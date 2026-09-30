@@ -250,6 +250,11 @@ class E2Control:
             self._experiment_event("PREPARE_OK", object_id=object_id, token=token)
             self._say(connection, "PREPARE_OK token %s (30 s)" % token)
             return True
+        except observers.LabIdentityAmbiguous:
+            code = e2_admission.BODY_UNAVAILABLE
+            self._experiment_event("PREPARE_REJECT", object_id=object_id, code=code)
+            self._say(connection, "PREPARE_REJECT %s" % code)
+            return False
         except Exception as error:
             code = "E2_EXCEPTION:%s" % type(error).__name__
             self._experiment_event("PREPARE_REJECT", object_id=object_id, code=code[:64])
@@ -271,7 +276,15 @@ class E2Control:
             code = e2_admission.admit(bound, view, object_id, EXCLUDED_OBJECT_IDS,
                                       self.learner.signatures, self.open_ids)
             if code is not None:
-                self._experiment_event("ADMIT_REJECT", token=token, object_id=object_id, code=code)
+                extra = {}
+                if code == e2_admission.STALE_SNAPSHOT:
+                    underlying = e2_admission.check(
+                        view, object_id, EXCLUDED_OBJECT_IDS,
+                        self.learner.signatures, self.open_ids)
+                    if underlying is not None:
+                        extra["detail"] = underlying[:schema.MAX_DETAIL_LENGTH]
+                self._experiment_event("ADMIT_REJECT", token=token, object_id=object_id,
+                                       code=code, **extra)
                 self._say(connection, "ADMIT_REJECT %s" % code)
                 return False
             self.experiment_counter += 1

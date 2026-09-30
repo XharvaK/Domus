@@ -72,17 +72,22 @@ def check(view, object_id, excluded_ids, signatures, own_open_ids):
             return BODY_BUSY
         if entry.get("source_raw") in BUSY_SOURCES:
             return BODY_BUSY
+        if (entry.get("source_raw") == "InteractionSource.AUTONOMY" and
+                entry.get("target_id") == object_id):
+            return BODY_BUSY
     if view.get("paused") is not False:
         return CLOCK_PAUSED
     return None
 
 
-def fingerprint(view):
+def fingerprint(view, object_id):
     """Facts that must not change between prepare and admit (ticks excluded)."""
     busy = sorted(
         (entry.get("interaction_id") or "", entry.get("source_raw") or "")
         for entry in view.get("entries", ())
-        if entry.get("source_raw") in BUSY_SOURCES)
+        if entry.get("source_raw") in BUSY_SOURCES or
+        (entry.get("source_raw") == "InteractionSource.AUTONOMY" and
+         entry.get("target_id") == object_id))
     obj = view.get("object") or {}
     return (view.get("guid"), view.get("slot_id"), view.get("sim_id"),
             view.get("lineage_class"), view.get("posture_target_id"),
@@ -103,7 +108,8 @@ class TokenBook:
         if len(self._open) >= MAX_OPEN_TOKENS:
             return None, TOO_MANY_TOKENS
         token = self._factory()
-        self._open[token] = {"object_id": object_id, "fingerprint": fingerprint(view),
+        self._open[token] = {"object_id": object_id,
+                             "fingerprint": fingerprint(view, object_id),
                              "issued": now}
         return token, None
 
@@ -138,7 +144,7 @@ def admit(bound, fresh_view, object_id, excluded_ids, signatures, own_open_ids):
         return BAD_ARGUMENT
     code = check(fresh_view, object_id, excluded_ids, signatures, own_open_ids)
     if code is not None:
-        return STALE_SNAPSHOT if code in (PRECONDITION_PRESENT, BODY_BUSY) else code
-    if fingerprint(fresh_view) != bound["fingerprint"]:
+        return STALE_SNAPSHOT
+    if fingerprint(fresh_view, object_id) != bound["fingerprint"]:
         return STALE_SNAPSHOT
     return None

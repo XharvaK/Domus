@@ -130,6 +130,55 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.check(self.view(entries=[_entry("7", AUTO)]), own=("7",)),
                          A.BODY_BUSY)
 
+    def test_autonomy_targeting_chair_is_body_busy_and_in_fingerprint(self):
+        A = self.adm
+        idle = self.view(entries=[_entry("2", AUTO)])
+        self.assertIsNone(self.check(idle))
+        targeting = self.view(entries=[_entry("2", AUTO, target=CHAIR)])
+        self.assertEqual(self.check(targeting), A.BODY_BUSY)
+        posture = self.view(entries=[_entry("4", POSTURE, "RUNNING", CHAIR)])
+        self.assertIsNone(self.check(posture))
+        self.assertNotEqual(A.fingerprint(idle, CHAIR), A.fingerprint(targeting, CHAIR))
+        self.assertEqual(A.fingerprint(idle, CHAIR), A.fingerprint(posture, CHAIR))
+
+    def test_autonomy_on_chair_between_prepare_and_sit_is_stale(self):
+        A = self.adm
+        book = A.TokenBook(token_factory=lambda: "a" * 16)
+        clean = self.view()
+        token, code = book.issue(CHAIR, clean, 0.0)
+        self.assertIsNone(code)
+        bound, code = book.consume(token, 1.0)
+        self.assertIsNone(code)
+        fresh = self.view(entries=list(clean["entries"]) + [_entry("9", AUTO, target=CHAIR)])
+        sig = {CHAIR: "sit"}
+        self.assertEqual(A.admit(bound, fresh, CHAIR, frozenset(), sig, set()),
+                         A.STALE_SNAPSHOT)
+
+    def test_paused_or_missing_object_on_sit_is_stale_snapshot(self):
+        A = self.adm
+        book = A.TokenBook(token_factory=iter(["%016x" % n for n in range(4)]).__next__)
+        view = self.view()
+        sig = {CHAIR: "sit"}
+        excluded = frozenset()
+        token, _ = book.issue(CHAIR, view, 0.0)
+        bound, code = book.consume(token, 1.0)
+        self.assertIsNone(code)
+        self.assertEqual(A.admit(bound, self.view(paused=True), CHAIR, excluded, sig, set()),
+                         A.STALE_SNAPSHOT)
+        token, _ = book.issue(CHAIR, view, 2.0)
+        bound, _ = book.consume(token, 3.0)
+        vanished = self.view(object={"exists": False, "sit_offer_count": 0})
+        self.assertEqual(A.admit(bound, vanished, CHAIR, excluded, sig, set()),
+                         A.STALE_SNAPSHOT)
+
+    def test_token_expiry_and_replay_stay_token_outcomes(self):
+        A = self.adm
+        book = A.TokenBook(token_factory=iter(["%016x" % n for n in range(4)]).__next__)
+        view = self.view()
+        token, _ = book.issue(CHAIR, view, 0.0)
+        self.assertEqual(book.consume(token, 31.0), (None, A.TOKEN_EXPIRED))
+        self.assertEqual(book.consume(token, 32.0), (None, A.REPLAY_REJECTED))
+
     def test_tokens_single_use_expiry_replay_and_stale(self):
         A = self.adm
         book = A.TokenBook(token_factory=iter(["%016x" % n for n in range(10)]).__next__)
@@ -201,6 +250,17 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(exp.claims["ATTRIBUTED"])
         exp = self.experiment()
         exp.observe(_row(1, [ours, _entry("300", AUTO, target=CHAIR)]))
+        self.assertEqual(exp.foreign_roots, ["300"])
+
+    def test_baseline_autonomy_on_chair_blocks_attributed(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        auto = _entry("300", AUTO, target=CHAIR)
+        exp = self.reg.Experiment("e-1", "t" * 16, CHAIR, "s", "100", 0, "sit",
+                                  ["1", "2", "300"])
+        exp.observe(_row(1, [ours, auto]))
+        self.assertTrue(exp.claims["STARTED"])
+        exp.observe(_row(2, [ours, auto], "sit", CHAIR))
+        self.assertFalse(exp.claims["ATTRIBUTED"])
         self.assertEqual(exp.foreign_roots, ["300"])
 
     def test_known_baseline_and_autonomy_idles_are_not_foreign(self):
@@ -522,8 +582,31 @@ class ControlFlowTests(unittest.TestCase):
         token = self.e2("experiment_event")[-1]["token"]
         self.sim.posture = _Posture("sitSingle", types.SimpleNamespace(id=int(CHAIR)))
         self.assertFalse(self.probe._dispatch_e2_sit(token, _session_id=1))
-        self.assertEqual(self.e2("experiment_event")[-1]["code"], "STALE_SNAPSHOT")
+        reject = self.e2("experiment_event")[-1]
+        self.assertEqual(reject["code"], "STALE_SNAPSHOT")
+        self.assertEqual(reject["detail"], "PRECONDITION_PRESENT")
         self.assertEqual(self.pushes, [])
+
+    def test_prepare_two_selectable_sims_is_body_unavailable(self):
+        self.arm_start_poll(self.continuing())
+        self.learn_signature()
+        sim = self.sim
+
+        class SimInfo:
+            is_selectable = True
+
+            def __init__(self, sim_id):
+                self.id = sim_id
+
+            def get_sim_instance(self, allow_hidden_flags=None):
+                return sim
+
+        self.services.sim_info_manager = lambda: types.SimpleNamespace(
+            get_all=lambda: [SimInfo(1), SimInfo(2)])
+        self.assertFalse(self.probe._dispatch_e2_prepare(CHAIR, _session_id=1))
+        event = self.e2("experiment_event")[-1]
+        self.assertEqual(event["phase"], "PREPARE_REJECT")
+        self.assertEqual(event["code"], "BODY_UNAVAILABLE")
 
     def test_finishing_callback_sets_finished_with_game_value(self):
         self.arm_start_poll(self.continuing())
@@ -562,7 +645,7 @@ class WriterLedgerTests(unittest.TestCase):
 
     def test_ledger_loads_appends_and_survives_restart(self):
         with tempfile.TemporaryDirectory() as temp:
-            sink = self.writer.TelemetryWriter(temp, "u", "2.0.0", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "u", "2.0.1", "1.128.90.1030")
             self.assertTrue(sink.try_put(self.lineage_row()))
             self.assertTrue(sink.try_put(self.lineage_row("CLASSIFIED")))
             sink.signal_close("DISARM_CLEAN")
@@ -570,7 +653,7 @@ class WriterLedgerTests(unittest.TestCase):
             state, records = sink.ledger_snapshot()
             self.assertEqual(state, "OK")
             self.assertEqual([r["record"] for r in records], ["SAVE_OBSERVED"])
-            again = self.writer.TelemetryWriter(temp, "v", "2.0.0", "1.128.90.1030")
+            again = self.writer.TelemetryWriter(temp, "v", "2.0.1", "1.128.90.1030")
             again.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(again.wait_idle(5.0))
             state, records = again.ledger_snapshot()
@@ -582,13 +665,13 @@ class WriterLedgerTests(unittest.TestCase):
             path = os.path.join(temp, self.writer.LEDGER_FILENAME)
             with open(path, "wb") as handle:
                 handle.write(b"{not json\n")
-            sink = self.writer.TelemetryWriter(temp, "u", "2.0.0", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "u", "2.0.1", "1.128.90.1030")
             sink.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(sink.wait_idle(5.0))
             self.assertEqual(sink.ledger_snapshot()[0], "UNREADABLE")
             with open(path, "wb") as handle:
                 handle.write(b"x" * (self.writer.MAX_LEDGER_BYTES + 1))
-            sink = self.writer.TelemetryWriter(temp, "v", "2.0.0", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "v", "2.0.1", "1.128.90.1030")
             sink.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(sink.wait_idle(5.0))
             self.assertEqual(sink.ledger_snapshot()[0], "TOO_LARGE")

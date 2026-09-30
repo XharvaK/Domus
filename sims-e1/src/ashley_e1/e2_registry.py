@@ -63,13 +63,19 @@ class Experiment:
             if iid is not None and iid == self.interaction_id:
                 ours = entry
                 continue
+            source = entry.get("source_raw")
+            autonomy_on_object = (
+                source == "InteractionSource.AUTONOMY" and
+                entry.get("target_id") == self.object_id)
+            if autonomy_on_object and iid is not None:
+                if iid not in self.foreign_roots:
+                    self.foreign_roots.append(iid)
+                self.known_ids.add(iid)
+                continue
             if iid is None or iid in self.known_ids:
                 continue
             self.known_ids.add(iid)
-            source = entry.get("source_raw")
-            if (source in e2_admission.BUSY_SOURCES or
-                    (source == "InteractionSource.AUTONOMY" and
-                     entry.get("target_id") == self.object_id)):
+            if source in e2_admission.BUSY_SOURCES:
                 self.foreign_roots.append(iid)
         if ours is not None:
             self.claims["ENQUEUED"] = True
