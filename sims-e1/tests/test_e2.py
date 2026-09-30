@@ -317,16 +317,78 @@ class RegistryTests(unittest.TestCase):
         before = _entry("40", AUTO, "QUEUED", CHAIR, "14244")
         running = _entry("60", AUTO, "RUNNING", CHAIR, "99999")
         queued = _entry("70", AUTO, "QUEUED", CHAIR, "14244")
+        rerun = _entry("80", AUTO, "QUEUED", CHAIR, "99999")
         self.assertIsNone(learner.observe(_row(1, [click, before]), set()))
         self.assertEqual(learner.observe(_row(2, [], "sit", CHAIR), set()),
                          (CHAIR, "sit"))
         self.assertEqual(learner.continuation_events, [])
-        learner.observe(_row(3, [running, queued], "sit", CHAIR), set())
+        learner.observe(_row(3, [before, running, queued], "sit", CHAIR), set())
         self.assertEqual(learner.continuation_events, [])
+        learner.observe(_row(4, [rerun], "sit", CHAIR), set())
         learner.observe(_row(33, [queued], "sit", CHAIR), set())
         self.assertEqual(learner.continuation[CHAIR], {"14244"})
         self.assertEqual(learner.continuation_events, [(CHAIR, "14244")])
         learner.observe(_row(34, [queued], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation_events, [])
+
+    def _seat(self, learner, at=2.0):
+        click = _entry("50", PIE, target=CHAIR, affordance_id="31564")
+        self.assertIsNone(learner.observe(_row(at - 1, [click]), set()))
+        self.assertEqual(learner.observe(_row(at, [], "sit", CHAIR), set()),
+                         (CHAIR, "sit"))
+        self.assertEqual(learner.continuation_events, [])
+
+    def test_affordance_first_seen_after_deadline_is_not_learned(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        late = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        learner.observe(_row(33, [late], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+
+    def test_running_after_deadline_does_not_remove_in_window_candidate(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        queued = _entry("70", AUTO, "QUEUED", CHAIR, "14244")
+        learner.observe(_row(3, [queued], "sit", CHAIR), set())
+        late = _entry("70", AUTO, "RUNNING", CHAIR, "14244")
+        learner.observe(_row(33, [late], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], {"14244"})
+        self.assertEqual(learner.continuation_events, [(CHAIR, "14244")])
+
+    def test_queued_in_incomplete_row_before_seating_is_not_learned(self):
+        learner = self.reg.SignatureLearner()
+        click = _entry("50", PIE, target=CHAIR, affordance_id="31564")
+        early = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        self.assertIsNone(learner.observe(_row(1, [click]), set()))
+        learner.observe(_row(1.5, [early], complete=False), set())
+        self.assertEqual(learner.observe(_row(2, [], "sit", CHAIR), set()),
+                         (CHAIR, "sit"))
+        learner.observe(_row(3, [early], "sit", CHAIR), set())
+        learner.observe(_row(33, [], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+
+    def test_running_in_incomplete_row_excludes_affordance(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        queued = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        running = _entry("70", AUTO, "RUNNING", CHAIR, "88888")
+        learner.observe(_row(3, [queued], "sit", CHAIR), set())
+        learner.observe(_row(4, [running], "sit", CHAIR, complete=False), set())
+        self.assertEqual(learner.continuation_events, [])
+        learner.observe(_row(33, [], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+
+    def test_departure_in_incomplete_row_closes_window(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        learner.observe(_row(4, [], "stand", SOFA, complete=False), set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+        later = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        learner.observe(_row(5, [later], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
         self.assertEqual(learner.continuation_events, [])
 
     def test_continuation_queued_after_seating_passes(self):
@@ -694,6 +756,24 @@ class ControlFlowTests(unittest.TestCase):
         self.assertEqual((verdict["phase"], verdict["code"]), ("VERDICT", "OUTCOME_UNKNOWN"))
         for row in self.rows():
             self.package.schema.validate_record(row)
+
+    def test_verdict_detail_contains_continuation_count(self):
+        self.arm_start_poll(self.continuing())
+        self.learn_signature()
+        self.assertTrue(self.probe._dispatch_e2_prepare(CHAIR, _session_id=1))
+        token = self.e2("experiment_event")[-1]["token"]
+        self.assertTrue(self.probe._dispatch_e2_sit(token, _session_id=1))
+        ours = types.SimpleNamespace(id=777, guid64=31564, affordance="sit",
+                                     target=types.SimpleNamespace(id=int(CHAIR)),
+                                     context=types.SimpleNamespace(
+                                         source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
+        self.sim.si_state = [ours]
+        self.sim.posture = _Posture("sitSingle", types.SimpleNamespace(id=int(CHAIR)))
+        self.tick()
+        self.assertTrue(self.probe._cmd_stop())
+        verdict = self.e2("experiment_event")[-1]
+        self.assertEqual(verdict["phase"], "VERDICT")
+        self.assertIn("continuation=", verdict.get("detail"))
 
     def test_push_failure_never_touches_interaction_and_opens_no_experiment(self):
         self.arm_start_poll(self.continuing())

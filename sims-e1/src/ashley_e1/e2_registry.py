@@ -172,12 +172,15 @@ class SignatureLearner:
         """
         self.continuation_events = []
         mono = row.get("monotonic_ns")
-        if row.get("observation_complete") is not True:
-            return None
         for entry in _entries(row):
             iid = entry.get("interaction_id")
             if iid is not None and iid not in self._seen_first:
                 self._seen_first[iid] = mono
+        if row.get("observation_complete") is not True:
+            posture = _posture(row)
+            self._observe_continuation(
+                row, open_harness_ids, posture.get("target_id"), mono, False)
+            return None
         for entry in _entries(row):
             if (entry.get("source_raw") == "InteractionSource.PIE_MENU" and
                     entry.get("affordance_id") == e2_admission.SIT_AFFORDANCE_GUID and
@@ -199,36 +202,39 @@ class SignatureLearner:
                 self._cont_excluded.setdefault(object_id, set())
                 self._cont_since[object_id] = mono
                 learned = (object_id, name)
-        self._observe_continuation(row, open_harness_ids, target, mono)
+        self._observe_continuation(row, open_harness_ids, target, mono, True)
         return learned
 
-    def _observe_continuation(self, row, open_harness_ids, target, mono):
+    def _close_continuation(self, object_id):
+        learned = self.continuation.setdefault(object_id, set())
+        detail = ",".join(sorted(learned))
+        self.continuation_events.append((object_id, detail))
+        self._cont_closed.add(object_id)
+        self._cont_since.pop(object_id, None)
+
+    def _observe_continuation(self, row, open_harness_ids, target, mono, complete):
         for object_id, m0 in list(self._cont_since.items()):
             if object_id in self._cont_closed:
                 continue
+            if mono - m0 > CONTINUATION_WINDOW_SECONDS * 1e9:
+                self._close_continuation(object_id)
+                continue
             seated_here = target == object_id
-            timed_out = mono - m0 > CONTINUATION_WINDOW_SECONDS * 1e9
-            if seated_here:
-                for entry in _entries(row):
-                    self._consider_continuation_entry(
-                        object_id, entry, open_harness_ids, m0)
-            if (not seated_here) or timed_out:
-                learned = self.continuation.setdefault(object_id, set())
-                detail = ",".join(sorted(learned))
-                self.continuation_events.append((object_id, detail))
-                self._cont_closed.add(object_id)
-                self._cont_since.pop(object_id, None)
+            for entry in _entries(row):
+                self._consider_continuation_entry(
+                    object_id, entry, open_harness_ids, m0,
+                    complete and seated_here)
+            if target != object_id and (complete or target is not None):
+                self._close_continuation(object_id)
 
-    def _consider_continuation_entry(self, object_id, entry, open_harness_ids, m0):
+    def _consider_continuation_entry(self, object_id, entry, open_harness_ids, m0,
+                                     allow_add):
         if entry.get("source_raw") != "InteractionSource.AUTONOMY":
             return
         if entry.get("target_id") != object_id:
             return
         iid = entry.get("interaction_id")
         if iid is None or iid in open_harness_ids:
-            return
-        first = self._seen_first.get(iid)
-        if first is None or first < m0:
             return
         aff = entry.get("affordance_id")
         if aff is None:
@@ -238,6 +244,11 @@ class SignatureLearner:
         if entry.get("membership") in RUNNING_MEMBERSHIPS:
             excluded.add(aff)
             learned.discard(aff)
+            return
+        if not allow_add:
+            return
+        first = self._seen_first.get(iid)
+        if first is None or first < m0:
             return
         if entry.get("membership") == "QUEUED" and aff not in excluded:
             learned.add(aff)
