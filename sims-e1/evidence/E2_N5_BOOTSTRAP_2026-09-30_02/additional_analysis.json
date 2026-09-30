@@ -1,0 +1,15 @@
+{
+  "presence_monotonic_regressions": 0,
+  "nonidle_first": {
+    "wall": 1790790144004,
+    "id": "14427",
+    "target": "118245043789434022"
+  },
+  "nonidle_last": {
+    "wall": 1790790170575,
+    "id": "14241",
+    "target": "118245043789434023"
+  },
+  "guard_exception_rows": 0,
+  "post_prepare_sample_seconds": 319.547
+}
