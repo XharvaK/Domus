@@ -1,0 +1,5 @@
+# Build output (rebuild with sims-e1/tools/build.ps1)
+/sims-e1/build/
+__pycache__/
+*.pyc
+.DS_Store

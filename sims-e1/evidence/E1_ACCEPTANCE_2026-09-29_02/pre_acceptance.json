@@ -1,0 +1,35 @@
+{
+  "evidence_id": "E1_ACCEPTANCE_2026-09-29_02",
+  "captured_before_filesystem_change": true,
+  "sims_root": "C:\\Users\\Xharv\\OneDrive\\Belgeler\\Electronic Arts\\The Sims 4",
+  "repository": {
+    "head": "64341679db058ed81cf10f99f619325f26507923",
+    "tree": "d952c461095b6c2229c7794156d23b1082b5196e",
+    "origin_main": "64341679db058ed81cf10f99f619325f26507923"
+  },
+  "artifact": {
+    "filename": "ashley_e1_1.0.2.ts4script",
+    "sha256": "C73AFC3B7AC8FCE547B507491E0918DBEB21F583BAE21D07BFB213D7C6398F98",
+    "bytes": 23410,
+    "probe_version": "1.0.2"
+  },
+  "installed_before_change": {
+    "filename": "ashley_e1_1.0.0.ts4script",
+    "sha256": "2B78CB40303A0228578BA1205FB6526A026F04B3F466B77A2EE4B4E40B8AA3E3",
+    "bytes": 22206,
+    "path": "Mods\\AshleyE1\\ashley_e1_1.0.0.ts4script"
+  },
+  "saves_sha256_before_acceptance": [
+    {"path": "Slot_00000002.save", "bytes": 1094877, "last_write_utc": "2026-09-29T02:19:43.3411373Z", "sha256": "5213CD2DC4F74F80393468AB0A4C155EB672EFD0D35F9D1F5F2845065E0D8B3E"},
+    {"path": "Slot_00000002.save.day.ver0", "bytes": 943943, "last_write_utc": "2026-09-29T02:17:36.0000000Z", "sha256": "FE92E44AE8A3D2F7BA6FE23388231EE9450938462A078408C69C89DC6AAA8696"},
+    {"path": "Slot_00000002.save.ver0", "bytes": 1005869, "last_write_utc": "2026-09-29T02:19:41.0000000Z", "sha256": "C5ECD439B1684CA40C370E91F78C9D260BD8603884FA42D846E6BFFD8B570C20"},
+    {"path": "Slot_00000002.save.ver1", "bytes": 943943, "last_write_utc": "2026-09-29T02:17:36.0000000Z", "sha256": "FE92E44AE8A3D2F7BA6FE23388231EE9450938462A078408C69C89DC6AAA8696"},
+    {"path": "Slot_ffffffff.save", "bytes": 943989, "last_write_utc": "2026-09-29T02:18:02.7295466Z", "sha256": "FA92FEA250BBE90733769C4AC06928771A0BE4718E27C1773305A242104BE671"},
+    {"path": "steam_autocloud.vdf", "bytes": 51, "last_write_utc": "2026-09-29T02:21:51.7638581Z", "sha256": "3D3A5E9A1D3E79C91E971CE506B0FA88F0FF909B6F33DB67EA7ED4F4A8B5267D"}
+  ],
+  "telemetry_inventory_before_acceptance": [
+    {"path": "ashley_e1_bootstrap_0eae2882-c49b-4231-bde7-f42b02e7093b.jsonl", "bytes": 456, "last_write_utc": "2026-09-29T02:22:06.8612722Z", "probe_version": "1.0.0", "event_kind": "load_disabled", "armed_name": "UNARMED", "sha256": "E4EA640013E81EDE1F057B84A360DF6F8B05D3790AD05FA342EB15004139F3EB"},
+    {"path": "ashley_e1_bootstrap_eaa5803c-29bb-4f31-9c45-b38b16526dc3.jsonl", "bytes": 456, "last_write_utc": "2026-09-29T02:08:03.0872037Z", "probe_version": "1.0.0", "event_kind": "load_disabled", "armed_name": "UNARMED", "sha256": "0C04BB4DE96B2568C647838F4D599738FCF89E4A972A4A0F183F092934991185"}
+  ],
+  "process_boundary": "TS4_PROCESS_NOT_RUNNING"
+}

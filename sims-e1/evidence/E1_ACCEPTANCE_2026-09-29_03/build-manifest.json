@@ -1,0 +1,107 @@
+﻿{
+    "manifest_version":  1,
+    "probe_version":  "1.0.2",
+    "target_sims_build":  "1.128.90.1030",
+    "baseline_commit":  "db6a8d3e40f85eb2a88cc24d87fe7a01f5bd0217",
+    "implemented_commit":  "64341679db058ed81cf10f99f619325f26507923",
+    "governing_documents":  {
+                                "master_sha256":  "A06C24544F23F3520FD0C1FDA78E375C8A24D12581BFB8D2E7D98EE0E4E178F3",
+                                "plan_v1_2a_sha256":  "CBF47BF6803FE909F02C0BF2B0B0F21EBB78E139BDEB3595984F8E313130F683"
+                            },
+    "compiler":  {
+                     "implementation":  "CPython",
+                     "version":  "3.7.0",
+                     "architecture":  "x64",
+                     "source_url":  "https://www.python.org/downloads/release/python-370/",
+                     "installer_url":  "https://www.python.org/ftp/python/3.7.0/python-3.7.0-amd64.exe",
+                     "installer_md5":  "531C3FC821CE0A4107B6D2C6A129BE3E",
+                     "installer_sha256":  "9D6AFA39538AADE3A2BACB099EF1C9F78E8D4AFAEFFF99057B902118845C5DDA",
+                     "executable_path":  "C:\\Users\\Xharv\\AppData\\Local\\Programs\\Python\\Python370-AshleyE1\\python.exe",
+                     "executable_sha256":  "E964F2E498AB3141D86DA5F0D6E135BE82986C66AAAFEF356B6E7751B779A796",
+                     "embedded_package_url":  "https://www.python.org/ftp/python/3.7.0/python-3.7.0-embed-amd64.zip",
+                     "embedded_package_md5":  "CB8B4F0D979A36258F73ED541DEF10A5",
+                     "embedded_package_sha256":  "0CC08F3C74C0112ABC2ADAFD16A534CDE12FE7C7AAFB42E936D59FD3AB08FCDB",
+                     "optimize":  0,
+                     "pyc_placement":  "legacy_adjacent"
+                 },
+    "pyc":  {
+                "magic_hex":  "420d0d0a",
+                "magic_decimal":  3394
+            },
+    "p1_game_dll":  {
+                        "path":  "E:\\SteamLibrary\\steamapps\\common\\The Sims 4\\Game\\Bin\\python37_x64.dll",
+                        "filename":  "python37_x64.dll",
+                        "file_version":  "3.7.150.1013",
+                        "file_version_display":  "3.7.0",
+                        "file_version_raw":  "3.7.150.1013",
+                        "product_version":  "3.7.0",
+                        "description":  "Python Core",
+                        "sha256":  "3BD2257D1A7C3D405D25F989CC0E3C847213700397C3F86D7B64AFB910069AEC",
+                        "verdict":  "COMPATIBLE"
+                    },
+    "s4cl_source_consulted":  "db1ca99",
+    "game_imports":  [
+                         {
+                             "name":  "services",
+                             "evidence":  "PRIOR_ART"
+                         },
+                         {
+                             "name":  "sims.sim_info.SimInfo",
+                             "evidence":  "PRIOR_ART"
+                         },
+                         {
+                             "name":  "alarms.add_alarm_real_time",
+                             "evidence":  "PRIOR_ART"
+                         },
+                         {
+                             "name":  "alarms.cancel_alarm",
+                             "evidence":  "PRIOR_ART"
+                         },
+                         {
+                             "name":  "clock.interval_in_real_seconds",
+                             "evidence":  "PRIOR_ART"
+                         },
+                         {
+                             "name":  "sims4.commands.register",
+                             "evidence":  "PRIOR_ART"
+                         }
+                     ],
+    "source_content_sha256":  "B3012FE4604E486DB1C8DAC3608BC919B19F8C8CB1440170AB74F3CB537188FB",
+    "files":  [
+                  {
+                      "path":  "ashley_e1/__init__.py",
+                      "bytes":  83,
+                      "sha256":  "9986F24107235D74492A642B8DFDFC3E9061F6ADAE55E50714A51A1680A61E55"
+                  },
+                  {
+                      "path":  "ashley_e1/observers.py",
+                      "bytes":  3878,
+                      "sha256":  "D3EBB8A76EF40C8A23ED4EDA2045AA0A0EC66F4A3D950C679BDF9F98DE4615A1"
+                  },
+                  {
+                      "path":  "ashley_e1/probe.py",
+                      "bytes":  14910,
+                      "sha256":  "EAF43D90EC76A2C71CED09DE94389B6B92C123DF1D4184439E42C278216F82FA"
+                  },
+                  {
+                      "path":  "ashley_e1/schema.py",
+                      "bytes":  25808,
+                      "sha256":  "9E0F57A932185824D12AFF4CA94CDC83060BC146A33AE423A7368336011E031D"
+                  },
+                  {
+                      "path":  "ashley_e1/snapshot.py",
+                      "bytes":  3847,
+                      "sha256":  "091C1578F99E689AA8DEA34FC6373CBCC3F50F90DF3858E33AFB90989235B852"
+                  },
+                  {
+                      "path":  "ashley_e1/writer.py",
+                      "bytes":  16717,
+                      "sha256":  "9F6E1FD29870B49B80D76B2244724DAF12C036F44B6E3C2638C8F5B3124BEA46"
+                  }
+              ],
+    "artifact":  {
+                     "filename":  "ashley_e1_1.0.2.ts4script",
+                     "sha256":  "C73AFC3B7AC8FCE547B507491E0918DBEB21F583BAE21D07BFB213D7C6398F98",
+                     "bytes":  23410
+                 }
+}

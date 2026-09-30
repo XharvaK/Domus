@@ -1,0 +1,43 @@
+{
+  "evidence_id": "E1_ACCEPTANCE_2026-09-29_03",
+  "setup": {
+    "existing_lab_save_reused": "LAB_E1",
+    "owner_attested_autosave_on_loading_screen": "OFF",
+    "owner_attested_autosave_on_exiting_build_mode": "OFF",
+    "owner_attested_real_time_autosave": "OFF",
+    "owner_attested_in_game_time_autosave": "OFF",
+    "owner_attested_sims_fully_quit": true,
+    "owner_attested_manual_lab_save": "not separately reported; existing LAB_E1 save authorized for reuse",
+    "setup_writes_complete_before_baseline": true
+  },
+  "repository": {
+    "head": "64341679db058ed81cf10f99f619325f26507923",
+    "origin_main": "64341679db058ed81cf10f99f619325f26507923"
+  },
+  "artifact": {
+    "filename": "ashley_e1_1.0.2.ts4script",
+    "probe_version": "1.0.2",
+    "sha256": "C73AFC3B7AC8FCE547B507491E0918DBEB21F583BAE21D07BFB213D7C6398F98"
+  },
+  "saves_baseline_sha256": {
+    "Slot_00000002.save": "5213CD2DC4F74F80393468AB0A4C155EB672EFD0D35F9D1F5F2845065E0D8B3E",
+    "Slot_00000002.save.day.ver0": "FE92E44AE8A3D2F7BA6FE23388231EE9450938462A078408C69C89DC6AAA8696",
+    "Slot_00000002.save.ver0": "C5ECD439B1684CA40C370E91F78C9D260BD8603884FA42D846E6BFFD8B570C20",
+    "Slot_00000002.save.ver1": "FE92E44AE8A3D2F7BA6FE23388231EE9450938462A078408C69C89DC6AAA8696",
+    "Slot_ffffffff.save": "2400F383A11A3862A751CBA80AB56E8F5DD68ED84AA15AACB47737EE90947B57",
+    "Slot_ffffffff.save.day.ver0": "FA92FEA250BBE90733769C4AC06928771A0BE4718E27C1773305A242104BE671",
+    "Slot_ffffffff.save.ver0": "232B92532F883C706A25376EF1AE169035B2D1447523A3F64CBE2B1A3F2D318A",
+    "Slot_ffffffff.save.ver1": "FA92FEA250BBE90733769C4AC06928771A0BE4718E27C1773305A242104BE671",
+    "steam_autocloud.vdf": "3D3A5E9A1D3E79C91E971CE506B0FA88F0FF909B6F33DB67EA7ED4F4A8B5267D"
+  },
+  "localthumbcache": {
+    "bytes": 240245,
+    "last_write_utc": "2026-09-29T03:33:53.0381819Z"
+  },
+  "telemetry_baseline_files": [
+    "ashley_e1_bootstrap_0eae2882-c49b-4231-bde7-f42b02e7093b.jsonl",
+    "ashley_e1_bootstrap_48c99689-94fe-483d-9e1a-efdf77096c16.jsonl",
+    "ashley_e1_bootstrap_eaa5803c-29bb-4f31-9c45-b38b16526dc3.jsonl"
+  ],
+  "capture_utc": "2026-09-29T03:36:06.1027864Z"
+}

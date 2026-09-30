@@ -1,0 +1,15 @@
+PRE-INSTALL / INSTALL
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/install.ps1 -SimsRoot "C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4" -Version 1.0.0
+INSTALL_PASS destination=C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4\Mods\AshleyE1\ashley_e1_1.0.0.ts4script
+
+OWNER-ATTESTED UI
+Game Options -> Other -> Enable Custom Content and Mods = ON
+Game Options -> Other -> Script Mods Allowed = ON
+Mods list = exactly one Ashley E1 1.0.0 entry
+Main Menu build = PC 1.128.90.1030
+LAB_E1 = newly created; exactly one Sim; Sims fully quit before baseline
+LAB_E1 = loaded; stable live gameplay; probe NOT armed or started
+
+PROBE COMMANDS
+No ashley_e1.arm, ashley_e1.start, ashley_e1.stop, or ashley_e1.disarm command was executed.
+Acceptance stopped at bootstrap validation before arming.

@@ -1,0 +1,33 @@
+{
+  "evidence_id": "E1_ACCEPTANCE_2026-09-29_01",
+  "captured_at_utc": "2026-09-29T02:20:37.7866124Z",
+  "repo": "C:\\Users\\Xharv\\Projects\\Ashley",
+  "branch": "main",
+  "head": "f92ccd0f803b40250cac8ecc93779debd18c8d7c",
+  "head_tree": "d6ba73743c595e46be1f6dec8ff6cfddc305eec8",
+  "origin_main": "f92ccd0f803b40250cac8ecc93779debd18c8d7c",
+  "artifact_path": "C:\\Users\\Xharv\\Projects\\Ashley\\sims-e1\\build\\ashley_e1_1.0.0.ts4script",
+  "artifact_sha256": "2B78CB40303A0228578BA1205FB6526A026F04B3F466B77A2EE4B4E40B8AA3E3",
+  "artifact_bytes": 22206,
+  "sims_root": "C:\\Users\\Xharv\\OneDrive\\Belgeler\\Electronic Arts\\The Sims 4",
+  "expected_sims_build": "PC 1.128.90.1030",
+  "probe_version": "1.0.0",
+  "lab": "LAB_E1",
+  "lab_status": "newly_created",
+  "lab_household_cardinality": 1,
+  "localthumbcache": {
+    "path": "localthumbcache.package",
+    "exists": true,
+    "bytes": 203961,
+    "last_write_time_utc": "2026-09-29T02:19:54.9877235Z"
+  },
+  "telemetry_preexisting": [
+    {
+      "name": "ashley_e1_bootstrap_eaa5803c-29bb-4f31-9c45-b38b16526dc3.jsonl",
+      "bytes": 456,
+      "last_write_time_utc": "2026-09-29T02:08:03.0872037Z",
+      "sha256": "0C04BB4DE96B2568C647838F4D599738FCF89E4A972A4A0F183F092934991185"
+    }
+  ],
+  "notes": "Pre-acceptance snapshot taken after newly-created LAB_E1 was saved and Sims was fully quit. The pre-existing bootstrap file predates this acceptance interval and is not used as the acceptance bootstrap witness."
+}

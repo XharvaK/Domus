@@ -1,0 +1,11 @@
+﻿{
+    "schema":  "sims-e1.install/v1",
+    "installed_at_utc":  "2026-09-29T02:02:56.7923893Z",
+    "sims_root":  "C:\\Users\\Xharv\\OneDrive\\Belgeler\\Electronic Arts\\The Sims 4",
+    "mods_root":  "C:\\Users\\Xharv\\OneDrive\\Belgeler\\Electronic Arts\\The Sims 4\\Mods",
+    "destination":  "C:\\Users\\Xharv\\OneDrive\\Belgeler\\Electronic Arts\\The Sims 4\\Mods\\AshleyE1",
+    "destination_structure":  "root\\\\Mods\\\\AshleyE1",
+    "artifact":  "C:\\Users\\Xharv\\OneDrive\\Belgeler\\Electronic Arts\\The Sims 4\\Mods\\AshleyE1\\ashley_e1_1.0.0.ts4script",
+    "artifact_sha256":  "2B78CB40303A0228578BA1205FB6526A026F04B3F466B77A2EE4B4E40B8AA3E3",
+    "sidecar_sha256":  "2B78CB40303A0228578BA1205FB6526A026F04B3F466B77A2EE4B4E40B8AA3E3"
+}
