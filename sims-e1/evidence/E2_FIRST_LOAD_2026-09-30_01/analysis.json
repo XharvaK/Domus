@@ -1,0 +1,57 @@
+{
+  "row_count": 344,
+  "sequence_contiguous": true,
+  "kinds": [
+    {
+      "Name": "lineage_event",
+      "Count": 2
+    },
+    {
+      "Name": "presence_snapshot",
+      "Count": 332
+    },
+    {
+      "Name": "session_checkpoint",
+      "Count": 8
+    },
+    {
+      "Name": "session_close",
+      "Count": 1
+    },
+    {
+      "Name": "session_open",
+      "Count": 1
+    }
+  ],
+  "callbacks_first_60s": 59,
+  "paused_rows": 45,
+  "paused_tick_values": [
+    1629169
+  ],
+  "postures": [
+    "sit|118245043789434044",
+    "toilet_sit|118245043789434022",
+    "stand|",
+    "stand|118245043789434022",
+    "stand|118245043789434023"
+  ],
+  "stop1_ms": 1790781672459,
+  "restart_ms": 1790781738598,
+  "stop2_ms": 1790781865264,
+  "disarm_ms": 1790781894862,
+  "presence_after_stop1_before_restart": 0,
+  "presence_after_stop2": 0,
+  "experiment_rows": 0,
+  "guard_or_exception_rows": 0,
+  "close_reason": "DISARM_CLEAN",
+  "close_counters": {
+    "dropped_queue": 0,
+    "dropped_overrun": 0,
+    "dropped_serialize": 0,
+    "redundant_starts": 1
+  },
+  "close_writer": {
+    "state": "OK",
+    "rotation_index": 0
+  }
+}
