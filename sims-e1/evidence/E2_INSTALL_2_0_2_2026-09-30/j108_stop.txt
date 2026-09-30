@@ -1,0 +1,62 @@
+﻿STATUS: STOPPED
+
+TASK
+J108: replace installed probe 2.0.1 with 2.0.2 under J104/J102 procedure.
+
+STATE
+Stopped at step 3. The build hash differs from the mandatory J107 hash.
+The job explicitly requires STOP before removal on this mismatch.
+Initial checkout was clean on e2-run. After git fetch origin, HEAD and origin/e2-run both equaled the required SHA.
+Get-Process -Name TS4_x64 -ErrorAction SilentlyContinue returned no process.
+
+MODEL_USED
+gpt-6.1-sol; model_reasoning_effort=low; service_tier=default, as specified by the session launcher in the user instruction.
+
+CHANGED (before -> after)
+Evidence folder created; ignored build output regenerated.
+Installed probe remains 2.0.1. remove.ps1 and install.ps1 were not run.
+Options.ini was read only. No backups, saves, or Tray were changed by this job.
+
+EVIDENCE
+git fetch origin: succeeded.
+git rev-parse HEAD origin/e2-run 'HEAD^{tree}':
+4e694843756adcbd81863a835dd6c812e03aba0e
+4e694843756adcbd81863a835dd6c812e03aba0e
+02a336c2cf4fb33efea521117f89b94d3c89f3eb
+An earlier unquoted HEAD^{tree} was parsed incorrectly by PowerShell; the quoted read command above succeeded.
+powershell -ExecutionPolicy Bypass -File sims-e1\tools\build.ps1 -Version 2.0.2 -ImplementedCommit 4e694843756adcbd81863a835dd6c812e03aba0e
+BUILD_PASS
+BUILD_SHA256=2B8550730465C390BD2438B9893F5027F58BDEAC8B7EA903484FE5A77ADFC415
+powershell -ExecutionPolicy Bypass -File sims-e1\tools\verify.ps1 -Version 2.0.2
+VERIFY_PASS all checks
+Full output: C:\Users\Xharv\Projects\Domus\sims-e1\evidence\E2_INSTALL_2_0_2_2026-09-30\build_verify.txt
+Before evidence, build manifest, verify log, and stopped summary are in C:\Users\Xharv\Projects\Domus\sims-e1\evidence\E2_INSTALL_2_0_2_2026-09-30.
+Expected J107 SHA256: DCD422479D03CEF5B7BDF698612307CDDE8627E29E71178930120025C9213B2A
+Exactly one before duplicate: Mods\AshleyE1\ashley_e1_2.0.1.ts4script.
+
+NOT DONE
+Removal, installation, backup creation, after-install comparison, evidence commit, and push.
+No repair or build retry attempted.
+
+NEXT
+Resolve the build reproducibility mismatch through a separately authorized job before removal.
+
+E2_RUN_SHA_BUILT=4e694843756adcbd81863a835dd6c812e03aba0e
+BUILD_SHA256=2B8550730465C390BD2438B9893F5027F58BDEAC8B7EA903484FE5A77ADFC415
+BUILD_REPRODUCED=no
+VERIFY_PASS_COUNT=7
+VERIFY_FAIL_COUNT=0
+VERIFY_SKIP_COUNT=0
+REMOVE=not run (STOP before removal)
+INSTALL=not run (STOP before removal)
+BACKUP_FOLDER=not created
+BACKUP_BYTES=not applicable
+INSTALLED_ARTIFACT_SHA256=C2993BDC7E01667E4F5E8A59D9D66D231E1F77D4B8ADF5055E9AA540235E3FE1 (existing 2.0.1 manifest; no 2.0.2 installed)
+INSTALLED_SHA256=not applicable (2.0.2 not installed)
+SAVES_IDENTICAL=not assessed after installation; installation did not occur
+OPTIONS_INI=scriptmodsenabled = 1; modsdisabled = 0
+AUTONOMY_OPTIONS=autonomyhousehold = 1; autonomydisabledforactivesim = 1
+TELEMETRY_ROOT=exists; LEDGER=exists
+EVIDENCE_COMMIT=none
+PUSHED=no
+

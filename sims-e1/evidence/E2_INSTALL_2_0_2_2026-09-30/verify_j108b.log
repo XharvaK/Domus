@@ -1,0 +1,7 @@
+﻿VERIFY_PASS compiler=3.7.0
+VERIFY_PASS host=Python 3.14.3
+VERIFY_PASS AST guards
+VERIFY_PASS focused tests under CPython 3.7.0
+VERIFY_PASS focused tests under host Python
+VERIFY_PASS artifact layout, magic, hashes, manifest, source digest
+

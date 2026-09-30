@@ -1,0 +1,9 @@
+﻿BUILD_PASS artifact=C:\Users\Xharv\Projects\Domus\sims-e1\build\ashley_e1_2.0.2.ts4script
+BUILD_SHA256=2B8550730465C390BD2438B9893F5027F58BDEAC8B7EA903484FE5A77ADFC415
+VERIFY_PASS compiler=3.7.0
+VERIFY_PASS host=Python 3.14.3
+VERIFY_PASS AST guards
+VERIFY_PASS focused tests under CPython 3.7.0
+VERIFY_PASS focused tests under host Python
+VERIFY_PASS artifact layout, magic, hashes, manifest, source digest
+VERIFY_PASS all checks
