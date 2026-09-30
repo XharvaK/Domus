@@ -1,0 +1,2 @@
+scriptmodsenabled = 1
+modsdisabled = 0
