@@ -217,9 +217,9 @@ class RegistryTests(unittest.TestCase):
     def setUp(self):
         _, _, self.reg, _, _ = _load_pure()
 
-    def experiment(self, signature="sit"):
+    def experiment(self, signature="sit", continuation=()):
         return self.reg.Experiment("e-1", "t" * 16, CHAIR, "s", "100", 0,
-                                   signature, ["1", "2"])
+                                   signature, ["1", "2"], continuation=continuation)
 
     def test_success_ladder_passes_only_after_maintained(self):
         exp = self.experiment()
@@ -310,6 +310,153 @@ class RegistryTests(unittest.TestCase):
         stale = self.reg.SignatureLearner()
         stale.observe(_row(1, [click]), set())
         self.assertIsNone(stale.observe(_row(40, [], "sitSingle", CHAIR), set()))
+
+    def test_learner_learns_queued_autonomy_continuation_once(self):
+        learner = self.reg.SignatureLearner()
+        click = _entry("50", PIE, target=CHAIR, affordance_id="31564")
+        before = _entry("40", AUTO, "QUEUED", CHAIR, "14244")
+        running = _entry("60", AUTO, "RUNNING", CHAIR, "99999")
+        queued = _entry("70", AUTO, "QUEUED", CHAIR, "14244")
+        self.assertIsNone(learner.observe(_row(1, [click, before]), set()))
+        self.assertEqual(learner.observe(_row(2, [], "sit", CHAIR), set()),
+                         (CHAIR, "sit"))
+        self.assertEqual(learner.continuation_events, [])
+        learner.observe(_row(3, [running, queued], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation_events, [])
+        learner.observe(_row(33, [queued], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], {"14244"})
+        self.assertEqual(learner.continuation_events, [(CHAIR, "14244")])
+        learner.observe(_row(34, [queued], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation_events, [])
+
+    def test_continuation_queued_after_seating_passes(self):
+        ours_q = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "QUEUED", CHAIR)
+        ours_r = dict(ours_q, membership="RUNNING")
+        idle = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours_q]))
+        exp.observe(_row(2, [ours_r], "sit", CHAIR))
+        exp.observe(_row(3, [ours_r, idle], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, [])
+        self.assertEqual(exp.continuation_entries, ["200"])
+        self.assertTrue(exp.claims["ATTRIBUTED"])
+        exp.observe(_row(12.5, [ours_r, idle], "sit", CHAIR))
+        self.assertTrue(exp.claims["MAINTAINED_10S"])
+        self.assertEqual(exp.close(), self.reg.PASS)
+
+    def test_empty_continuation_keeps_queued_autonomy_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        idle = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        exp = self.experiment(continuation=())
+        exp.observe(_row(1, [ours, idle], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        self.assertFalse(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.close(), self.reg.OUTCOME_UNKNOWN)
+
+    def test_continuation_affordance_before_seating_is_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        idle = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours, idle]))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        exp.observe(_row(2, [ours, idle], "sit", CHAIR))
+        self.assertFalse(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.continuation_entries, [])
+
+    def test_continuation_entry_later_running_becomes_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        queued = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        running = dict(queued, membership="RUNNING")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours], "sit", CHAIR))
+        exp.observe(_row(2, [ours, queued], "sit", CHAIR))
+        self.assertTrue(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.continuation_entries, ["200"])
+        exp.observe(_row(3, [ours, running], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        self.assertEqual(exp.continuation_entries, [])
+        exp.observe(_row(13, [ours, running], "sit", CHAIR))
+        self.assertFalse(exp.claims["MAINTAINED_10S"])
+
+    def test_non_continuation_autonomy_after_seating_is_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        other = _entry("200", AUTO, "QUEUED", CHAIR, "99999")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours, other], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        self.assertFalse(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.close(), self.reg.OUTCOME_UNKNOWN)
+
+    def test_t1_evidence_replay_continuation_and_empty_set(self):
+        path = os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
+            "sims-e1", "evidence", "E2_T1_T3_2026-09-30_01",
+            "ashley_e1_863ffab5-edd0-44c2-b74b-5ce9b2d352a3.jsonl")
+        if not os.path.isfile(path):
+            self.skipTest("missing T1 evidence file: %s" % path)
+        rows = []
+        with open(path) as handle:
+            for line in handle:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+        chair = "118245043789434055"
+        pushed = None
+        before = None
+        after = []
+        for row in rows:
+            if row.get("event_kind") == "presence_snapshot":
+                if pushed is None:
+                    before = row
+                else:
+                    after.append(row)
+            e2 = row.get("e2") or {}
+            if (row.get("event_kind") == "experiment_event" and
+                    e2.get("phase") == "PUSHED" and
+                    e2.get("interaction_id") == "7223"):
+                pushed = row
+        self.assertIsNotNone(pushed)
+        baseline = [e.get("interaction_id")
+                    for e in (before.get("interactions") or {}).get("observed") or []]
+        def run(continuation):
+            exp = self.reg.Experiment(
+                "t1", "t" * 16, chair, "s", "7223", pushed["monotonic_ns"],
+                "sit", baseline, continuation=continuation)
+            for row in after:
+                exp.observe(row)
+                if exp.closed:
+                    break
+            return exp
+        attributed = run(frozenset(("14244",)))
+        self.assertTrue(attributed.claims["ATTRIBUTED"])
+        self.assertTrue(attributed.claims["MAINTAINED_10S"])
+        self.assertEqual(attributed.verdict, self.reg.PASS)
+        self.assertEqual(len(attributed.continuation_entries), 9)
+        unknown = run(frozenset())
+        self.assertEqual(unknown.verdict, self.reg.OUTCOME_UNKNOWN)
+        self.assertEqual(len(unknown.foreign_roots), 9)
+        self.assertEqual(unknown.continuation_entries, [])
+
+    def test_n5_evidence_learns_sit_and_continuation(self):
+        path = os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
+            "sims-e1", "evidence", "E2_N5_BOOTSTRAP_2026-09-30_02",
+            "ashley_e1_863ffab5-edd0-44c2-b74b-5ce9b2d352a3.jsonl")
+        if not os.path.isfile(path):
+            self.skipTest("missing N5 evidence file: %s" % path)
+        chair = "118245043789434055"
+        learner = self.reg.SignatureLearner()
+        with open(path) as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("event_kind") != "presence_snapshot":
+                    continue
+                learner.observe(row, set())
+        self.assertEqual(learner.signatures.get(chair), "sit")
+        self.assertEqual(learner.continuation.get(chair), {"14244"})
 
 
 class _Posture:
@@ -645,7 +792,7 @@ class WriterLedgerTests(unittest.TestCase):
 
     def test_ledger_loads_appends_and_survives_restart(self):
         with tempfile.TemporaryDirectory() as temp:
-            sink = self.writer.TelemetryWriter(temp, "u", "2.0.1", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "u", "2.0.2", "1.128.90.1030")
             self.assertTrue(sink.try_put(self.lineage_row()))
             self.assertTrue(sink.try_put(self.lineage_row("CLASSIFIED")))
             sink.signal_close("DISARM_CLEAN")
@@ -653,7 +800,7 @@ class WriterLedgerTests(unittest.TestCase):
             state, records = sink.ledger_snapshot()
             self.assertEqual(state, "OK")
             self.assertEqual([r["record"] for r in records], ["SAVE_OBSERVED"])
-            again = self.writer.TelemetryWriter(temp, "v", "2.0.1", "1.128.90.1030")
+            again = self.writer.TelemetryWriter(temp, "v", "2.0.2", "1.128.90.1030")
             again.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(again.wait_idle(5.0))
             state, records = again.ledger_snapshot()
@@ -665,13 +812,13 @@ class WriterLedgerTests(unittest.TestCase):
             path = os.path.join(temp, self.writer.LEDGER_FILENAME)
             with open(path, "wb") as handle:
                 handle.write(b"{not json\n")
-            sink = self.writer.TelemetryWriter(temp, "u", "2.0.1", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "u", "2.0.2", "1.128.90.1030")
             sink.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(sink.wait_idle(5.0))
             self.assertEqual(sink.ledger_snapshot()[0], "UNREADABLE")
             with open(path, "wb") as handle:
                 handle.write(b"x" * (self.writer.MAX_LEDGER_BYTES + 1))
-            sink = self.writer.TelemetryWriter(temp, "v", "2.0.1", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "v", "2.0.2", "1.128.90.1030")
             sink.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(sink.wait_idle(5.0))
             self.assertEqual(sink.ledger_snapshot()[0], "TOO_LARGE")
