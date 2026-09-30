@@ -4,7 +4,3 @@ build/**
 **/__pycache__/
 *.pyc
 *.pyo
-evidence/*.jsonl
-evidence/*.jsonl.*
-evidence/*/excerpts/
-evidence/*/screenshots/
