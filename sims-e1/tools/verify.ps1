@@ -1,7 +1,8 @@
 param(
-    [string]$Version = "2.0.2",
+    [string]$Version = "2.1.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
-    [string]$HostPythonPath = ""
+    [string]$HostPythonPath = "",
+    [switch]$SkipReproducible
 )
 
 $ErrorActionPreference = "Continue"
@@ -153,7 +154,7 @@ for name in sorted(os.listdir(os.path.join(source_root, 'ashley_e1'))):
         continue
     rel = 'ashley_e1/' + name
     with open(os.path.join(source_root, 'ashley_e1', name), 'rb') as handle:
-        data = handle.read()
+        data = handle.read().replace(b'\r\n', b'\n')
     source_items[rel] = {'path': rel, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest().upper()}
     material.extend(rel.encode('utf-8'))
     material.append(0)
@@ -184,6 +185,74 @@ if ($compilerAvailable -and $artifactReady -and $manifestReady -and $sidecarRead
     else { Record-Fail ("artifact verification: " + ($packageOutput -join " | ")) }
 } else {
     Record-Skip "artifact verification prerequisites unavailable"
+}
+
+
+$zipimportCode = @'
+import sys
+import zipfile
+import zipimport
+artifact, expected_version = sys.argv[1:]
+with zipfile.ZipFile(artifact) as archive:
+    if any(name.endswith('.py') for name in archive.namelist()):
+        raise SystemExit('ZIPIMPORT: source present in artifact')
+# Import the pure submodule directly, without executing the game bootstrap.
+importer = zipimport.zipimporter(artifact + '/ashley_e1')
+schema = importer.load_module('ashley_e1.schema')
+if schema.PROBE_VERSION != expected_version:
+    raise SystemExit('ZIPIMPORT: probe version mismatch')
+print('PROBE_VERSION=' + schema.PROBE_VERSION)
+'@
+if ($compilerAvailable -and $artifactReady) {
+    $zipimportOutput = & $PythonPath -c $zipimportCode $artifact $Version 2>&1
+    if ($LASTEXITCODE -eq 0) { Record-Pass ("ZIPIMPORT " + ($zipimportOutput -join " | ")) }
+    else { Record-Fail ("ZIPIMPORT " + ($zipimportOutput -join " | ")) }
+} else {
+    Record-Fail "ZIPIMPORT prerequisites unavailable"
+}
+
+if ($SkipReproducible) {
+    Record-Skip "REPRODUCIBLE nested worktree verification"
+} elseif ($compilerAvailable -and $artifactReady) {
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ashley_repro_" + [guid]::NewGuid().ToString('N'))
+    $worktrees = @((Join-Path $tempRoot "first"), (Join-Path $tempRoot "second"))
+    try {
+        New-Item -ItemType Directory -Path $tempRoot -ErrorAction Stop | Out-Null
+        $headCommit = (& git -C $repo rev-parse HEAD | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Cannot resolve HEAD" }
+        $expectedHash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant()
+        $hashes = @()
+        $powershellPath = (Get-Process -Id $PID -ErrorAction Stop).Path
+        foreach ($worktree in $worktrees) {
+            $addOutput = & git -C $repo worktree add --detach $worktree $headCommit 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ("Worktree creation failed: " + ($addOutput -join " | ")) }
+            $buildOutput = & $powershellPath -NoProfile -ExecutionPolicy Bypass -File (Join-Path $worktree "sims-e1\tools\build.ps1") -Version $Version -PythonPath $PythonPath 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ("Worktree build failed: " + ($buildOutput -join " | ")) }
+            $hashLines = @($buildOutput | Where-Object { "$_" -match '^BUILD_SHA256=([0-9A-F]{64})$' })
+            if ($hashLines.Count -ne 1) { throw "Worktree build did not emit exactly one BUILD_SHA256" }
+            $hash = ("" + $hashLines[0]).Substring(13)
+            $hashes += $hash
+            if ($hash -ne $expectedHash) { throw ("BUILD_SHA256 mismatch: " + $hash + " expected=" + $expectedHash) }
+            $verifyOutput = & $powershellPath -NoProfile -ExecutionPolicy Bypass -File (Join-Path $worktree "sims-e1\tools\verify.ps1") -Version $Version -PythonPath $PythonPath -HostPythonPath $HostPythonPath -SkipReproducible 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ("Worktree verification failed: " + ($verifyOutput -join " | ")) }
+        }
+        Record-Pass ("REPRODUCIBLE BUILD_SHA256=" + $expectedHash + " first=" + $hashes[0] + " second=" + $hashes[1])
+    } catch {
+        Record-Fail ("REPRODUCIBLE " + $_.Exception.Message)
+    } finally {
+        foreach ($worktree in $worktrees) {
+            if (Test-Path -LiteralPath $worktree) {
+                $removeOutput = & git -C $repo worktree remove --force $worktree 2>&1
+                if ($LASTEXITCODE -ne 0) { Record-Fail ("REPRODUCIBLE cleanup: " + ($removeOutput -join " | ")) }
+            }
+        }
+        if (Test-Path -LiteralPath $tempRoot) {
+            try { Remove-Item -LiteralPath $tempRoot -Force -ErrorAction Stop }
+            catch { Record-Fail ("REPRODUCIBLE temp cleanup: " + $_.Exception.Message) }
+        }
+    }
+} else {
+    Record-Fail "REPRODUCIBLE prerequisites unavailable"
 }
 
 $lines | Set-Content -LiteralPath $logPath -Encoding UTF8

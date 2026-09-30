@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.0.2",
+    [string]$Version = "2.1.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$ImplementedCommit = "WORKTREE_UNCOMMITTED",
     [string]$BaselineCommit = ""
@@ -30,7 +30,8 @@ if ($LASTEXITCODE -ne 0) { throw "Compiler is not exact CPython 3.7.0: $versionC
 $compileCode = @'
 import py_compile
 import sys
-py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[3], doraise=True, optimize=0)
+py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[3], doraise=True, optimize=0,
+                   invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
 '@
 $moduleNames = @("__init__", "probe", "observers", "snapshot", "schema", "writer",
                  "e2_admission", "e2_lineage", "e2_registry", "e2_actuator", "e2_control")
@@ -79,7 +80,7 @@ for name in sorted(os.listdir(os.path.join(root, 'ashley_e1'))):
         continue
     path = os.path.join(root, 'ashley_e1', name)
     with open(path, 'rb') as handle:
-        data = handle.read()
+        data = handle.read().replace(b'\r\n', b'\n')
     digest = hashlib.sha256(data).hexdigest().upper()
     rel = 'ashley_e1/' + name
     items.append({'path': rel, 'bytes': len(data), 'sha256': digest})

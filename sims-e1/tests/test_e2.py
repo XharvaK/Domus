@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import types
@@ -773,7 +774,9 @@ class ControlFlowTests(unittest.TestCase):
         self.assertTrue(self.probe._cmd_stop())
         verdict = self.e2("experiment_event")[-1]
         self.assertEqual(verdict["phase"], "VERDICT")
-        self.assertIn("continuation=", verdict.get("detail"))
+        match = re.search(r"continuation=(\d+)", verdict.get("detail"))
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), 0)
 
     def test_push_failure_never_touches_interaction_and_opens_no_experiment(self):
         self.arm_start_poll(self.continuing())

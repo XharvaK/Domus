@@ -1,3 +1,5 @@
 # Evidence is byte-exact: reports cite file hashes.
 sims-e1/evidence/** -text
 *.ts4script binary
+sims-e1/src/** text eol=lf
+sims-e1/tools/*.py text eol=lf
