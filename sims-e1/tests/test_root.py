@@ -1,4 +1,6 @@
 import os
+import ntpath
+from unittest import mock
 import sys
 import tempfile
 import types
@@ -20,6 +22,13 @@ class RootDerivationTests(unittest.TestCase):
     def test_component_safe_mods_ashley_pair_derives_root(self):
         path = os.path.join("C:\\Users\\Owner", "Documents", "Electronic Arts", "The Sims 4",
                             "Mods", "AshleyE1", "ashley_e1", "writer.pyc")
+        if os.name != "nt":
+            with mock.patch.object(writer.os, "path", ntpath):
+                root = writer.derive_telemetry_root(path)
+            expected = ntpath.join("C:\\Users\\Owner", "Documents", "Electronic Arts",
+                                   "The Sims 4", "AshleyE1Telemetry")
+            self.assertEqual(ntpath.normcase(root), ntpath.normcase(expected))
+            return
         root = writer.derive_telemetry_root(path)
         self.assertEqual(
             os.path.normcase(root),

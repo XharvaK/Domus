@@ -103,7 +103,12 @@ _INBOX_HANDLE = None
 _INBOX_ZONE = None
 _INBOX_STARTED_ZONE = None
 _INBOX_AUTOSTART = "NOT_STARTED"
+_INBOX_ARM_SOURCE = "manager"
+_INBOX_ARMED_ZONES = []
+_INBOX_ARMED_MANAGERS = []
+_AUTOSTART_HOOKS = {}
 _INBOX_BUSY = False
+_INBOX_ERRORS = 0
 _INBOX_USED_IDS = set()
 _INBOX_VERDICTS = []
 _STATE = "UNARMED"
@@ -215,18 +220,86 @@ class _InboxReply:
         self.lines = []
 
 
-def _on_zone_added(z):
-    global _INBOX_ZONE
-    try:
-        if hasattr(z, "register_callback"):
-            _INBOX_ZONE = z
+def _arm_inbox_zone(z, source):
+    global _INBOX_ZONE, _INBOX_ARM_SOURCE
+    if hasattr(z, "register_callback"):
+        if any(armed is z for armed in _INBOX_ARMED_ZONES):
+            return
+        _INBOX_ZONE = z
+        _INBOX_ARM_SOURCE = source
+        _INBOX_ARMED_ZONES.append(z)
+        try:
             # 6 is zone_types.ZoneState.RUNNING (no new import root).
             z.register_callback(6, _start_inbox_pump)
+        except Exception:
+            _INBOX_ARMED_ZONES.remove(z)
+            raise
+
+
+def _on_zone_added(z):
+    try:
+        _arm_inbox_zone(z, 'manager')
     except Exception:
         pass
 
 
-def _start_inbox_pump():
+def _try_arm_zone(source):
+    global _INBOX_AUTOSTART
+    try:
+        m = _services_module.get_zone_manager()
+        if m is None:
+            if _INBOX_HANDLE is None:
+                _INBOX_AUTOSTART = "MANAGER_UNAVAILABLE"
+        elif not any(armed is m for armed in _INBOX_ARMED_MANAGERS):
+            _INBOX_ARMED_MANAGERS.append(m)
+            try:
+                # 0 is indexed_manager.CallbackTypes.ON_OBJECT_ADD (no new import root).
+                m.register_callback(0, _on_zone_added)
+            except Exception:
+                _INBOX_ARMED_MANAGERS.remove(m)
+                return
+    except Exception:
+        return
+    try:
+        z = _services_module.current_zone()
+        if z is not None:
+            _arm_inbox_zone(z, source)
+    except Exception:
+        pass
+
+
+def _register_autostart_hooks():
+    try:
+        import sims4.resources as resources
+        _services_module.get_instance_manager(resources.Types.SNIPPET).add_on_load_complete(
+            lambda *a, **k: _try_arm_zone('tuning'))
+        _AUTOSTART_HOOKS['tuning'] = 'registered'
+    except Exception:
+        _AUTOSTART_HOOKS['tuning'] = 'failed'
+    _try_arm_zone('tuning')
+    for source in ('posture', 'household', 'transition'):
+        try:
+            import sims4.callback_utils as callbacks
+            if source == 'posture':
+                event = callbacks.CallbackEvent.POSTURE_GRAPH_BUILD_EXIT
+            elif source == 'household':
+                event = callbacks.CallbackEvent.HOUSEHOLD_EXIT
+            else:
+                event = callbacks.CallbackEvent.TRANSITION_SEQUENCE_EXIT
+            callbacks.add_callbacks((event,),
+                                    lambda *a, _source=source, **k: _try_arm_zone(_source))
+            _AUTOSTART_HOOKS[source] = 'registered'
+        except Exception:
+            _AUTOSTART_HOOKS[source] = 'failed'
+        _try_arm_zone(source)
+    try:
+        _try_arm_zone('import')
+        _AUTOSTART_HOOKS['import'] = 'registered'
+    except Exception:
+        _AUTOSTART_HOOKS['import'] = 'failed'
+
+
+def _start_inbox_pump(source=None):
     global _INBOX_HANDLE, _INBOX_STARTED_ZONE, _INBOX_AUTOSTART
     try:
         if _INBOX_HANDLE is not None and _INBOX_STARTED_ZONE is _INBOX_ZONE:
@@ -244,7 +317,7 @@ def _start_inbox_pump():
             callback=_inbox_tick, repeating=True, use_sleep_time=False,
             cross_zone=False)
         _INBOX_STARTED_ZONE = _INBOX_ZONE
-        _INBOX_AUTOSTART = "STARTED"
+        _INBOX_AUTOSTART = "ZONE:" + (source or _INBOX_ARM_SOURCE)
         return True
     except Exception:
         return False
@@ -253,8 +326,15 @@ def _start_inbox_pump():
 def _dispatch_inbox(*args, _session_id=0, **kwargs):
     if args or kwargs:
         return False
-    if not _start_inbox_pump():
+    global _INBOX_AUTOSTART
+    if _INBOX_HANDLE is not None and _INBOX_STARTED_ZONE is _INBOX_ZONE:
+        source = (_INBOX_AUTOSTART[5:] if _INBOX_AUTOSTART.startswith('ZONE:')
+                  else _INBOX_AUTOSTART)
+        _output('INBOX ON (already, %s)' % source, _session_id)
+        return True
+    if not _start_inbox_pump('import'):
         return False
+    _INBOX_AUTOSTART = 'CONSOLE'
     _output('INBOX ON', _session_id)
     return True
 
@@ -274,7 +354,7 @@ def _inbox_status():
                 continuation={key: sorted(value) for key, value in _E2.learner.continuation.items()},
                 lineage_class=_E2.lineage_class, designated_sim_id=_E2.designated_sim_id,
                 verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
-                inbox_autostart=_INBOX_AUTOSTART)
+                inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS)
 
 
 def _inbox_dispatch(cmd, connection):
@@ -296,7 +376,7 @@ def _inbox_dispatch(cmd, connection):
 
 
 def _inbox_tick(alarm_handle=None):
-    global _INBOX_BUSY
+    global _INBOX_BUSY, _INBOX_ERRORS
     if _INBOX_HANDLE is None or _INBOX_BUSY:
         return
     if alarm_handle is not None and alarm_handle is not _INBOX_HANDLE:
@@ -304,11 +384,14 @@ def _inbox_tick(alarm_handle=None):
     _INBOX_BUSY = True
     try:
         _inbox_tick_body()
+    except Exception:
+        _INBOX_ERRORS += 1
     finally:
         _INBOX_BUSY = False
 
 
 def _inbox_tick_body():
+    global _INBOX_ERRORS
     root = os.path.join(_TELEMETRY_ROOT, 'cmd')
     inbox = os.path.join(root, 'inbox')
     try:
@@ -318,11 +401,14 @@ def _inbox_tick_body():
     for name in names:
         path = os.path.join(inbox, name)
         taken = path + '.taken'
+        command_id = uuid.uuid4().hex
+        identity = None
+        error_reply_written = False
         try:
-            os.replace(path, taken)
-        except OSError:
-            continue
-        try:
+            try:
+                os.replace(path, taken)
+            except OSError:
+                continue
             raw = read_command_file(taken)
             cmd, code = cmdbox.parse(raw, int(time.time() * 1000), _INBOX_USED_IDS)
             # A rejected JSON still needs a safe reply name. An invalid/missing id
@@ -351,6 +437,7 @@ def _inbox_tick_body():
                     result = (_inbox_status() if cmd['command'] == 'status' else
                               {'ok': ok, 'lines': connection.lines})
                 except Exception as error:
+                    _INBOX_ERRORS += 1
                     status, code = 'ERROR', type(error).__name__[:64]
                     result = {'ok': False, 'lines': connection.lines}
             else:
@@ -359,6 +446,7 @@ def _inbox_tick_body():
             payload = cmdbox.attribute_reply(
                 cmdbox.reply(command_id, status, code, result), issuer)
             write_command_reply(os.path.join(root, 'outbox', command_id + '.json'), payload)
+            error_reply_written = status == 'ERROR'
             # Retain the original completion marker on a persistent replay.
             if persistent_replay:
                 os.remove(taken)
@@ -372,8 +460,26 @@ def _inbox_tick_body():
                     wall_timestamp_ms=int(time.time() * 1000), monotonic_ns=time.perf_counter_ns(),
                     e2=dict(id=command_id, issuer=identity['issuer'], command=identity['command'],
                             status=status, code=code)))
-        except (OSError, ValueError):
-            # Leave a claimed input for inspection if filesystem publication fails.
+        except Exception as error:
+            _INBOX_ERRORS += 1
+            if not error_reply_written:
+                try:
+                    issuer = identity.get('issuer') if type(identity) is dict else None
+                    payload = cmdbox.attribute_reply(
+                        cmdbox.reply(command_id, 'ERROR', type(error).__name__[:64],
+                                     {'ok': False, 'lines': []}), issuer)
+                    write_command_reply(
+                        os.path.join(root, 'outbox', command_id + '.json'), payload)
+                except Exception:
+                    pass
+            try:
+                done = os.path.join(root, 'done', command_id + '.json')
+                if os.path.exists(done):
+                    os.remove(taken)
+                else:
+                    os.replace(taken, done)
+            except Exception:
+                pass
             continue
 
 
@@ -449,18 +555,9 @@ def initialize_probe():
         return
     _INITIALIZED = True
     _TELEMETRY_ROOT = derive_telemetry_root(__file__)
-    try:
-        m = _services_module.get_zone_manager()
-        if m is None:
-            _INBOX_AUTOSTART = "MANAGER_UNAVAILABLE"
-        else:
-            # 0 is indexed_manager.CallbackTypes.ON_OBJECT_ADD (no new import root).
-            m.register_callback(0, _on_zone_added)
-        z = _services_module.current_zone()
-        if z is not None:
-            _on_zone_added(z)
-    except Exception:
-        pass
+    _register_autostart_hooks()
+    print('ashley_e1 bootstrap autostart hooks: %s' % dict(_AUTOSTART_HOOKS),
+          flush=True)
     if _TELEMETRY_ROOT is not None:
         bootstrap_from_module_path(
             __file__, E1_PROBE_VERSION, SIMS_BUILD,
@@ -472,7 +569,7 @@ def initialize_probe():
 def _STATE_RESET():
     global _STATE, _ARMED_NAME, _ARMED_SNAPSHOT, _TELEMETRY_SESSION_ID
     global _ALARM_HANDLE, _WRITER, _WRITER_IDLE, _SESSION_OPENED, _POLL_BUSY
-    global _MISUSE_COUNT, _LAST_CAPTURE_COUNTERS
+    global _MISUSE_COUNT, _LAST_CAPTURE_COUNTERS, _INBOX_ERRORS
     _STATE = "UNARMED"
     _ARMED_NAME = None
     _ARMED_SNAPSHOT = None
@@ -483,6 +580,7 @@ def _STATE_RESET():
     _SESSION_OPENED = False
     _POLL_BUSY = False
     _MISUSE_COUNT = 0
+    _INBOX_ERRORS = 0
     _LAST_CAPTURE_COUNTERS = None
     _COUNTERS["dropped_queue"] = 0
     _COUNTERS["dropped_overrun"] = 0
