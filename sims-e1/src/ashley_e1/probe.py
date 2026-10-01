@@ -100,6 +100,9 @@ class _ProbeAlarmOwner:
 _PROBE_ALARM_OWNER = _ProbeAlarmOwner()
 _INBOX_ALARM_OWNER = _ProbeAlarmOwner()
 _INBOX_HANDLE = None
+_INBOX_ZONE = None
+_INBOX_STARTED_ZONE = None
+_INBOX_AUTOSTART = "NOT_STARTED"
 _INBOX_BUSY = False
 _INBOX_USED_IDS = set()
 _INBOX_VERDICTS = []
@@ -212,23 +215,46 @@ class _InboxReply:
         self.lines = []
 
 
-def _dispatch_inbox(*args, _session_id=0, **kwargs):
-    global _INBOX_HANDLE
-    if args or kwargs:
-        return False
-    if _INBOX_HANDLE is None:
+def _on_zone_added(z):
+    global _INBOX_ZONE
+    try:
+        if hasattr(z, "register_callback"):
+            _INBOX_ZONE = z
+            # 6 is zone_types.ZoneState.RUNNING (no new import root).
+            z.register_callback(6, _start_inbox_pump)
+    except Exception:
+        pass
+
+
+def _start_inbox_pump():
+    global _INBOX_HANDLE, _INBOX_STARTED_ZONE, _INBOX_AUTOSTART
+    try:
+        if _INBOX_HANDLE is not None and _INBOX_STARTED_ZONE is _INBOX_ZONE:
+            return True
+        if _INBOX_HANDLE is not None:
+            alarms.cancel_alarm(_INBOX_HANDLE)
+            _INBOX_HANDLE = None
+            _INBOX_AUTOSTART = "NOT_STARTED"
         if _TELEMETRY_ROOT is None:
             return False
-        try:
-            for directory in ('inbox', 'outbox', 'done'):
-                os.makedirs(os.path.join(_TELEMETRY_ROOT, 'cmd', directory), exist_ok=True)
-            _INBOX_HANDLE = alarms.add_alarm_real_time(
-                owner=_INBOX_ALARM_OWNER, time_span=interval_in_real_seconds(1),
-                callback=_inbox_tick, repeating=True, use_sleep_time=False,
-                cross_zone=False)
-        except Exception:
-            _INBOX_HANDLE = None
-            return False
+        for directory in ('inbox', 'outbox', 'done'):
+            os.makedirs(os.path.join(_TELEMETRY_ROOT, 'cmd', directory), exist_ok=True)
+        _INBOX_HANDLE = alarms.add_alarm_real_time(
+            owner=_INBOX_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+            callback=_inbox_tick, repeating=True, use_sleep_time=False,
+            cross_zone=False)
+        _INBOX_STARTED_ZONE = _INBOX_ZONE
+        _INBOX_AUTOSTART = "STARTED"
+        return True
+    except Exception:
+        return False
+
+
+def _dispatch_inbox(*args, _session_id=0, **kwargs):
+    if args or kwargs:
+        return False
+    if not _start_inbox_pump():
+        return False
     _output('INBOX ON', _session_id)
     return True
 
@@ -247,7 +273,8 @@ def _inbox_status():
                 signatures=dict(_E2.learner.signatures),
                 continuation={key: sorted(value) for key, value in _E2.learner.continuation.items()},
                 lineage_class=_E2.lineage_class, designated_sim_id=_E2.designated_sim_id,
-                verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on')
+                verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
+                inbox_autostart=_INBOX_AUTOSTART)
 
 
 def _inbox_dispatch(cmd, connection):
@@ -314,7 +341,7 @@ def _inbox_tick_body():
             persistent_replay = os.path.exists(done)
             if persistent_replay:
                 cmd, code = None, 'REPLAYED'
-            status, result = 'REJECTED', None
+            status, result = 'REJECTED', {'ok': False, 'lines': []}
             if cmd is not None:
                 _INBOX_USED_IDS.add(command_id)
                 connection = _InboxReply(cmd['issuer'])
@@ -413,7 +440,7 @@ def _required_import_summary():
 
 
 def initialize_probe():
-    global _INITIALIZED, _TELEMETRY_ROOT
+    global _INITIALIZED, _TELEMETRY_ROOT, _INBOX_AUTOSTART
     if _INITIALIZED:
         return
     _STATE_RESET()
@@ -422,10 +449,23 @@ def initialize_probe():
         return
     _INITIALIZED = True
     _TELEMETRY_ROOT = derive_telemetry_root(__file__)
+    try:
+        m = _services_module.get_zone_manager()
+        if m is None:
+            _INBOX_AUTOSTART = "MANAGER_UNAVAILABLE"
+        else:
+            # 0 is indexed_manager.CallbackTypes.ON_OBJECT_ADD (no new import root).
+            m.register_callback(0, _on_zone_added)
+        z = _services_module.current_zone()
+        if z is not None:
+            _on_zone_added(z)
+    except Exception:
+        pass
     if _TELEMETRY_ROOT is not None:
         bootstrap_from_module_path(
             __file__, E1_PROBE_VERSION, SIMS_BUILD,
             required_imports=_required_import_summary(),
+            inbox_autostart=_INBOX_AUTOSTART,
         )
 
 

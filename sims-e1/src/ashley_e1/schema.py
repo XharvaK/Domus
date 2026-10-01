@@ -249,12 +249,18 @@ def make_load_disabled_record(boot_id, wall_timestamp_ms, monotonic_ns, runtime,
 
 
 def _validate_load_disabled_runtime(runtime):
-    _require(set(runtime) == {"python_version", "perf_counter", "required_imports"},
+    _require(set(runtime) in ({"python_version", "perf_counter", "required_imports"},
+                              {"python_version", "perf_counter", "required_imports",
+                               "inbox_autostart"}),
              "load_disabled runtime shape")
     bounded_string(runtime.get("python_version"), MAX_ID_LENGTH,
                    "runtime.python_version", False)
     _require(type(runtime.get("perf_counter")) is bool,
              "runtime.perf_counter")
+    if "inbox_autostart" in runtime:
+        _require(runtime["inbox_autostart"] in
+                 ("STARTED", "MANAGER_UNAVAILABLE", "NOT_STARTED"),
+                 "runtime.inbox_autostart")
     required_imports = runtime.get("required_imports")
     _require(isinstance(required_imports, dict),
              "runtime.required_imports")

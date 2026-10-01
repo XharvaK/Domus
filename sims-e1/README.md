@@ -11,19 +11,23 @@ it carries the E2 actuation experiment described by
 2.2.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC.
 
-Owner commands (also available through the local command inbox after `ashley_e1.inbox`):
+Owner commands (also available through the local command inbox when the zone reaches RUNNING):
 
 | Command | Stage | What it does |
 |---|---|---|
 | `ashley_e1.arm LAB_E1` / `ashley_e1.arm LAB_E1_FORK` | E1 | Arm an observation session |
 | `ashley_e1.start` / `ashley_e1.stop` | E1 | Start and stop observation |
-| `ashley_e1.inbox` | E1 | Start the independent 1 Hz local command inbox |
+| `ashley_e1.inbox` | E1 | Fallback start for the independent 1 Hz local command inbox |
 | `ashley_e1.status` | E1 | Report probe and inbox state |
 | `ashley_e1.disarm` | E1 | Disarm the session |
 | `ashley_e2.prepare <object_id>` | E2 | Prepare one sit experiment on an object |
 | `ashley_e2.sit <token>` | E2 | Admit and push one prepared sit experiment |
 | `ashley_e2.pause` | E2 | Push the probe's pause request |
 | `ashley_e2.release` | E2 | Remove the probe's pause request |
+
+The inbox starts automatically through the zone manager object-add callback when
+a zone reaches RUNNING. `ashley_e1.inbox` is the fallback if automatic start is
+unavailable. Automatic start still awaits live qualification.
 
 The inbox uses UTF-8 JSON files in `AshleyE1Telemetry/cmd/inbox`, single-use
 32-character lowercase hex ids, and expiry of at most 60 seconds. Replies are

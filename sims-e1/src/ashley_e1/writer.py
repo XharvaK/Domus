@@ -55,16 +55,19 @@ def _directory_size(root):
 
 
 def bootstrap_from_module_path(module_path, probe_version, sims_build,
-                               required_imports):
+                               required_imports, inbox_autostart=None):
     root = derive_telemetry_root(module_path)
     if root is None:
         return None
     os.makedirs(root, exist_ok=True)
     boot_id = str(uuid.uuid4())
+    runtime = {"python_version": "3.7.0", "perf_counter": True,
+               "required_imports": dict(required_imports)}
+    if inbox_autostart is not None:
+        runtime["inbox_autostart"] = inbox_autostart
     row = schema.make_load_disabled_record(
         boot_id, int(time.time() * 1000), time.perf_counter_ns(),
-        {"python_version": "3.7.0", "perf_counter": True,
-         "required_imports": dict(required_imports)},
+        runtime,
         probe_version=probe_version, sims_build=sims_build,
     )
     path = os.path.join(root, "ashley_e1_bootstrap_%s.jsonl" % boot_id)
