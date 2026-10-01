@@ -1,0 +1,112 @@
+STATUS: PARTIAL. Import-time tuning completion can bridge to ZoneManager in the inspected mirror; exact 1.128 behavior and menu/reload persistence remain unverified.
+
+# R-Z2: Import-time hook before ZoneManager exists
+
+Target: PC 1.128.90.1030. Labels: SOURCE-CONFIRMED = inspected vanilla bytecode, not proof of target-build behavior; COMMUNITY = third-party source/stubs; INFERENCE = reasoning; UNKNOWN = unresolved. Recommendations are PROPOSED. The supplied live fact is accepted: `services.get_zone_manager()` is None at main-menu ts4script import. R-Z1's direct registration cannot bootstrap.
+
+## Q1: What exists at ts4script import time?
+
+**SOURCE-CONFIRMED:** The mirror creates `services.tuning_managers = InstanceTuningManagers()` and binds `get_instance_manager` during module execution, independently of service startup. `_account_service`, `_zone_manager`, `_server_clock_service`, `_persistence_service`, `_distributor_service`, `_intern_service`, `_terrain_service`, `definition_manager`, `snippet_manager`, `_terrain_object` and `_object_leak_tracker` initially equal None (E1). Callable accessors exist even when service instances do not.
+
+**SOURCE-CONFIRMED:** `services.game_services` is a module reference; its `service_manager` initially equals None. Direct `import game_services` is outside the approved roots; access through services requires no such import. `sims4.core_services.service_manager` initially equals None, and startup constructs a new manager. Script reload and GSI support are disabled in this mirror (E4). **UNKNOWN:** actual values of these two managers at the 1.128 probe's import; the ZoneManager observation does not establish them.
+
+**SOURCE-CONFIRMED:** `sims4.callback_utils` provides its enum, callable-list classes and module `_callbacks` without services. CallbackEvent values: TUNING_CODE_RELOAD=1; AUTONOMY_PING_ENTER/EXIT=2/4; POSTURE_GRAPH_BUILD_ENTER/EXIT=8/16; CONTENT_SET_GENERATE_ENTER/EXIT=32/64; PROCESS_EVENTS_FOR_HOUSEHOLD_ENTER/EXIT=128/256; TRANSITION_SEQUENCE_ENTER/EXIT=512/1024; compound content/household ENTER and EXIT flags (E3). No dedicated services-start, client-connect, zone-load or RUNNING event exists in this inspected enum.
+
+**SOURCE-CONFIRMED:** Persistence is lazy: `services.get_persistence_service()` constructs it when absent (E5). Calling this is not a passive availability probe. Its callback API concerns save unlocking, not load completion. **UNKNOWN:** whether persistence already existed at actual target import.
+
+**SOURCE-CONFIRMED:** `server.__init__` has no startup registry. Importing `server.clientmanager` supplies a class; the ClientManager instance is constructed in `game_services.start_services`. `create_client` constructs and adds a Client. `services.client_manager()` dereferences the game-service manager. `services.on_client_connect(client)` dispatches to three service managers; `on_enter_main_menu()` does nothing (E4/E6). These methods are not registration hooks.
+
+## Q2: Registries reachable at import and their later firing
+
+| Candidate and exact signature/call | Relative to RUNNING | Persistence and suitability |
+| --- | --- | --- |
+| **SOURCE-CONFIRMED:** `InstanceManager.add_on_load_complete(self, callback)`; `services.get_instance_manager(sims4.resources.Types.SNIPPET).add_on_load_complete(on_tuning_loaded)` (E1/E2). Callback receives the manager. | **SOURCE-CONFIRMED:** queued until that manager's tuning callbacks finish; immediate if complete. ZoneManager is assigned before those same tuning managers are passed to TuningInstanceManager. **INFERENCE:** early global-start bridge, before zone RUNNING; install object-add here, not the alarm. | **SOURCE-CONFIRMED:** list belongs to an InstanceManager reached through an import-created module mapping; completion invocation does not clear it. **INFERENCE:** ordinary zone changes do not re-fire tuning completion. Global shutdown clears the mapping; no guarantee across global restart. |
+| **SOURCE-CONFIRMED:** `sims4.callback_utils.add_callbacks(events, *callbacks)`; e.g. `add_callbacks((CallbackEvent.POSTURE_GRAPH_BUILD_EXIT,), on_event)`; dispatcher `invoke_callbacks(events, *args, **kwargs)` (E3). | **SOURCE-CONFIRMED:** synchronous argument forwarding. ReloadService dispatches TUNING_CODE_RELOAD, but script reload startup is disabled here. **UNKNOWN:** dependable gameplay event firing/arguments on target zone startup; see Q3. | **SOURCE-CONFIRMED:** module list, reload-protected, not cleared by dispatch; registration returns while reloading. **INFERENCE:** survives ordinary zone changes/menu return while module remains resident. No established RUNNING bootstrap. |
+| **SOURCE-CONFIRMED:** `PersistenceService.add_save_unlock_callback(self, callback)`; `services.get_persistence_service().add_save_unlock_callback(fn)` (E5). Callback takes no arguments. | **SOURCE-CONFIRMED:** immediate when unlocked, otherwise at unlock; no RUNNING ordering. | **SOURCE-CONFIRMED:** instance list cleared after unlock dispatch. **INFERENCE:** unsuitable startup observer. |
+| **SOURCE-CONFIRMED:** later `IndexedManager.register_callback(self, callback_type, callback)`; `manager.register_callback(0, arm_zone)` (E7). Receives added object. | **SOURCE-CONFIRMED:** ZoneManager adds after Zone construction, before RUNNING. | **INFERENCE:** unavailable directly at verified import, reachable after tuning completion. Survives zone replacement on the same manager, not manager replacement. |
+| **SOURCE-CONFIRMED:** later `Zone.register_callback(self, callback_type, callback)`; `z.register_callback(zone_module.zone_types.ZoneState.RUNNING, start_pump)` (E8). Takes no callback arguments. | **SOURCE-CONFIRMED:** state assigned before dispatch; immediate if already reached; returns during shutdown. RUNNING precedes `exit_zone_spin_up()`, so it is not loading-screen completion. | **SOURCE-CONFIRMED:** one-shot per-zone list, deleted after dispatch; registration does not transfer to another Zone. |
+
+**SOURCE-CONFIRMED:** `ServiceManager.register_service(self, service, is_init_critical=False)` appends a service; `on_all_households_and_sim_infos_loaded(self, client)` dispatches service methods. Spin-up invokes this before the later hit-their-marks transition (E9). **INFERENCE:** registering a service requires an existing manager and a valid lifecycle window; late append alone does not prove start/setup. No module services-start list or ZoneManager-creation observer was found in inspected candidates. **UNKNOWN:** target-build additions.
+
+## Q3: Module registry / non-zone route / spin-up calls
+
+**SOURCE-CONFIRMED:** Yes: callback_utils `_callbacks` is module-owned. Separately, `services.tuning_managers` is module-owned and can supply an InstanceManager before services start; its completion list is instance-owned. That is the concrete deferred bridge missing from R-Z1 (E1/E2).
+
+**SOURCE-CONFIRMED:** The inspected zone module has no module-level zone-load/RUNNING subscriber list. Its state, spawn-point and navmesh callback lists are instance members. **INFERENCE:** after global startup, `sys.modules['zone']` reaches the existing module without importing an unapproved root: ZoneManager imports zone before manager construction (E7). This route supplies the enum, not a missing global observer. `services.current_zone()` reaches an instance after one exists. TYPE_CHECKING imports in services do not establish a runtime `services.zone` attribute.
+
+**SOURCE-CONFIRMED:** Spin-up L503 calls `services.current_zone().posture_graph_service.build_during_zone_spin_up()` between telemetry calls (E10); telemetry constants are not CallbackEvents. The inspected zone/spin-up bodies do not directly dispatch callback_utils events. **UNKNOWN:** whether the downstream posture graph implementation dispatches POSTURE_GRAPH_BUILD_EXIT during this call; its body was unavailable locally. Do not assert either dependable startup firing or universal absence of callback_utils events during spin-up. **INFERENCE:** a callback there would precede RUNNING and still require a per-zone RUNNING registration.
+
+**UNKNOWN:** exhaustive caller coverage. With lazy fetching disabled, a recursive scan examined 195 locally available core/simulation bytecode blobs for callback/household/menu names; 2,472 were missing. All 120 bytecode modules in local core.zip were also scanned: the only external direct callback_utils dispatcher there was ReloadService. These bounded searches cannot prove absence of other routes.
+
+## Q4: Command-module events
+
+**SOURCE-CONFIRMED:** Inspected `sims4.commands` exposes named registration and execution, not a first-dispatch/client-connect observer: `register(name, restrictions, handler, description, usage, command_type)` delegates to `_commands.register`; `execute(command_line, _connection)` delegates to `_commands.execute` (E6). `Command(*aliases, command_type=..., command_restrictions=..., pack=None, console_type=None)` wraps a named handler. **INFERENCE:** it runs upon invocation of its own command, not somebody else's first command; replacing the dispatcher is excluded.
+
+**SOURCE-CONFIRMED:** ClientManager object-add is instance-owned and requires that instance first. `services.on_client_connect(client)` dispatches service lifecycle methods, not module subscribers. **COMMUNITY:** 1.128 native stubs document named-command registration (E11). **UNKNOWN:** undocumented native hooks; stubs do not prove absence. The server_commands tree was not exhaustively available locally, and direct `server_commands` imports are outside approved roots.
+
+## Q5: Ranked PROPOSED recommendation
+
+1. **PROPOSED, conditional unattended candidate:** tuning completion → ZoneManager object-add → per-zone RUNNING. Exact import-time call:
+
+```python
+import services
+import sims4.resources
+
+services.get_instance_manager(sims4.resources.Types.SNIPPET).add_on_load_complete(
+    on_tuning_loaded)
+```
+
+**INFERENCE / PROPOSED:** `on_tuning_loaded(tuning_manager)` obtains `manager = services.get_zone_manager()`; if non-None, calls `manager.register_callback(0, arm_zone)` once per manager and also arms an existing `services.current_zone()`. `arm_zone(z)` skips non-instantiated objects and calls:
+
+```python
+import sys
+
+z.register_callback(sys.modules['zone'].zone_types.ZoneState.RUNNING, start_pump)
+```
+
+**SOURCE-CONFIRMED:** 0 is ON_OBJECT_ADD. **INFERENCE:** the existing zone module supplies the enum through approved sys access. `start_pump()` can then use the exact alarm call:
+
+```python
+import alarms
+import clock
+
+owner.handle = alarms.add_alarm_real_time(
+    owner, clock.interval_in_real_seconds(1), pump,
+    repeating=True, use_sleep_time=False, cross_zone=False)
+```
+
+**PROPOSED:** these are research call sequences, not an installed implementation. Implement the named callbacks, retained weak-referenceable owner and bounded pump with per-manager/per-zone idempotence, exception containment, cancellation and teardown cleanup. No service startup, fabricated manager, attribute replacement, importer/reload modification or zone_utils slot. If tuning completion is immediate while ZoneManager remains None, log unavailable: no retry is established by this sequence.
+
+2. **PROPOSED, demonstrated fallback:** Owner invokes exact console command `ashley_e1.inbox` once in a loaded lot. Preserve this working bootstrap while validating recommendation 1. **INFERENCE:** manager registration then can cover later zones while that manager survives; one-command-per-launch still requires menu/reload checks.
+3. **PROPOSED, outside current authorization:** architect may consider an Owner-approved guarded injection amendment or the Owner helper typing `ashley_e1.inbox` once. Neither was implemented. Helper typing is not proposed as Ashley's action path; acceptability is an architect/Owner policy decision.
+
+**INFERENCE:** It is inaccurate to say nothing exists without injection: the mirror supplies a tuning-completion bridge. No guaranteed 1.128 unattended import bootstrap is established. If this bridge fails target checks, no validated automatic alternative exists in this research under current constraints; retain the command fallback.
+
+## Quoted source evidence
+
+E1–E10 — **SOURCE-CONFIRMED**, repo https://github.com/asiamserrano/TheSims4ScriptModBuilder, commit `40fadf822da383cdff76949a5c0c50e3b2e6968e` (2025-02-10). Paths are repository paths. Line numbers are ORIGINAL EA bytecode line-table numbers, not generated output numbering. Python quotations reconstruct decompiled bytecode; opcode quotations are explicit. No game modules were executed.
+
+- **E1:** `game/unzip/simulation/services/__init__.pyc` L331 `tuning_managers = InstanceTuningManagers()`; L334 `get_instance_manager = tuning_managers.__getitem__`; L337–343 service globals set to None; L346–347 `definition_manager = None`, `snippet_manager = None`; L350 `_terrain_object = None`; L355 `_object_leak_tracker = None`. `start_global_services(initial_ticks)` def L393: L419 `_zone_manager = ZoneManager()`; L439 `instantiated_tuning_managers.append(tuning_managers[definition.TYPE_ENUM_VALUE])`; L440 `services.append(TuningInstanceManager(instantiated_tuning_managers))`; L451 `sims4.core_services.start_services(init_critical_services, services)`. Shutdown L459 `_zone_manager = None`; L462 `tuning_managers.clear()`.
+- **E2:** `game/unzip/simulation/services/tuning_managers.pyc` `__missing__` def L20: L26 `manager = self._create_instance_manager(definition, resource_type_enum)`; L29 `self[resource_type_enum] = manager`; L31 `return manager`. `game/unzip/core/sims4/tuning/instance_manager.pyc` L297 `self._load_all_complete = False`; L301 `self._load_all_complete_callbacks = CallableList()`; `add_on_load_complete(self, callback)` def L327: L337 `if not self._load_all_complete:`; L338 `self._load_all_complete_callbacks.append(callback)`; L340 `callback(self)`. `invoke_registered_callbacks_gen` def L593: L627 `self._load_all_complete = True`; L634 `self._load_all_complete_callbacks(self)`. TuningInstanceManager generator L212–217 invokes those generators before L231 `instance_manager.on_start`. `game/unzip/core/sims4/resources.pyc` Types L195–197: `SNIPPET = _add_inst_tuning("snippet", resource_type=2113017500, require_reference=True)`.
+- **E3:** `game/unzip/core/sims4/callback_utils.pyc` L22 `TUNING_CODE_RELOAD = 1`; L24–25 `AUTONOMY_PING_ENTER = 2`, `AUTONOMY_PING_EXIT = 4`; L27–28 posture ENTER/EXIT=8/16; L30–31 content ENTER/EXIT=32/64; L33–34 household ENTER/EXIT=128/256; L36–37 transition ENTER/EXIT=512/1024; L39–40 compound flags OR the content/household values. L43 `with sims4.reload.protected(globals()):`; L45 `_callbacks = collections.defaultdict(list)`. `add_callbacks(events, *callbacks)` def L47; L55 `if sims4.reload.currently_reloading:`; L68 `_callbacks[event].append(callback)`. `invoke_callbacks(events, *args, **kwargs)` def L70; L80 `fn(*args, **kwargs)`.
+- **E4:** `game/unzip/simulation/game_services.pyc` L15 `service_manager = None`; L59–60 checks None then `service_manager = GameServiceManager()`; L139 `ClientManager(manager_id=MGR_CLIENT)`; L197 `service_manager.register_service(service)`; L199 `service_manager.start_services(container=service_manager, save_slot_data=save_slot_data)`; L208–209 stops services and sets manager None if shutdown allowed. `game/unzip/core/sims4/core_services.pyc` L13 `SUPPORT_RELOADING_SCRIPTS = False and ...`; L18 `SUPPORT_GSI = False`; L21 `service_manager = None`; L94 `service_manager = sims4.service_manager.ServiceManager()`; L151 `service_manager.start_services(defer_start_to_tick=True)`.
+- **E5:** `game/unzip/simulation/services/__init__.pyc` get_persistence_service def L1084; L1086 checks None; L1088 `_persistence_service = PersistenceService()`; L1090 `return _persistence_service`. `game/unzip/simulation/services/persistence_service.pyc` L154 `self._unlocked_callbacks = CallableList()`; add_save_unlock_callback def L404; L410–413 checks lock, registers or immediately calls `callback()`. L420 `self._unlocked_callbacks()`; L421 `self._unlocked_callbacks.clear()`.
+- **E6:** `game/unzip/simulation/services/__init__.pyc` L1011–1013 dispatches `on_client_connect(client)` to core/game/current-zone managers; on_enter_main_menu def L1024, L1028 `LOAD_CONST None; RETURN_VALUE`. `game/unzip/simulation/server/clientmanager.pyc` create_client def L14 decompiles to `new_client = Client(client_id, account, household_id)` / `self.add(new_client)` / `return new_client`. `game/unzip/core/sims4/commands.pyc` register def L118; L136 `LOAD_GLOBAL _commands; LOAD_METHOD register`; execute def L145; L159 `LOAD_GLOBAL _commands; LOAD_METHOD execute`. Command decorator def L332.
+- **E7:** `game/unzip/simulation/zone_manager.pyc` L14 `IMPORT_NAME zone`; L72 `new_zone = zone.Zone(zone_id, save_slot_data_id)`; L74 `self.add(new_zone)`. `game/unzip/simulation/indexed_manager.pyc` L47 `ON_OBJECT_ADD = 0`; register def L142, L147 `self._registered_callbacks[callback_type].append(callback)`; L329 `self._registered_callbacks[CallbackTypes.ON_OBJECT_ADD](obj)`. stop L136 `self.destroy_all_objects()`; L137 returns without clearing registration lists.
+- **E8:** `game/unzip/simulation/zone.pyc` L182–183 initializes state and callback dictionary on self; register def L1133; L1140–1141 shutdown check returns; L1143–1145 immediate call when `callback_type <= self._zone_state`; L1147 appends. Transition L1128 `self._zone_state = state`; L1130 `self._zone_state_callbacks[state]()`; L1131 `del self._zone_state_callbacks[state]`. on_hit_their_marks L738 sets RUNNING; L740 `game_clock.exit_zone_spin_up()` follows. `game/unzip/simulation/zone_types.pyc` L30 `RUNNING = 6` (also quoted in R-Z1).
+- **E9:** `game/unzip/core/sims4/service_manager.pyc` register def L261, L274 `self.services.append(service)`; on_all_households_and_sim_infos_loaded def L443, L451 `service.on_all_households_and_sim_infos_loaded(client)`. `game/unzip/simulation/zone_spin_up_service.pyc` L289–291 invokes that lifecycle method on zone/game/core managers; L1345 `services.current_zone().on_hit_their_marks()` occurs later in spin-up.
+- **E10:** `game/unzip/simulation/zone_spin_up_service.pyc` L498 `sims4.resources.python_telemetry_event(sims4.resources.LOT_LOAD_POSTURE_GRAPH_BEGIN)`; L503 `services.current_zone().posture_graph_service.build_during_zone_spin_up()`; L506 analogous LOT_LOAD_POSTURE_GRAPH_END telemetry call. `game/unzip/core/sims4/importer/custom_import.pyc` LegacyCustomLoader.post_load L202–203 invokes `sims4.tuning.serialization.process_tuning(module)` for non-ignored modules, without a subscriber list. `game/unzip/core/sims4/reload.pyc` protected L147–151 constructs `__reload_hooks__` entries for module names; these preserve reload state rather than notify zone startup. `game/unzip/core/sims4/reload_service.pyc` trigger_reload def L25 names `invoke_callbacks` and `TUNING_CODE_RELOAD` in its bytecode.
+
+E11 — **COMMUNITY/version boundary**, https://github.com/TURBODRIVER/TS4CPythonStubs @ `76338aa350fb1bf723d03397c3ef44c375441b13` (1.128.90), `_commands.pyi` L51: `def register(name: 'str', description: 'str', usage: 'str', callback: 'Callable[..., None]') -> 'bool':`; L55 `Register callable for the named command.` Native stubs do not confirm Python startup ordering.
+
+E12 — **COMMUNITY:** https://github.com/DeviantGameMods/Sims4CommunityLibrary @ `db1ca99dc448589d4cb1ab315cf4a3bb26c115be`, `Scripts/sims4communitylib/events/save/common_save_event_dispatcher.py` L62: `@CommonInjectionUtils.inject_safely_into(ModInfo.get_identity(), GameServiceManager, GameServiceManager.on_all_households_and_sim_infos_loaded.__name__, handle_exceptions=False)`. https://github.com/lot51/core-library @ `a4fc43efdd59e7222c0e68ea6c4917fbc04cf3e2`, `services/service_manager.py` L52: `@inject_to(GameServiceManager, 'start_services')`. These paths rely on injection and are excluded.
+
+E13 — **SOURCE-CONFIRMED**, same vanilla repo/commit as E1, `game/unzip/simulation/alarms.pyc`: `add_alarm_real_time(owner, time_span, callback, repeating=False, use_sleep_time=True, cross_zone=False)` def L71; L94 `ts = services.time_service()`; L95–100 constructs `AlarmHandle` using `ts.wall_clock_timeline` and `ts.wall_clock_timeline.now + time_span`. **INFERENCE:** tuning completion must defer alarm creation to RUNNING; cross_zone does not create an absent time service/timeline.
+
+## Version caveats / live checks / research boundaries
+
+- **UNKNOWN:** mirror's exact vanilla build; commit predates 1.128 and bytecode is CPython 3.7. Native 1.128 stubs do not close this gap. No target guarantee is claimed.
+- **PROPOSED live check for an authorized LAB operator:** at actual import log existing managers and selected tuning manager's `all_instances_loaded`; register only completion. Record callback firing, supplied manager identity, ZoneManager identity and thread. Verify startup uses the same tuning instance. If callback is immediate with ZoneManager None, reject the bridge rather than invent a retry.
+- **PROPOSED live check:** at deferred registration read `sys.modules.get('zone')`, verify enum and object-add signature; record instantiated-zone additions, RUNNING, wall-clock/time-service readiness and order against hit-their-marks/loading-screen completion. Compare callback thread with the console-command thread. No worker-thread game API mutation.
+- **PROPOSED live check:** first save load, travel, menu return, second save load. Track manager identities, one registration/drain per zone, cancellation and teardown. Distinguish game-service shutdown from global shutdown: no-op on_enter_main_menu alone establishes neither lifetime. Do not promise tuning re-arming after global restart or real-time alarm persistence through menu/reload. No live checks performed here.
+- **SOURCE-CONFIRMED research boundary/deviation:** no game execution, Windows/XQX access, login, messages, posts or pushes. Decompilation stayed in memory because the explicit two-output-file limit takes precedence over the suggested dec directory. An initial broad Git-object scan encountered partial-clone lazy fetching and spawned Git fetch/HTTPS processes, potentially writing fetched objects into the source repository. It was stopped on detection; subsequent blob reads used `GIT_NO_LAZY_FETCH=1`. This is an unintended deviation from the read-only/write-only requirement; exact implicit-fetch writes were not audited. The two requested reports are the only deliberate output-file writes.
