@@ -13,6 +13,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+_STR = tuple(t for t in (ast.__dict__.get('Str'), ast.Constant) if t is not None)
 
 
 def parse_source(path):
@@ -76,8 +77,10 @@ class PortabilityTests(unittest.TestCase):
                     for keyword in node.keywords:
                         if keyword.arg == 'mode':
                             mode = keyword.value
-                    if isinstance(mode, ast.Str) and 'b' in mode.s:
-                        continue
+                    if isinstance(mode, _STR):
+                        value = mode.s if type(mode).__name__ == 'Str' else mode.value
+                        if isinstance(value, str) and 'b' in value:
+                            continue
                 failures.append('{}:{}: {}'.format(path.name, node.lineno, name))
         self.assertEqual(failures, [])
 
