@@ -47,6 +47,7 @@ class E2Control:
 
     # ------------------------------------------------------------------ state
     def _reset_state(self):
+        self.last_prepared_token = None
         self.tokens = e2_admission.TokenBook()
         self.learner = e2_registry.SignatureLearner()
         self.experiments = {}
@@ -251,6 +252,7 @@ class E2Control:
                                     sim_id=view["sim_id"], ticks=view["ticks"],
                                     lineage_class=self.lineage_class)
             self._experiment_event("PREPARE_OK", object_id=object_id, token=token)
+            self.last_prepared_token = token
             self._say(connection, "PREPARE_OK token %s (30 s)" % token)
             return True
         except observers.LabIdentityAmbiguous:
@@ -401,6 +403,7 @@ class E2Control:
         if self.pause_request is None:
             return
         if self._remove_request():
-            self._speed_event("RELEASED_ON_DISARM", detail=reason)
+            self._speed_event("RELEASED_ON_DISARM" if reason == "DISARM" else
+                              "RELEASED_ON_STOP", detail=reason)
         else:
             self._speed_event("RELEASE_FAILED", code="REMOVE_FAILED", detail=reason)

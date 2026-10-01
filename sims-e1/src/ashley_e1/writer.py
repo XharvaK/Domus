@@ -661,3 +661,17 @@ class TelemetryWriter:
             self._idle = True
             if self._on_idle is not None:
                 self._on_idle()
+
+
+def read_command_file(path):
+    """Bound the game-thread inbox read, including oversized-input detection."""
+    with open(path, 'rb') as handle:
+        return handle.read(4097)
+
+
+def write_command_reply(path, payload):
+    """Publish a complete reply on the local filesystem."""
+    temporary = path + '.tmp'
+    with open(temporary, 'wb') as handle:
+        handle.write(payload)
+    os.replace(temporary, path)

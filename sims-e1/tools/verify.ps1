@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.1.0",
+    [string]$Version = "2.2.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$HostPythonPath = "",
     [switch]$SkipReproducible
@@ -196,6 +196,10 @@ artifact, expected_version = sys.argv[1:]
 with zipfile.ZipFile(artifact) as archive:
     if any(name.endswith('.py') for name in archive.namelist()):
         raise SystemExit('ZIPIMPORT: source present in artifact')
+    for name in archive.namelist():
+        if name.startswith('ashley_e1/') and name.endswith('.pyc'):
+            if int.from_bytes(archive.read(name)[4:8], 'little') != 1:
+                raise SystemExit('ZIPIMPORT: flags must be 1: ' + name)
 # Import the pure submodule directly, without executing the game bootstrap.
 importer = zipimport.zipimporter(artifact + '/ashley_e1')
 schema = importer.load_module('ashley_e1.schema')
@@ -215,6 +219,7 @@ if ($SkipReproducible) {
     Record-Skip "REPRODUCIBLE nested worktree verification"
 } elseif ($compilerAvailable -and $artifactReady) {
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ashley_repro_" + [guid]::NewGuid().ToString('N'))
+    $reproSucceeded = $false
     $worktrees = @((Join-Path $tempRoot "first"), (Join-Path $tempRoot "second"))
     try {
         New-Item -ItemType Directory -Path $tempRoot -ErrorAction Stop | Out-Null
@@ -233,10 +238,14 @@ if ($SkipReproducible) {
             $hash = ("" + $hashLines[0]).Substring(13)
             $hashes += $hash
             if ($hash -ne $expectedHash) { throw ("BUILD_SHA256 mismatch: " + $hash + " expected=" + $expectedHash) }
-            $verifyOutput = & $powershellPath -NoProfile -ExecutionPolicy Bypass -File (Join-Path $worktree "sims-e1\tools\verify.ps1") -Version $Version -PythonPath $PythonPath -HostPythonPath $HostPythonPath -SkipReproducible 2>&1
+            $verifyArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $worktree "sims-e1\tools\verify.ps1"), "-Version", $Version, "-PythonPath", $PythonPath, "-SkipReproducible")
+            if (-not [string]::IsNullOrWhiteSpace($HostPythonPath)) {
+                $verifyArgs += @("-HostPythonPath", $HostPythonPath)
+            }
+            $verifyOutput = & $powershellPath @verifyArgs 2>&1
             if ($LASTEXITCODE -ne 0) { throw ("Worktree verification failed: " + ($verifyOutput -join " | ")) }
         }
-        Record-Pass ("REPRODUCIBLE BUILD_SHA256=" + $expectedHash + " first=" + $hashes[0] + " second=" + $hashes[1])
+        $reproSucceeded = $true
     } catch {
         Record-Fail ("REPRODUCIBLE " + $_.Exception.Message)
     } finally {
@@ -250,6 +259,9 @@ if ($SkipReproducible) {
             try { Remove-Item -LiteralPath $tempRoot -Force -ErrorAction Stop }
             catch { Record-Fail ("REPRODUCIBLE temp cleanup: " + $_.Exception.Message) }
         }
+    }
+    if ($reproSucceeded -and -not $failed) {
+        Record-Pass ("REPRODUCIBLE BUILD_SHA256=" + $expectedHash + " first=" + $hashes[0] + " second=" + $hashes[1])
     }
 } else {
     Record-Fail "REPRODUCIBLE prerequisites unavailable"

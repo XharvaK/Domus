@@ -11,14 +11,14 @@ from test_binding import FakeWriter, load_probe
 class BootstrapTests(unittest.TestCase):
     def test_package_initializes_once_and_secondary_imports_are_pure(self):
         package, probe, calls = load_probe()
-        self.assertEqual(len(calls["registrations"]), 8)
+        self.assertEqual(len(calls["registrations"]), 10)
         probe.initialize_probe()
-        self.assertEqual(len(calls["registrations"]), 8)
+        self.assertEqual(len(calls["registrations"]), 10)
         self.assertEqual(len(calls["alarms"]), 0)
         for name in ("observers", "snapshot", "schema", "writer", "e2_admission",
                      "e2_lineage", "e2_registry", "e2_actuator", "e2_control"):
             importlib.import_module("ashley_e1." + name)
-        self.assertEqual(len(calls["registrations"]), 8)
+        self.assertEqual(len(calls["registrations"]), 10)
         self.assertEqual(calls["pushes"], [])
         self.assertEqual(calls["speed"], [])
         self.assertEqual(calls["save_callbacks"], [])
@@ -59,8 +59,8 @@ class BootstrapTests(unittest.TestCase):
             "bootstrap")
         probe.initialize_probe()
 
-        self.assertEqual(calls["events"], ["register"] * 8 + ["bootstrap"])
-        self.assertEqual(len(calls["registrations"]), 16)
+        self.assertEqual(calls["events"], ["register"] * 10 + ["bootstrap"])
+        self.assertEqual(len(calls["registrations"]), 20)
         self.assertEqual(probe.get_status()["state"], "UNARMED")
         self.assertEqual(calls["alarms"], [])
         self.assertEqual(FakeWriter.instances, [])

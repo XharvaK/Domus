@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.1.0",
+    [string]$Version = "2.2.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$ImplementedCommit = "WORKTREE_UNCOMMITTED",
     [string]$BaselineCommit = ""
@@ -16,6 +16,11 @@ $manifestPath = Join-Path $buildRoot "manifest.json"
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must match <major>.<minor>.<patch>" }
 if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) { throw "Pinned Python not found: $PythonPath" }
+foreach ($sourceFile in (Get-ChildItem -LiteralPath $sourceRoot -Recurse -Filter *.py -File)) {
+    if ([System.IO.File]::ReadAllBytes($sourceFile.FullName) -contains 13) {
+        throw "SOURCE_NOT_LF"
+    }
+}
 $initSource = Get-Content -LiteralPath (Join-Path $sourceRoot "ashley_e1\__init__.py") -Raw
 if ($initSource -notmatch ('E1_PROBE_VERSION\s*=\s*"' + [regex]::Escape($Version) + '"')) {
     throw "Version argument does not match ashley_e1.__init__.py"
@@ -34,7 +39,7 @@ py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[3], doraise=Tr
                    invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
 '@
 $moduleNames = @("__init__", "probe", "observers", "snapshot", "schema", "writer",
-                 "e2_admission", "e2_lineage", "e2_registry", "e2_actuator", "e2_control")
+                 "e2_admission", "e2_lineage", "e2_registry", "e2_actuator", "e2_control", "cmdbox")
 foreach ($moduleName in $moduleNames) {
     $source = Join-Path $sourceRoot ("ashley_e1\" + $moduleName + ".py")
     $destination = Join-Path $stageRoot ("ashley_e1\" + $moduleName + ".pyc")

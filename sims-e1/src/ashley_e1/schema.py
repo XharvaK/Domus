@@ -3,9 +3,9 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 2
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v2"
-PROBE_VERSION = "2.1.0"
+OBSERVATION_SCHEMA_VERSION = 3
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v3"
+PROBE_VERSION = "2.2.0"
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
 MAX_ID_LENGTH = 64
@@ -38,9 +38,11 @@ EVENT_KINDS = (
     "experiment_event",
     "speed_event",
     "lineage_event",
+    "command_event",
 )
-E2_EVENT_KINDS = ("experiment_event", "speed_event", "lineage_event")
+E2_EVENT_KINDS = ("experiment_event", "speed_event", "lineage_event", "command_event")
 E2_PAYLOAD_KEYS = {
+    "command_event": ("id", "issuer", "command", "status", "code"),
     "experiment_event": ("phase", "code", "experiment_id", "object_id", "token",
                          "interaction_id", "claims", "finishing_type", "detail"),
     "speed_event": ("phase", "code", "detail"),
@@ -52,8 +54,23 @@ EXPERIMENT_PHASES = (
     "ADMIT_REJECT", "PUSHED", "PUSH_FAILED", "CLAIM", "FINISHED_CALLBACK",
     "VERDICT",
 )
+COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
+            "release", "status", "sit_trial")
+
+
+def _command_id(value):
+    return (type(value) is str and len(value) == 32 and
+            all(ch in "0123456789abcdef" for ch in value))
+
+
+def _command_issuer(value):
+    return (type(value) is str and (value in ("helper", "console") or
+            (value.startswith("agent:") and 1 <= len(value[6:]) <= 34 and
+             all(ch in "abcdefghijklmnopqrstuvwxyz0123456789_-" for ch in value[6:]))))
+
+
 SPEED_PHASES = ("REQUEST_PUSHED", "REQUEST_REMOVED", "REJECT",
-                "RELEASED_ON_DISARM", "RELEASE_FAILED")
+                "RELEASED_ON_DISARM", "RELEASED_ON_STOP", "RELEASE_FAILED")
 LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED")
 CLAIM_KEYS = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
               "ATTRIBUTED", "MAINTAINED_10S", "FINISHED")
@@ -347,7 +364,13 @@ def _validate_e2(row):
     _require(isinstance(payload, dict) and
              set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
-    if kind == "experiment_event":
+    if kind == "command_event":
+        _require(_command_id(payload["id"]), "command id")
+        _require(_command_issuer(payload["issuer"]), "command issuer")
+        _require(payload["command"] in COMMANDS, "command vocabulary")
+        _require(payload["status"] in ("OK", "REJECTED", "ERROR"), "command status")
+        bounded_string(payload["code"], 64, "command code")
+    elif kind == "experiment_event":
         _require(payload["phase"] in EXPERIMENT_PHASES, "experiment phase")
         claims = payload["claims"]
         if claims is not None:

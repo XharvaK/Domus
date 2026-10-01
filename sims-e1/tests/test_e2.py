@@ -665,7 +665,7 @@ class ControlFlowTests(unittest.TestCase):
         self.assertEqual(self.calls["save_callbacks"], [])
         phases = [p["phase"] for p in self.e2("speed_event")]
         # the arity-violating dispatch is rejected by the adapter with no event
-        self.assertEqual(phases, ["REQUEST_PUSHED", "REJECT", "RELEASED_ON_DISARM"])
+        self.assertEqual(phases, ["REQUEST_PUSHED", "REJECT", "RELEASED_ON_STOP"])
 
     def test_pause_requires_sampling_and_release_requires_request(self):
         self.assertTrue(self.probe._cmd_arm("LAB_E1"))

@@ -63,7 +63,8 @@ def install_stubs():
         calls["registrations"].append(args)
 
     commands.register = register
-    commands.output = lambda text, connection: calls["outputs"].append((text, connection))
+    commands.cheat_output = lambda text, connection: calls["outputs"].append((text, connection))
+    commands.output = lambda text, connection: None
     sims4 = types.ModuleType("sims4")
     sims4.__path__ = []
     sims4.commands = commands
@@ -270,11 +271,13 @@ class BindingTests(unittest.TestCase):
     def test_production_registrations_use_target_forms(self):
         _, probe, calls = load_probe()
         self.assertEqual([item[0] for item in calls["registrations"]], [
+            "ashley_e1.inbox", "ashley_e1.status",
             "ashley_e1.arm", "ashley_e1.disarm", "ashley_e1.start", "ashley_e1.stop",
             "ashley_e2.prepare", "ashley_e2.sit", "ashley_e2.pause", "ashley_e2.release",
         ])
-        self.assertEqual(len(calls["registrations"]), 8)
+        self.assertEqual(len(calls["registrations"]), 10)
         self.assertEqual([item[2].__name__ for item in calls["registrations"]], [
+            "_dispatch_inbox", "_dispatch_status",
             "_dispatch_arm", "_dispatch_disarm", "_dispatch_start", "_dispatch_stop",
             "_dispatch_e2_prepare", "_dispatch_e2_sit", "_dispatch_e2_pause",
             "_dispatch_e2_release",

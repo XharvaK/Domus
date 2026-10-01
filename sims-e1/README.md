@@ -2,32 +2,41 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.1.0 (E2)
+## Current build: 2.2.0 (E2)
 
-The source is version `2.1.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 2). It is no longer read-only:
+The source is version `2.2.0` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 3). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.1.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.2.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC.
 
-Owner commands (all Owner-typed; the probe issues nothing on its own):
+Owner commands (also available through the local command inbox after `ashley_e1.inbox`):
 
 | Command | Stage | What it does |
 |---|---|---|
 | `ashley_e1.arm LAB_E1` / `ashley_e1.arm LAB_E1_FORK` | E1 | Arm an observation session |
 | `ashley_e1.start` / `ashley_e1.stop` | E1 | Start and stop observation |
+| `ashley_e1.inbox` | E1 | Start the independent 1 Hz local command inbox |
+| `ashley_e1.status` | E1 | Report probe and inbox state |
 | `ashley_e1.disarm` | E1 | Disarm the session |
 | `ashley_e2.prepare <object_id>` | E2 | Prepare one sit experiment on an object |
 | `ashley_e2.sit <token>` | E2 | Admit and push one prepared sit experiment |
 | `ashley_e2.pause` | E2 | Push the probe's pause request |
 | `ashley_e2.release` | E2 | Remove the probe's pause request |
 
+The inbox uses UTF-8 JSON files in `AshleyE1Telemetry/cmd/inbox`, single-use
+32-character lowercase hex ids, and expiry of at most 60 seconds. Replies are
+published atomically in `cmd/outbox`; claimed inputs finish in `cmd/done`.
+`status` works while unarmed; `sit_trial` calls prepare then sit in one tick,
+with the existing admission checks. The inbox survives stop and disarm and
+its alarm ends at the zone boundary.
+
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.1.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.1.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.2.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.2.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

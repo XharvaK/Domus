@@ -36,6 +36,7 @@ try:
     import sims4.commands as _commands_module  # PRIOR_ART|RUNTIME_UNVERIFIED: vanilla command surface.
 except ImportError:
     _commands_module = None
+import os
 import time
 import uuid
 
@@ -47,10 +48,11 @@ except ImportError:
     CommandRestrictionFlags = None
     register = None
 
+from . import cmdbox
 from . import e2_control
 from . import observers
 from . import schema
-from .writer import TelemetryWriter, bootstrap_from_module_path, derive_telemetry_root
+from .writer import TelemetryWriter, bootstrap_from_module_path, derive_telemetry_root, read_command_file, write_command_reply
 
 
 E1_PROBE_VERSION = schema.PROBE_VERSION
@@ -84,7 +86,7 @@ try:
 except AttributeError:
     _interaction_context_type = None
 try:
-    _commands_output = _commands_module.output
+    _commands_output = _commands_module.cheat_output
 except AttributeError:
     _commands_output = None
 
@@ -96,6 +98,11 @@ class _ProbeAlarmOwner:
 
 
 _PROBE_ALARM_OWNER = _ProbeAlarmOwner()
+_INBOX_ALARM_OWNER = _ProbeAlarmOwner()
+_INBOX_HANDLE = None
+_INBOX_BUSY = False
+_INBOX_USED_IDS = set()
+_INBOX_VERDICTS = []
 _STATE = "UNARMED"
 _ARMED_NAME = None
 _ARMED_SNAPSHOT = None
@@ -112,6 +119,9 @@ _COUNTERS = {"dropped_queue": 0, "dropped_overrun": 0,
              "dropped_serialize": 0, "redundant_starts": 0}
 
 def _output(text, connection):
+    if isinstance(connection, _InboxReply):
+        connection.lines.append(text)
+        return
     if _commands_output is None:
         return
     try:
@@ -196,9 +206,159 @@ def _dispatch_e2_release(*args, _session_id=0, **kwargs):
     return _E2.cmd_release(_session_id)
 
 
+class _InboxReply:
+    def __init__(self, issuer):
+        self.issuer = issuer
+        self.lines = []
+
+
+def _dispatch_inbox(*args, _session_id=0, **kwargs):
+    global _INBOX_HANDLE
+    if args or kwargs:
+        return False
+    if _INBOX_HANDLE is None:
+        if _TELEMETRY_ROOT is None:
+            return False
+        try:
+            for directory in ('inbox', 'outbox', 'done'):
+                os.makedirs(os.path.join(_TELEMETRY_ROOT, 'cmd', directory), exist_ok=True)
+            _INBOX_HANDLE = alarms.add_alarm_real_time(
+                owner=_INBOX_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+                callback=_inbox_tick, repeating=True, use_sleep_time=False,
+                cross_zone=False)
+        except Exception:
+            _INBOX_HANDLE = None
+            return False
+    _output('INBOX ON', _session_id)
+    return True
+
+
+def _dispatch_status(*args, _session_id=0, **kwargs):
+    if args or kwargs:
+        return False
+    _output('state: %s inbox: %s' % (_STATE, 'on' if _INBOX_HANDLE is not None else 'off'),
+            _session_id)
+    return True
+
+
+def _inbox_status():
+    return dict(state=_STATE, armed_name=_ARMED_NAME,
+                probe_version=E1_PROBE_VERSION, schema_version=schema.OBSERVATION_SCHEMA_VERSION,
+                signatures=dict(_E2.learner.signatures),
+                continuation={key: sorted(value) for key, value in _E2.learner.continuation.items()},
+                lineage_class=_E2.lineage_class, designated_sim_id=_E2.designated_sim_id,
+                verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on')
+
+
+def _inbox_dispatch(cmd, connection):
+    name, args = cmd['command'], cmd['args']
+    if name == 'arm':
+        return _dispatch_arm(args['name'], _session_id=connection)
+    if name == 'prepare':
+        return _dispatch_e2_prepare(args['object_id'], _session_id=connection)
+    if name == 'sit':
+        return _dispatch_e2_sit(args['token'], _session_id=connection)
+    if name == 'sit_trial':
+        if not _dispatch_e2_prepare(args['object_id'], _session_id=connection):
+            return False
+        return _dispatch_e2_sit(_E2.last_prepared_token, _session_id=connection)
+    dispatchers = {'start': _dispatch_start, 'stop': _dispatch_stop,
+                   'disarm': _dispatch_disarm, 'pause': _dispatch_e2_pause,
+                   'release': _dispatch_e2_release, 'status': _dispatch_status}
+    return dispatchers[name](_session_id=connection)
+
+
+def _inbox_tick(alarm_handle=None):
+    global _INBOX_BUSY
+    if _INBOX_HANDLE is None or _INBOX_BUSY:
+        return
+    if alarm_handle is not None and alarm_handle is not _INBOX_HANDLE:
+        return
+    _INBOX_BUSY = True
+    try:
+        _inbox_tick_body()
+    finally:
+        _INBOX_BUSY = False
+
+
+def _inbox_tick_body():
+    root = os.path.join(_TELEMETRY_ROOT, 'cmd')
+    inbox = os.path.join(root, 'inbox')
+    try:
+        names = sorted(name for name in os.listdir(inbox) if name.endswith('.json'))[:4]
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(inbox, name)
+        taken = path + '.taken'
+        try:
+            os.replace(path, taken)
+        except OSError:
+            continue
+        try:
+            raw = read_command_file(taken)
+            cmd, code = cmdbox.parse(raw, int(time.time() * 1000), _INBOX_USED_IDS)
+            # A rejected JSON still needs a safe reply name. An invalid/missing id
+            # gets a fresh local id, never an untrusted pathname component.
+            identity = cmd
+            if identity is None:
+                try:
+                    identity = cmdbox.decode(raw)
+                except (ValueError, UnicodeError, RecursionError):
+                    identity = None
+            if type(identity) is dict and cmdbox.valid_hex(identity.get('id'), 32):
+                command_id = identity['id']
+            else:
+                command_id = uuid.uuid4().hex
+            done = os.path.join(root, 'done', command_id + '.json')
+            persistent_replay = os.path.exists(done)
+            if persistent_replay:
+                cmd, code = None, 'REPLAYED'
+            status, result = 'REJECTED', None
+            if cmd is not None:
+                _INBOX_USED_IDS.add(command_id)
+                connection = _InboxReply(cmd['issuer'])
+                try:
+                    ok = bool(_inbox_dispatch(cmd, connection))
+                    status = 'OK' if ok else 'REJECTED'
+                    result = (_inbox_status() if cmd['command'] == 'status' else
+                              {'ok': ok, 'lines': connection.lines})
+                except Exception as error:
+                    status, code = 'ERROR', type(error).__name__[:64]
+                    result = {'ok': False, 'lines': connection.lines}
+            else:
+                _INBOX_USED_IDS.add(command_id)
+            issuer = identity.get('issuer') if type(identity) is dict else None
+            payload = cmdbox.attribute_reply(
+                cmdbox.reply(command_id, status, code, result), issuer)
+            write_command_reply(os.path.join(root, 'outbox', command_id + '.json'), payload)
+            # Retain the original completion marker on a persistent replay.
+            if persistent_replay:
+                os.remove(taken)
+            else:
+                os.replace(taken, done)
+            if (_WRITER is not None and not _WRITER_IDLE and
+                    type(identity) is dict and cmdbox.valid_issuer(identity.get('issuer')) and
+                    identity.get('command') in cmdbox.COMMANDS):
+                _emit(schema.make_record('command_event',
+                    telemetry_session_id=_TELEMETRY_SESSION_ID,
+                    wall_timestamp_ms=int(time.time() * 1000), monotonic_ns=time.perf_counter_ns(),
+                    e2=dict(id=command_id, issuer=identity['issuer'], command=identity['command'],
+                            status=status, code=code)))
+        except (OSError, ValueError):
+            # Leave a claimed input for inspection if filesystem publication fails.
+            continue
+
+
 def _register_commands():
     if register is None or CommandType is None or CommandRestrictionFlags is None:
         return False
+    register('ashley_e1.inbox', CommandRestrictionFlags.UNRESTRICTED,
+             _dispatch_inbox, 'Start the local command inbox.',
+             'ashley_e1.inbox', CommandType.Live)
+    register('ashley_e1.status', CommandRestrictionFlags.UNRESTRICTED,
+             _dispatch_status, 'Report probe and inbox state.',
+             'ashley_e1.status', CommandType.Live)
     register('ashley_e1.arm', CommandRestrictionFlags.UNRESTRICTED,
              _dispatch_arm, 'Arm the Ashley E1 probe in LAB_E1 or LAB_E1_FORK.',
              'ashley_e1.arm LAB_E1 | ashley_e1.arm LAB_E1_FORK', CommandType.Live)
@@ -439,6 +599,10 @@ def _cmd_disarm(_connection=None) -> bool:
 
 
 def _emit(row):
+    if row.get("event_kind") == "experiment_event" and row.get("e2", {}).get("phase") == "VERDICT":
+        payload = row["e2"]
+        _INBOX_VERDICTS.append({key: payload[key] for key in ("phase", "code", "experiment_id", "detail")})
+        del _INBOX_VERDICTS[:-5]
     if _WRITER is None:
         return False
     for key, value in _COUNTERS.items():
