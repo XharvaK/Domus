@@ -178,3 +178,64 @@ class InboxTickErrorTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AutostartValuesTests(unittest.TestCase):
+    def test_versions_are_221(self):
+        package, probe, _ = load_probe()
+        self.assertEqual(package.E1_PROBE_VERSION, "2.2.1")
+        self.assertEqual(probe.schema.PROBE_VERSION, "2.2.1")
+
+    def test_closed_values_include_legacy_and_reject_unknown(self):
+        _, probe, _ = load_probe()
+        schema = probe.schema
+        runtime = dict(python_version="3.13", perf_counter=True,
+                       required_imports=dict.fromkeys(schema.REQUIRED_IMPORT_KEYS, True))
+        for value in CLOSED_AUTOSTART + ("STARTED",):
+            with self.subTest(value=value):
+                schema._validate_load_disabled_runtime(dict(runtime, inbox_autostart=value))
+        with self.assertRaises(schema.SchemaError):
+            schema._validate_load_disabled_runtime(dict(runtime, inbox_autostart="ZONE:bogus"))
+
+    def test_status_includes_autostart_and_errors(self):
+        _, probe, _ = load_probe()
+        self.assertIn("inbox_autostart", probe._inbox_status())
+        self.assertIn("inbox_errors", probe._inbox_status())
+
+    def test_never_emits_legacy_started(self):
+        for path in ("import", "zone", "console", "manager"):
+            with self.subTest(path=path):
+                _, probe, calls = load_probe()
+                def check():
+                    self.assertNotEqual(probe._INBOX_AUTOSTART, "STARTED")
+                    self.assertNotEqual(probe._inbox_status()["inbox_autostart"], "STARTED")
+                check()
+                zone = Zone()
+                manager_callbacks = []
+                manager = types.SimpleNamespace(
+                    register_callback=lambda *args: manager_callbacks.append(args))
+                probe._services_module.get_zone_manager = lambda: manager
+                probe._services_module.current_zone = lambda: None
+                probe._INITIALIZED = False
+                with mock.patch.object(probe, 'derive_telemetry_root',
+                                       return_value=probe._TELEMETRY_ROOT), \
+                        mock.patch.object(probe, 'bootstrap_from_module_path'):
+                    probe.initialize_probe()
+                check()
+                if path != "manager":
+                    probe._services_module.current_zone = lambda: zone
+                if path in ("import", "zone"):
+                    probe._try_arm_zone("import" if path == "import" else "tuning")
+                    check()
+                if path == "manager":
+                    manager_callbacks[0][1](zone)
+                    check()
+                if path == "console":
+                    registered = dict((r[0], r[2]) for r in calls['registrations'])
+                    registered['ashley_e1.inbox'](_session_id=73)
+                else:
+                    zone.callbacks[0][1]()
+                check()
+                expected = "CONSOLE" if path == "console" else "ZONE:" + (
+                    "manager" if path == "manager" else ("import" if path == "import" else "tuning"))
+                self.assertEqual(probe._INBOX_AUTOSTART, expected)

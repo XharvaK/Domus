@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 3
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v3"
-PROBE_VERSION = "2.2.0"
+PROBE_VERSION = "2.2.1"
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
 MAX_ID_LENGTH = 64
@@ -259,7 +259,8 @@ def _validate_load_disabled_runtime(runtime):
              "runtime.perf_counter")
     if "inbox_autostart" in runtime:
         _require(runtime["inbox_autostart"] in
-                 ("STARTED", "MANAGER_UNAVAILABLE", "NOT_STARTED", "CONSOLE",
+                 ("STARTED",  # legacy: written by probe 2.2.0
+                  "MANAGER_UNAVAILABLE", "NOT_STARTED", "CONSOLE",
                   "ZONE:import", "ZONE:tuning", "ZONE:posture",
                   "ZONE:household", "ZONE:transition", "ZONE:manager"),
                  "runtime.inbox_autostart")
