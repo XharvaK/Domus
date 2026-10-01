@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "domus": {
+      "command": "helper/.venv/Scripts/python.exe",
+      "args": ["-m", "domus_helper.mcp_server"],
+      "env": {"PYTHONPATH": "helper", "DOMUS_AGENT_NAME": "mcp"}
+    }
+  }
+}
