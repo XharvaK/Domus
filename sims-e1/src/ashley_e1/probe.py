@@ -108,6 +108,7 @@ _INBOX_ARMED_ZONES = []
 _INBOX_ARMED_MANAGERS = []
 _AUTOSTART_HOOKS = {}
 _INBOX_BUSY = False
+_INBOX_ERRORS = 0
 _INBOX_USED_IDS = set()
 _INBOX_VERDICTS = []
 _STATE = "UNARMED"
@@ -353,7 +354,7 @@ def _inbox_status():
                 continuation={key: sorted(value) for key, value in _E2.learner.continuation.items()},
                 lineage_class=_E2.lineage_class, designated_sim_id=_E2.designated_sim_id,
                 verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
-                inbox_autostart=_INBOX_AUTOSTART)
+                inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS)
 
 
 def _inbox_dispatch(cmd, connection):
@@ -375,7 +376,7 @@ def _inbox_dispatch(cmd, connection):
 
 
 def _inbox_tick(alarm_handle=None):
-    global _INBOX_BUSY
+    global _INBOX_BUSY, _INBOX_ERRORS
     if _INBOX_HANDLE is None or _INBOX_BUSY:
         return
     if alarm_handle is not None and alarm_handle is not _INBOX_HANDLE:
@@ -383,11 +384,14 @@ def _inbox_tick(alarm_handle=None):
     _INBOX_BUSY = True
     try:
         _inbox_tick_body()
+    except Exception:
+        _INBOX_ERRORS += 1
     finally:
         _INBOX_BUSY = False
 
 
 def _inbox_tick_body():
+    global _INBOX_ERRORS
     root = os.path.join(_TELEMETRY_ROOT, 'cmd')
     inbox = os.path.join(root, 'inbox')
     try:
@@ -397,11 +401,14 @@ def _inbox_tick_body():
     for name in names:
         path = os.path.join(inbox, name)
         taken = path + '.taken'
+        command_id = uuid.uuid4().hex
+        identity = None
+        error_reply_written = False
         try:
-            os.replace(path, taken)
-        except OSError:
-            continue
-        try:
+            try:
+                os.replace(path, taken)
+            except OSError:
+                continue
             raw = read_command_file(taken)
             cmd, code = cmdbox.parse(raw, int(time.time() * 1000), _INBOX_USED_IDS)
             # A rejected JSON still needs a safe reply name. An invalid/missing id
@@ -430,6 +437,7 @@ def _inbox_tick_body():
                     result = (_inbox_status() if cmd['command'] == 'status' else
                               {'ok': ok, 'lines': connection.lines})
                 except Exception as error:
+                    _INBOX_ERRORS += 1
                     status, code = 'ERROR', type(error).__name__[:64]
                     result = {'ok': False, 'lines': connection.lines}
             else:
@@ -438,6 +446,7 @@ def _inbox_tick_body():
             payload = cmdbox.attribute_reply(
                 cmdbox.reply(command_id, status, code, result), issuer)
             write_command_reply(os.path.join(root, 'outbox', command_id + '.json'), payload)
+            error_reply_written = status == 'ERROR'
             # Retain the original completion marker on a persistent replay.
             if persistent_replay:
                 os.remove(taken)
@@ -451,8 +460,26 @@ def _inbox_tick_body():
                     wall_timestamp_ms=int(time.time() * 1000), monotonic_ns=time.perf_counter_ns(),
                     e2=dict(id=command_id, issuer=identity['issuer'], command=identity['command'],
                             status=status, code=code)))
-        except (OSError, ValueError):
-            # Leave a claimed input for inspection if filesystem publication fails.
+        except Exception as error:
+            _INBOX_ERRORS += 1
+            if not error_reply_written:
+                try:
+                    issuer = identity.get('issuer') if type(identity) is dict else None
+                    payload = cmdbox.attribute_reply(
+                        cmdbox.reply(command_id, 'ERROR', type(error).__name__[:64],
+                                     {'ok': False, 'lines': []}), issuer)
+                    write_command_reply(
+                        os.path.join(root, 'outbox', command_id + '.json'), payload)
+                except Exception:
+                    pass
+            try:
+                done = os.path.join(root, 'done', command_id + '.json')
+                if os.path.exists(done):
+                    os.remove(taken)
+                else:
+                    os.replace(taken, done)
+            except Exception:
+                pass
             continue
 
 
@@ -542,7 +569,7 @@ def initialize_probe():
 def _STATE_RESET():
     global _STATE, _ARMED_NAME, _ARMED_SNAPSHOT, _TELEMETRY_SESSION_ID
     global _ALARM_HANDLE, _WRITER, _WRITER_IDLE, _SESSION_OPENED, _POLL_BUSY
-    global _MISUSE_COUNT, _LAST_CAPTURE_COUNTERS
+    global _MISUSE_COUNT, _LAST_CAPTURE_COUNTERS, _INBOX_ERRORS
     _STATE = "UNARMED"
     _ARMED_NAME = None
     _ARMED_SNAPSHOT = None
@@ -553,6 +580,7 @@ def _STATE_RESET():
     _SESSION_OPENED = False
     _POLL_BUSY = False
     _MISUSE_COUNT = 0
+    _INBOX_ERRORS = 0
     _LAST_CAPTURE_COUNTERS = None
     _COUNTERS["dropped_queue"] = 0
     _COUNTERS["dropped_overrun"] = 0

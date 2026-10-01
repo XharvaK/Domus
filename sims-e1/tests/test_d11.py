@@ -1,9 +1,12 @@
 """D11-1 autostart-hook contract tests; fakes only, no live game."""
+import json
+from pathlib import Path
 import types
 import unittest
 from unittest import mock
 
 from test_binding import load_probe
+from test_d10 import command
 
 
 CLOSED_AUTOSTART = (
@@ -110,6 +113,67 @@ class AutostartHookTests(unittest.TestCase):
         text, connection = self.calls['outputs'][-1]
         self.assertIn('already', text, 'console did not say already')
         self.assertIn(source[5:], text, 'already reply missing source')
+
+
+class InboxTickErrorTests(unittest.TestCase):
+    def setUp(self):
+        _, self.p, _ = load_probe()
+        self.root = Path(self.p._TELEMETRY_ROOT) / 'cmd'
+        self.p._start_inbox_pump()
+
+    def queue(self, command_id='a' * 32):
+        path = self.root / 'inbox' / (command_id + '.json')
+        path.write_text(json.dumps(command(id=command_id)), encoding='utf-8')
+        return path
+
+    def tick(self):
+        try:
+            with mock.patch.object(self.p.time, 'time', return_value=1):
+                self.p._inbox_tick()
+        except Exception as error:
+            self.fail('tick raised %r' % (error,))
+
+    def assert_completed(self, path):
+        self.assertFalse(path.exists())
+        self.assertFalse(Path(str(path) + '.taken').exists())
+        self.assertTrue((self.root / 'done' / path.name).exists())
+
+    def test_emit_error_is_replied_and_completed(self):
+        path = self.queue()
+        self.p._WRITER = object()
+        self.p._WRITER_IDLE = False
+        with mock.patch.object(self.p, '_emit', side_effect=RuntimeError('writer')):
+            self.tick()
+        self.assertEqual(self.p._inbox_status().get('inbox_errors'), 1)
+        self.assert_completed(path)
+        reply = json.loads((self.root / 'outbox' / path.name).read_bytes())
+        self.assertEqual(reply['status'], 'ERROR')
+
+    def test_reply_write_error_is_completed(self):
+        path = self.queue()
+        with mock.patch.object(self.p, 'write_command_reply',
+                               side_effect=[RuntimeError('reply'), None]):
+            self.tick()
+        self.assertEqual(self.p._inbox_status().get('inbox_errors'), 1)
+        self.assert_completed(path)
+
+    def test_status_reports_error_count(self):
+        self.assertEqual(self.p._inbox_status().get('inbox_errors'), 0)
+        path = self.queue()
+        self.tick()
+        reply = json.loads((self.root / 'outbox' / path.name).read_bytes())
+        self.assertEqual(reply['result'].get('inbox_errors'), 0)
+        path = self.queue('b' * 32)
+        with mock.patch.object(self.p, 'write_command_reply',
+                               side_effect=RuntimeError('reply')):
+            self.tick()
+        self.assertEqual(self.p._inbox_status().get('inbox_errors'), 1)
+        path = self.queue('c' * 32)
+        self.tick()
+        reply = json.loads((self.root / 'outbox' / path.name).read_bytes())
+        self.assertEqual(reply['result'].get('inbox_errors'), 1)
+        self.p._STATE_RESET()
+        self.assertEqual(self.p._inbox_status().get('inbox_errors'), 0)
 
 
 if __name__ == '__main__':
