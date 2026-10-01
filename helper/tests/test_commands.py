@@ -89,3 +89,21 @@ def test_unowned_tmp_is_preserved(paths, monkeypatch):
     with pytest.raises(FileExistsError):
         commands.send("status", {}, "helper")
     assert existing.read_bytes() == b"not ours"
+
+
+def test_probe_221_status_fields(paths, monkeypatch):
+    from domus_helper import mcp_server
+
+    result = dict(probe_version="2.2.1", armed_name=None,
+                  inbox_errors=0, inbox_autostart="ZONE:tuning")
+    def handler(row):
+        assert row["command"] == "status"
+        return dict(status="OK", code=None, result=result)
+
+    monkeypatch.setattr(mcp_server, "game_running", lambda: True)
+    with replier(paths, handler):
+        replies = [commands.send("status", {}, "helper", paths=paths),
+                   mcp_server.DomusTools(paths=paths).checked_status()]
+    for reply in replies:
+        assert reply.status == "OK"
+        assert reply.result == result
