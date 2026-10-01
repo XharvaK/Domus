@@ -51,7 +51,7 @@ class AutostartTests(unittest.TestCase):
         self.initialize(self.manager)
         self.assertEqual(len(self.manager_calls), 1, 'manager object-add callback not registered')
         self.assertEqual(self.manager_calls, [(0, self.p._on_zone_added)])
-        source = Path(self.p.__file__).read_text()
+        source = Path(self.p.__file__).read_text(encoding='utf-8')
         self.assertIn('0 is indexed_manager.CallbackTypes.ON_OBJECT_ADD', source)
         self.assertNotIn('getattr(', source)
 
@@ -60,7 +60,7 @@ class AutostartTests(unittest.TestCase):
         self.assertEqual(len(self.zone.callbacks), 1, 'existing zone not registered immediately')
         self.assertEqual(self.zone.callbacks, [(6, self.p._start_inbox_pump)])
         self.assertEqual(self.calls['alarms'], [])
-        self.assertIn('6 is zone_types.ZoneState.RUNNING', Path(self.p.__file__).read_text())
+        self.assertIn('6 is zone_types.ZoneState.RUNNING', Path(self.p.__file__).read_text(encoding='utf-8'))
 
     def test_running_alarm_idempotent_and_second_zone_replaces(self):
         self.start_zone()
@@ -117,7 +117,7 @@ class AutostartTests(unittest.TestCase):
     def test_started_status_reply_and_bootstrap_summary(self):
         self.start_zone()
         root = Path(self.p._TELEMETRY_ROOT)
-        (root/'cmd/inbox/001.json').write_text(json.dumps(command()))
+        (root/'cmd/inbox/001.json').write_text(json.dumps(command()), encoding='utf-8')
         with mock.patch.object(self.p.time, 'time', return_value=1):
             self.p._inbox_tick()
         reply = json.loads((root/'cmd/outbox'/('a'*32+'.json')).read_bytes())
@@ -129,7 +129,7 @@ class AutostartTests(unittest.TestCase):
             bootstrap_from_module_path('fake', '2.2.0', self.p.SIMS_BUILD,
                                        self.p._required_import_summary(),
                                        inbox_autostart='STARTED')
-            row = json.loads(next(Path(directory).glob('*.jsonl')).read_text())
+            row = json.loads(next(Path(directory).glob('*.jsonl')).read_text(encoding='utf-8'))
             self.assertEqual(row['runtime']['inbox_autostart'], 'STARTED')
             self.p.schema.validate_record(row)
             row['runtime']['inbox_autostart'] = 'INVALID'
@@ -140,7 +140,7 @@ class AutostartTests(unittest.TestCase):
         self.require_hooks()
         self.p._on_zone_added(object())
         self.assertEqual(self.calls['alarms'], [])
-        source = Path(self.p.__file__).read_text()
+        source = Path(self.p.__file__).read_text(encoding='utf-8')
         self.assertIn('hasattr(z, "register_callback")', source)
 
     def test_manager_and_current_zone_exceptions_never_escape(self):
@@ -200,7 +200,7 @@ class RejectionTests(unittest.TestCase):
         _, p, calls = load_probe()
         self.assertTrue(p._dispatch_inbox())
         root = Path(p._TELEMETRY_ROOT)/'cmd'
-        (root/'inbox/001.json').write_text(json.dumps(command('start', expires_at_ms=999)))
+        (root/'inbox/001.json').write_text(json.dumps(command('start', expires_at_ms=999)), encoding='utf-8')
         with mock.patch.object(p.time, 'time', return_value=1), \
                 mock.patch.object(p, '_dispatch_start') as start:
             p._inbox_tick()

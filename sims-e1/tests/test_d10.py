@@ -199,7 +199,7 @@ class InboxTests(unittest.TestCase):
         self.put(command())
         with mock.patch.object(self.p.os, 'replace', wraps=os.replace) as replace:
             self.tick()
-        moves=[(Path(c.args[0]), Path(c.args[1])) for c in replace.call_args_list]
+        moves=[(Path(c[0][0]), Path(c[0][1])) for c in replace.call_args_list]
         self.assertEqual(moves, [
             (self.root/'inbox/001.json', self.root/'inbox/001.json.taken'),
             (self.root/'outbox'/('a'*32+'.json.tmp'), self.root/'outbox'/('a'*32+'.json')),
@@ -222,7 +222,7 @@ class InboxTests(unittest.TestCase):
 
 class PowerShellStaticTests(unittest.TestCase):
     def test_source_not_lf_recursive_before_compile(self):
-        text=(ROOT/'tools/build.ps1').read_text()
+        text=(ROOT/'tools/build.ps1').read_text(encoding='utf-8')
         self.assertIn('SOURCE_NOT_LF',text)
         self.assertIn('Get-ChildItem -LiteralPath $sourceRoot -Recurse -Filter *.py -File',text)
         self.assertIn('[System.IO.File]::ReadAllBytes',text)
@@ -230,16 +230,16 @@ class PowerShellStaticTests(unittest.TestCase):
         self.assertLess(text.index('SOURCE_NOT_LF'),text.index('$compileCode'))
 
     def test_zipimport_flags(self):
-        text=(ROOT/'tools/verify.ps1').read_text()
+        text=(ROOT/'tools/verify.ps1').read_text(encoding='utf-8')
         self.assertIn("int.from_bytes(archive.read(name)[4:8], 'little') != 1",text)
 
     def test_cleanup_precedes_pass(self):
-        text=(ROOT/'tools/verify.ps1').read_text()
+        text=(ROOT/'tools/verify.ps1').read_text(encoding='utf-8')
         self.assertGreater(text.index('Record-Pass ("REPRODUCIBLE BUILD_SHA256='),text.index('REPRODUCIBLE temp cleanup:'))
         self.assertIn('if ($reproSucceeded -and -not $failed)',text)
 
     def test_optional_nested_host(self):
-        text=(ROOT/'tools/verify.ps1').read_text()
+        text=(ROOT/'tools/verify.ps1').read_text(encoding='utf-8')
         self.assertIn('$verifyArgs += @("-HostPythonPath", $HostPythonPath)',text)
         self.assertIn('& $powershellPath @verifyArgs',text)
         guard='if (-not [string]::IsNullOrWhiteSpace($HostPythonPath)) {'
@@ -251,9 +251,9 @@ class RemainingContractsTests(unittest.TestCase):
     def test_version_and_exact_a12(self):
         for path in ('src/ashley_e1/__init__.py','src/ashley_e1/schema.py',
                      'tools/build.ps1','tools/verify.ps1','tools/install.ps1','tools/remove.ps1','README.md'):
-            self.assertIn('2.2.0',(ROOT/path).read_text(),path)
+            self.assertIn('2.2.0',(ROOT/path).read_text(encoding='utf-8'),path)
         expected="| A12 | §4 harness inputs are the Owner's console commands; §5 telemetry schema v2 | Probe 2.2.0, telemetry schema v3: a local command inbox (`AshleyE1Telemetry/cmd/inbox`, single-use ids, ≤ 60 s expiry, closed vocabulary and argument shapes) is a harness input path equivalent to the console. Commands run through the same dispatchers; actions keep the `EXPERIMENT` origin; the issuer (`agent:<name>`, `helper`, `console`) is recorded in a `command_event` row and the reply file as attribution: an agent acts on the Owner's behalf. `sit_trial` is prepare then sit inside one call, with admission unchanged. Nothing in the inbox can do what the console cannot. Schema v3 also adds `RELEASED_ON_STOP`. Console replies use `cheat_output`, because `sims4.commands.output` is a no-op in release builds. The pump starts when a zone reaches RUNNING, registered through the zone manager's object-add callback without injection, or by the console command `ashley_e1.inbox`. | Plan Phase 2 (agent-run LAB, no 30 s human token race); R-H2 (vanilla `commands.py` bytecode: `output` has an empty body); D9b (H4 deferred to one schema bump). |"
-        plan=(ROOT.parent/'docs/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md').read_text().splitlines()
+        plan=(ROOT.parent/'docs/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md').read_text(encoding='utf-8').splitlines()
         index=next(i for i,line in enumerate(plan) if line.startswith('| A11 |'))
         self.assertEqual(plan[index+1],expected)
 
@@ -262,9 +262,9 @@ class RemainingContractsTests(unittest.TestCase):
         import check_guards
         self.assertIn('cmdbox',check_guards.PRODUCTION_MODULES)
         self.assertIn('cmdbox.py',check_guards.PURE_FILES)
-        self.assertIn('"cmdbox"',(ROOT/'tools/build.ps1').read_text())
+        self.assertIn('"cmdbox"',(ROOT/'tools/build.ps1').read_text(encoding='utf-8'))
         for path in (ROOT/'src').rglob('*.py'):
-            self.assertEqual(check_guards.scan_text(path.read_text(),str(path)),[])
+            self.assertEqual(check_guards.scan_text(path.read_text(encoding='utf-8'),str(path)),[])
 
     def test_sit_trial_real_admission_and_experiment_origin(self):
         from test_e2 import ControlFlowTests, CHAIR

@@ -458,7 +458,7 @@ class RegistryTests(unittest.TestCase):
         if not os.path.isfile(path):
             self.skipTest("missing T1 evidence file: %s" % path)
         rows = []
-        with open(path) as handle:
+        with open(path, encoding='utf-8') as handle:
             for line in handle:
                 line = line.strip()
                 if line:
@@ -509,7 +509,7 @@ class RegistryTests(unittest.TestCase):
             self.skipTest("missing N5 evidence file: %s" % path)
         chair = "118245043789434055"
         learner = self.reg.SignatureLearner()
-        with open(path) as handle:
+        with open(path, encoding='utf-8') as handle:
             for line in handle:
                 line = line.strip()
                 if not line:
