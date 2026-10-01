@@ -259,7 +259,9 @@ def _validate_load_disabled_runtime(runtime):
              "runtime.perf_counter")
     if "inbox_autostart" in runtime:
         _require(runtime["inbox_autostart"] in
-                 ("STARTED", "MANAGER_UNAVAILABLE", "NOT_STARTED"),
+                 ("STARTED", "MANAGER_UNAVAILABLE", "NOT_STARTED", "CONSOLE",
+                  "ZONE:import", "ZONE:tuning", "ZONE:posture",
+                  "ZONE:household", "ZONE:transition", "ZONE:manager"),
                  "runtime.inbox_autostart")
     required_imports = runtime.get("required_imports")
     _require(isinstance(required_imports, dict),

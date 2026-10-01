@@ -91,7 +91,7 @@ class AutostartTests(unittest.TestCase):
         self.assertIs(self.p._INBOX_HANDLE, handle)
         self.assertEqual(len(self.calls['alarms']), 1)
         self.assertEqual(self.calls['cancelled'], [])
-        self.assertEqual(self.calls['outputs'][-1], ('INBOX ON', 73))
+        self.assertEqual(self.calls['outputs'][-1], ('INBOX ON (already, tuning)', 73))
 
     def test_manager_unavailable_status_bootstrap_and_fallback(self):
         self.initialize()
@@ -99,14 +99,14 @@ class AutostartTests(unittest.TestCase):
                          'MANAGER_UNAVAILABLE', 'missing manager-unavailable status')
         self.assertEqual(self.boot[-1]['inbox_autostart'], 'MANAGER_UNAVAILABLE')
         self.assertTrue(self.p._dispatch_inbox())
-        self.assertEqual(self.p._inbox_status()['inbox_autostart'], 'STARTED')
+        self.assertEqual(self.p._inbox_status()['inbox_autostart'], 'CONSOLE')
 
     def test_existing_zone_registered_even_without_manager(self):
         self.initialize(None, self.zone)
         self.assertEqual(len(self.zone.callbacks), 1, 'existing zone skipped without manager')
         self.assertEqual(self.boot[-1]['inbox_autostart'], 'MANAGER_UNAVAILABLE')
         self.assertTrue(self.zone.callbacks[0][1]())
-        self.assertEqual(self.p._inbox_status()['inbox_autostart'], 'STARTED')
+        self.assertEqual(self.p._inbox_status()['inbox_autostart'], 'ZONE:tuning')
 
     def test_not_started_status_and_bootstrap(self):
         self.initialize(self.manager)
@@ -121,16 +121,16 @@ class AutostartTests(unittest.TestCase):
         with mock.patch.object(self.p.time, 'time', return_value=1):
             self.p._inbox_tick()
         reply = json.loads((root/'cmd/outbox'/('a'*32+'.json')).read_bytes())
-        self.assertEqual(reply['result']['inbox_autostart'], 'STARTED')
+        self.assertEqual(reply['result']['inbox_autostart'], 'ZONE:tuning')
         # Exercise the actual bootstrap writer and schema, not just its call arguments.
         from ashley_e1.writer import bootstrap_from_module_path
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch('ashley_e1.writer.derive_telemetry_root', return_value=directory):
             bootstrap_from_module_path('fake', '2.2.0', self.p.SIMS_BUILD,
                                        self.p._required_import_summary(),
-                                       inbox_autostart='STARTED')
+                                       inbox_autostart='ZONE:tuning')
             row = json.loads(next(Path(directory).glob('*.jsonl')).read_text(encoding='utf-8'))
-            self.assertEqual(row['runtime']['inbox_autostart'], 'STARTED')
+            self.assertEqual(row['runtime']['inbox_autostart'], 'ZONE:tuning')
             self.p.schema.validate_record(row)
             row['runtime']['inbox_autostart'] = 'INVALID'
             with self.assertRaises(ValueError):
