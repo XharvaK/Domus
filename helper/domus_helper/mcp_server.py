@@ -1,0 +1,160 @@
+"""Domus tools, served exclusively over the SDK's stdio transport."""
+import csv
+import io
+import os
+import subprocess
+from dataclasses import asdict
+
+from mcp.server.mcpserver import MCPServer
+
+from . import commands, telemetry as telemetry_reader
+from .paths import Paths
+from .vendor.cmdbox import valid_issuer
+
+LAB_NAMES = {"LAB_E1", "LAB_E1_FORK"}
+ACTUATING = {"arm", "start", "prepare", "sit", "sit_trial", "pause", "release"}
+
+
+class SafetyError(RuntimeError):
+    pass
+
+
+class CommandFailed(RuntimeError):
+    def __init__(self, reply):
+        self.reply = reply
+        super().__init__(f"{reply.status}: {reply.code}")
+
+
+def game_running():
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq TS4_x64.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=5, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return any(row and row[0].casefold() == "ts4_x64.exe"
+               for row in csv.reader(io.StringIO(result.stdout)))
+
+
+class DomusTools:
+    def __init__(self, *, paths=None):
+        self.paths = paths or Paths.from_env()
+        self.issuer = "agent:" + os.environ.get("DOMUS_AGENT_NAME", "mcp")
+        if not valid_issuer(self.issuer):
+            raise ValueError("invalid DOMUS_AGENT_NAME")
+
+    def send(self, command, args):
+        reply = commands.send(command, args, self.issuer, paths=self.paths)
+        if reply.status != "OK":
+            raise CommandFailed(reply)
+        return reply
+
+    def checked_status(self):
+        if not game_running():
+            raise SafetyError("TS4_x64.exe is not running")
+        return self.send("status", {})
+
+    def command(self, name, args=None):
+        status = self.checked_status()
+        if name == "status":
+            return status
+        if name == "arm":
+            if args != {"name": "lab_e1"} and args != {"name": "lab_e1_fork"}:
+                raise SafetyError("arm requires lab_e1 or lab_e1_fork")
+        elif name in ACTUATING and status.result.get("armed_name") not in LAB_NAMES:
+            raise SafetyError("actuation requires LAB_E1 or LAB_E1_FORK")
+        reply = self.send(name, args or {})
+        if name == "arm":
+            armed = self.checked_status()
+            if armed.result.get("armed_name") not in LAB_NAMES:
+                raise SafetyError("arming did not establish a LAB save")
+        return reply
+
+
+server = MCPServer("Domus")
+
+
+def tools():
+    return DomusTools()
+
+
+@server.tool()
+def status() -> dict:
+    return asdict(tools().command("status"))
+
+
+@server.tool()
+def arm(save: str) -> dict:
+    return asdict(tools().command("arm", {"name": save}))
+
+
+@server.tool()
+def start() -> dict:
+    return asdict(tools().command("start"))
+
+
+@server.tool()
+def stop() -> dict:
+    return asdict(tools().command("stop"))
+
+
+@server.tool()
+def disarm() -> dict:
+    return asdict(tools().command("disarm"))
+
+
+@server.tool()
+def prepare(object_id: str) -> dict:
+    return asdict(tools().command("prepare", {"object_id": object_id}))
+
+
+@server.tool()
+def sit(token: str) -> dict:
+    return asdict(tools().command("sit", {"token": token}))
+
+
+@server.tool()
+def sit_trial(object_id: str) -> dict:
+    return asdict(tools().command("sit_trial", {"object_id": object_id}))
+
+
+@server.tool()
+def pause() -> dict:
+    return asdict(tools().command("pause"))
+
+
+@server.tool()
+def release() -> dict:
+    return asdict(tools().command("release"))
+
+
+@server.tool()
+def verdicts(n: int = 5) -> list[dict]:
+    client = tools()
+    client.checked_status()
+    return [r for r in telemetry_reader.tail(["experiment_event"], 10000, paths=client.paths)
+            if r["e2"]["phase"] == "VERDICT"][-_count(n):]
+
+
+def _count(n):
+    if type(n) is not int or not 1 <= n <= 10000:
+        raise ValueError("n must be between 1 and 10000")
+    return n
+
+
+@server.tool()
+def telemetry(kinds: list[str], n: int = 20) -> list[dict]:
+    client = tools()
+    client.checked_status()
+    return telemetry_reader.tail(kinds, n, paths=client.paths)
+
+
+@server.tool()
+def lineage() -> list[dict]:
+    client = tools()
+    client.checked_status()
+    return telemetry_reader.lineage(paths=client.paths)
+
+
+if __name__ == "__main__":
+    server.run(transport="stdio")
