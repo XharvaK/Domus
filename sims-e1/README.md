@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.0.0 (E2)
+## Current build: 2.0.2 (E2)
 
-The source is version `2.0.0` (`src/ashley_e1/__init__.py`,
+The source is version `2.0.2` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 2). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.0.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.0.2 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC.
 
 Owner commands (all Owner-typed; the probe issues nothing on its own):
@@ -26,8 +26,8 @@ Owner commands (all Owner-typed; the probe issues nothing on its own):
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.0.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.0.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.0.2
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.0.2
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

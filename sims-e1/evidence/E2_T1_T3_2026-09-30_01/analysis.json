@@ -1,0 +1,83 @@
+{
+  "copy_time": "2026-09-30T20:59:04.6539314+03:00",
+  "rows": 951,
+  "bytes": 1742936,
+  "changes": [],
+  "removed": [],
+  "push_source": [
+    "InteractionSource.SCRIPT_WITH_USER_INTENT"
+  ],
+  "foreign_roots": [
+    {
+      "interaction_id": "7226",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7244",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7281",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7305",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    },
+    {
+      "interaction_id": "7313",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "target_id": "118245043789434055"
+    }
+  ],
+  "seated_rows": 62
+}

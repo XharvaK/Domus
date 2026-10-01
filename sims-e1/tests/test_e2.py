@@ -130,6 +130,55 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.check(self.view(entries=[_entry("7", AUTO)]), own=("7",)),
                          A.BODY_BUSY)
 
+    def test_autonomy_targeting_chair_is_body_busy_and_in_fingerprint(self):
+        A = self.adm
+        idle = self.view(entries=[_entry("2", AUTO)])
+        self.assertIsNone(self.check(idle))
+        targeting = self.view(entries=[_entry("2", AUTO, target=CHAIR)])
+        self.assertEqual(self.check(targeting), A.BODY_BUSY)
+        posture = self.view(entries=[_entry("4", POSTURE, "RUNNING", CHAIR)])
+        self.assertIsNone(self.check(posture))
+        self.assertNotEqual(A.fingerprint(idle, CHAIR), A.fingerprint(targeting, CHAIR))
+        self.assertEqual(A.fingerprint(idle, CHAIR), A.fingerprint(posture, CHAIR))
+
+    def test_autonomy_on_chair_between_prepare_and_sit_is_stale(self):
+        A = self.adm
+        book = A.TokenBook(token_factory=lambda: "a" * 16)
+        clean = self.view()
+        token, code = book.issue(CHAIR, clean, 0.0)
+        self.assertIsNone(code)
+        bound, code = book.consume(token, 1.0)
+        self.assertIsNone(code)
+        fresh = self.view(entries=list(clean["entries"]) + [_entry("9", AUTO, target=CHAIR)])
+        sig = {CHAIR: "sit"}
+        self.assertEqual(A.admit(bound, fresh, CHAIR, frozenset(), sig, set()),
+                         A.STALE_SNAPSHOT)
+
+    def test_paused_or_missing_object_on_sit_is_stale_snapshot(self):
+        A = self.adm
+        book = A.TokenBook(token_factory=iter(["%016x" % n for n in range(4)]).__next__)
+        view = self.view()
+        sig = {CHAIR: "sit"}
+        excluded = frozenset()
+        token, _ = book.issue(CHAIR, view, 0.0)
+        bound, code = book.consume(token, 1.0)
+        self.assertIsNone(code)
+        self.assertEqual(A.admit(bound, self.view(paused=True), CHAIR, excluded, sig, set()),
+                         A.STALE_SNAPSHOT)
+        token, _ = book.issue(CHAIR, view, 2.0)
+        bound, _ = book.consume(token, 3.0)
+        vanished = self.view(object={"exists": False, "sit_offer_count": 0})
+        self.assertEqual(A.admit(bound, vanished, CHAIR, excluded, sig, set()),
+                         A.STALE_SNAPSHOT)
+
+    def test_token_expiry_and_replay_stay_token_outcomes(self):
+        A = self.adm
+        book = A.TokenBook(token_factory=iter(["%016x" % n for n in range(4)]).__next__)
+        view = self.view()
+        token, _ = book.issue(CHAIR, view, 0.0)
+        self.assertEqual(book.consume(token, 31.0), (None, A.TOKEN_EXPIRED))
+        self.assertEqual(book.consume(token, 32.0), (None, A.REPLAY_REJECTED))
+
     def test_tokens_single_use_expiry_replay_and_stale(self):
         A = self.adm
         book = A.TokenBook(token_factory=iter(["%016x" % n for n in range(10)]).__next__)
@@ -168,9 +217,9 @@ class RegistryTests(unittest.TestCase):
     def setUp(self):
         _, _, self.reg, _, _ = _load_pure()
 
-    def experiment(self, signature="sit"):
+    def experiment(self, signature="sit", continuation=()):
         return self.reg.Experiment("e-1", "t" * 16, CHAIR, "s", "100", 0,
-                                   signature, ["1", "2"])
+                                   signature, ["1", "2"], continuation=continuation)
 
     def test_success_ladder_passes_only_after_maintained(self):
         exp = self.experiment()
@@ -201,6 +250,17 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(exp.claims["ATTRIBUTED"])
         exp = self.experiment()
         exp.observe(_row(1, [ours, _entry("300", AUTO, target=CHAIR)]))
+        self.assertEqual(exp.foreign_roots, ["300"])
+
+    def test_baseline_autonomy_on_chair_blocks_attributed(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        auto = _entry("300", AUTO, target=CHAIR)
+        exp = self.reg.Experiment("e-1", "t" * 16, CHAIR, "s", "100", 0, "sit",
+                                  ["1", "2", "300"])
+        exp.observe(_row(1, [ours, auto]))
+        self.assertTrue(exp.claims["STARTED"])
+        exp.observe(_row(2, [ours, auto], "sit", CHAIR))
+        self.assertFalse(exp.claims["ATTRIBUTED"])
         self.assertEqual(exp.foreign_roots, ["300"])
 
     def test_known_baseline_and_autonomy_idles_are_not_foreign(self):
@@ -250,6 +310,215 @@ class RegistryTests(unittest.TestCase):
         stale = self.reg.SignatureLearner()
         stale.observe(_row(1, [click]), set())
         self.assertIsNone(stale.observe(_row(40, [], "sitSingle", CHAIR), set()))
+
+    def test_learner_learns_queued_autonomy_continuation_once(self):
+        learner = self.reg.SignatureLearner()
+        click = _entry("50", PIE, target=CHAIR, affordance_id="31564")
+        before = _entry("40", AUTO, "QUEUED", CHAIR, "14244")
+        running = _entry("60", AUTO, "RUNNING", CHAIR, "99999")
+        queued = _entry("70", AUTO, "QUEUED", CHAIR, "14244")
+        rerun = _entry("80", AUTO, "QUEUED", CHAIR, "99999")
+        self.assertIsNone(learner.observe(_row(1, [click, before]), set()))
+        self.assertEqual(learner.observe(_row(2, [], "sit", CHAIR), set()),
+                         (CHAIR, "sit"))
+        self.assertEqual(learner.continuation_events, [])
+        learner.observe(_row(3, [before, running, queued], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation_events, [])
+        learner.observe(_row(4, [rerun], "sit", CHAIR), set())
+        learner.observe(_row(33, [queued], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], {"14244"})
+        self.assertEqual(learner.continuation_events, [(CHAIR, "14244")])
+        learner.observe(_row(34, [queued], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation_events, [])
+
+    def _seat(self, learner, at=2.0):
+        click = _entry("50", PIE, target=CHAIR, affordance_id="31564")
+        self.assertIsNone(learner.observe(_row(at - 1, [click]), set()))
+        self.assertEqual(learner.observe(_row(at, [], "sit", CHAIR), set()),
+                         (CHAIR, "sit"))
+        self.assertEqual(learner.continuation_events, [])
+
+    def test_affordance_first_seen_after_deadline_is_not_learned(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        late = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        learner.observe(_row(33, [late], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+
+    def test_running_after_deadline_does_not_remove_in_window_candidate(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        queued = _entry("70", AUTO, "QUEUED", CHAIR, "14244")
+        learner.observe(_row(3, [queued], "sit", CHAIR), set())
+        late = _entry("70", AUTO, "RUNNING", CHAIR, "14244")
+        learner.observe(_row(33, [late], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], {"14244"})
+        self.assertEqual(learner.continuation_events, [(CHAIR, "14244")])
+
+    def test_queued_in_incomplete_row_before_seating_is_not_learned(self):
+        learner = self.reg.SignatureLearner()
+        click = _entry("50", PIE, target=CHAIR, affordance_id="31564")
+        early = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        self.assertIsNone(learner.observe(_row(1, [click]), set()))
+        learner.observe(_row(1.5, [early], complete=False), set())
+        self.assertEqual(learner.observe(_row(2, [], "sit", CHAIR), set()),
+                         (CHAIR, "sit"))
+        learner.observe(_row(3, [early], "sit", CHAIR), set())
+        learner.observe(_row(33, [], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+
+    def test_running_in_incomplete_row_excludes_affordance(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        queued = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        running = _entry("70", AUTO, "RUNNING", CHAIR, "88888")
+        learner.observe(_row(3, [queued], "sit", CHAIR), set())
+        learner.observe(_row(4, [running], "sit", CHAIR, complete=False), set())
+        self.assertEqual(learner.continuation_events, [])
+        learner.observe(_row(33, [], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+
+    def test_departure_in_incomplete_row_closes_window(self):
+        learner = self.reg.SignatureLearner()
+        self._seat(learner)
+        learner.observe(_row(4, [], "stand", SOFA, complete=False), set())
+        self.assertEqual(learner.continuation_events, [(CHAIR, "")])
+        later = _entry("70", AUTO, "QUEUED", CHAIR, "88888")
+        learner.observe(_row(5, [later], "sit", CHAIR), set())
+        self.assertEqual(learner.continuation[CHAIR], set())
+        self.assertEqual(learner.continuation_events, [])
+
+    def test_continuation_queued_after_seating_passes(self):
+        ours_q = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "QUEUED", CHAIR)
+        ours_r = dict(ours_q, membership="RUNNING")
+        idle = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours_q]))
+        exp.observe(_row(2, [ours_r], "sit", CHAIR))
+        exp.observe(_row(3, [ours_r, idle], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, [])
+        self.assertEqual(exp.continuation_entries, ["200"])
+        self.assertTrue(exp.claims["ATTRIBUTED"])
+        exp.observe(_row(12.5, [ours_r, idle], "sit", CHAIR))
+        self.assertTrue(exp.claims["MAINTAINED_10S"])
+        self.assertEqual(exp.close(), self.reg.PASS)
+
+    def test_empty_continuation_keeps_queued_autonomy_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        idle = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        exp = self.experiment(continuation=())
+        exp.observe(_row(1, [ours, idle], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        self.assertFalse(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.close(), self.reg.OUTCOME_UNKNOWN)
+
+    def test_continuation_affordance_before_seating_is_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        idle = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours, idle]))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        exp.observe(_row(2, [ours, idle], "sit", CHAIR))
+        self.assertFalse(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.continuation_entries, [])
+
+    def test_continuation_entry_later_running_becomes_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        queued = _entry("200", AUTO, "QUEUED", CHAIR, "14244")
+        running = dict(queued, membership="RUNNING")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours], "sit", CHAIR))
+        exp.observe(_row(2, [ours, queued], "sit", CHAIR))
+        self.assertTrue(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.continuation_entries, ["200"])
+        exp.observe(_row(3, [ours, running], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        self.assertEqual(exp.continuation_entries, [])
+        exp.observe(_row(13, [ours, running], "sit", CHAIR))
+        self.assertFalse(exp.claims["MAINTAINED_10S"])
+
+    def test_non_continuation_autonomy_after_seating_is_foreign(self):
+        ours = _entry("100", "InteractionSource.SCRIPT_WITH_USER_INTENT", "RUNNING", CHAIR)
+        other = _entry("200", AUTO, "QUEUED", CHAIR, "99999")
+        exp = self.experiment(continuation=("14244",))
+        exp.observe(_row(1, [ours, other], "sit", CHAIR))
+        self.assertEqual(exp.foreign_roots, ["200"])
+        self.assertFalse(exp.claims["ATTRIBUTED"])
+        self.assertEqual(exp.close(), self.reg.OUTCOME_UNKNOWN)
+
+    def test_t1_evidence_replay_continuation_and_empty_set(self):
+        path = os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
+            "sims-e1", "evidence", "E2_T1_T3_2026-09-30_01",
+            "ashley_e1_863ffab5-edd0-44c2-b74b-5ce9b2d352a3.jsonl")
+        if not os.path.isfile(path):
+            self.skipTest("missing T1 evidence file: %s" % path)
+        rows = []
+        with open(path) as handle:
+            for line in handle:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+        chair = "118245043789434055"
+        pushed = None
+        before = None
+        after = []
+        for row in rows:
+            if row.get("event_kind") == "presence_snapshot":
+                if pushed is None:
+                    before = row
+                else:
+                    after.append(row)
+            e2 = row.get("e2") or {}
+            if (row.get("event_kind") == "experiment_event" and
+                    e2.get("phase") == "PUSHED" and
+                    e2.get("interaction_id") == "7223"):
+                pushed = row
+        self.assertIsNotNone(pushed)
+        baseline = [e.get("interaction_id")
+                    for e in (before.get("interactions") or {}).get("observed") or []]
+        def run(continuation):
+            exp = self.reg.Experiment(
+                "t1", "t" * 16, chair, "s", "7223", pushed["monotonic_ns"],
+                "sit", baseline, continuation=continuation)
+            for row in after:
+                exp.observe(row)
+                if exp.closed:
+                    break
+            return exp
+        attributed = run(frozenset(("14244",)))
+        self.assertTrue(attributed.claims["ATTRIBUTED"])
+        self.assertTrue(attributed.claims["MAINTAINED_10S"])
+        self.assertEqual(attributed.verdict, self.reg.PASS)
+        self.assertEqual(len(attributed.continuation_entries), 9)
+        unknown = run(frozenset())
+        self.assertEqual(unknown.verdict, self.reg.OUTCOME_UNKNOWN)
+        self.assertEqual(len(unknown.foreign_roots), 9)
+        self.assertEqual(unknown.continuation_entries, [])
+
+    def test_n5_evidence_learns_sit_and_continuation(self):
+        path = os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
+            "sims-e1", "evidence", "E2_N5_BOOTSTRAP_2026-09-30_02",
+            "ashley_e1_863ffab5-edd0-44c2-b74b-5ce9b2d352a3.jsonl")
+        if not os.path.isfile(path):
+            self.skipTest("missing N5 evidence file: %s" % path)
+        chair = "118245043789434055"
+        learner = self.reg.SignatureLearner()
+        with open(path) as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("event_kind") != "presence_snapshot":
+                    continue
+                learner.observe(row, set())
+        self.assertEqual(learner.signatures.get(chair), "sit")
+        self.assertEqual(learner.continuation.get(chair), {"14244"})
 
 
 class _Posture:
@@ -488,6 +757,24 @@ class ControlFlowTests(unittest.TestCase):
         for row in self.rows():
             self.package.schema.validate_record(row)
 
+    def test_verdict_detail_contains_continuation_count(self):
+        self.arm_start_poll(self.continuing())
+        self.learn_signature()
+        self.assertTrue(self.probe._dispatch_e2_prepare(CHAIR, _session_id=1))
+        token = self.e2("experiment_event")[-1]["token"]
+        self.assertTrue(self.probe._dispatch_e2_sit(token, _session_id=1))
+        ours = types.SimpleNamespace(id=777, guid64=31564, affordance="sit",
+                                     target=types.SimpleNamespace(id=int(CHAIR)),
+                                     context=types.SimpleNamespace(
+                                         source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
+        self.sim.si_state = [ours]
+        self.sim.posture = _Posture("sitSingle", types.SimpleNamespace(id=int(CHAIR)))
+        self.tick()
+        self.assertTrue(self.probe._cmd_stop())
+        verdict = self.e2("experiment_event")[-1]
+        self.assertEqual(verdict["phase"], "VERDICT")
+        self.assertIn("continuation=", verdict.get("detail"))
+
     def test_push_failure_never_touches_interaction_and_opens_no_experiment(self):
         self.arm_start_poll(self.continuing())
         self.learn_signature()
@@ -522,8 +809,31 @@ class ControlFlowTests(unittest.TestCase):
         token = self.e2("experiment_event")[-1]["token"]
         self.sim.posture = _Posture("sitSingle", types.SimpleNamespace(id=int(CHAIR)))
         self.assertFalse(self.probe._dispatch_e2_sit(token, _session_id=1))
-        self.assertEqual(self.e2("experiment_event")[-1]["code"], "STALE_SNAPSHOT")
+        reject = self.e2("experiment_event")[-1]
+        self.assertEqual(reject["code"], "STALE_SNAPSHOT")
+        self.assertEqual(reject["detail"], "PRECONDITION_PRESENT")
         self.assertEqual(self.pushes, [])
+
+    def test_prepare_two_selectable_sims_is_body_unavailable(self):
+        self.arm_start_poll(self.continuing())
+        self.learn_signature()
+        sim = self.sim
+
+        class SimInfo:
+            is_selectable = True
+
+            def __init__(self, sim_id):
+                self.id = sim_id
+
+            def get_sim_instance(self, allow_hidden_flags=None):
+                return sim
+
+        self.services.sim_info_manager = lambda: types.SimpleNamespace(
+            get_all=lambda: [SimInfo(1), SimInfo(2)])
+        self.assertFalse(self.probe._dispatch_e2_prepare(CHAIR, _session_id=1))
+        event = self.e2("experiment_event")[-1]
+        self.assertEqual(event["phase"], "PREPARE_REJECT")
+        self.assertEqual(event["code"], "BODY_UNAVAILABLE")
 
     def test_finishing_callback_sets_finished_with_game_value(self):
         self.arm_start_poll(self.continuing())
@@ -562,7 +872,7 @@ class WriterLedgerTests(unittest.TestCase):
 
     def test_ledger_loads_appends_and_survives_restart(self):
         with tempfile.TemporaryDirectory() as temp:
-            sink = self.writer.TelemetryWriter(temp, "u", "2.0.0", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "u", "2.0.2", "1.128.90.1030")
             self.assertTrue(sink.try_put(self.lineage_row()))
             self.assertTrue(sink.try_put(self.lineage_row("CLASSIFIED")))
             sink.signal_close("DISARM_CLEAN")
@@ -570,7 +880,7 @@ class WriterLedgerTests(unittest.TestCase):
             state, records = sink.ledger_snapshot()
             self.assertEqual(state, "OK")
             self.assertEqual([r["record"] for r in records], ["SAVE_OBSERVED"])
-            again = self.writer.TelemetryWriter(temp, "v", "2.0.0", "1.128.90.1030")
+            again = self.writer.TelemetryWriter(temp, "v", "2.0.2", "1.128.90.1030")
             again.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(again.wait_idle(5.0))
             state, records = again.ledger_snapshot()
@@ -582,13 +892,13 @@ class WriterLedgerTests(unittest.TestCase):
             path = os.path.join(temp, self.writer.LEDGER_FILENAME)
             with open(path, "wb") as handle:
                 handle.write(b"{not json\n")
-            sink = self.writer.TelemetryWriter(temp, "u", "2.0.0", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "u", "2.0.2", "1.128.90.1030")
             sink.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(sink.wait_idle(5.0))
             self.assertEqual(sink.ledger_snapshot()[0], "UNREADABLE")
             with open(path, "wb") as handle:
                 handle.write(b"x" * (self.writer.MAX_LEDGER_BYTES + 1))
-            sink = self.writer.TelemetryWriter(temp, "v", "2.0.0", "1.128.90.1030")
+            sink = self.writer.TelemetryWriter(temp, "v", "2.0.2", "1.128.90.1030")
             sink.signal_close("ARMED_NEVER_STARTED")
             self.assertTrue(sink.wait_idle(5.0))
             self.assertEqual(sink.ledger_snapshot()[0], "TOO_LARGE")

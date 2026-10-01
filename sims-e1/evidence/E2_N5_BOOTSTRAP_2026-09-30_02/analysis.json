@@ -1,0 +1,308 @@
+{
+  "copy_time": "2026-09-30T20:46:34.3269869+03:00",
+  "snapshot_bytes": 1278606,
+  "rows": 697,
+  "sequence_gaps": 0,
+  "monotonic_regressions": 11,
+  "content_changes": [
+    "Slot_00000002.save",
+    "Slot_00000002.save.ver0",
+    "Slot_00000002.save.ver1",
+    "Slot_00000002.save.ver2",
+    "Slot_00000002.save.ver3",
+    "Slot_00000002.save.ver4"
+  ],
+  "outside_lab_changes": [],
+  "events": [
+    {
+      "wall_timestamp_ms": 1790789563088,
+      "event_kind": "lineage_event",
+      "e2": {
+        "record": "LOAD_OBSERVED",
+        "guid": "2773024768",
+        "slot_id": "2",
+        "sim_id": "118245043779534861",
+        "ticks": 1027738,
+        "loaded_from_slot_id": null,
+        "lineage_class": null,
+        "session_uuid": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3"
+      }
+    },
+    {
+      "wall_timestamp_ms": 1790789563089,
+      "event_kind": "lineage_event",
+      "e2": {
+        "record": "CLASSIFIED",
+        "guid": "2773024768",
+        "slot_id": "2",
+        "sim_id": "118245043779534861",
+        "ticks": 1027738,
+        "loaded_from_slot_id": null,
+        "lineage_class": "FOREIGN_OR_UNKNOWN",
+        "session_uuid": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3"
+      }
+    },
+    {
+      "wall_timestamp_ms": 1790789707550,
+      "event_kind": "lineage_event",
+      "e2": {
+        "record": "SAVE_OBSERVED",
+        "guid": "2773024768",
+        "slot_id": "2",
+        "sim_id": "118245043779534861",
+        "ticks": 1286977,
+        "loaded_from_slot_id": "2",
+        "lineage_class": null,
+        "session_uuid": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3"
+      }
+    },
+    {
+      "wall_timestamp_ms": 1790789707550,
+      "event_kind": "lineage_event",
+      "e2": {
+        "record": "CLASSIFIED",
+        "guid": "2773024768",
+        "slot_id": "2",
+        "sim_id": "118245043779534861",
+        "ticks": 1286977,
+        "loaded_from_slot_id": null,
+        "lineage_class": "CONTINUES_LAST_SAVE",
+        "session_uuid": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3"
+      }
+    },
+    {
+      "wall_timestamp_ms": 1790789756218,
+      "event_kind": "experiment_event",
+      "e2": {
+        "phase": "SIGNATURE_LEARNED",
+        "code": null,
+        "experiment_id": null,
+        "object_id": "118245043789434055",
+        "token": null,
+        "interaction_id": null,
+        "claims": null,
+        "finishing_type": null,
+        "detail": "sit"
+      }
+    },
+    {
+      "wall_timestamp_ms": 1790789935768,
+      "event_kind": "lineage_event",
+      "e2": {
+        "record": "DESIGNATED_BODY",
+        "guid": "2773024768",
+        "slot_id": "2",
+        "sim_id": "118245043779534861",
+        "ticks": 1515124,
+        "loaded_from_slot_id": null,
+        "lineage_class": "CONTINUES_LAST_SAVE",
+        "session_uuid": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3"
+      }
+    },
+    {
+      "wall_timestamp_ms": 1790789935768,
+      "event_kind": "experiment_event",
+      "e2": {
+        "phase": "PREPARE_OK",
+        "code": null,
+        "experiment_id": null,
+        "object_id": "118245043789434055",
+        "token": "5f3be50a1fc84c0b",
+        "interaction_id": null,
+        "claims": null,
+        "finishing_type": null,
+        "detail": null
+      }
+    }
+  ],
+  "sit_rows": 108,
+  "sit_first": 1790789756217,
+  "sit_last": 1790789865765,
+  "sit_observed_seconds": 109.548,
+  "owner_sit_first": {
+    "wall": 1790789755197,
+    "interaction": {
+      "entry_key": "0x7ff4cb9aad08",
+      "interaction_id": "5620",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.PIE_MENU",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  "owner_sit_last": {
+    "wall": 1790789865765,
+    "interaction": {
+      "entry_key": "0x7ff4cb9aad08",
+      "interaction_id": "5620",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.PIE_MENU",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  "push_claim_count": 0,
+  "script_intent_after_prepare": 0,
+  "chair_posture_after_prepare": 0,
+  "autonomy_unique": [
+    {
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434044"
+    },
+    {
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055"
+    },
+    {
+      "affordance_id": "14310",
+      "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+      "target_id": null
+    },
+    {
+      "affordance_id": "13481",
+      "affordance_text": "<class 'sims4.tuning.instances.idle_Bladder'>",
+      "target_id": null
+    },
+    {
+      "affordance_id": "25717",
+      "affordance_text": "<class 'sims4.tuning.instances.Emotion_Idle'>",
+      "target_id": null
+    },
+    {
+      "affordance_id": "9325",
+      "affordance_text": "<class 'sims4.tuning.instances.Idle_Trait_Cheerful'>",
+      "target_id": null
+    },
+    {
+      "affordance_id": "13993",
+      "affordance_text": "<class 'sims4.tuning.instances.sim_BladderDistress'>",
+      "target_id": null
+    },
+    {
+      "affordance_id": "14427",
+      "affordance_text": "<class 'sims4.tuning.instances.toilet-use-sitting'>",
+      "target_id": "118245043789434022"
+    },
+    {
+      "affordance_id": "40413",
+      "affordance_text": "<class 'sims4.tuning.instances.Toilet_Use_Action'>",
+      "target_id": "118245043789434022"
+    },
+    {
+      "affordance_id": "14426",
+      "affordance_text": "<class 'sims4.tuning.instances.toilet-flush'>",
+      "target_id": "118245043789434022"
+    },
+    {
+      "affordance_id": "14241",
+      "affordance_text": "<class 'sims4.tuning.instances.sink_washHands'>",
+      "target_id": "118245043789434023"
+    }
+  ],
+  "last_row": {
+    "schema_version": 2,
+    "telemetry_session_id": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3",
+    "boot_id": null,
+    "written_sequence": 696,
+    "wall_timestamp_ms": 1790790255315,
+    "monotonic_ns": 1050785987200,
+    "game": {
+      "ticks": 1834706,
+      "calendar": "20:23:08.240 day:0 week:0",
+      "clock_speed": "NORMAL",
+      "paused": false
+    },
+    "probe_version": "2.0.1",
+    "sims_build": "1.128.90.1030",
+    "event_kind": "presence_snapshot",
+    "reason": null,
+    "checkpoint_reason": null,
+    "close_reason": null,
+    "observation_complete": true,
+    "attestation": {
+      "armed_name": "LAB_E1",
+      "armed_name_hash": null,
+      "snapshot_guid": "2773024768",
+      "snapshot_slot": "2",
+      "snapshot_sim": "118245043779534861"
+    },
+    "save": {
+      "save_slot_guid": "2773024768",
+      "slot_id": "2"
+    },
+    "zone": {
+      "zone_id": null,
+      "lot_id": null,
+      "room": null,
+      "position": null
+    },
+    "body": {
+      "sim_id": "118245043779534861",
+      "instantiated": true,
+      "is_selectable": true,
+      "is_selected": null,
+      "posture": {
+        "posture_name": "stand",
+        "target_id": null
+      }
+    },
+    "interactions": {
+      "observed": [
+        {
+          "entry_key": "0x7ff4c91b70d0",
+          "interaction_id": "7056",
+          "affordance_id": "14310",
+          "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+          "target_id": null,
+          "source_raw": "InteractionSource.AUTONOMY",
+          "source_norm": "UNKNOWN",
+          "source_confidence": "UNKNOWN",
+          "present": true,
+          "membership": "QUEUED"
+        },
+        {
+          "entry_key": "0x7ff4cbac0a48",
+          "interaction_id": "6948",
+          "affordance_id": "13983",
+          "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+          "target_id": null,
+          "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+          "source_norm": "UNKNOWN",
+          "source_confidence": "UNKNOWN",
+          "present": true,
+          "membership": "RUNNING"
+        }
+      ],
+      "queue_truncated": false,
+      "running_truncated": false,
+      "observation_complete": true
+    },
+    "motives": [],
+    "sim_signals": [],
+    "missingness": {},
+    "unsupported": [],
+    "availability": "AVAILABLE",
+    "counters": {
+      "dropped_queue": 0,
+      "dropped_overrun": 0,
+      "dropped_serialize": 0,
+      "redundant_starts": 0
+    },
+    "writer": {
+      "state": "OK",
+      "rotation_index": 0
+    },
+    "note": null,
+    "e2": null
+  }
+}

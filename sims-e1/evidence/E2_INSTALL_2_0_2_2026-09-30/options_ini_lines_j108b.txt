@@ -1,0 +1,4 @@
+﻿autonomydisabledforactivesim = 1
+scriptmodsenabled = 1
+modsdisabled = 0
+autonomyhousehold = 1

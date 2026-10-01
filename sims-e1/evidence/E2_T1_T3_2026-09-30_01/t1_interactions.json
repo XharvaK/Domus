@@ -1,0 +1,2057 @@
+[
+  {
+    "wall": 1790790873511,
+    "entry": {
+      "entry_key": "0x7ff4cb8ccd10",
+      "interaction_id": "7205",
+      "affordance_id": "14310",
+      "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790873511,
+    "entry": {
+      "entry_key": "0x7ff4cbac0a48",
+      "interaction_id": "6948",
+      "affordance_id": "13983",
+      "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790874534,
+    "entry": {
+      "entry_key": "0x7ff4cb8ccd10",
+      "interaction_id": "7205",
+      "affordance_id": "14310",
+      "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790874534,
+    "entry": {
+      "entry_key": "0x7ff4cbac0a48",
+      "interaction_id": "6948",
+      "affordance_id": "13983",
+      "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790875554,
+    "entry": {
+      "entry_key": "0x7ff4cb8ccd10",
+      "interaction_id": "7205",
+      "affordance_id": "14310",
+      "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790875554,
+    "entry": {
+      "entry_key": "0x7ff4cbac0a48",
+      "interaction_id": "6948",
+      "affordance_id": "13983",
+      "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790876575,
+    "entry": {
+      "entry_key": "0x7ff4cb8ccd10",
+      "interaction_id": "7205",
+      "affordance_id": "14310",
+      "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790876575,
+    "entry": {
+      "entry_key": "0x7ff4cbac0a48",
+      "interaction_id": "6948",
+      "affordance_id": "13983",
+      "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790877594,
+    "entry": {
+      "entry_key": "0x7ff4cb8ccd10",
+      "interaction_id": "7205",
+      "affordance_id": "14310",
+      "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790877594,
+    "entry": {
+      "entry_key": "0x7ff4cbac0a48",
+      "interaction_id": "6948",
+      "affordance_id": "13983",
+      "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790878596,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790878596,
+    "entry": {
+      "entry_key": "0x7ff4cbac0a48",
+      "interaction_id": "6948",
+      "affordance_id": "13983",
+      "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790879616,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790879616,
+    "entry": {
+      "entry_key": "0x7ff4cbac0a48",
+      "interaction_id": "6948",
+      "affordance_id": "13983",
+      "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+      "target_id": null,
+      "source_raw": "InteractionSource.BODY_CANCEL_AOP",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790880638,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790881640,
+    "entry": {
+      "entry_key": "0x7ff4ca294d10",
+      "interaction_id": "7226",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790881640,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790882662,
+    "entry": {
+      "entry_key": "0x7ff4ca294d10",
+      "interaction_id": "7226",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790882662,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790883687,
+    "entry": {
+      "entry_key": "0x7ff4ca294d10",
+      "interaction_id": "7226",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790883687,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790884687,
+    "entry": {
+      "entry_key": "0x7ff4ca294d10",
+      "interaction_id": "7226",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790884687,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790885690,
+    "entry": {
+      "entry_key": "0x7ff4ca294d10",
+      "interaction_id": "7226",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790885690,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790886715,
+    "entry": {
+      "entry_key": "0x7ff4ca294d10",
+      "interaction_id": "7226",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790886715,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790887743,
+    "entry": {
+      "entry_key": "0x7ff4cbae70d0",
+      "interaction_id": "7244",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790887743,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790888774,
+    "entry": {
+      "entry_key": "0x7ff4cbae70d0",
+      "interaction_id": "7244",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790888774,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790889769,
+    "entry": {
+      "entry_key": "0x7ff4cbae70d0",
+      "interaction_id": "7244",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790889769,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790890793,
+    "entry": {
+      "entry_key": "0x7ff4cbae70d0",
+      "interaction_id": "7244",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790890793,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790891818,
+    "entry": {
+      "entry_key": "0x7ff4cbae70d0",
+      "interaction_id": "7244",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790891818,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790892838,
+    "entry": {
+      "entry_key": "0x7ff4cbae70d0",
+      "interaction_id": "7244",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790892838,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790893862,
+    "entry": {
+      "entry_key": "0x7ff4c8c581d0",
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790893862,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790894883,
+    "entry": {
+      "entry_key": "0x7ff4c8c581d0",
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790894883,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790895899,
+    "entry": {
+      "entry_key": "0x7ff4c8c581d0",
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790895899,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790896917,
+    "entry": {
+      "entry_key": "0x7ff4c8c581d0",
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790896917,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790897938,
+    "entry": {
+      "entry_key": "0x7ff4c8c581d0",
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790897938,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790898957,
+    "entry": {
+      "entry_key": "0x7ff4c8c581d0",
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790898957,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790899983,
+    "entry": {
+      "entry_key": "0x7ff4c8c581d0",
+      "interaction_id": "7261",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790899983,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790901003,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790901003,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790902018,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790902018,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790903041,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790903041,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790904041,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790904041,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790905064,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790905064,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790906090,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790906090,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790907117,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790907117,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790908140,
+    "entry": {
+      "entry_key": "0x7ff4c7c99e50",
+      "interaction_id": "7270",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790908140,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790909161,
+    "entry": {
+      "entry_key": "0x7ff4cbec1050",
+      "interaction_id": "7281",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790909161,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790910188,
+    "entry": {
+      "entry_key": "0x7ff4cbec1050",
+      "interaction_id": "7281",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790910188,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790911207,
+    "entry": {
+      "entry_key": "0x7ff4cbec1050",
+      "interaction_id": "7281",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790911207,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790912225,
+    "entry": {
+      "entry_key": "0x7ff4cbec1050",
+      "interaction_id": "7281",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790912225,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790913240,
+    "entry": {
+      "entry_key": "0x7ff4cbec1050",
+      "interaction_id": "7281",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790913240,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790914260,
+    "entry": {
+      "entry_key": "0x7ff4cbec1050",
+      "interaction_id": "7281",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790914260,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790915280,
+    "entry": {
+      "entry_key": "0x7ff4ca364d10",
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790915280,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790916302,
+    "entry": {
+      "entry_key": "0x7ff4ca364d10",
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790916302,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790917325,
+    "entry": {
+      "entry_key": "0x7ff4ca364d10",
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790917325,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790918348,
+    "entry": {
+      "entry_key": "0x7ff4ca364d10",
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790918348,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790919373,
+    "entry": {
+      "entry_key": "0x7ff4ca364d10",
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790919373,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790920394,
+    "entry": {
+      "entry_key": "0x7ff4ca364d10",
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790920394,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790921417,
+    "entry": {
+      "entry_key": "0x7ff4ca364d10",
+      "interaction_id": "7293",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790921417,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790922439,
+    "entry": {
+      "entry_key": "0x7ff4ca596910",
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790922439,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790923459,
+    "entry": {
+      "entry_key": "0x7ff4ca596910",
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790923459,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790924480,
+    "entry": {
+      "entry_key": "0x7ff4ca596910",
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790924480,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790925496,
+    "entry": {
+      "entry_key": "0x7ff4ca596910",
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790925496,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790926513,
+    "entry": {
+      "entry_key": "0x7ff4ca596910",
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790926513,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790927534,
+    "entry": {
+      "entry_key": "0x7ff4ca596910",
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790927534,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790928551,
+    "entry": {
+      "entry_key": "0x7ff4ca596910",
+      "interaction_id": "7296",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790928551,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790929572,
+    "entry": {
+      "entry_key": "0x7ff4c69f7d10",
+      "interaction_id": "7305",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790929572,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790930590,
+    "entry": {
+      "entry_key": "0x7ff4c69f7d10",
+      "interaction_id": "7305",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790930590,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790931606,
+    "entry": {
+      "entry_key": "0x7ff4c69f7d10",
+      "interaction_id": "7305",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790931606,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790932625,
+    "entry": {
+      "entry_key": "0x7ff4c69f7d10",
+      "interaction_id": "7305",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790932625,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790933640,
+    "entry": {
+      "entry_key": "0x7ff4c69f7d10",
+      "interaction_id": "7305",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790933640,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790934662,
+    "entry": {
+      "entry_key": "0x7ff4c69f7d10",
+      "interaction_id": "7305",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790934662,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790935681,
+    "entry": {
+      "entry_key": "0x7ff4cc0af5d0",
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790935681,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790936705,
+    "entry": {
+      "entry_key": "0x7ff4cc0af5d0",
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790936705,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790937726,
+    "entry": {
+      "entry_key": "0x7ff4cc0af5d0",
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790937726,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790938747,
+    "entry": {
+      "entry_key": "0x7ff4cc0af5d0",
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790938747,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790939767,
+    "entry": {
+      "entry_key": "0x7ff4cc0af5d0",
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790939767,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790940790,
+    "entry": {
+      "entry_key": "0x7ff4cc0af5d0",
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790940790,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790941810,
+    "entry": {
+      "entry_key": "0x7ff4cc0af5d0",
+      "interaction_id": "7306",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790941810,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  },
+  {
+    "wall": 1790790942833,
+    "entry": {
+      "entry_key": "0x7ff4cafa4c10",
+      "interaction_id": "7313",
+      "affordance_id": "14244",
+      "affordance_text": "<class 'sims4.tuning.instances.sit_Passive'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.AUTONOMY",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "QUEUED"
+    }
+  },
+  {
+    "wall": 1790790942833,
+    "entry": {
+      "entry_key": "0x7ff4cc85c8e8",
+      "interaction_id": "7223",
+      "affordance_id": "31564",
+      "affordance_text": "<class 'sims4.tuning.instances.seating_Sit'>",
+      "target_id": "118245043789434055",
+      "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT",
+      "source_norm": "UNKNOWN",
+      "source_confidence": "UNKNOWN",
+      "present": true,
+      "membership": "RUNNING"
+    }
+  }
+]

@@ -1,0 +1,518 @@
+[
+  {
+    "schema_version": 2,
+    "telemetry_session_id": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3",
+    "boot_id": null,
+    "written_sequence": 759,
+    "wall_timestamp_ms": 1790790878096,
+    "monotonic_ns": 1673565926300,
+    "game": {
+      "ticks": null,
+      "calendar": null,
+      "clock_speed": null,
+      "paused": null
+    },
+    "probe_version": "2.0.1",
+    "sims_build": "1.128.90.1030",
+    "event_kind": "experiment_event",
+    "reason": null,
+    "checkpoint_reason": null,
+    "close_reason": null,
+    "observation_complete": null,
+    "attestation": {
+      "armed_name": "UNARMED",
+      "armed_name_hash": null,
+      "snapshot_guid": null,
+      "snapshot_slot": null,
+      "snapshot_sim": null
+    },
+    "save": {
+      "save_slot_guid": null,
+      "slot_id": null
+    },
+    "zone": {
+      "zone_id": null,
+      "lot_id": null,
+      "room": null,
+      "position": null
+    },
+    "body": {
+      "sim_id": null,
+      "instantiated": null,
+      "is_selectable": null,
+      "is_selected": null,
+      "posture": null
+    },
+    "interactions": {
+      "observed": [],
+      "queue_truncated": false,
+      "running_truncated": false,
+      "observation_complete": false
+    },
+    "motives": [],
+    "sim_signals": [],
+    "missingness": {},
+    "unsupported": [],
+    "availability": "AVAILABLE",
+    "counters": {
+      "dropped_queue": 0,
+      "dropped_overrun": 0,
+      "dropped_serialize": 0,
+      "redundant_starts": 0
+    },
+    "writer": {
+      "state": "OK",
+      "rotation_index": 0
+    },
+    "note": null,
+    "e2": {
+      "phase": "PUSHED",
+      "code": null,
+      "experiment_id": "863ffab5-1",
+      "object_id": "118245043789434055",
+      "token": "cf0dddc61646457c",
+      "interaction_id": "7223",
+      "claims": {
+        "REQUEST_ACCEPTED": true,
+        "ENQUEUED": false,
+        "STARTED": false,
+        "EFFECT_OBSERVED": false,
+        "ATTRIBUTED": false,
+        "MAINTAINED_10S": false,
+        "FINISHED": false
+      },
+      "finishing_type": null,
+      "detail": null
+    }
+  },
+  {
+    "schema_version": 2,
+    "telemetry_session_id": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3",
+    "boot_id": null,
+    "written_sequence": 761,
+    "wall_timestamp_ms": 1790790878596,
+    "monotonic_ns": 1674066477100,
+    "game": {
+      "ticks": null,
+      "calendar": null,
+      "clock_speed": null,
+      "paused": null
+    },
+    "probe_version": "2.0.1",
+    "sims_build": "1.128.90.1030",
+    "event_kind": "experiment_event",
+    "reason": null,
+    "checkpoint_reason": null,
+    "close_reason": null,
+    "observation_complete": null,
+    "attestation": {
+      "armed_name": "UNARMED",
+      "armed_name_hash": null,
+      "snapshot_guid": null,
+      "snapshot_slot": null,
+      "snapshot_sim": null
+    },
+    "save": {
+      "save_slot_guid": null,
+      "slot_id": null
+    },
+    "zone": {
+      "zone_id": null,
+      "lot_id": null,
+      "room": null,
+      "position": null
+    },
+    "body": {
+      "sim_id": null,
+      "instantiated": null,
+      "is_selectable": null,
+      "is_selected": null,
+      "posture": null
+    },
+    "interactions": {
+      "observed": [],
+      "queue_truncated": false,
+      "running_truncated": false,
+      "observation_complete": false
+    },
+    "motives": [],
+    "sim_signals": [],
+    "missingness": {},
+    "unsupported": [],
+    "availability": "AVAILABLE",
+    "counters": {
+      "dropped_queue": 0,
+      "dropped_overrun": 0,
+      "dropped_serialize": 0,
+      "redundant_starts": 0
+    },
+    "writer": {
+      "state": "OK",
+      "rotation_index": 0
+    },
+    "note": null,
+    "e2": {
+      "phase": "CLAIM",
+      "code": "ENQUEUED",
+      "experiment_id": "863ffab5-1",
+      "object_id": "118245043789434055",
+      "token": null,
+      "interaction_id": "7223",
+      "claims": {
+        "REQUEST_ACCEPTED": true,
+        "ENQUEUED": true,
+        "STARTED": false,
+        "EFFECT_OBSERVED": false,
+        "ATTRIBUTED": false,
+        "MAINTAINED_10S": false,
+        "FINISHED": false
+      },
+      "finishing_type": null,
+      "detail": null
+    }
+  },
+  {
+    "schema_version": 2,
+    "telemetry_session_id": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3",
+    "boot_id": null,
+    "written_sequence": 765,
+    "wall_timestamp_ms": 1790790880638,
+    "monotonic_ns": 1676108351000,
+    "game": {
+      "ticks": null,
+      "calendar": null,
+      "clock_speed": null,
+      "paused": null
+    },
+    "probe_version": "2.0.1",
+    "sims_build": "1.128.90.1030",
+    "event_kind": "experiment_event",
+    "reason": null,
+    "checkpoint_reason": null,
+    "close_reason": null,
+    "observation_complete": null,
+    "attestation": {
+      "armed_name": "UNARMED",
+      "armed_name_hash": null,
+      "snapshot_guid": null,
+      "snapshot_slot": null,
+      "snapshot_sim": null
+    },
+    "save": {
+      "save_slot_guid": null,
+      "slot_id": null
+    },
+    "zone": {
+      "zone_id": null,
+      "lot_id": null,
+      "room": null,
+      "position": null
+    },
+    "body": {
+      "sim_id": null,
+      "instantiated": null,
+      "is_selectable": null,
+      "is_selected": null,
+      "posture": null
+    },
+    "interactions": {
+      "observed": [],
+      "queue_truncated": false,
+      "running_truncated": false,
+      "observation_complete": false
+    },
+    "motives": [],
+    "sim_signals": [],
+    "missingness": {},
+    "unsupported": [],
+    "availability": "AVAILABLE",
+    "counters": {
+      "dropped_queue": 0,
+      "dropped_overrun": 0,
+      "dropped_serialize": 0,
+      "redundant_starts": 0
+    },
+    "writer": {
+      "state": "OK",
+      "rotation_index": 0
+    },
+    "note": null,
+    "e2": {
+      "phase": "CLAIM",
+      "code": "EFFECT_OBSERVED",
+      "experiment_id": "863ffab5-1",
+      "object_id": "118245043789434055",
+      "token": null,
+      "interaction_id": "7223",
+      "claims": {
+        "REQUEST_ACCEPTED": true,
+        "ENQUEUED": true,
+        "STARTED": false,
+        "EFFECT_OBSERVED": true,
+        "ATTRIBUTED": false,
+        "MAINTAINED_10S": false,
+        "FINISHED": false
+      },
+      "finishing_type": null,
+      "detail": null
+    }
+  },
+  {
+    "schema_version": 2,
+    "telemetry_session_id": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3",
+    "boot_id": null,
+    "written_sequence": 767,
+    "wall_timestamp_ms": 1790790881641,
+    "monotonic_ns": 1677110576600,
+    "game": {
+      "ticks": null,
+      "calendar": null,
+      "clock_speed": null,
+      "paused": null
+    },
+    "probe_version": "2.0.1",
+    "sims_build": "1.128.90.1030",
+    "event_kind": "experiment_event",
+    "reason": null,
+    "checkpoint_reason": null,
+    "close_reason": null,
+    "observation_complete": null,
+    "attestation": {
+      "armed_name": "UNARMED",
+      "armed_name_hash": null,
+      "snapshot_guid": null,
+      "snapshot_slot": null,
+      "snapshot_sim": null
+    },
+    "save": {
+      "save_slot_guid": null,
+      "slot_id": null
+    },
+    "zone": {
+      "zone_id": null,
+      "lot_id": null,
+      "room": null,
+      "position": null
+    },
+    "body": {
+      "sim_id": null,
+      "instantiated": null,
+      "is_selectable": null,
+      "is_selected": null,
+      "posture": null
+    },
+    "interactions": {
+      "observed": [],
+      "queue_truncated": false,
+      "running_truncated": false,
+      "observation_complete": false
+    },
+    "motives": [],
+    "sim_signals": [],
+    "missingness": {},
+    "unsupported": [],
+    "availability": "AVAILABLE",
+    "counters": {
+      "dropped_queue": 0,
+      "dropped_overrun": 0,
+      "dropped_serialize": 0,
+      "redundant_starts": 0
+    },
+    "writer": {
+      "state": "OK",
+      "rotation_index": 0
+    },
+    "note": null,
+    "e2": {
+      "phase": "CLAIM",
+      "code": "STARTED",
+      "experiment_id": "863ffab5-1",
+      "object_id": "118245043789434055",
+      "token": null,
+      "interaction_id": "7223",
+      "claims": {
+        "REQUEST_ACCEPTED": true,
+        "ENQUEUED": true,
+        "STARTED": true,
+        "EFFECT_OBSERVED": true,
+        "ATTRIBUTED": false,
+        "MAINTAINED_10S": false,
+        "FINISHED": false
+      },
+      "finishing_type": null,
+      "detail": null
+    }
+  },
+  {
+    "schema_version": 2,
+    "telemetry_session_id": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3",
+    "boot_id": null,
+    "written_sequence": 824,
+    "wall_timestamp_ms": 1790790938747,
+    "monotonic_ns": 1734217539400,
+    "game": {
+      "ticks": null,
+      "calendar": null,
+      "clock_speed": null,
+      "paused": null
+    },
+    "probe_version": "2.0.1",
+    "sims_build": "1.128.90.1030",
+    "event_kind": "experiment_event",
+    "reason": null,
+    "checkpoint_reason": null,
+    "close_reason": null,
+    "observation_complete": null,
+    "attestation": {
+      "armed_name": "UNARMED",
+      "armed_name_hash": null,
+      "snapshot_guid": null,
+      "snapshot_slot": null,
+      "snapshot_sim": null
+    },
+    "save": {
+      "save_slot_guid": null,
+      "slot_id": null
+    },
+    "zone": {
+      "zone_id": null,
+      "lot_id": null,
+      "room": null,
+      "position": null
+    },
+    "body": {
+      "sim_id": null,
+      "instantiated": null,
+      "is_selectable": null,
+      "is_selected": null,
+      "posture": null
+    },
+    "interactions": {
+      "observed": [],
+      "queue_truncated": false,
+      "running_truncated": false,
+      "observation_complete": false
+    },
+    "motives": [],
+    "sim_signals": [],
+    "missingness": {},
+    "unsupported": [],
+    "availability": "AVAILABLE",
+    "counters": {
+      "dropped_queue": 0,
+      "dropped_overrun": 0,
+      "dropped_serialize": 0,
+      "redundant_starts": 0
+    },
+    "writer": {
+      "state": "OK",
+      "rotation_index": 0
+    },
+    "note": null,
+    "e2": {
+      "phase": "VERDICT",
+      "code": "OUTCOME_UNKNOWN",
+      "experiment_id": "863ffab5-1",
+      "object_id": "118245043789434055",
+      "token": null,
+      "interaction_id": "7223",
+      "claims": {
+        "REQUEST_ACCEPTED": true,
+        "ENQUEUED": true,
+        "STARTED": true,
+        "EFFECT_OBSERVED": true,
+        "ATTRIBUTED": false,
+        "MAINTAINED_10S": false,
+        "FINISHED": false
+      },
+      "finishing_type": null,
+      "detail": "foreign_roots=9 incomplete_rows=0"
+    }
+  },
+  {
+    "schema_version": 2,
+    "telemetry_session_id": "863ffab5-edd0-44c2-b74b-5ce9b2d352a3",
+    "boot_id": null,
+    "written_sequence": 897,
+    "wall_timestamp_ms": 1790791010330,
+    "monotonic_ns": 1805800873700,
+    "game": {
+      "ticks": null,
+      "calendar": null,
+      "clock_speed": null,
+      "paused": null
+    },
+    "probe_version": "2.0.1",
+    "sims_build": "1.128.90.1030",
+    "event_kind": "experiment_event",
+    "reason": null,
+    "checkpoint_reason": null,
+    "close_reason": null,
+    "observation_complete": null,
+    "attestation": {
+      "armed_name": "UNARMED",
+      "armed_name_hash": null,
+      "snapshot_guid": null,
+      "snapshot_slot": null,
+      "snapshot_sim": null
+    },
+    "save": {
+      "save_slot_guid": null,
+      "slot_id": null
+    },
+    "zone": {
+      "zone_id": null,
+      "lot_id": null,
+      "room": null,
+      "position": null
+    },
+    "body": {
+      "sim_id": null,
+      "instantiated": null,
+      "is_selectable": null,
+      "is_selected": null,
+      "posture": null
+    },
+    "interactions": {
+      "observed": [],
+      "queue_truncated": false,
+      "running_truncated": false,
+      "observation_complete": false
+    },
+    "motives": [],
+    "sim_signals": [],
+    "missingness": {},
+    "unsupported": [],
+    "availability": "AVAILABLE",
+    "counters": {
+      "dropped_queue": 0,
+      "dropped_overrun": 0,
+      "dropped_serialize": 0,
+      "redundant_starts": 0
+    },
+    "writer": {
+      "state": "OK",
+      "rotation_index": 0
+    },
+    "note": null,
+    "e2": {
+      "phase": "FINISHED_CALLBACK",
+      "code": null,
+      "experiment_id": "863ffab5-1",
+      "object_id": null,
+      "token": null,
+      "interaction_id": "7223",
+      "claims": {
+        "REQUEST_ACCEPTED": true,
+        "ENQUEUED": true,
+        "STARTED": true,
+        "EFFECT_OBSERVED": true,
+        "ATTRIBUTED": false,
+        "MAINTAINED_10S": false,
+        "FINISHED": true
+      },
+      "finishing_type": "FinishingType.INTERACTION_INCOMPATIBILITY",
+      "detail": null
+    }
+  }
+]
