@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from test_binding import FakeWriter, load_probe
 
@@ -110,8 +111,11 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             module_path = os.path.join(temp, "The Sims 4", "Mods", "AshleyE1",
                                        "ashley_e1", "writer.py")
-            root = writer.bootstrap_from_module_path(
-                module_path, "1.0.7", "1.128.90.1030", summary)
+            fixture_root = (writer.derive_telemetry_root(module_path)
+                            if os.name == "nt" else temp)
+            with mock.patch.object(writer, "derive_telemetry_root", return_value=fixture_root):
+                root = writer.bootstrap_from_module_path(
+                    module_path, "1.0.7", "1.128.90.1030", summary)
             files = [name for name in os.listdir(root) if name.startswith("ashley_e1_bootstrap_")]
             self.assertEqual(len(files), 1)
             with open(os.path.join(root, files[0]), "r", encoding="utf-8") as handle:
