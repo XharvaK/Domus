@@ -156,6 +156,12 @@ def _motive_band(value):
     return "ok"
 
 
+# Live-verified on 1.128.90.1030 (TARGET_BYTECODE): instance value comes from
+# ContinuousStatistic.get_value (stat path reads inst._modified_value (!= None)
+# else cls.default_value); _update_value is the mutating updater, so Domus
+# never calls get_value itself — it replays the verified read path: return
+# inst._modified_value when not None, else cls.default_value. Age comes from
+# inst._last_update (ticks; _update_value stamps it from sim_now).
 def _read_cached_motive(entry, now_ticks):
     try:
         guid = int(entry.guid64)
@@ -164,8 +170,16 @@ def _read_cached_motive(entry, now_ticks):
     if guid not in MOTIVE_GUIDS:
         return None
     try:
-        raw = entry._cached_value
-        updated = entry._last_update_ticks
+        raw = entry._modified_value
+    except Exception:
+        return None
+    if raw is None:
+        try:
+            raw = entry.default_value
+        except Exception:
+            return None
+    try:
+        updated = entry._last_update
         minimum = entry.min_value
         maximum = entry.max_value
     except Exception:
@@ -355,9 +369,13 @@ def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS):
     except Exception:
         return [], False
     try:
-        generator = manager.instanced_sims_on_active_lot_gen(hidden_flags)
+        generator = manager.instanced_sims_on_active_lot_gen(
+            hidden_flags, include_spawn_point=False)
     except Exception:
-        return [], False
+        try:
+            generator = manager.instanced_sims_on_active_lot_gen(hidden_flags)
+        except Exception:
+            return [], False
     try:
         iterator = iter(generator)
     except TypeError:

@@ -56,8 +56,8 @@ class FakeBuffs:
 class FakeCommodity:
     def __init__(self, guid, value, updated, minimum=0, maximum=100):
         self.guid64 = guid
-        self._cached_value = value
-        self._last_update_ticks = updated
+        self._modified_value = value
+        self._last_update = updated
         self.min_value = minimum
         self.max_value = maximum
         for name in FORBIDDEN:
@@ -150,6 +150,11 @@ class SensesTests(unittest.TestCase):
         self.assertEqual(row["motives"], [])
         row = make_row({"ticks": 10}, FakeSimInfo(None))
         self.assertEqual(row["motives"], [])
+        entry = FakeCommodity(16656, None, 5)
+        entry.default_value = 42
+        tracker = FakeTracker([entry])
+        row = make_row({"ticks": 10}, FakeSimInfo(tracker))
+        self.assertEqual(row["motives"][0]["value"], 42)
 
     def test_moodlets_capped_weighted_and_row_failures_skipped(self):
         entries = [FakeBuff(1000 + i, "Happy", i) for i in range(17)]
