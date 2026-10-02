@@ -34,7 +34,13 @@ letters, digits, underscores or hyphens. Commands use issuer `agent:<name>`.
 The inbox directories must already exist. Every tool checks `tasklist` for
 `TS4_x64.exe` then gets an accepted status. Arming accepts only `lab_e1` or
 `lab_e1_fork`; further actuation requires canonical LAB status after arming.
-Read tools include status, verdicts, telemetry and lineage. Stop/disarm remain
+Read tools include status, verdicts, telemetry and lineage. `detected_build`
+reports the installed client version bound to the running `TS4_x64.exe`
+process (EXE file version, sims-root `GameVersion.txt`, `Default.ini`
+`gameversion`); `fingerprints` adds the script-archive sha256, the installed
+pack list and the Mods file list with hashes. A declared (`sims_build`) vs
+detected mismatch blocks every actuating command — the session stays
+telemetry-only. Stop/disarm remain
 available without LAB attestation for cleanup.
 
 The packet requires the Owner to launch the game, load LAB_E1 and type

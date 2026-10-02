@@ -4,15 +4,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_SIMS_ROOT = r"C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4"
+DEFAULT_GAME_ROOT = r"E:\SteamLibrary\steamapps\common\The Sims 4"
 
 
 @dataclass(frozen=True)
 class Paths:
     sims_root: Path
+    game_root: "Path | None" = None
 
     @classmethod
     def from_env(cls):
-        return cls(Path(os.environ.get("DOMUS_SIMS_ROOT", DEFAULT_SIMS_ROOT)))
+        game = os.environ.get("DOMUS_GAME_ROOT")
+        return cls(Path(os.environ.get("DOMUS_SIMS_ROOT", DEFAULT_SIMS_ROOT)),
+                   Path(game) if game else None)
 
     @property
     def telemetry(self):

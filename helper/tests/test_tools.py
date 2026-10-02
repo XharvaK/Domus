@@ -7,7 +7,8 @@ from conftest import replier
 @pytest.mark.parametrize("tool,args", [(mcp.status, ()), (mcp.arm, ("lab_e1",)),
     (mcp.start, ()), (mcp.stop, ()), (mcp.disarm, ()), (mcp.prepare, ("1",)),
     (mcp.sit, ("a" * 16,)), (mcp.sit_trial, ("1",)), (mcp.pause, ()),
-    (mcp.release, ()), (mcp.verdicts, ()), (mcp.telemetry, ([],)), (mcp.lineage, ())])
+    (mcp.release, ()), (mcp.verdicts, ()), (mcp.telemetry, ([],)), (mcp.lineage, ()),
+    (mcp.detected_build, ()), (mcp.fingerprints, ())])
 def test_all_tools_require_game(paths, monkeypatch, tool, args):
     monkeypatch.setattr(mcp, "game_running", lambda: False)
     with pytest.raises(mcp.SafetyError, match="TS4_x64"):

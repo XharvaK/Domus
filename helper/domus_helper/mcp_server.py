@@ -8,6 +8,7 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from . import commands, telemetry as telemetry_reader
+from . import fingerprints as fingerprint_reader
 from .paths import Paths
 from .vendor.cmdbox import valid_issuer
 
@@ -54,10 +55,30 @@ class DomusTools:
             raise SafetyError("TS4_x64.exe is not running")
         return self.send("status", {})
 
+    def _require_build_match(self, status):
+        try:
+            detected = fingerprint_reader.detected_build(paths=self.paths)["detected_build"]
+        except (OSError, FileNotFoundError, ValueError, UnicodeError):
+            raise SafetyError("detected build unreadable")
+        declared = status.result.get("sims_build")
+        if declared is not None and declared != detected:
+            raise SafetyError("build mismatch: declared %s, detected %s"
+                              % (declared, detected))
+
+    def detected_build_fn(self):
+        self.checked_status()
+        return fingerprint_reader.detected_build(paths=self.paths)
+
+    def fingerprints_fn(self):
+        self.checked_status()
+        return fingerprint_reader.fingerprint(paths=self.paths)
+
     def command(self, name, args=None):
         status = self.checked_status()
         if name == "status":
             return status
+        if name in ACTUATING:
+            self._require_build_match(status)
         if name == "arm":
             if args != {"name": "lab_e1"} and args != {"name": "lab_e1_fork"}:
                 raise SafetyError("arm requires lab_e1 or lab_e1_fork")
@@ -154,6 +175,16 @@ def lineage() -> list[dict]:
     client = tools()
     client.checked_status()
     return telemetry_reader.lineage(paths=client.paths)
+
+
+@server.tool()
+def detected_build() -> dict:
+    return tools().detected_build_fn()
+
+
+@server.tool()
+def fingerprints() -> dict:
+    return tools().fingerprints_fn()
 
 
 if __name__ == "__main__":

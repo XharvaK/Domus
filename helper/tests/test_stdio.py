@@ -19,5 +19,6 @@ def test_sdk_stdio_registration():
                     listing = await session.list_tools()
                     assert {tool.name for tool in listing.tools} == {
                         "status", "arm", "start", "stop", "disarm", "prepare", "sit", "sit_trial",
-                        "pause", "release", "verdicts", "telemetry", "lineage"}
+                        "pause", "release", "verdicts", "telemetry", "lineage",
+                        "detected_build", "fingerprints"}
     anyio.run(exercise)

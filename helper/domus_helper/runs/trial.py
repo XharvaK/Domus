@@ -96,7 +96,8 @@ def run(save, objects, repeat, out, *, client=None, verdict_timeout=60):
     session = None
     try:
         previous = set(client.paths.telemetry.glob("ashley_e1_*.jsonl"))
-        client.command("status")
+        status = client.command("status")
+        client._require_build_match(status)
         client.command("arm", {"name": save})
         client.command("start")
         session = wait_session(client.paths, verdict_timeout, previous)
