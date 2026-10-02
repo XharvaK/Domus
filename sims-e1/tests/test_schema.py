@@ -21,8 +21,8 @@ class SchemaContractTests(unittest.TestCase):
         return {key: value for key in schema.REQUIRED_IMPORT_KEYS}
 
     def test_closed_vocabularies_are_exact(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 3)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v3")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 4)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v4")
         self.assertEqual(
             set(schema.EVENT_KINDS),
             {
@@ -188,7 +188,7 @@ class SchemaContractTests(unittest.TestCase):
                   "is_selected": None, "posture": None},
             interactions={"observed": [], "queue_truncated": False,
                           "running_truncated": False, "observation_complete": True},
-            motives=[{"id": "m", "value": 1, "band": None}],
+            motives=[{"id": "m", "value": 1, "band": None, "age_ticks": None}],
             sim_signals=[{"kind": "MOODLET", "tuning_id": "t", "game_text": None,
                           "magnitude": None, "consequences": "UNKNOWN", "native_override": None}],
         )

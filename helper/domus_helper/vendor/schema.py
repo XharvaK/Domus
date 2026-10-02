@@ -3,8 +3,8 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 3
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v3"
+OBSERVATION_SCHEMA_VERSION = 4
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v4"
 PROBE_VERSION = "2.2.1"
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
@@ -16,6 +16,9 @@ MAX_NOTE_LENGTH = 256
 MAX_INTERACTIONS = 8
 MAX_MOTIVES = 12
 MAX_SIGNALS = 16
+MAX_PRESENCE = 8
+MAX_SOCIAL = 4
+MOTIVE_BANDS = ("distress", "low", "ok")
 SIGNAL_KINDS = (
     "MOODLET", "WANT", "FEAR", "TRAIT_NOTE", "LIKE", "ASPIRATION_NOTE",
     "RELATIONSHIP_NOTE", "FAILURE_PRECURSOR",
@@ -108,7 +111,8 @@ COMMON_KEYS = {
     "wall_timestamp_ms", "monotonic_ns", "game", "probe_version", "sims_build",
     "event_kind", "reason", "checkpoint_reason", "close_reason",
     "observation_complete", "attestation", "save", "zone", "body",
-    "interactions", "motives", "sim_signals", "missingness", "unsupported",
+    "interactions", "motives", "sim_signals", "presence", "social", "mood",
+    "missingness", "unsupported",
     "availability", "counters", "writer", "note", "e2",
 }
 
@@ -210,6 +214,9 @@ def make_record(event_kind, telemetry_session_id=None, boot_id=None,
         "interactions": _default_interactions(),
         "motives": [],
         "sim_signals": [],
+        "presence": [],
+        "social": [],
+        "mood": None,
         "missingness": {},
         "unsupported": [],
         "availability": "AVAILABLE",
@@ -283,7 +290,7 @@ def _validate_string_tree(value, key="value"):
         elif key in ("note",):
             bounded_string(value, MAX_NOTE_LENGTH, key, False)
         elif key in ("affordance_text", "game_text", "calendar", "posture", "room",
-                     "posture_name", "detail_text", "finishing_type"):
+                      "posture_name", "detail_text", "finishing_type", "type"):
             bounded_string(value, MAX_DISPLAY_TEXT_LENGTH, key, False)
         else:
             bounded_string(value, MAX_ID_LENGTH, key, False)
@@ -416,7 +423,7 @@ def _validate_motives(value):
     _require(isinstance(value, list) and len(value) <= MAX_MOTIVES, "motives")
     for item in value:
         _require(isinstance(item, dict), "motive must be an object")
-        _require(set(item) == {"id", "value", "band"}, "motive shape")
+        _require(set(item) == {"id", "value", "band", "age_ticks"}, "motive shape")
         _require(isinstance(item.get("id"), str), "motive.id must be a string")
         string_id(item["id"], "motive.id")
         if item.get("value") is not None:
@@ -425,6 +432,53 @@ def _validate_motives(value):
                      "motive.value must be numeric")
         if item.get("band") is not None:
             bounded_string(item["band"], MAX_ID_LENGTH, "motive.band", False)
+            _require(item["band"] in MOTIVE_BANDS, "invalid motive band")
+        if item.get("age_ticks") is not None:
+            _require(type(item["age_ticks"]) is int and item["age_ticks"] >= 0,
+                     "motive.age_ticks must be a non-negative int")
+
+
+def _validate_presence(value):
+    _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
+    for item in value:
+        _require(isinstance(item, dict), "presence entry must be an object")
+        _require(set(item) == {"id", "active_household", "level"},
+                 "presence shape")
+        _require(isinstance(item.get("id"), str), "presence.id must be a string")
+        string_id(item["id"], "presence.id")
+        _require(type(item.get("active_household")) is bool,
+                 "presence.active_household must be bool")
+        if item.get("level") is not None:
+            _require(type(item["level"]) is int, "presence.level must be int")
+
+
+def _validate_social(value):
+    _require(isinstance(value, list) and len(value) <= MAX_SOCIAL, "social")
+    for item in value:
+        _require(isinstance(item, dict), "social entry must be an object")
+        _require(set(item) == {"entry_key", "interaction_id", "affordance_id",
+                               "affordance_text", "target_id", "source_raw",
+                               "source_norm", "source_confidence", "present",
+                               "membership"},
+                 "social interaction shape")
+        _require(item.get("membership") in MEMBERSHIPS, "invalid social membership")
+        _require(item.get("source_norm") in SOURCE_NORMS, "invalid social source_norm")
+        _require(item.get("source_confidence") in SOURCE_CONFIDENCES,
+                 "invalid social source_confidence")
+        _require(type(item.get("present")) is bool, "social.present must be bool")
+
+
+def _validate_mood(value):
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == {"type", "intensity"},
+             "mood shape")
+    if value["type"] is not None:
+        bounded_string(value["type"], MAX_ID_LENGTH, "mood.type", False)
+    if value["intensity"] is not None:
+        _require(isinstance(value["intensity"], (int, float)) and
+                 not isinstance(value["intensity"], bool),
+                 "mood.intensity must be numeric")
 
 
 def _validate_signals(value):
@@ -464,6 +518,9 @@ def _validate_payload_contracts(row):
                  "%s interactions payload" % kind)
         _require(row.get("motives") == [], "%s motives payload" % kind)
         _require(row.get("sim_signals") == [], "%s sim_signals payload" % kind)
+        _require(row.get("presence") == [], "%s presence payload" % kind)
+        _require(row.get("social") == [], "%s social payload" % kind)
+        _require(row.get("mood") is None, "%s mood payload" % kind)
         _require(row.get("observation_complete") is None,
                  "%s observation payload" % kind)
         _require(row.get("attestation") == attestation(),
@@ -478,6 +535,9 @@ def _validate_payload_contracts(row):
                  "%s interactions payload" % kind)
         _require(row.get("motives") == [], "%s motives payload" % kind)
         _require(row.get("sim_signals") == [], "%s sim_signals payload" % kind)
+        _require(row.get("presence") == [], "%s presence payload" % kind)
+        _require(row.get("social") == [], "%s social payload" % kind)
+        _require(row.get("mood") is None, "%s mood payload" % kind)
         _require(row.get("observation_complete") is None,
                  "%s observation payload" % kind)
         _require(row.get("attestation") == attestation(),
@@ -490,6 +550,8 @@ def _validate_payload_contracts(row):
                  "clock interactions payload")
         _require(row.get("motives") == [] and row.get("sim_signals") == [],
                  "clock semantic payload")
+        _require(row.get("presence") == [] and row.get("social") == [] and
+                 row.get("mood") is None, "clock sense payload")
     elif kind == "zone_snapshot":
         _require(row.get("save") == _default_save(), "zone save payload")
         _require(row.get("body") == _default_body(), "zone body payload")
@@ -497,6 +559,8 @@ def _validate_payload_contracts(row):
                  "zone interactions payload")
         _require(row.get("motives") == [] and row.get("sim_signals") == [],
                  "zone semantic payload")
+        _require(row.get("presence") == [] and row.get("social") == [] and
+                 row.get("mood") is None, "zone sense payload")
     elif kind == "save_observation":
         _require(row.get("zone") == _default_zone(), "save zone payload")
         _require(row.get("body") == _default_body(), "save body payload")
@@ -504,9 +568,13 @@ def _validate_payload_contracts(row):
                  "save interactions payload")
         _require(row.get("motives") == [] and row.get("sim_signals") == [],
                  "save semantic payload")
+        _require(row.get("presence") == [] and row.get("social") == [] and
+                 row.get("mood") is None, "save sense payload")
     elif kind == "session_open":
         _require(row.get("motives") == [] and row.get("sim_signals") == [],
                  "session open semantic payload")
+        _require(row.get("presence") == [] and row.get("social") == [] and
+                 row.get("mood") is None, "session open sense payload")
     elif kind in E2_EVENT_KINDS:
         _require(row.get("save") == _default_save(), "%s save payload" % kind)
         _require(row.get("zone") == _default_zone(), "%s zone payload" % kind)
@@ -515,6 +583,8 @@ def _validate_payload_contracts(row):
                  "%s interactions payload" % kind)
         _require(row.get("motives") == [] and row.get("sim_signals") == [],
                  "%s semantic payload" % kind)
+        _require(row.get("presence") == [] and row.get("social") == [] and
+                 row.get("mood") is None, "%s sense payload" % kind)
         _require(row.get("attestation") == attestation(),
                  "%s attestation payload" % kind)
 
@@ -575,6 +645,9 @@ def _validate_common(row):
     _validate_interactions(row.get("interactions"))
     _validate_motives(row.get("motives"))
     _validate_signals(row.get("sim_signals"))
+    _validate_presence(row.get("presence"))
+    _validate_social(row.get("social"))
+    _validate_mood(row.get("mood"))
     _require(isinstance(row.get("missingness"), dict), "missingness")
     for field, item in row["missingness"].items():
         bounded_string(field, MAX_ID_LENGTH, "missingness field", False)
@@ -610,7 +683,8 @@ def validate_record(row):
                  "load_disabled armed_name")
         _require(isinstance(row.get("runtime"), dict), "load_disabled runtime")
         _validate_load_disabled_runtime(row["runtime"])
-        for forbidden in ("save", "zone", "body", "interactions", "motives", "sim_signals"):
+        for forbidden in ("save", "zone", "body", "interactions", "motives", "sim_signals",
+                            "presence", "social", "mood"):
             _require(forbidden not in row, "load_disabled contains %s" % forbidden)
     else:
         _validate_common(row)

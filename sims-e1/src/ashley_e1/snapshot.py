@@ -108,4 +108,57 @@ def freeze_plain(value):
         return result
     raise TypeError("live object escaped snapshot copy-out")
 
+
+def _encoded_bytes(row):
+    import json
+    return len(json.dumps(row, ensure_ascii=True, separators=(",", ":"),
+                          sort_keys=False).encode("utf-8"))
+
+
+def _mark_truncated(row):
+    interactions = row.get("interactions")
+    if interactions is not None:
+        interactions = dict(interactions)
+        interactions["observation_complete"] = False
+        row["interactions"] = interactions
+    row["observation_complete"] = False
+
+
+def apply_size_budget(row):
+    """Trim a presence_snapshot in place-order until it fits 8 KiB.
+
+    Drop order: social, then presence beyond 4, then signals beyond 8.
+    When the record still exceeds the cap, game_text is cleared signal by
+    signal (moodlets keep their tuning ids). Sets the existing truncation
+    flags and returns the row.
+    """
+    from . import schema
+    if row.get("event_kind") != "presence_snapshot":
+        return row
+    if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+        return row
+    if row.get("social"):
+        row["social"] = []
+        _mark_truncated(row)
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+    if len(row.get("presence", ())) > 4:
+        row["presence"] = list(row["presence"][:4])
+        _mark_truncated(row)
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+    if len(row.get("sim_signals", ())) > 8:
+        row["sim_signals"] = list(row["sim_signals"][:8])
+        _mark_truncated(row)
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+    for signal in row.get("sim_signals", ()):
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+        if isinstance(signal, dict) and signal.get("game_text") is not None:
+            signal["game_text"] = None
+            _mark_truncated(row)
+    return row
+
+
 # End of pure snapshot helpers.
