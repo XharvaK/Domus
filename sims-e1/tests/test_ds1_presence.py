@@ -1,0 +1,146 @@
+"""DS1-3 red-first: presence and social reads."""
+import os
+import sys
+import types
+import unittest
+
+
+SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
+if "ashley_e1" not in sys.modules:
+    package = types.ModuleType("ashley_e1")
+    package.__path__ = [os.path.join(SRC, "ashley_e1")]
+    sys.modules["ashley_e1"] = package
+
+from test_binding import load_probe
+from test_ds1_senses import FakeSimInfo, FakeTracker, FakeBuffs
+
+
+class FakeSim(object):
+    def __init__(self, sim_id, household_id=None, level=None, selectable=True,
+                 si_state=None, queue=None, on_lot=True):
+        self._sim_id = sim_id
+        self._household_id = household_id
+        self._level = level
+        self._selectable = selectable
+        self.si_state = si_state
+        self.queue = queue
+        self._on_lot = on_lot
+
+    @property
+    def level(self):
+        return self._level
+
+    def is_on_active_lot(self, include_spawn_point=None):
+        del include_spawn_point
+        return self._on_lot
+
+
+class FakeSimInfoEntry(object):
+    def __init__(self, sim_id, sim=None, household=None, household_id=None,
+                 selectable=True):
+        self.id = sim_id
+        self._sim = sim
+        self.household = household
+        self.household_id = household_id
+        self._selectable = selectable
+
+    def get_sim_instance(self, allow_hidden_flags=None):
+        del allow_hidden_flags
+        return self._sim
+
+    @property
+    def is_selectable(self):
+        return self._selectable
+
+
+class FakeEntry(object):
+    def __init__(self, entry_id, affordance, target, source="InteractionSource.AUTONOMY"):
+        self.id = entry_id
+        self.guid64 = affordance
+        self.affordance = affordance
+        self.target = target
+        self.context = types.SimpleNamespace(source=source)
+
+
+class LabSim(object):
+    def __init__(self, sim_id):
+        self.id = sim_id
+
+
+class Manager(object):
+    def __init__(self, entries):
+        self._entries = entries
+
+    def instanced_sims_on_active_lot_gen(self, allow_hidden_flags=None,
+                                         include_spawn_point=None):
+        del allow_hidden_flags, include_spawn_point
+        for entry in self._entries:
+            yield entry
+
+
+class PresenceTests(unittest.TestCase):
+    def context(self, entries, active_household="hh1", lab_id="lab"):
+        _, probe, _ = load_probe()
+        services = sys.modules["services"]
+        manager = Manager(entries)
+        services.sim_info_manager = lambda: manager
+        services.active_household = lambda: types.SimpleNamespace(id=active_household)
+        return probe
+
+    def test_lab_present_once_with_flag(self):
+        sim = FakeSim("lab")
+        entry = FakeSimInfoEntry("lab", sim=sim, household="hh1", household_id="hh1")
+        probe = self.context([entry])
+        presence, truncated = probe.observers.read_presence("lab")
+        self.assertEqual(presence, [{"id": "lab", "active_household": True,
+                                     "level": None}])
+        self.assertFalse(truncated)
+
+    def test_cap_eight_sets_truncation_and_skips_no_instance(self):
+        entries = [FakeSimInfoEntry("s%d" % i, sim=FakeSim("s%d" % i),
+                                    household="other", household_id="other")
+                   for i in range(10)]
+        entries.insert(3, FakeSimInfoEntry("ghost", sim=None))
+        probe = self.context(entries)
+        presence, truncated = probe.observers.read_presence("lab")
+        self.assertEqual(len(presence), 8)
+        self.assertTrue(truncated)
+        self.assertNotIn("ghost", [row["id"] for row in presence])
+
+    def test_level_and_household_flag(self):
+        sim = FakeSim("s1", level=3)
+        entry = FakeSimInfoEntry("s1", sim=sim, household="hh9", household_id="hh9")
+        probe = self.context([entry], active_household="hh1")
+        presence, _ = probe.observers.read_presence("lab")
+        self.assertEqual(presence, [{"id": "s1", "active_household": False,
+                                     "level": 3}])
+
+    def test_social_keeps_lab_targeted_drops_others(self):
+        lab = LabSim("lab")
+        other_target = LabSim("other")
+        me = FakeSim("me", si_state=[FakeEntry(1, "aff1", lab),
+                                     FakeEntry(2, "aff2", other_target)],
+                     queue=[FakeEntry(3, "aff3", lab)])
+        entry = FakeSimInfoEntry("me", sim=me)
+        probe = self.context([entry])
+        social, truncated = probe.observers.read_social("lab", LabSim("lab"), [entry])
+        self.assertEqual(len(social), 2)
+        self.assertFalse(truncated)
+        for row in social:
+            self.assertEqual(row["target_id"], "lab")
+
+    def test_social_reads_queue_and_si_state_none_fine_capped(self):
+        lab = LabSim("lab")
+        queued = [FakeEntry(i, "aff", lab) for i in range(6)]
+        me = FakeSim("me", si_state=None, queue=queued)
+        entry = FakeSimInfoEntry("me", sim=me)
+        probe = self.context([entry])
+        social, truncated = probe.observers.read_social("lab", lab, [entry])
+        self.assertEqual(len(social), 4)
+        self.assertTrue(truncated)
+
+
+if __name__ == "__main__":
+    unittest.main()

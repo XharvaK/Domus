@@ -312,6 +312,165 @@ def read_senses(sim_info, now_ticks, game):
             "mood": read_mood(sim_info)}
 
 
+def _active_household_id():
+    try:
+        household = services.active_household()
+    except Exception:
+        return None
+    try:
+        return household.id
+    except Exception:
+        return None
+
+
+def _describe_presence(sim_info, sim, household_id):
+    try:
+        raw_id = sim_info.id
+    except Exception:
+        return None
+    if raw_id is None:
+        return None
+    try:
+        own_household = sim_info.household_id
+    except Exception:
+        own_household = None
+    try:
+        level = sim.level
+    except Exception:
+        level = None
+    if isinstance(level, bool) or not isinstance(level, int):
+        level = None
+    try:
+        entry_id = str(schema.string_id(raw_id, "presence.id"))
+    except Exception:
+        return None
+    return {"id": entry_id,
+            "active_household": household_id is not None and own_household == household_id,
+            "level": level}
+
+
+def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS):
+    try:
+        manager = services.sim_info_manager()
+    except Exception:
+        return [], False
+    try:
+        generator = manager.instanced_sims_on_active_lot_gen(hidden_flags)
+    except Exception:
+        return [], False
+    try:
+        iterator = iter(generator)
+    except TypeError:
+        return [], False
+    household_id = _active_household_id()
+    presence = []
+    truncated = False
+    while True:
+        try:
+            candidate = next(iterator)
+        except StopIteration:
+            break
+        except Exception:
+            continue
+        if candidate is None:
+            continue
+        try:
+            sim = candidate.get_sim_instance(allow_hidden_flags=hidden_flags)
+        except Exception:
+            continue
+        if sim is None:
+            continue
+        try:
+            on_lot = sim.is_on_active_lot()
+        except Exception:
+            continue
+        if on_lot is not True:
+            continue
+        try:
+            row = _describe_presence(candidate, sim, household_id)
+        except Exception:
+            continue
+        if row is None:
+            continue
+        if len(presence) >= schema.MAX_PRESENCE:
+            truncated = True
+            continue
+        presence.append(row)
+    return presence, truncated
+
+
+def _target_matches(entry, lab_sim, lab_sim_id):
+    try:
+        target = entry.target
+    except Exception:
+        return False
+    if target is None:
+        return False
+    if target is lab_sim:
+        return True
+    for candidate in (target, lab_sim):
+        try:
+            if str(candidate.id) == str(lab_sim_id):
+                other = lab_sim if candidate is target else target
+                try:
+                    if str(other.id) == str(lab_sim_id):
+                        return True
+                except Exception:
+                    pass
+        except Exception:
+            continue
+    return False
+
+
+def read_social(lab_sim_id, lab_sim, candidates):
+    social = []
+    truncated = False
+    for candidate in candidates or ():
+        if candidate is None:
+            continue
+        try:
+            raw_id = candidate.id
+        except Exception:
+            continue
+        if raw_id is not None and str(raw_id) == str(lab_sim_id):
+            continue
+        try:
+            sim = candidate.get_sim_instance(allow_hidden_flags=ALL_HIDDEN_REASONS)
+        except Exception:
+            continue
+        if sim is None:
+            continue
+        for container in (sim.si_state, sim.queue):
+            if container is None:
+                continue
+            try:
+                iterator = iter(container)
+            except TypeError:
+                continue
+            while True:
+                try:
+                    entry = next(iterator)
+                except StopIteration:
+                    break
+                except Exception:
+                    continue
+                if entry is None:
+                    continue
+                if not _target_matches(entry, lab_sim, lab_sim_id):
+                    continue
+                try:
+                    row = _describe_interaction(entry)
+                    row["entry_key"] = snapshot.entry_key(entry)
+                    row["membership"] = "QUEUED"
+                except Exception:
+                    continue
+                if len(social) >= schema.MAX_SOCIAL:
+                    truncated = True
+                    continue
+                social.append(row)
+    return social, truncated
+
+
 def poll_once(telemetry_session_id, armed_name,
               hidden_flags=ALL_HIDDEN_REASONS):
     """Read one body and return a plain-data presence record."""
@@ -329,6 +488,27 @@ def poll_once(telemetry_session_id, armed_name,
     motives = senses["motives"]
     signals = senses["sim_signals"]
     mood = senses["mood"]
+    try:
+        raw_lab_id = sim_info.id
+        lab_id = None if raw_lab_id is None else str(raw_lab_id)
+    except Exception:
+        lab_id = None
+    presence, presence_truncated = ([], False)
+    social, social_truncated = ([], False)
+    if lab_id is not None:
+        try:
+            presence, presence_truncated = read_presence(lab_id)
+        except Exception:
+            presence, presence_truncated = ([], False)
+        if presence and len(presence) <= schema.MAX_PRESENCE:
+            try:
+                candidates = services.sim_info_manager().get_all()
+            except Exception:
+                candidates = ()
+            try:
+                social, social_truncated = read_social(lab_id, sim, candidates)
+            except Exception:
+                social, social_truncated = ([], False)
     save = _save_snapshot()
     game = _game_snapshot()
     wall = int(time.time() * 1000)
@@ -339,6 +519,8 @@ def poll_once(telemetry_session_id, armed_name,
             "is_selected": None, "posture": _posture_snapshot(sim)}
     complete = snapshot.interactions_complete(
         queue_truncated, running_truncated, capture_complete)
+    if presence_truncated or social_truncated:
+        complete = False
     row = schema.make_record(
         "presence_snapshot", telemetry_session_id=telemetry_session_id,
         wall_timestamp_ms=wall, monotonic_ns=mono,
@@ -349,5 +531,6 @@ def poll_once(telemetry_session_id, armed_name,
                       "observation_complete": complete},
         observation_complete=complete,
         motives=motives, sim_signals=signals, mood=mood,
+        presence=presence, social=social,
     )
     return snapshot.apply_size_budget(row)
