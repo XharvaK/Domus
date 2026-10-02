@@ -94,7 +94,7 @@ def test_unowned_tmp_is_preserved(paths, monkeypatch):
 def test_probe_230_status_fields(paths, monkeypatch):
     from domus_helper import mcp_server
 
-    result = dict(probe_version="2.3.0", armed_name=None,
+    result = dict(probe_version="2.3.1", armed_name=None,
                   inbox_errors=0, inbox_autostart="ZONE:tuning")
     def handler(row):
         assert row["command"] == "status"

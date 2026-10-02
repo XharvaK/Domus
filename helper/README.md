@@ -1,7 +1,7 @@
 # Domus host helper
 
 Python >=3.12, Windows host only for live use. Never install or import this
-package in the game. The probe remains 2.3.0. Only local command files and
+package in the game. The probe remains 2.3.1. Only local command files and
 stdio MCP are used; no HTTP listener or network client is started.
 
 From the Domus root, after Owner approval on the Windows PC:
