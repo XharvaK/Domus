@@ -1,7 +1,7 @@
 # Domus host helper
 
 Python >=3.12, Windows host only for live use. Never install or import this
-package in the game. The probe remains 2.2.1. Only local command files and
+package in the game. The probe remains 2.3.0. Only local command files and
 stdio MCP are used; no HTTP listener or network client is started.
 
 From the Domus root, after Owner approval on the Windows PC:
@@ -63,7 +63,7 @@ fail closed. Evidence missing its ledger is an error, not fabricated data.
 
 Test from `helper/`: `.venv/bin/python -m pytest` (on Windows use
 `.venv/Scripts/python.exe`). Tests fake the inbox/replier and process check;
-no game or credentials are needed. The vendored cmdbox and full schema v3
+no game or credentials are needed. The vendored cmdbox and full schema v4
 validator are pure Python copies from da68647. AST equality tests detect
 changes to their vocabulary, shapes, key sets and validation behavior.
 The existing probe guard is invoked only on `sims-e1/src/ashley_e1`.

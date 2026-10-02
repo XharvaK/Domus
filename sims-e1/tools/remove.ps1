@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$SimsRoot,
-    [string]$Version = "2.2.1"
+    [string]$Version = "2.3.0"
 )
 
 $ErrorActionPreference = "Stop"
