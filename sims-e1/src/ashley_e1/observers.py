@@ -136,6 +136,182 @@ def _describe_interaction(entry):
     return row
 
 
+# Community-sourced motive tuning ids (s4cl motives enum), LAB-unverified.
+# Name match is preferred where available; guid64 is the fallback key.
+MOTIVE_GUIDS = {
+    16656: "hunger",
+    16654: "energy",
+    16652: "bladder",
+    16657: "hygiene",
+    16655: "fun",
+    16658: "social",
+}
+
+
+def _motive_band(value):
+    if value <= 20:
+        return "distress"
+    if value <= 50:
+        return "low"
+    return "ok"
+
+
+def _read_cached_motive(entry, now_ticks):
+    try:
+        guid = int(entry.guid64)
+    except Exception:
+        return None
+    if guid not in MOTIVE_GUIDS:
+        return None
+    try:
+        raw = entry._cached_value
+        updated = entry._last_update_ticks
+        minimum = entry.min_value
+        maximum = entry.max_value
+    except Exception:
+        return None
+    try:
+        value = float(raw)
+        low = float(minimum)
+        high = float(maximum)
+        stamp = int(updated)
+        now = int(now_ticks)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(raw, bool) or isinstance(updated, bool):
+        return None
+    if high == low:
+        normalized = None
+    else:
+        normalized = round((value - low) / (high - low) * 100)
+        normalized = max(0, min(100, normalized))
+    try:
+        age = now - stamp
+    except (TypeError, ValueError):
+        return None
+    if age < 0:
+        age = 0
+    band = None if normalized is None else _motive_band(normalized)
+    try:
+        motive_id = str(schema.string_id(MOTIVE_GUIDS[guid], "motive.id"))
+    except Exception:
+        return None
+    return {"id": motive_id, "value": normalized, "band": band, "age_ticks": age}
+
+
+def read_motives(sim_info, now_ticks):
+    try:
+        tracker = sim_info.commodity_tracker
+    except Exception:
+        return []
+    if tracker is None:
+        return []
+    try:
+        commodities = tracker.get_all_commodities()
+    except Exception:
+        return []
+    motives = []
+    try:
+        iterator = iter(commodities)
+    except TypeError:
+        return []
+    for entry in iterator:
+        if len(motives) >= schema.MAX_MOTIVES:
+            break
+        try:
+            row = _read_cached_motive(entry, now_ticks)
+        except Exception:
+            continue
+        if row is not None:
+            motives.append(row)
+    return motives
+
+
+def _describe_buff(entry):
+    try:
+        tuning = str(entry.guid64)
+    except Exception:
+        return None
+    try:
+        weight = entry.mood_weight
+    except Exception:
+        return None
+    if isinstance(weight, bool):
+        return None
+    try:
+        magnitude = "w:%d" % int(weight)
+    except (TypeError, ValueError):
+        return None
+    try:
+        tuning_id = str(schema.string_id(tuning, "signal.tuning_id"))
+    except Exception:
+        return None
+    return {"kind": "MOODLET", "tuning_id": tuning_id, "game_text": None,
+            "magnitude": magnitude, "consequences": None, "native_override": None}
+
+
+def read_moodlets(sim_info):
+    try:
+        buffs = sim_info.Buffs
+    except Exception:
+        return []
+    if buffs is None:
+        return []
+    try:
+        iterator = iter(buffs)
+    except TypeError:
+        return []
+    signals = []
+    for entry in iterator:
+        if len(signals) >= schema.MAX_SIGNALS:
+            break
+        try:
+            row = _describe_buff(entry)
+        except Exception:
+            continue
+        if row is not None:
+            signals.append(row)
+    return signals
+
+
+def read_mood(sim_info):
+    try:
+        buffs = sim_info.Buffs
+    except Exception:
+        return None
+    if buffs is None:
+        return None
+    try:
+        mood = buffs.get_mood()
+    except Exception:
+        return None
+    if mood is None:
+        return None
+    try:
+        mood_type = str(mood.guid64)
+    except Exception:
+        return None
+    try:
+        intensity = buffs.get_mood_intensity()
+    except Exception:
+        return None
+    if intensity is not None and (isinstance(intensity, bool) or
+                                  not isinstance(intensity, (int, float))):
+        return None
+    try:
+        mood_id = str(schema.string_id(mood_type, "mood.type"))
+    except Exception:
+        return None
+    return {"type": mood_id, "intensity": intensity}
+
+
+def read_senses(sim_info, now_ticks, game):
+    del game
+    return {"motives": read_motives(sim_info, now_ticks),
+            "sim_signals": read_moodlets(sim_info),
+            "mood": read_mood(sim_info)}
+
+
 def poll_once(telemetry_session_id, armed_name,
               hidden_flags=ALL_HIDDEN_REASONS):
     """Read one body and return a plain-data presence record."""
@@ -149,6 +325,10 @@ def poll_once(telemetry_session_id, armed_name,
     interactions, queue_truncated, running_truncated = snapshot.merge_interactions(
         queued, running, _describe_interaction
     )
+    senses = read_senses(sim_info, services.time_service().sim_now.absolute_ticks(), None)
+    motives = senses["motives"]
+    signals = senses["sim_signals"]
+    mood = senses["mood"]
     save = _save_snapshot()
     game = _game_snapshot()
     wall = int(time.time() * 1000)
@@ -159,7 +339,7 @@ def poll_once(telemetry_session_id, armed_name,
             "is_selected": None, "posture": _posture_snapshot(sim)}
     complete = snapshot.interactions_complete(
         queue_truncated, running_truncated, capture_complete)
-    return schema.make_record(
+    row = schema.make_record(
         "presence_snapshot", telemetry_session_id=telemetry_session_id,
         wall_timestamp_ms=wall, monotonic_ns=mono,
         game=game, attestation=schema.attestation(armed_name),
@@ -168,4 +348,6 @@ def poll_once(telemetry_session_id, armed_name,
                       "running_truncated": running_truncated,
                       "observation_complete": complete},
         observation_complete=complete,
+        motives=motives, sim_signals=signals, mood=mood,
     )
+    return snapshot.apply_size_budget(row)
