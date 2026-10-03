@@ -73,7 +73,7 @@ def test_invalid_arguments(paths, command, args):
     assert not list(paths.inbox.iterdir())
 
 
-@pytest.mark.parametrize("module", ["cmdbox", "schema"])
+@pytest.mark.parametrize("module", ["cmdbox", "schema", "e2_cards"])
 def test_ast_drift(module):
     root = Path(__file__).resolve().parents[2]
     source = root / "sims-e1" / "src" / "ashley_e1" / (module + ".py")

@@ -6,6 +6,7 @@ never becomes FINISHED; only the game's finishing callback sets FINISHED.
 """
 
 from . import e2_admission
+from . import e2_cards
 
 WINDOW_SECONDS = 60.0
 MAINTAIN_SECONDS = 10.0
@@ -29,7 +30,8 @@ def _posture(row):
 
 class Experiment:
     def __init__(self, experiment_id, token, object_id, sim_id, interaction_id,
-                 pushed_mono_ns, signature, baseline_ids, continuation=()):
+                 pushed_mono_ns, signature, baseline_ids, continuation=(),
+                 card=None, control_rows=None):
         self.experiment_id = experiment_id
         self.token = token
         self.object_id = object_id
@@ -38,6 +40,14 @@ class Experiment:
         self.pushed_mono_ns = pushed_mono_ns
         self.signature = signature
         self.continuation = frozenset(continuation)
+        if card is None:
+            card = e2_cards.posture_card(object_id, signature)
+        else:
+            e2_cards.validate_card(card)
+        self.card = card
+        self.control_rows = list(control_rows or ())
+        self.ambiguous = []
+        self._rows_since = []
         self.known_ids = set(i for i in baseline_ids if i is not None)
         self.claims = dict((key, False) for key in CLAIM_ORDER)
         self.claims["REQUEST_ACCEPTED"] = True
@@ -106,7 +116,21 @@ class Experiment:
             if ours.get("membership") in RUNNING_MEMBERSHIPS and self.started_ns is None:
                 self.started_ns = mono
                 self.claims["STARTED"] = True
-        if seated:
+        if self.card["card_class"] != "posture":
+            self._rows_since.append(row)
+        effect_held, reason = e2_cards.evaluate_effect(self.card, {
+            "interaction_id": self.interaction_id,
+            "foreign_roots": self.foreign_roots,
+            "control_rows": self.control_rows,
+            "pushed_mono_ns": self.pushed_mono_ns,
+            "rows_since_push": self._rows_since,
+            "started_ns": self.started_ns,
+        }, row)
+        if reason is not None and reason not in self.ambiguous:
+            self.ambiguous.append(reason)
+        if reason is not None:
+            effect_held = False
+        if effect_held:
             self.claims["EFFECT_OBSERVED"] = True
             if self.effect_since_ns is None:
                 self.effect_since_ns = mono
@@ -116,12 +140,12 @@ class Experiment:
                 # Maintenance must be continuous from attribution; a later
                 # re-seat is a new, unattributed effect.
                 self.maintenance_broken = True
-        if (seated and self.claims["STARTED"] and not self.claims["ATTRIBUTED"] and
+        if (effect_held and self.claims["STARTED"] and not self.claims["ATTRIBUTED"] and
                 not self.foreign_roots and self.incomplete_rows == 0 and
                 self.started_ns is not None and self.started_ns <= mono):
             self.claims["ATTRIBUTED"] = True
             self.attributed_ns = mono
-        if (self.claims["ATTRIBUTED"] and seated and not self.foreign_roots and
+        if (self.claims["ATTRIBUTED"] and effect_held and not self.foreign_roots and
                 not self.maintenance_broken and
                 self.effect_since_ns is not None and
                 mono - max(self.effect_since_ns, self.attributed_ns) >=
@@ -140,14 +164,15 @@ class Experiment:
         if self.closed:
             return self.verdict
         self.closed = True
-        if self.claims["ATTRIBUTED"] and self.claims["MAINTAINED_10S"]:
+        if (self.claims["ATTRIBUTED"] and self.claims["MAINTAINED_10S"] and
+                not self.ambiguous):
             self.verdict = PASS
         else:
             self.verdict = OUTCOME_UNKNOWN
         return self.verdict
 
 
-class SignatureLearner:
+class CardLearner:
     """Learn the seated posture name from an Owner pie-menu sit on the object.
 
     The Host never guesses which posture name means "seated": the name is
@@ -257,3 +282,13 @@ class SignatureLearner:
             return
         if entry.get("membership") == "QUEUED" and aff not in excluded:
             learned.add(aff)
+
+    def cards(self):
+        """Posture cards for signatures learned from the Owner's own Sit."""
+        found = []
+        for object_id in sorted(self.signatures):
+            found.append(e2_cards.posture_card(object_id, self.signatures[object_id]))
+        return found
+
+
+SignatureLearner = CardLearner

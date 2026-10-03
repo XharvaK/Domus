@@ -232,6 +232,14 @@ def atlas_query(build: str | None = None, name_contains: str | None = None,
 
 
 @server.tool()
+def cards(card_class: str | None = None) -> list[dict]:
+    """Read cards for the detected build. Nothing is written."""
+    client = tools()
+    detected = fingerprint_reader.detected_build(paths=client.paths)["detected_build"]
+    return atlas_store.list_cards(client.paths.atlas_db, detected, card_class)
+
+
+@server.tool()
 def bridge_status() -> dict:
     from .bridge import Bridge
     return Bridge(paths=Paths.from_env()).status()
