@@ -1,5 +1,6 @@
 """Helper bridge: spool telemetry, heartbeat, and flush the observation outbox."""
 import argparse
+import json
 import time
 import uuid
 
@@ -90,6 +91,7 @@ def main(argv=None):
     bridge = Bridge()
     if args.once:
         bridge.tick(int(time.time() * 1000))
+        print(json.dumps(bridge.status(), sort_keys=True))
         return 0
     if args.interval is None:
         parser.error("pass --once or --interval")
