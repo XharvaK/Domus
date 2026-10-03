@@ -19,9 +19,9 @@ import ashley_e1.schema as schema
 
 
 WHITELIST = (
-    "guid64", "name", "is_super", "is_social", "allow_autonomous",
-    "allow_user_directed", "require_current_posture", "posture_preferences",
-    "static_commodities",
+    "guid64", "name", "is_super", "is_social", "target_type",
+    "allow_autonomous", "allow_user_directed", "require_current_posture",
+    "posture_preferences", "static_commodities",
 )
 
 
@@ -47,17 +47,21 @@ class _Commodity(object):
         self.guid64 = guid
 
 
+class _EnumName(object):
+    name = "OBJECT"
+
+
 class _Affordance(object):
     def __init__(self, guid, name="Sit"):
         self.guid64 = guid
         self.__name__ = name
         self.is_super = True
         self.is_social = False
+        self.target_type = _EnumName()
         self.allow_autonomous = True
         self.allow_user_directed = False
         self._require_current_posture = True
         self.posture_preferences = object()
-        self.target_type = "SHOULD_NOT_APPEAR"
         self.commodity_flags = (1, 2)
         self._static_commodities = (
             _Entry(9, _Commodity(4)),
@@ -119,7 +123,7 @@ class AtlasModuleTests(unittest.TestCase):
         self.assertEqual(dump.state, "done")
         row = [item for item in _rows(path) if item["kind"] == "affordance"][0]
         self.assertEqual(set(row) - {"kind"}, set(WHITELIST))
-        self.assertNotIn("target_type", row)
+        self.assertEqual(row["target_type"], "OBJECT")
         self.assertNotIn("commodity_flags", row)
         self.assertEqual(row["static_commodities"], list(range(1, 33)))
         self.assertLessEqual(len(row["static_commodities"]), 32)

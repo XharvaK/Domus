@@ -21,6 +21,20 @@ def _bool_or_null(value):
     return None
 
 
+def _enum_name(value):
+    if value is None:
+        return None
+    try:
+        name = value.name
+    except AttributeError:
+        return None
+    if type(name) is not str:
+        return None
+    if len(name) > 128:
+        return name[:128]
+    return name
+
+
 def _static_commodities(value):
     if type(value) not in (list, tuple):
         return None
@@ -54,6 +68,7 @@ def _affordance_row(cls):
         "name": name,
         "is_super": _bool_or_null(_missing(lambda: cls.is_super)),
         "is_social": _bool_or_null(_missing(lambda: cls.is_social)),
+        "target_type": _enum_name(_missing(lambda: cls.target_type)),
         "allow_autonomous": _bool_or_null(_missing(lambda: cls.allow_autonomous)),
         "allow_user_directed": _bool_or_null(_missing(lambda: cls.allow_user_directed)),
         "require_current_posture": _bool_or_null(_missing(lambda: cls._require_current_posture)),
