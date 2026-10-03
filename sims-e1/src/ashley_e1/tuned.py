@@ -8,21 +8,31 @@ from . import schema
 from .writer import append_atlas_line
 
 
+def _descriptor(value):
+    for klass in type(value).__mro__:
+        if "__get__" in klass.__dict__:
+            return True
+    return False
+
+
 def _plain(obj, name, instance):
     for klass in type(obj).__mro__:
         if name not in klass.__dict__:
             continue
         value = klass.__dict__[name]
-        if hasattr(value, "__get__"):
+        if _descriptor(value):
             continue
         return value
     if not instance:
         return None
-    raw = getattr(obj, "__dict__", None)
+    try:
+        raw = obj.__dict__
+    except AttributeError:
+        return None
     if type(raw) is not dict or name not in raw:
         return None
     value = raw[name]
-    if hasattr(value, "__get__"):
+    if _descriptor(value):
         return None
     return value
 
