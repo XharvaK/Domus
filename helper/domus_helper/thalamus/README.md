@@ -49,4 +49,32 @@ On fire: percepts are deduplicated by key (highest salience, first-seen order), 
 
 ## Open
 
-θ₀ against "≤ 1 wake per 3–5 real minutes" is a DT2B replay question. `w_kind` learning (`wake_worth`) is not in v1. The decision-log quota is DT2C.
+θ₀ against "≤ 1 wake per 3–5 real minutes" is still open after the DT2B replays below. Defaults were not changed. `w_kind` learning (`wake_worth`) is not in v1. The decision-log quota is DT2C.
+
+## Extraction
+
+`Extractor.step` reads one row. `telemetry.raw_rows` replays old evidence without schema checks. `file_rows` still validates. Her body is `body.sim_id`. Activity for a need rate is the sorted tuple of RUNNING `affordance_id`s on the previous snapshot (`()` when idle). A lineage id is `slot_id:guid` and is stamped on later percepts. Gap and lineage reset both forward models.
+
+| Percept | When | Bucket | Urgency |
+|---|---|---|---|
+| `gap` | `written_sequence` jumps by more than 1 in the session, or `session_open` after any row | `gap` | `wake` |
+| `lineage` | `lineage_event` (`subject` slot, `object` guid) | `lineage_class` | `wake` |
+| `need` | Her motive band changes. Otherwise only when the need model's `z >= 2` | new band | ok→low `wake`; any→distress `always_through`; recovery `normal`; surprise `normal` |
+| `interaction` | RUNNING membership gained, or a RUNNING entry gone | `started` / `ended` | `normal`. `ended` sets `pressure=action_end` for `SCRIPT_WITH_USER_INTENT`, and `surprise=3` for `BODY_CANCEL_AOP` |
+| `posture` | `posture_name` differs from the previous snapshot | new name | `normal` |
+| `env` | `zone_id` or `lot_id` changes, both sides non-null or null→value | `lot_id` | `wake` |
+| `presence` | Only if the row has `presence`. A sim id appears or disappears | `arrived` / `left` | `normal` |
+| `social` | Only if the row has `social`. An entry whose `target_id` is her body | `addressed` | `always_through` when `source_sim == owner_sim_id` |
+
+Facts are at most `ticks`, need `value`/`band`, and interaction `affordance_text` cut to 120 characters. `NeedModel` learns `rate` and `sigma` with gain 0.2 on consecutive unpaused pairs (`z = 0` until a rate exists). `DurationModel` keeps 50 unambiguous completed durations; surprise is 0 with fewer than 3 samples, else 3 when the duration is outside `[p25/2, p75×2]` (nearest rank, same helper as calibration).
+
+## Replay (dt2.v1 defaults, 2026-10-03)
+
+| Run | Result |
+|---|---|
+| Sit `E2_T1_T3` `863ffab5` | Affordance `14244` is QUEUED on 419 rows and RUNNING on 0. No interaction percept, so no `h` series. |
+| N5 `E2_N5_BOOTSTRAP_02` `863ffab5` | Max 2 non-`always_through` fires in any 60 s wall window (6 such fires). `wakes_per_real_minute` 0.520. Counts: interaction 27, lineage 5, posture 5. |
+| Nap `E2_N_P_L_OWNER` `863ffab5` | During `SUPER_SPEED3`, max 1 fire per 60 s (3 fires). Whole file max 3 per 60 s. `wakes_per_real_minute` 0.425 (above the 0.20–0.33 target). Counts: interaction 199, lineage 7, posture 36. |
+| L3 `0d15935a` then `1437e3d1` | Every `zone_id` and `lot_id` is null, so no `env` percept. Six `lineage` percepts; each resets the models. A key seen before a lineage boundary has novelty 0.6 on its next sighting. Counts: interaction 3, lineage 6, gap 1. |
+| Fixture `DT2B_FIXTURE` | Need band changes, distress as `always_through`. Rates learned for every motive. Raw bands: bladder ok→low; energy distress→low→ok; fun low; hunger low→distress; hygiene distress; social distress. Counts: gap 1, interaction 8, lineage 2, need 6, posture 2. |
+| Determinism | Two replays of the fixture match. |
