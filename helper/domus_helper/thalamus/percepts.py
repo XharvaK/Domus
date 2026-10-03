@@ -41,6 +41,9 @@ class Extractor:
         self.needs = NeedModel()
         self.durations = DurationModel()
         self.lineage_id = ""
+        self.slot_id = None
+        self.guid = None
+        self.lineage_class = ""
         self._seen_row = False
         self._session = None
         self._seq = None
@@ -85,6 +88,9 @@ class Extractor:
         guid = "" if e2.get("guid") is None else str(e2.get("guid"))
         lineage_class = "" if e2.get("lineage_class") is None else str(e2.get("lineage_class"))
         percept = Percept("lineage", slot, guid, lineage_class, urgency="wake", lineage="")
+        self.slot_id = e2.get("slot_id")
+        self.guid = e2.get("guid")
+        self.lineage_class = lineage_class
         self.lineage_id = f"{slot}:{guid}"
         self.needs.reset()
         self.durations.reset()
@@ -301,6 +307,45 @@ class Extractor:
                 "addressed", urgency=urgency, lineage=self.lineage_id, facts=_facts(ticks, ())))
         self._social = seen
         return percepts
+
+    def to_dict(self):
+        return {
+            "owner_sim_id": self.owner_sim_id,
+            "needs": self.needs.to_dict(),
+            "durations": self.durations.to_dict(),
+            "lineage_id": self.lineage_id,
+            "slot_id": self.slot_id,
+            "guid": self.guid,
+            "lineage_class": self.lineage_class,
+            "seen_row": self._seen_row,
+            "session": self._session,
+            "seq": self._seq,
+            "prev": self._prev,
+            "open": self._open,
+            "barrier": self._barrier,
+            "presence": None if self._presence is None else sorted(self._presence),
+            "social": sorted(self._social),
+        }
+
+    @classmethod
+    def from_dict(cls, blob):
+        extractor = cls(owner_sim_id=blob.get("owner_sim_id"))
+        extractor.needs = NeedModel.from_dict(blob.get("needs") or {})
+        extractor.durations = DurationModel.from_dict(blob.get("durations") or {})
+        extractor.lineage_id = blob.get("lineage_id") or ""
+        extractor.slot_id = blob.get("slot_id")
+        extractor.guid = blob.get("guid")
+        extractor.lineage_class = blob.get("lineage_class") or ""
+        extractor._seen_row = bool(blob.get("seen_row"))
+        extractor._session = blob.get("session")
+        extractor._seq = blob.get("seq")
+        extractor._prev = blob.get("prev")
+        extractor._open = blob.get("open") or {}
+        extractor._barrier = blob.get("barrier") or 0
+        presence = blob.get("presence")
+        extractor._presence = None if presence is None else set(presence)
+        extractor._social = set(blob.get("social") or [])
+        return extractor
 
 
 def _find_entry(observed, identity):

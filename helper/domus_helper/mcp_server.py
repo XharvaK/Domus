@@ -238,6 +238,12 @@ def bridge_status() -> dict:
 
 
 @server.tool()
+def thalamus_status() -> dict:
+    from .bridge import Bridge
+    return Bridge(paths=Paths.from_env()).thalamus_status()
+
+
+@server.tool()
 def calibrate() -> dict:
     return asdict(tools().command("calibrate"))
 
