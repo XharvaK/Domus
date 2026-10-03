@@ -21,5 +21,6 @@ def test_sdk_stdio_registration():
                         "status", "arm", "start", "stop", "disarm", "prepare", "sit", "sit_trial",
                         "pause", "release", "verdicts", "telemetry", "lineage",
                         "detected_build", "fingerprints",
-                        "atlas_dump", "atlas_progress", "atlas_import", "atlas_query"}
+                        "atlas_dump", "atlas_progress", "atlas_import", "atlas_query",
+                        "tuned_scan"}
     anyio.run(exercise)

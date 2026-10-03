@@ -35,8 +35,8 @@ The inbox directories must already exist. Every tool checks `tasklist` for
 `TS4_x64.exe` then gets an accepted status. Arming accepts only `lab_e1` or
 `lab_e1_fork`; further actuation requires canonical LAB status after arming.
 Read tools include status, verdicts, telemetry, lineage, `atlas_dump`,
-`atlas_progress`, `atlas_import` and `atlas_query`. `atlas_dump` is read-only
-and is not an actuating command. The atlas database is
+`atlas_progress`, `atlas_import`, `atlas_query` and `tuned_scan`. `atlas_dump`
+and `tuned_scan` are read-only and are not actuating commands. The atlas database is
 `%LOCALAPPDATA%\Domus\atlas.db` unless `DOMUS_DATA_DIR` is set.
 `detected_build`
 reports the installed client version bound to the running `TS4_x64.exe`

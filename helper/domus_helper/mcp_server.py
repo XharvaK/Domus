@@ -194,6 +194,11 @@ def atlas_dump() -> dict:
 
 
 @server.tool()
+def tuned_scan() -> dict:
+    return asdict(tools().command("tuned_scan"))
+
+
+@server.tool()
 def atlas_progress() -> dict:
     block = tools().checked_status().result.get("atlas")
     if not isinstance(block, dict):

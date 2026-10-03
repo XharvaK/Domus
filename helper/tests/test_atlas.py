@@ -116,6 +116,21 @@ def test_name_contains_is_bound(tmp_path):
     assert atlas.query(db, build="1.1", name_contains="x' OR 1=1 --") == []
 
 
+def test_tuned_scan_is_readonly_command(paths, monkeypatch):
+    assert "tuned_scan" not in mcp.ACTUATING
+    monkeypatch.setattr(mcp, "game_running", lambda: True)
+    seen = []
+
+    def handler(row):
+        seen.append(row)
+        return dict(status="OK", code=None, result={"tuned": {"state": "idle"}})
+
+    with replier(paths, handler):
+        mcp.tuned_scan()
+    commands = [(row["command"], row["args"]) for row in seen]
+    assert ("tuned_scan", {}) in commands
+
+
 def test_atlas_dump_is_readonly_command(paths, monkeypatch):
     assert "atlas_dump" not in mcp.ACTUATING
     monkeypatch.setattr(mcp, "game_running", lambda: True)
