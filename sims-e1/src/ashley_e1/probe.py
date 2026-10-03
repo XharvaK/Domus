@@ -50,6 +50,7 @@ except ImportError:
 
 from . import atlas
 from . import cmdbox
+from . import tuned
 from . import e2_control
 from . import observers
 from . import schema
@@ -103,6 +104,9 @@ _INBOX_ALARM_OWNER = _ProbeAlarmOwner()
 _ATLAS_ALARM_OWNER = _ProbeAlarmOwner()
 _ATLAS = None
 _ATLAS_HANDLE = None
+_TUNED_ALARM_OWNER = _ProbeAlarmOwner()
+_TUNED = None
+_TUNED_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
 _INBOX_STARTED_ZONE = None
@@ -361,7 +365,7 @@ def _inbox_status():
                 verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
                 inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS,
                 motive_diag=observers.motive_diag(),
-                atlas=_atlas_progress())
+                atlas=_atlas_progress(), tuned=_tuned_progress())
 
 
 def _inbox_dispatch(cmd, connection):
@@ -378,6 +382,8 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_e2_sit(_E2.last_prepared_token, _session_id=connection)
     if name == 'atlas_dump':
         return _dispatch_atlas_dump(connection)
+    if name == 'tuned_scan':
+        return _dispatch_tuned_scan(connection)
     dispatchers = {'start': _dispatch_start, 'stop': _dispatch_stop,
                    'disarm': _dispatch_disarm, 'pause': _dispatch_e2_pause,
                    'release': _dispatch_e2_release, 'status': _dispatch_status}
@@ -455,6 +461,83 @@ def _dispatch_atlas_dump(connection):
         callback=_atlas_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True
+
+
+def _tuned_progress():
+    if _TUNED is None:
+        return {"state": "idle", "done": 0, "total": 0, "chunks": 0,
+                "max_chunk_ms": 0, "file": None}
+    return _TUNED.progress()
+
+
+def _cancel_tuned():
+    global _TUNED_HANDLE
+    handle = _TUNED_HANDLE
+    _TUNED_HANDLE = None
+    if handle is None or alarms is None:
+        return
+    try:
+        alarms.cancel_alarm(handle)
+    except Exception:
+        return
+
+
+def _lot_snapshot():
+    if _services_module is None:
+        return None, "TUNED_NO_LOT"
+    try:
+        manager = _services_module.object_manager()
+    except AttributeError:
+        return None, "TUNED_NO_LOT"
+    if manager is None:
+        return None, "TUNED_NO_LOT"
+    try:
+        objects = manager._objects
+    except AttributeError:
+        return None, "TUNED_NO_LOT"
+    try:
+        values = dict.values(objects)
+    except (AttributeError, TypeError):
+        return None, "TUNED_NO_LOT"
+    return list(values), None
+
+
+def _dispatch_tuned_scan(connection):
+    global _TUNED, _TUNED_HANDLE
+    if _INBOX_HANDLE is None:
+        connection.code = "TUNED_NO_PUMP"
+        return False
+    if _TUNED is not None and _TUNED.state == "running":
+        connection.code = "TUNED_BUSY"
+        return False
+    snapshot, code = _lot_snapshot()
+    if code is not None:
+        connection.code = code
+        return False
+    folder = os.path.join(_TELEMETRY_ROOT, "atlas")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(
+        folder, "tuned_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
+    _TUNED = tuned.TunedScan(snapshot, path)
+    _TUNED_HANDLE = alarms.add_alarm_real_time(
+        owner=_TUNED_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        callback=_tuned_tick, repeating=True, use_sleep_time=False,
+        cross_zone=False)
+    return True
+
+
+def _tuned_tick(alarm_handle=None):
+    try:
+        if _TUNED is None or _TUNED.state != "running":
+            _cancel_tuned()
+            return
+        _TUNED.step()
+        if _TUNED.state != "running":
+            _cancel_tuned()
+    except Exception:
+        if _TUNED is not None:
+            _TUNED.state = "error"
+        _cancel_tuned()
 
 
 def _atlas_tick(alarm_handle=None):

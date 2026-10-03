@@ -66,7 +66,7 @@ EXPERIMENT_PHASES = (
     "VERDICT",
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
-            "release", "status", "sit_trial", "atlas_dump")
+            "release", "status", "sit_trial", "atlas_dump", "tuned_scan")
 
 
 def _command_id(value):
@@ -155,6 +155,26 @@ def validate_atlas(row):
     elapsed = row["max_chunk_ms"]
     _require(type(elapsed) in (int, float) and elapsed >= 0, "atlas.max_chunk_ms")
     _require(row["file"] is None or type(row["file"]) is str, "atlas.file")
+    return {
+        "state": row["state"],
+        "done": row["done"],
+        "total": row["total"],
+        "chunks": row["chunks"],
+        "max_chunk_ms": elapsed,
+        "file": row["file"],
+    }
+
+
+def validate_tuned(row):
+    """Closed tuned-scan progress on the status reply. Not a telemetry row."""
+    _require(type(row) is dict and set(row) == {
+        "state", "done", "total", "chunks", "max_chunk_ms", "file"}, "tuned")
+    _require(row["state"] in ATLAS_STATES, "tuned.state")
+    for key in ("done", "total", "chunks"):
+        _require(type(row[key]) is int and row[key] >= 0, "tuned." + key)
+    elapsed = row["max_chunk_ms"]
+    _require(type(elapsed) in (int, float) and elapsed >= 0, "tuned.max_chunk_ms")
+    _require(row["file"] is None or type(row["file"]) is str, "tuned.file")
     return {
         "state": row["state"],
         "done": row["done"],
