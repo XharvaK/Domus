@@ -121,6 +121,9 @@ _INBOX_USED_IDS = set()
 _INBOX_VERDICTS = []
 _STATE = "UNARMED"
 _ARMED_NAME = None
+_CALIBRATE = False
+_CAL_SPEED = None
+_OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -357,7 +360,7 @@ def _dispatch_status(*args, _session_id=0, **kwargs):
 
 
 def _inbox_status():
-    return dict(state=_STATE, armed_name=_ARMED_NAME,
+    return dict(state=_STATE, armed_name=_ARMED_NAME, calibrate=_CALIBRATE,
                 probe_version=E1_PROBE_VERSION, schema_version=schema.OBSERVATION_SCHEMA_VERSION,
                 signatures=dict(_E2.learner.signatures),
                 continuation={key: sorted(value) for key, value in _E2.learner.continuation.items()},
@@ -368,8 +371,21 @@ def _inbox_status():
                 atlas=_atlas_progress(), tuned=_tuned_progress())
 
 
+def _refuse_observe_only(connection, name):
+    connection.code = "CALIBRATE_OBSERVE_ONLY"
+    _INBOX_VERDICTS.append({
+        "phase": "VERDICT", "code": "CALIBRATE_OBSERVE_ONLY",
+        "experiment_id": None, "detail": name})
+    del _INBOX_VERDICTS[:-5]
+    return False
+
+
 def _inbox_dispatch(cmd, connection):
     name, args = cmd['command'], cmd['args']
+    if _CALIBRATE and name in _OBSERVE_REFUSED:
+        return _refuse_observe_only(connection, name)
+    if name == 'calibrate':
+        return _cmd_calibrate(connection)
     if name == 'arm':
         return _dispatch_arm(args['name'], _session_id=connection)
     if name == 'prepare':
@@ -751,8 +767,11 @@ def _STATE_RESET():
     global _STATE, _ARMED_NAME, _ARMED_SNAPSHOT, _TELEMETRY_SESSION_ID
     global _ALARM_HANDLE, _WRITER, _WRITER_IDLE, _SESSION_OPENED, _POLL_BUSY
     global _MISUSE_COUNT, _LAST_CAPTURE_COUNTERS, _INBOX_ERRORS
+    global _CALIBRATE, _CAL_SPEED
     _STATE = "UNARMED"
     _ARMED_NAME = None
+    _CALIBRATE = False
+    _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
     _TELEMETRY_SESSION_ID = None
     _ALARM_HANDLE = None
@@ -781,6 +800,7 @@ def get_status():
     return {
         "state": _STATE,
         "armed_name": _ARMED_NAME,
+        "calibrate": _CALIBRATE,
         "armed_snapshot": _ARMED_SNAPSHOT,
         "telemetry_session_id": _TELEMETRY_SESSION_ID,
         "alarm_handle": _ALARM_HANDLE,
@@ -819,10 +839,50 @@ def _emit_stop_failure(reason):
         return False
 
 
+def _current_clock_speed():
+    try:
+        game = observers._game_snapshot()
+    except Exception:
+        return None
+    if type(game) is not dict:
+        return None
+    speed = game.get("clock_speed")
+    if type(speed) is not str:
+        return None
+    return speed
+
+
+def _cmd_calibrate(_connection=None) -> bool:
+    global _CALIBRATE, _CAL_SPEED
+    if _ARMED_NAME is None:
+        return False
+    speed = _current_clock_speed()
+    _CALIBRATE = True
+    _CAL_SPEED = speed
+    detail = "clock_speed=%s armed_name=%s" % (speed, _ARMED_NAME)
+    _E2._experiment_event("CALIBRATE_START", detail=detail[:schema.MAX_DETAIL_LENGTH])
+    return True
+
+
+def _note_calibrate_speed(row):
+    global _CAL_SPEED
+    if not _CALIBRATE:
+        return
+    game = row.get("game") or {}
+    speed = game.get("clock_speed")
+    if _CAL_SPEED is None and speed is None:
+        return
+    if speed == _CAL_SPEED:
+        return
+    detail = "from=%s to=%s ticks=%s" % (_CAL_SPEED, speed, game.get("ticks"))
+    _E2._experiment_event("CALIBRATE_SPEED", detail=detail[:schema.MAX_DETAIL_LENGTH])
+    _CAL_SPEED = speed
+
+
 def _cmd_arm(arm_name: str, _connection=None) -> bool:
     global _STATE, _ARMED_NAME, _ARMED_SNAPSHOT, _TELEMETRY_SESSION_ID
     global _WRITER, _WRITER_IDLE, _SESSION_OPENED, _MISUSE_COUNT
-    global _LAST_CAPTURE_COUNTERS
+    global _LAST_CAPTURE_COUNTERS, _CALIBRATE, _CAL_SPEED
     if arm_name not in ("LAB_E1", "LAB_E1_FORK"):
         _MISUSE_COUNT += 1
         return False
@@ -832,6 +892,8 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
         return False
     _TELEMETRY_SESSION_ID = str(uuid.uuid4())
     _ARMED_NAME = arm_name
+    _CALIBRATE = False
+    _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
     _SESSION_OPENED = False
     _LAST_CAPTURE_COUNTERS = None
@@ -844,6 +906,8 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
     except (OSError, IOError, ValueError):
         _WRITER = None
         _ARMED_NAME = None
+        _CALIBRATE = False
+        _CAL_SPEED = None
         _TELEMETRY_SESSION_ID = None
         return False
     _WRITER_IDLE = False
@@ -897,6 +961,7 @@ def _cmd_stop(_connection=None) -> bool:
 
 def _cmd_disarm(_connection=None) -> bool:
     global _STATE, _ARMED_NAME, _ARMED_SNAPSHOT, _SESSION_OPENED, _WRITER_IDLE
+    global _CALIBRATE, _CAL_SPEED
     if _STATE == "UNARMED":
         return True
     if not _cmd_stop():
@@ -912,6 +977,8 @@ def _cmd_disarm(_connection=None) -> bool:
             _WRITER_IDLE = False
     _STATE = "UNARMED"
     _ARMED_NAME = None
+    _CALIBRATE = False
+    _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
     _SESSION_OPENED = False
     return True
@@ -1066,6 +1133,8 @@ def _poll_tick_body():
     if not _emit(row):
         _cmd_stop()
         return
+    if row.get("event_kind") == "presence_snapshot":
+        _note_calibrate_speed(row)
     try:
         _E2.on_poll_row(row)
     except Exception as error:
