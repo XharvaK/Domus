@@ -162,83 +162,180 @@ def _motive_band(value):
 # never calls get_value itself — it replays the verified read path: return
 # inst._modified_value when not None, else cls.default_value. Age comes from
 # inst._last_update (ticks; _update_value stamps it from sim_now).
-def _read_cached_motive(entry, now_ticks):
+_MOTIVE_DIAG = {"stage": "ok", "seen_guids": [], "matched": 0}
+
+
+def motive_diag():
+    """Copy of the last motive-read outcome. Never raises."""
     try:
-        guid = int(entry.guid64)
+        return {
+            "stage": _MOTIVE_DIAG["stage"],
+            "seen_guids": list(_MOTIVE_DIAG["seen_guids"]),
+            "matched": _MOTIVE_DIAG["matched"],
+        }
+    except Exception:
+        return {"stage": "ok", "seen_guids": [], "matched": 0}
+
+
+def _store_motive_diag(stage, seen, matched):
+    global _MOTIVE_DIAG
+    try:
+        row = schema.validate_motive_diag(
+            {"stage": stage, "seen_guids": list(seen), "matched": matched})
+    except Exception:
+        return
+    _MOTIVE_DIAG = row
+
+
+def _motive_guid(entry):
+    try:
+        value = entry.guid64
     except Exception:
         return None
-    if guid not in MOTIVE_GUIDS:
+    if isinstance(value, bool):
         return None
     try:
-        raw = entry._modified_value
-    except Exception:
-        return None
-    if raw is None:
-        try:
-            raw = entry.default_value
-        except Exception:
-            return None
-    try:
-        updated = entry._last_update
-        minimum = entry.min_value
-        maximum = entry.max_value
-    except Exception:
-        return None
-    try:
-        value = float(raw)
-        low = float(minimum)
-        high = float(maximum)
-        stamp = int(updated)
-        now = int(now_ticks)
+        return int(value)
     except (TypeError, ValueError):
         return None
-    if isinstance(raw, bool) or isinstance(updated, bool):
-        return None
+
+
+def _load_field(entry, field):
+    if field == "_modified_value":
+        return entry._modified_value
+    if field == "default_value":
+        return entry.default_value
+    if field == "_last_update":
+        return entry._last_update
+    if field == "min_value":
+        return entry.min_value
+    if field == "max_value":
+        return entry.max_value
+    raise AttributeError(field)
+
+
+def _read_cached_motive(entry, now_ticks):
+    """Return (row or None, fault or None). Fault is set only for a known motive."""
+    guid = _motive_guid(entry)
+    if guid is None or guid not in MOTIVE_GUIDS:
+        return None, None
+    try:
+        raw = _load_field(entry, "_modified_value")
+    except Exception:
+        return None, "row_error:_modified_value"
+    source = "_modified_value"
+    if raw is None:
+        try:
+            raw = _load_field(entry, "default_value")
+        except Exception:
+            return None, "row_error:default_value"
+        source = "default_value"
+    loaded = {}
+    for field in ("_last_update", "min_value", "max_value"):
+        try:
+            loaded[field] = _load_field(entry, field)
+        except Exception:
+            return None, "row_error:" + field
+    if isinstance(raw, bool):
+        return None, "row_error:" + source
+    if isinstance(loaded["_last_update"], bool):
+        return None, "row_error:_last_update"
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None, "row_error:" + source
+    try:
+        low = float(loaded["min_value"])
+    except (TypeError, ValueError):
+        return None, "row_error:min_value"
+    try:
+        high = float(loaded["max_value"])
+    except (TypeError, ValueError):
+        return None, "row_error:max_value"
+    try:
+        stamp = int(loaded["_last_update"])
+        now = int(now_ticks)
+        age = now - stamp
+    except (TypeError, ValueError):
+        return None, "row_error:_last_update"
+    if age < 0:
+        age = 0
     if high == low:
         normalized = None
     else:
         normalized = round((value - low) / (high - low) * 100)
         normalized = max(0, min(100, normalized))
-    try:
-        age = now - stamp
-    except (TypeError, ValueError):
-        return None
-    if age < 0:
-        age = 0
     band = None if normalized is None else _motive_band(normalized)
     try:
-        motive_id = str(schema.string_id(MOTIVE_GUIDS[guid], "motive.id"))
+        motive_id = schema.string_id(MOTIVE_GUIDS[guid], "motive.id")
+        if motive_id is None:
+            raise ValueError("motive.id")
+        motive_id = str(motive_id)
     except Exception:
-        return None
-    return {"id": motive_id, "value": normalized, "band": band, "age_ticks": age}
+        return None, "string_id_error"
+    return {"id": motive_id, "value": normalized, "band": band, "age_ticks": age}, None
 
 
 def read_motives(sim_info, now_ticks):
-    try:
-        tracker = sim_info.commodity_tracker
-    except Exception:
-        return []
-    if tracker is None:
-        return []
-    try:
-        commodities = tracker.get_all_commodities()
-    except Exception:
-        return []
+    """Pure tracker route: get_component → get_commodity_tracker(create=False)."""
+    stage = "ok"
+    seen = []
+    matched = 0
     motives = []
     try:
-        iterator = iter(commodities)
-    except TypeError:
-        return []
-    for entry in iterator:
-        if len(motives) >= schema.MAX_MOTIVES:
-            break
         try:
-            row = _read_cached_motive(entry, now_ticks)
+            from objects.components.types import STATISTIC_COMPONENT
+            component = sim_info.get_component(STATISTIC_COMPONENT)
         except Exception:
-            continue
-        if row is not None:
-            motives.append(row)
-    return motives
+            stage = "component_error"
+            return []
+        if component is None:
+            stage = "no_component"
+            return []
+        try:
+            tracker = component.get_commodity_tracker(create=False)
+        except Exception:
+            stage = "no_tracker"
+            return []
+        if tracker is None:
+            stage = "no_tracker"
+            return []
+        try:
+            commodities = tracker.get_all_commodities()
+            iterator = iter(commodities)
+        except Exception:
+            stage = "commodities_error"
+            return []
+        seen_set = []
+        fault = None
+        for entry in iterator:
+            guid = _motive_guid(entry)
+            if guid is not None and guid not in seen_set and len(seen_set) < 40:
+                seen_set.append(guid)
+            if len(motives) >= schema.MAX_MOTIVES:
+                continue
+            try:
+                row, row_fault = _read_cached_motive(entry, now_ticks)
+            except Exception:
+                row, row_fault = None, "commodities_error"
+            if row_fault is not None and fault is None:
+                fault = row_fault
+            if row is not None:
+                motives.append(row)
+        seen = sorted(seen_set)
+        matched = len(motives)
+        if fault is not None and matched == 0:
+            stage = fault
+        elif matched:
+            stage = "ok"
+        else:
+            stage = "no_guid_match"
+        return motives
+    except Exception:
+        stage = "commodities_error"
+        return []
+    finally:
+        _store_motive_diag(stage, seen, matched)
 
 
 def _describe_buff(entry):

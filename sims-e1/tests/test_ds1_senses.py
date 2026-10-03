@@ -74,12 +74,30 @@ class FakeTracker:
         return list(self._commodities)
 
 
+class FakeComponent:
+    def __init__(self, tracker):
+        self._tracker = tracker
+
+    def get_commodity_tracker(self, create=True):
+        if create:
+            raise AssertionError("get_commodity_tracker create")
+        return self._tracker
+
+
 class FakeSimInfo:
     def __init__(self, tracker=None, buffs=None):
-        self.commodity_tracker = tracker
+        self._component = None if tracker is None else FakeComponent(tracker)
         self.Buffs = buffs or FakeBuffs()
         for name in FORBIDDEN:
             setattr(self, name, hostile("sim_info.%s" % name))
+
+    def get_component(self, kind):
+        del kind
+        return self._component
+
+    @property
+    def commodity_tracker(self):
+        raise AssertionError("forbidden commodity_tracker")
 
 
 def make_row(context, sim_info):

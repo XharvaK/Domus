@@ -354,7 +354,8 @@ def _inbox_status():
                 continuation={key: sorted(value) for key, value in _E2.learner.continuation.items()},
                 lineage_class=_E2.lineage_class, designated_sim_id=_E2.designated_sim_id,
                 verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
-                inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS)
+                inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS,
+                motive_diag=observers.motive_diag())
 
 
 def _inbox_dispatch(cmd, connection):

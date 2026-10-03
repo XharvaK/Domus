@@ -15,6 +15,14 @@ MAX_DETAIL_LENGTH = 128
 MAX_NOTE_LENGTH = 256
 MAX_INTERACTIONS = 8
 MAX_MOTIVES = 12
+MAX_SEEN_GUIDS = 40
+MOTIVE_DIAG_STAGES = (
+    "ok", "no_component", "no_tracker", "commodities_error", "no_guid_match",
+    "string_id_error", "component_error",
+)
+MOTIVE_ROW_FIELDS = (
+    "_modified_value", "default_value", "_last_update", "min_value", "max_value",
+)
 MAX_SIGNALS = 16
 MAX_PRESENCE = 8
 MAX_SOCIAL = 4
@@ -132,6 +140,30 @@ def bounded_string(value, limit, field="value", allow_none=True):
     _require(isinstance(value, str), "%s must be a string" % field)
     _require(len(value) <= limit, "%s exceeds %d characters" % (field, limit))
     return value
+
+
+def validate_motive_diag(row):
+    """Closed status diagnostic. Not part of a telemetry row."""
+    _require(type(row) is dict and set(row) == {"stage", "seen_guids", "matched"},
+             "motive_diag")
+    stage = row["stage"]
+    _require(type(stage) is str, "motive_diag.stage")
+    if stage.startswith("row_error:"):
+        field = stage[len("row_error:"):]
+        _require(field in MOTIVE_ROW_FIELDS and ":" not in field, "motive_diag.stage")
+    else:
+        _require(stage in MOTIVE_DIAG_STAGES, "motive_diag.stage")
+    seen = row["seen_guids"]
+    _require(type(seen) is list and len(seen) <= MAX_SEEN_GUIDS, "motive_diag.seen_guids")
+    _require(all(type(item) is int for item in seen), "motive_diag.seen_guids")
+    _require(seen == sorted(set(seen)), "motive_diag.seen_guids")
+    matched = row["matched"]
+    _require(type(matched) is int and 0 <= matched <= MAX_MOTIVES, "motive_diag.matched")
+    return {
+        "stage": stage,
+        "seen_guids": list(seen),
+        "matched": matched,
+    }
 
 
 def string_id(value, field="id"):

@@ -95,9 +95,16 @@ def install_stubs():
     date.TimeSpan = lambda value: value
     sys.modules["date_and_time"] = date
     objects = types.ModuleType("objects")
+    objects.__path__ = []
     objects.ALL_HIDDEN_REASONS = object()
     objects.HiddenReasonFlag = types.SimpleNamespace(ALL_HIDDEN_FLAGS="ALL")
     sys.modules["objects"] = objects
+    components = types.ModuleType("objects.components")
+    components.__path__ = []
+    component_types = types.ModuleType("objects.components.types")
+    component_types.STATISTIC_COMPONENT = "STATISTIC_COMPONENT"
+    sys.modules["objects.components"] = components
+    sys.modules["objects.components.types"] = component_types
     services = types.ModuleType("services")
     services.sim_info_manager = lambda: types.SimpleNamespace(get_all=lambda: [])
     services.client_manager = lambda: types.SimpleNamespace()
