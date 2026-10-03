@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "parameterRevision": "dt2.v1",
+  "description": "sit_Passive 14244 every 6500 ms, five reps, ambient alpha 0.3",
+  "params": {},
+  "context": {},
+  "steps": [
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "keys": {
+          "interaction:sim:14244:running": {
+            "h": 0.7
+          }
+        }
+      }
+    },
+    {
+      "nowMs": 6500,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "keys": {
+          "interaction:sim:14244:running": {
+            "h": 0.492262721462496
+          }
+        }
+      }
+    },
+    {
+      "nowMs": 13000,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "keys": {
+          "interaction:sim:14244:running": {
+            "h": 0.34841346514860094
+          }
+        }
+      }
+    },
+    {
+      "nowMs": 19500,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "keys": {
+          "interaction:sim:14244:running": {
+            "h": 0.24880395506095954
+          }
+        }
+      }
+    },
+    {
+      "nowMs": 26000,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "keys": {
+          "interaction:sim:14244:running": {
+            "h": 0.17982859325409065
+          }
+        }
+      }
+    }
+  ]
+}

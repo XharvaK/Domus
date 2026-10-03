@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "parameterRevision": "dt2.v1",
+  "description": "crossing inside refractory stays pending; window opens once refractory ends",
+  "params": {},
+  "context": {},
+  "steps": [
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "need",
+          "subject": "s",
+          "object": "a",
+          "bucket": "1",
+          "surprise": 3.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "",
+          "undone": true,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "pendingDeadlineMs": 1500
+      }
+    },
+    {
+      "nowMs": 1500,
+      "percepts": [],
+      "expect": {
+        "fired": true,
+        "reason": "threshold",
+        "percepts": [
+          "need:s:a:1"
+        ],
+        "arousal": 0.0
+      }
+    },
+    {
+      "nowMs": 11500,
+      "percepts": [
+        {
+          "kind": "need",
+          "subject": "s",
+          "object": "b",
+          "bucket": "1",
+          "surprise": 3.0,
+          "urgency": "wake",
+          "pressure": null,
+          "lineage": "",
+          "undone": true,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "pendingDeadlineMs": null
+      }
+    },
+    {
+      "nowMs": 21501,
+      "percepts": [],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "pendingDeadlineMs": 23001
+      }
+    },
+    {
+      "nowMs": 23001,
+      "percepts": [],
+      "expect": {
+        "fired": true,
+        "reason": "threshold",
+        "arousal": 0.0,
+        "percepts": [
+          "need:s:b:1"
+        ]
+      }
+    }
+  ]
+}

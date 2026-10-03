@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "parameterRevision": "dt2.v1",
+  "description": "surprise 2.997 contributes 2.997/3 = 0.999 and does not open a window",
+  "params": {},
+  "context": {},
+  "steps": [
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "need",
+          "subject": "s",
+          "object": "hunger",
+          "bucket": "low",
+          "surprise": 2.997,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "",
+          "undone": true,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "arousal": 0.999,
+        "pendingDeadlineMs": null
+      }
+    },
+    {
+      "nowMs": 1500,
+      "percepts": [],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "pendingDeadlineMs": null
+      }
+    }
+  ]
+}
