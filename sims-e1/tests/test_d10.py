@@ -137,7 +137,7 @@ class InboxTests(unittest.TestCase):
         reply=self.reply()
         self.assertEqual(reply['status'],'OK')
         result=reply['result']
-        self.assertEqual((result['state'],result['inbox'],result['probe_version'],result['schema_version']),('UNARMED','on','2.5.0',4))
+        self.assertEqual((result['state'],result['inbox'],result['probe_version'],result['schema_version']),('UNARMED','on','2.5.1',4))
         for key in ('armed_name','signatures','continuation','lineage_class','designated_sim_id','verdicts'): self.assertIn(key,result)
         self.assertIsNone(self.p._WRITER)
         self.assertTrue((self.root/'done'/('a'*32+'.json')).exists())
@@ -251,7 +251,7 @@ class RemainingContractsTests(unittest.TestCase):
     def test_version_and_exact_a12(self):
         for path in ('src/ashley_e1/__init__.py','src/ashley_e1/schema.py',
                      'tools/build.ps1','tools/verify.ps1','README.md'):
-            self.assertIn('2.5.0',(ROOT/path).read_text(encoding='utf-8'),path)
+            self.assertIn('2.5.1',(ROOT/path).read_text(encoding='utf-8'),path)
         for path in ('tools/install.ps1','tools/remove.ps1'):
             self.assertIn('2.3.1',(ROOT/path).read_text(encoding='utf-8'),path)
         expected="| A12 | §4 harness inputs are the Owner's console commands; §5 telemetry schema v2 | Probe 2.2.0, telemetry schema v3: a local command inbox (`AshleyE1Telemetry/cmd/inbox`, single-use ids, ≤ 60 s expiry, closed vocabulary and argument shapes) is a harness input path equivalent to the console. Commands run through the same dispatchers; actions keep the `EXPERIMENT` origin; the issuer (`agent:<name>`, `helper`, `console`) is recorded in a `command_event` row and the reply file as attribution: an agent acts on the Owner's behalf. `sit_trial` is prepare then sit inside one call, with admission unchanged. Nothing in the inbox can do what the console cannot. Schema v3 also adds `RELEASED_ON_STOP`. Console replies use `cheat_output`, because `sims4.commands.output` is a no-op in release builds. The pump starts when a zone reaches RUNNING, registered through the zone manager's object-add callback without injection, or by the console command `ashley_e1.inbox`. | Plan Phase 2 (agent-run LAB, no 30 s human token race); R-H2 (vanilla `commands.py` bytecode: `output` has an empty body); D9b (H4 deferred to one schema bump). |"
