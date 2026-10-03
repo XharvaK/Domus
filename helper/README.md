@@ -71,6 +71,28 @@ Session telemetry may end with an unfinished row while the writer is active;
 readers ignore that row until it is newline terminated. Other malformed rows
 fail closed. Evidence missing its ledger is an error, not fabricated data.
 
+## Bridge
+
+`python -m domus_helper.bridge --once` reads new telemetry, updates attachment,
+sends one heartbeat when Ashley is configured, and flushes the observation
+outbox. `python -m domus_helper.bridge --interval 5` repeats until Ctrl+C.
+Nothing in this packet enqueues observations; a later packet calls
+`Spool.enqueue_observation`.
+
+Credentials: `%LOCALAPPDATA%\Domus\ashley_url` and `ashley_token` (or
+`DOMUS_DATA_DIR`). Overrides: `DOMUS_ASHLEY_URL` and `DOMUS_ASHLEY_TOKEN`.
+The token is at least 32 bytes. A missing URL, missing token, or short token
+disables transport. The MCP tool `bridge_status` reports attachment, spool
+and outbox counts, the last heartbeat, and whether transport is enabled. It
+does not require the game and it does not print the URL or the token.
+
+Attachment states: `attached` (process up, latest row at most 30 seconds old),
+`stale` (process up, row older), `game_exited` (process gone, close reason
+present), `crash_suspected` (process gone, no close), `sleep_resume` (one
+tick when wall time jumps more than 30 seconds ahead of the monotonic clock),
+`version_mismatch` (row `sims_build` differs from the detected build;
+`telemetry_only` is true). The spool is `%LOCALAPPDATA%\Domus\spool.db`.
+
 Test from `helper/`: `.venv/bin/python -m pytest` (on Windows use
 `.venv/Scripts/python.exe`). Tests fake the inbox/replier and process check;
 no game or credentials are needed. The vendored cmdbox and full schema v4
