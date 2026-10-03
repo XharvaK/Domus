@@ -49,7 +49,7 @@ class E2Control:
     def _reset_state(self):
         self.last_prepared_token = None
         self.tokens = e2_admission.TokenBook()
-        self.learner = e2_registry.SignatureLearner()
+        self.learner = e2_registry.CardLearner()
         self.experiments = {}
         self.open_ids = set()
         self.lineage_class = None

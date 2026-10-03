@@ -37,8 +37,8 @@ ACTUATOR_ONLY_CALLS = {
 }
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.
-PURE_FILES = {"e2_admission.py", "e2_lineage.py", "e2_registry.py", "writer.py",
-              "schema.py", "snapshot.py", "cmdbox.py"}
+PURE_FILES = {"e2_admission.py", "e2_lineage.py", "e2_registry.py", "e2_cards.py",
+              "writer.py", "schema.py", "snapshot.py", "cmdbox.py"}
 FORBIDDEN_CALL_NAMES = FORBIDDEN_CALL_NAMES | (ACTUATOR_ONLY_CALLS - {"push_super_affordance"})
 
 
