@@ -36,7 +36,7 @@ def forbid(name):
 class Commodity:
     def __init__(self, guid, value=25, updated=1000, minimum=0, maximum=100):
         self.guid64 = guid
-        self._modified_value = value
+        self._value = value
         self._last_update = updated
         self.default_value = value
         self.min_value = minimum

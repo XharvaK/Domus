@@ -156,12 +156,19 @@ def _motive_band(value):
     return "ok"
 
 
-# Live-verified on 1.128.90.1030 (TARGET_BYTECODE): instance value comes from
-# ContinuousStatistic.get_value (stat path reads inst._modified_value (!= None)
-# else cls.default_value); _update_value is the mutating updater, so Domus
-# never calls get_value itself — it replays the verified read path: return
-# inst._modified_value when not None, else cls.default_value. Age comes from
-# inst._last_update (ticks; _update_value stamps it from sim_now).
+# Live-verified on 1.128.90.1030 (TARGET_BYTECODE). Commodity defines no
+# get_value. An instance resolves ContinuousStatistic.get_value
+# (continuous_statistic.py offset 10: inst._update_value(), then offset 36:
+# super(ContinuousStatistic, inst).get_value()). ContinuousStatistic's base is
+# BaseStatistic, not Statistic. BaseStatistic.get_value offset 10 returns
+# inst._value when inst is not None; default_value at offset 16 runs only when
+# inst is None. _value is always stored in BaseStatistic.__init__ offset 10.
+# _modified_value is stored only by Statistic._update_modified_value offset 64.
+# Statistic subclasses BaseStatistic and is not on the Commodity chain
+# (Commodity's first base is TunedContinuousStatistic; ContinuousStatistic's
+# base is BaseStatistic). Domus does not call _update_value or get_value. It
+# reads inst._value. Age comes from inst._last_update
+# (ContinuousStatistic.__init__ offset 72).
 _MOTIVE_DIAG = {"stage": "ok", "seen_guids": [], "matched": 0}
 
 
@@ -201,10 +208,8 @@ def _motive_guid(entry):
 
 
 def _load_field(entry, field):
-    if field == "_modified_value":
-        return entry._modified_value
-    if field == "default_value":
-        return entry.default_value
+    if field == "_value":
+        return entry._value
     if field == "_last_update":
         return entry._last_update
     if field == "min_value":
@@ -220,16 +225,10 @@ def _read_cached_motive(entry, now_ticks):
     if guid is None or guid not in MOTIVE_GUIDS:
         return None, None
     try:
-        raw = _load_field(entry, "_modified_value")
+        raw = _load_field(entry, "_value")
     except Exception:
-        return None, "row_error:_modified_value"
-    source = "_modified_value"
-    if raw is None:
-        try:
-            raw = _load_field(entry, "default_value")
-        except Exception:
-            return None, "row_error:default_value"
-        source = "default_value"
+        return None, "row_error:_value"
+    source = "_value"
     loaded = {}
     for field in ("_last_update", "min_value", "max_value"):
         try:
