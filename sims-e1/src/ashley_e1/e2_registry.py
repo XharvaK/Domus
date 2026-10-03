@@ -116,21 +116,20 @@ class Experiment:
             if ours.get("membership") in RUNNING_MEMBERSHIPS and self.started_ns is None:
                 self.started_ns = mono
                 self.claims["STARTED"] = True
-        effect_held = seated
         if self.card["card_class"] != "posture":
             self._rows_since.append(row)
-            effect_held, reason = e2_cards.evaluate_effect(self.card, {
-                "interaction_id": self.interaction_id,
-                "foreign_roots": self.foreign_roots,
-                "control_rows": self.control_rows,
-                "pushed_mono_ns": self.pushed_mono_ns,
-                "rows_since_push": self._rows_since,
-                "started_ns": self.started_ns,
-            }, row)
-            if reason is not None and reason not in self.ambiguous:
-                self.ambiguous.append(reason)
-            if reason is not None:
-                effect_held = False
+        effect_held, reason = e2_cards.evaluate_effect(self.card, {
+            "interaction_id": self.interaction_id,
+            "foreign_roots": self.foreign_roots,
+            "control_rows": self.control_rows,
+            "pushed_mono_ns": self.pushed_mono_ns,
+            "rows_since_push": self._rows_since,
+            "started_ns": self.started_ns,
+        }, row)
+        if reason is not None and reason not in self.ambiguous:
+            self.ambiguous.append(reason)
+        if reason is not None:
+            effect_held = False
         if effect_held:
             self.claims["EFFECT_OBSERVED"] = True
             if self.effect_since_ns is None:
