@@ -40,6 +40,19 @@ def file_rows(session):
             yield validate_record(json.loads(raw))
 
 
+def raw_rows(path):
+    """Complete lines decoded as JSON, without schema validation.
+
+    Replays of committed evidence predate the schema `file_rows` enforces.
+    A partial trailing line is ignored, same as `file_rows`.
+    """
+    with Path(path).open("rb") as handle:
+        for raw in handle:
+            if not raw.endswith(b"\n"):
+                break
+            yield json.loads(raw)
+
+
 def tail(kinds, n, *, paths=None, session=None):
     if type(n) is not int or not 1 <= n <= 10000:
         raise ValueError("n must be between 1 and 10000")
