@@ -182,6 +182,11 @@ class SignatureLearner:
                 row, open_harness_ids, posture.get("target_id"), mono, False)
             return None
         for entry in _entries(row):
+            # AUTONOMY never teaches a signature and never marks an entry
+            # exercised. There is no exercised set; only a pie-menu sit opens
+            # a signature window.
+            if entry.get("source_raw") == "InteractionSource.AUTONOMY":
+                continue
             if (entry.get("source_raw") == "InteractionSource.PIE_MENU" and
                     entry.get("affordance_id") == e2_admission.SIT_AFFORDANCE_GUID and
                     entry.get("target_id") is not None and

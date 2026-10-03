@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 4
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v4"
-PROBE_VERSION = "2.5.1"
+PROBE_VERSION = "2.6.0"
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
 MAX_ID_LENGTH = 64
@@ -63,10 +63,11 @@ E2_PAYLOAD_KEYS = {
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
     "ADMIT_REJECT", "PUSHED", "PUSH_FAILED", "CLAIM", "FINISHED_CALLBACK",
-    "VERDICT",
+    "VERDICT", "CALIBRATE_START", "CALIBRATE_SPEED",
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
-            "release", "status", "sit_trial", "atlas_dump", "tuned_scan")
+            "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
+            "calibrate")
 
 
 def _command_id(value):

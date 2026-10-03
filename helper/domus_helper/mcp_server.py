@@ -8,6 +8,7 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from . import atlas as atlas_store
+from . import calibration
 from . import commands, telemetry as telemetry_reader
 from . import fingerprints as fingerprint_reader
 from .paths import Paths
@@ -234,6 +235,17 @@ def atlas_query(build: str | None = None, name_contains: str | None = None,
 def bridge_status() -> dict:
     from .bridge import Bridge
     return Bridge(paths=Paths.from_env()).status()
+
+
+@server.tool()
+def calibrate() -> dict:
+    return asdict(tools().command("calibrate"))
+
+
+@server.tool()
+def calibration_report(session: str = "latest") -> dict:
+    client = tools()
+    return calibration.report_for(session, client.paths)["coverage"]
 
 
 if __name__ == "__main__":
