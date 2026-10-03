@@ -38,6 +38,21 @@ class Paths:
     def ledger(self):
         return self.telemetry / "ashley_e2_lineage_ledger.jsonl"
 
+    @property
+    def atlas_dir(self):
+        return self.telemetry / "atlas"
+
+    @property
+    def data_dir(self):
+        configured = os.environ.get("DOMUS_DATA_DIR")
+        if configured:
+            return Path(configured)
+        return Path(os.environ["LOCALAPPDATA"]) / "Domus"
+
+    @property
+    def atlas_db(self):
+        return self.data_dir / "atlas.db"
+
     def check_inbox(self):
         # Reject redirected directories: publication must stay inside cmd/inbox.
         expected = self.sims_root.resolve() / "AshleyE1Telemetry" / "cmd" / "inbox"

@@ -1,7 +1,7 @@
 # Domus host helper
 
 Python >=3.12, Windows host only for live use. Never install or import this
-package in the game. The probe remains 2.3.1. Only local command files and
+package in the game. The probe is 2.4.0. Only local command files and
 stdio MCP are used; no HTTP listener or network client is started.
 
 From the Domus root, after Owner approval on the Windows PC:
@@ -34,7 +34,11 @@ letters, digits, underscores or hyphens. Commands use issuer `agent:<name>`.
 The inbox directories must already exist. Every tool checks `tasklist` for
 `TS4_x64.exe` then gets an accepted status. Arming accepts only `lab_e1` or
 `lab_e1_fork`; further actuation requires canonical LAB status after arming.
-Read tools include status, verdicts, telemetry and lineage. `detected_build`
+Read tools include status, verdicts, telemetry, lineage, `atlas_dump`,
+`atlas_progress`, `atlas_import` and `atlas_query`. `atlas_dump` is read-only
+and is not an actuating command. The atlas database is
+`%LOCALAPPDATA%\Domus\atlas.db` unless `DOMUS_DATA_DIR` is set.
+`detected_build`
 reports the installed client version bound to the running `TS4_x64.exe`
 process (EXE file version, sims-root `GameVersion.txt`, `Default.ini`
 `gameversion`); `fingerprints` adds the script-archive sha256, the installed

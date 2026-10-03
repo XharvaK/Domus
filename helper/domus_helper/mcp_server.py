@@ -7,6 +7,7 @@ from dataclasses import asdict
 
 from mcp.server.mcpserver import MCPServer
 
+from . import atlas as atlas_store
 from . import commands, telemetry as telemetry_reader
 from . import fingerprints as fingerprint_reader
 from .paths import Paths
@@ -185,6 +186,43 @@ def detected_build() -> dict:
 @server.tool()
 def fingerprints() -> dict:
     return tools().fingerprints_fn()
+
+
+@server.tool()
+def atlas_dump() -> dict:
+    return asdict(tools().command("atlas_dump"))
+
+
+@server.tool()
+def atlas_progress() -> dict:
+    block = tools().checked_status().result.get("atlas")
+    if not isinstance(block, dict):
+        raise SafetyError("status has no atlas block")
+    return block
+
+
+@server.tool()
+def atlas_import() -> dict:
+    client = tools()
+    detected = fingerprint_reader.detected_build(paths=client.paths)["detected_build"]
+    source = client.paths.atlas_dir / ("tuning_%s.jsonl" % detected)
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    return atlas_store.import_tuning(client.paths.atlas_db, source)
+
+
+@server.tool()
+def atlas_query(build: str | None = None, name_contains: str | None = None,
+                is_super: bool | None = None, is_social: bool | None = None,
+                allow_autonomous: bool | None = None,
+                allow_user_directed: bool | None = None,
+                ladder: str | None = None, limit: int = 50) -> list[dict]:
+    client = tools()
+    chosen = build if build is not None else atlas_store.latest_build(client.paths.atlas_db)
+    return atlas_store.query(
+        client.paths.atlas_db, build=chosen, name_contains=name_contains,
+        is_super=is_super, is_social=is_social, allow_autonomous=allow_autonomous,
+        allow_user_directed=allow_user_directed, ladder=ladder, limit=limit)
 
 
 if __name__ == "__main__":
