@@ -5,6 +5,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .vendor.e2_cards import validate_card
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS affordances (
     build TEXT NOT NULL,
@@ -30,7 +32,32 @@ CREATE TABLE IF NOT EXISTS imports (
     imported_at_ms INTEGER,
     probe_version TEXT
 );
-PRAGMA user_version = 1;
+CREATE TABLE IF NOT EXISTS cards (
+    build TEXT NOT NULL,
+    card_id TEXT NOT NULL,
+    card_class TEXT NOT NULL,
+    affordance_guid64 INTEGER,
+    object_id TEXT,
+    body_json TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('learned','owner','proposed')),
+    created_ms INTEGER NOT NULL,
+    PRIMARY KEY (build, card_id)
+);
+PRAGMA user_version = 2;
+"""
+
+_CARDS_DDL = """
+CREATE TABLE IF NOT EXISTS cards (
+    build TEXT NOT NULL,
+    card_id TEXT NOT NULL,
+    card_class TEXT NOT NULL,
+    affordance_guid64 INTEGER,
+    object_id TEXT,
+    body_json TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('learned','owner','proposed')),
+    created_ms INTEGER NOT NULL,
+    PRIMARY KEY (build, card_id)
+);
 """
 
 _FLAGS = ("is_super", "is_social", "allow_autonomous", "allow_user_directed",
@@ -49,7 +76,11 @@ def _connect(db_path):
     version = connection.execute("PRAGMA user_version").fetchone()[0]
     if version == 0:
         connection.executescript(_DDL)
-    elif version != 1:
+    elif version == 1:
+        connection.executescript(_CARDS_DDL)
+        connection.execute("PRAGMA user_version = 2")
+        connection.commit()
+    elif version != 2:
         connection.close()
         raise AtlasImportError("unsupported user_version")
     return connection
@@ -175,3 +206,63 @@ def query(db_path, *, build, name_contains=None, is_super=None, is_social=None,
                 item[column] = bool(item[column])
         decoded.append(item)
     return decoded
+
+
+_ORIGINS = ("learned", "owner", "proposed")
+
+
+def upsert_card(db_path, build, card_id, card, origin):
+    if origin not in _ORIGINS:
+        raise AtlasImportError("origin")
+    if not isinstance(build, str) or not isinstance(card_id, str) or not card_id:
+        raise AtlasImportError("card key")
+    validate_card(card)
+    body = json.dumps(card, sort_keys=True, separators=(",", ":"))
+    connection = _connect(db_path)
+    try:
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO cards (
+                    build, card_id, card_class, affordance_guid64, object_id,
+                    body_json, origin, created_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(build, card_id) DO UPDATE SET
+                    card_class = excluded.card_class,
+                    affordance_guid64 = excluded.affordance_guid64,
+                    object_id = excluded.object_id,
+                    body_json = excluded.body_json,
+                    origin = excluded.origin
+                """,
+                (build, card_id, card["card_class"], card.get("affordance_guid64"),
+                 card.get("object_id"), body, origin, int(time.time() * 1000)))
+    finally:
+        connection.close()
+    return {"build": build, "card_id": card_id, "origin": origin}
+
+
+def list_cards(db_path, build, card_class=None):
+    if card_class is not None and card_class not in ("posture", "need", "interaction", "social"):
+        raise AtlasImportError("card_class")
+    clauses = ["build = ?"]
+    params = [build]
+    if card_class is not None:
+        clauses.append("card_class = ?")
+        params.append(card_class)
+    connection = _connect(db_path)
+    try:
+        rows = connection.execute(
+            "SELECT * FROM cards WHERE " + " AND ".join(clauses) + " ORDER BY card_id",
+            params).fetchall()
+    finally:
+        connection.close()
+    found = []
+    for row in rows:
+        found.append({
+            "build": row["build"],
+            "card_id": row["card_id"],
+            "origin": row["origin"],
+            "created_ms": row["created_ms"],
+            "card": json.loads(row["body_json"]),
+        })
+    return found
