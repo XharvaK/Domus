@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 4
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v4"
-PROBE_VERSION = "2.3.1"
+PROBE_VERSION = "2.4.0"
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
 MAX_ID_LENGTH = 64
@@ -15,6 +15,14 @@ MAX_DETAIL_LENGTH = 128
 MAX_NOTE_LENGTH = 256
 MAX_INTERACTIONS = 8
 MAX_MOTIVES = 12
+MAX_SEEN_GUIDS = 40
+MOTIVE_DIAG_STAGES = (
+    "ok", "no_component", "no_tracker", "commodities_error", "no_guid_match",
+    "string_id_error", "component_error",
+)
+MOTIVE_ROW_FIELDS = (
+    "_modified_value", "default_value", "_last_update", "min_value", "max_value",
+)
 MAX_SIGNALS = 16
 MAX_PRESENCE = 8
 MAX_SOCIAL = 4
@@ -58,7 +66,7 @@ EXPERIMENT_PHASES = (
     "VERDICT",
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
-            "release", "status", "sit_trial")
+            "release", "status", "sit_trial", "atlas_dump")
 
 
 def _command_id(value):
@@ -132,6 +140,53 @@ def bounded_string(value, limit, field="value", allow_none=True):
     _require(isinstance(value, str), "%s must be a string" % field)
     _require(len(value) <= limit, "%s exceeds %d characters" % (field, limit))
     return value
+
+
+ATLAS_STATES = ("idle", "running", "done", "error")
+
+
+def validate_atlas(row):
+    """Closed atlas progress on the status reply. Not a telemetry row."""
+    _require(type(row) is dict and set(row) == {
+        "state", "done", "total", "chunks", "max_chunk_ms", "file"}, "atlas")
+    _require(row["state"] in ATLAS_STATES, "atlas.state")
+    for key in ("done", "total", "chunks"):
+        _require(type(row[key]) is int and row[key] >= 0, "atlas." + key)
+    elapsed = row["max_chunk_ms"]
+    _require(type(elapsed) in (int, float) and elapsed >= 0, "atlas.max_chunk_ms")
+    _require(row["file"] is None or type(row["file"]) is str, "atlas.file")
+    return {
+        "state": row["state"],
+        "done": row["done"],
+        "total": row["total"],
+        "chunks": row["chunks"],
+        "max_chunk_ms": elapsed,
+        "file": row["file"],
+    }
+
+
+def validate_motive_diag(row):
+    """Closed status diagnostic. Not part of a telemetry row."""
+    _require(type(row) is dict and set(row) == {"stage", "seen_guids", "matched"},
+             "motive_diag")
+    stage = row["stage"]
+    _require(type(stage) is str, "motive_diag.stage")
+    if stage.startswith("row_error:"):
+        field = stage[len("row_error:"):]
+        _require(field in MOTIVE_ROW_FIELDS and ":" not in field, "motive_diag.stage")
+    else:
+        _require(stage in MOTIVE_DIAG_STAGES, "motive_diag.stage")
+    seen = row["seen_guids"]
+    _require(type(seen) is list and len(seen) <= MAX_SEEN_GUIDS, "motive_diag.seen_guids")
+    _require(all(type(item) is int for item in seen), "motive_diag.seen_guids")
+    _require(seen == sorted(set(seen)), "motive_diag.seen_guids")
+    matched = row["matched"]
+    _require(type(matched) is int and 0 <= matched <= MAX_MOTIVES, "motive_diag.matched")
+    return {
+        "stage": stage,
+        "seen_guids": list(seen),
+        "matched": matched,
+    }
 
 
 def string_id(value, field="id"):
