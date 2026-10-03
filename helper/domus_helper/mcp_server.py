@@ -230,5 +230,11 @@ def atlas_query(build: str | None = None, name_contains: str | None = None,
         allow_user_directed=allow_user_directed, ladder=ladder, limit=limit)
 
 
+@server.tool()
+def bridge_status() -> dict:
+    from .bridge import Bridge
+    return Bridge(paths=Paths.from_env()).status()
+
+
 if __name__ == "__main__":
     server.run(transport="stdio")
