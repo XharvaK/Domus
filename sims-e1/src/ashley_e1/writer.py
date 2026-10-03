@@ -672,6 +672,16 @@ def read_command_file(path):
         return handle.read(4097)
 
 
+def append_atlas_line(path, payload):
+    """Append one atlas JSON line. File IO stays in this module."""
+    if type(payload) is not bytes:
+        raise TypeError("atlas line")
+    with open(path, "ab") as handle:
+        handle.write(payload)
+        if not payload.endswith(b"\n"):
+            handle.write(b"\n")
+
+
 def write_command_reply(path, payload):
     """Publish a complete reply on the local filesystem."""
     temporary = path + '.tmp'

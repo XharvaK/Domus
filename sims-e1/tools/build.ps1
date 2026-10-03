@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.3.3",
+    [string]$Version = "2.4.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$ImplementedCommit = "WORKTREE_UNCOMMITTED",
     [string]$BaselineCommit = ""
@@ -39,7 +39,8 @@ py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[3], doraise=Tr
                    invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
 '@
 $moduleNames = @("__init__", "probe", "observers", "snapshot", "schema", "writer",
-                 "e2_admission", "e2_lineage", "e2_registry", "e2_actuator", "e2_control", "cmdbox")
+                 "e2_admission", "e2_lineage", "e2_registry", "e2_actuator", "e2_control", "cmdbox",
+                 "atlas")
 foreach ($moduleName in $moduleNames) {
     $source = Join-Path $sourceRoot ("ashley_e1\" + $moduleName + ".py")
     $destination = Join-Path $stageRoot ("ashley_e1\" + $moduleName + ".pyc")

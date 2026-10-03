@@ -48,6 +48,7 @@ except ImportError:
     CommandRestrictionFlags = None
     register = None
 
+from . import atlas
 from . import cmdbox
 from . import e2_control
 from . import observers
@@ -99,6 +100,9 @@ class _ProbeAlarmOwner:
 
 _PROBE_ALARM_OWNER = _ProbeAlarmOwner()
 _INBOX_ALARM_OWNER = _ProbeAlarmOwner()
+_ATLAS_ALARM_OWNER = _ProbeAlarmOwner()
+_ATLAS = None
+_ATLAS_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
 _INBOX_STARTED_ZONE = None
@@ -218,6 +222,7 @@ class _InboxReply:
     def __init__(self, issuer):
         self.issuer = issuer
         self.lines = []
+        self.code = None
 
 
 def _arm_inbox_zone(z, source):
@@ -355,7 +360,8 @@ def _inbox_status():
                 lineage_class=_E2.lineage_class, designated_sim_id=_E2.designated_sim_id,
                 verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
                 inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS,
-                motive_diag=observers.motive_diag())
+                motive_diag=observers.motive_diag(),
+                atlas=_atlas_progress())
 
 
 def _inbox_dispatch(cmd, connection):
@@ -370,10 +376,99 @@ def _inbox_dispatch(cmd, connection):
         if not _dispatch_e2_prepare(args['object_id'], _session_id=connection):
             return False
         return _dispatch_e2_sit(_E2.last_prepared_token, _session_id=connection)
+    if name == 'atlas_dump':
+        return _dispatch_atlas_dump(connection)
     dispatchers = {'start': _dispatch_start, 'stop': _dispatch_stop,
                    'disarm': _dispatch_disarm, 'pause': _dispatch_e2_pause,
                    'release': _dispatch_e2_release, 'status': _dispatch_status}
     return dispatchers[name](_session_id=connection)
+
+
+def _atlas_progress():
+    if _ATLAS is None:
+        return {"state": "idle", "done": 0, "total": 0, "chunks": 0,
+                "max_chunk_ms": 0, "file": None}
+    return _ATLAS.progress()
+
+
+def _cancel_atlas():
+    global _ATLAS_HANDLE
+    handle = _ATLAS_HANDLE
+    _ATLAS_HANDLE = None
+    if handle is None or alarms is None:
+        return
+    try:
+        alarms.cancel_alarm(handle)
+    except Exception:
+        return
+
+
+def _interaction_classes():
+    try:
+        import services
+        import sims4.resources as resources
+    except ImportError:
+        return None, "ATLAS_NO_MANAGER"
+    try:
+        managers = services.tuning_managers
+    except AttributeError:
+        return None, "ATLAS_NO_MANAGER"
+    if managers is None:
+        return None, "ATLAS_NO_MANAGER"
+    try:
+        manager = dict.get(managers, resources.Types.INTERACTION)
+    except (AttributeError, TypeError):
+        return None, "ATLAS_NO_MANAGER"
+    if manager is None:
+        return None, "ATLAS_NO_MANAGER"
+    try:
+        loaded = manager.all_instances_loaded
+    except AttributeError:
+        return None, "ATLAS_NOT_LOADED"
+    if loaded is not True:
+        return None, "ATLAS_NOT_LOADED"
+    try:
+        classes = manager._tuned_classes
+    except AttributeError:
+        return None, "ATLAS_NOT_LOADED"
+    return classes, None
+
+
+def _dispatch_atlas_dump(connection):
+    global _ATLAS, _ATLAS_HANDLE
+    if _INBOX_HANDLE is None:
+        connection.code = "ATLAS_NO_PUMP"
+        return False
+    if _ATLAS is not None and _ATLAS.state == "running":
+        connection.code = "ATLAS_BUSY"
+        return False
+    classes, code = _interaction_classes()
+    if code is not None:
+        connection.code = code
+        return False
+    folder = os.path.join(_TELEMETRY_ROOT, "atlas")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "tuning_%s.jsonl" % SIMS_BUILD)
+    _ATLAS = atlas.AtlasDump(classes, path)
+    _ATLAS_HANDLE = alarms.add_alarm_real_time(
+        owner=_ATLAS_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        callback=_atlas_tick, repeating=True, use_sleep_time=False,
+        cross_zone=False)
+    return True
+
+
+def _atlas_tick(alarm_handle=None):
+    try:
+        if _ATLAS is None or _ATLAS.state != "running":
+            _cancel_atlas()
+            return
+        _ATLAS.step()
+        if _ATLAS.state != "running":
+            _cancel_atlas()
+    except Exception:
+        if _ATLAS is not None:
+            _ATLAS.state = "error"
+        _cancel_atlas()
 
 
 def _inbox_tick(alarm_handle=None):
@@ -435,6 +530,8 @@ def _inbox_tick_body():
                 try:
                     ok = bool(_inbox_dispatch(cmd, connection))
                     status = 'OK' if ok else 'REJECTED'
+                    if not ok and connection.code:
+                        code = connection.code
                     result = (_inbox_status() if cmd['command'] == 'status' else
                               {'ok': ok, 'lines': connection.lines})
                 except Exception as error:

@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 4
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v4"
-PROBE_VERSION = "2.3.3"
+PROBE_VERSION = "2.4.0"
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
 MAX_ID_LENGTH = 64
@@ -66,7 +66,7 @@ EXPERIMENT_PHASES = (
     "VERDICT",
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
-            "release", "status", "sit_trial")
+            "release", "status", "sit_trial", "atlas_dump")
 
 
 def _command_id(value):
@@ -140,6 +140,29 @@ def bounded_string(value, limit, field="value", allow_none=True):
     _require(isinstance(value, str), "%s must be a string" % field)
     _require(len(value) <= limit, "%s exceeds %d characters" % (field, limit))
     return value
+
+
+ATLAS_STATES = ("idle", "running", "done", "error")
+
+
+def validate_atlas(row):
+    """Closed atlas progress on the status reply. Not a telemetry row."""
+    _require(type(row) is dict and set(row) == {
+        "state", "done", "total", "chunks", "max_chunk_ms", "file"}, "atlas")
+    _require(row["state"] in ATLAS_STATES, "atlas.state")
+    for key in ("done", "total", "chunks"):
+        _require(type(row[key]) is int and row[key] >= 0, "atlas." + key)
+    elapsed = row["max_chunk_ms"]
+    _require(type(elapsed) in (int, float) and elapsed >= 0, "atlas.max_chunk_ms")
+    _require(row["file"] is None or type(row["file"]) is str, "atlas.file")
+    return {
+        "state": row["state"],
+        "done": row["done"],
+        "total": row["total"],
+        "chunks": row["chunks"],
+        "max_chunk_ms": elapsed,
+        "file": row["file"],
+    }
 
 
 def validate_motive_diag(row):
