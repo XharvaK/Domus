@@ -171,3 +171,32 @@ def decide(state, percepts, now_ms, params, context):
     )
     decision = Decision(fired, reason, delivered, arousal, th, tuple(traces))
     return new_state, decision
+
+
+def prune(state, now_ms, params, current_lineage):
+    """Drop recovered keys and novelty counts from other lineages. Does not decide."""
+    keys = {}
+    for key, slot in state.keys.items():
+        if slot.last_ms is None:
+            recovered = slot.h
+        else:
+            recovered = recover(slot.h, now_ms - slot.last_ms, params.recovery_tau_ms)
+        if recovered >= 0.999:
+            continue
+        keys[key] = slot
+    counts = {
+        key: count for key, count in state.novelty_counts.items()
+        if isinstance(key, tuple) and key and key[0] == current_lineage
+    }
+    return ThalamusState(
+        last_now_ms=state.last_now_ms,
+        arousal=state.arousal,
+        keys=keys,
+        novelty_counts=counts,
+        pending=state.pending,
+        pending_deadline_ms=state.pending_deadline_ms,
+        pending_reason=state.pending_reason,
+        refractory_until_ms=state.refractory_until_ms,
+        last_fire_ms=state.last_fire_ms,
+        idle_since_ms=state.idle_since_ms,
+    )

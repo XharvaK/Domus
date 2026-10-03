@@ -74,17 +74,42 @@ fail closed. Evidence missing its ledger is an error, not fabricated data.
 ## Bridge
 
 `python -m domus_helper.bridge --once` reads new telemetry, updates attachment,
-sends one heartbeat when Ashley is configured, and flushes the observation
-outbox. `python -m domus_helper.bridge --interval 5` repeats until Ctrl+C.
-Nothing in this packet enqueues observations; a later packet calls
-`Spool.enqueue_observation`.
+runs the peripheral thalamus, sends one heartbeat when Ashley is configured,
+and flushes the observation outbox. `python -m domus_helper.bridge --interval 5`
+repeats until Ctrl+C.
+
+After `read_new`, each new spool row (SQLite `rowid` after `last_rowid`) goes
+through `Extractor.step` and `decide`, using the row's `monotonic_ns // 1_000_000`
+as `now_ms`. One empty `decide` then advances deadlines and boredom on the
+bridge monotonic clock. `prune` drops recovered keys and foreign-lineage novelty
+counts. State, extractor state, `last_rowid`, and `obs_seq` persist in the spool
+`kv` table (`user_version` 2; a v1 database upgrades in place) so a helper
+restart does not repeat observations.
+
+A fire is enqueued only when transport is enabled and the session is not
+`telemetry_only`. `thalamus/observation.py` builds one v1 observation:
+`{helper_session}.{obs_seq}`, world `slot{slot_id}` (or `unknown`), branch from
+the lineage guid, session from `telemetry_session_id`, body from `body.sim_id`,
+snapshot from the last row's `written_sequence`, a 600000 ms expiry, lineage
+class `[A-Z_]{1,32}` or `PENDING`, up to 32 percepts (salience clamped to
+0..1, facts capped at 2048 bytes), and a present-tense portrait capped at
+8192 bytes. `seq` increments only when the outbox accepts the observation.
+
+Every `decide` that had percepts or fired appends one JSON line to
+`data_dir/thalamus/decisions-YYYYMMDD.jsonl` (UTC). `DECISION_LOG_QUOTA_BYTES`
+in `thalamus/parameters.py` (50 MiB) is the Owner-adjustable cap. After a
+write, the oldest files other than today's are deleted until the directory
+fits. A shadow scorer (`thalamus/scorer.py`, `DOMUS_SHADOW_SCORER`) may
+annotate a fire in that line. Unknown names stay `NullScorer`. The scorer has
+a 2 second budget, and it never changes `decide`, the observation, or enqueueing.
 
 Credentials: `%LOCALAPPDATA%\Domus\ashley_url` and `ashley_token` (or
 `DOMUS_DATA_DIR`). Overrides: `DOMUS_ASHLEY_URL` and `DOMUS_ASHLEY_TOKEN`.
 The token is at least 32 bytes. A missing URL, missing token, or short token
-disables transport. The MCP tool `bridge_status` reports attachment, spool
-and outbox counts, the last heartbeat, and whether transport is enabled. It
-does not require the game and it does not print the URL or the token.
+disables transport. MCP `bridge_status` reports attachment, spool and outbox
+counts, the last heartbeat, transport, and a `thalamus` block. MCP
+`thalamus_status` returns that block. Neither tool requires the game, and
+neither prints the URL or the token.
 
 Attachment states: `attached` (process up, latest row at most 30 seconds old),
 `stale` (process up, row older), `game_exited` (process gone, close reason

@@ -27,6 +27,7 @@ Central fixtures in `vectors/central/` are vendored byte for byte from Ashley. `
 | `boredom_rise_ms` | 900000 | Idle climbs 0→θ in ~15 real minutes (`:215-217`) |
 | `resting_rise_multiplier` | 2.0 | "Slower after resting" (`:215`). v1 doubles the rise. |
 | `w_kind` | 1.0 each | Kinds `:159-168`. Learning `wake_worth` is not in v1 (`:234-235`). |
+| `DECISION_LOG_QUOTA_BYTES` | 52428800 | Owner-adjustable retention for `data_dir/thalamus/decisions-*.jsonl`. Not a `decide` input. |
 
 Alpha: `urgency == always_through` uses `alpha_always_through` (including a social percept). Kind `social` otherwise uses `alpha_social`. Everything else uses `alpha_ambient`.
 
@@ -49,7 +50,7 @@ On fire: percepts are deduplicated by key (highest salience, first-seen order), 
 
 ## Open
 
-θ₀ against "≤ 1 wake per 3–5 real minutes" is still open after the DT2B replays below. Defaults were not changed. `w_kind` learning (`wake_worth`) is not in v1. The decision-log quota is DT2C.
+θ₀ against "≤ 1 wake per 3–5 real minutes" is still open after the DT2B replays below. Defaults were not changed. `w_kind` learning (`wake_worth`) is not in v1. `DECISION_LOG_QUOTA_BYTES` is the Owner-adjustable decision-log cap (50 MiB).
 
 ## Extraction
 
