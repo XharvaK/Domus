@@ -1,4 +1,4 @@
-E1_PROBE_VERSION = "2.3.1"
+E1_PROBE_VERSION = "2.3.2"
 
 from .probe import initialize_probe
 initialize_probe()
