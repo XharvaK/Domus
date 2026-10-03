@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "parameterRevision": "dt2.v1",
+  "description": "a later smaller now_ms does not move last_now_ms backward",
+  "params": {},
+  "context": {},
+  "steps": [
+    {
+      "nowMs": 10000,
+      "percepts": [],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "lastNowMs": 10000
+      }
+    },
+    {
+      "nowMs": 9000,
+      "percepts": [],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "lastNowMs": 10000
+      }
+    }
+  ]
+}

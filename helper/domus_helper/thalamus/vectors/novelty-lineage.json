@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "parameterRevision": "dt2.v1",
+  "description": "novelty is per lineage; undone does not consume the count",
+  "params": {},
+  "context": {},
+  "steps": [
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "novelty": [
+          0.6
+        ]
+      }
+    },
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "novelty": [
+          0.42426406871192845
+        ]
+      }
+    },
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "M",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "novelty": [
+          0.6
+        ]
+      }
+    },
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": true,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "novelty": [
+          0.0
+        ]
+      }
+    },
+    {
+      "nowMs": 0,
+      "percepts": [
+        {
+          "kind": "interaction",
+          "subject": "sim",
+          "object": "14244",
+          "bucket": "running",
+          "surprise": 0.0,
+          "urgency": "normal",
+          "pressure": null,
+          "lineage": "L",
+          "undone": false,
+          "facts": []
+        }
+      ],
+      "expect": {
+        "fired": false,
+        "reason": null,
+        "novelty": [
+          0.34641016151377546
+        ],
+        "keys": {
+          "interaction:sim:14244:running": {
+            "h": 0.16806999999999994
+          }
+        }
+      }
+    }
+  ]
+}
