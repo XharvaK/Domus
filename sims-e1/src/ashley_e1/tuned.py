@@ -37,6 +37,19 @@ def _plain(obj, name, instance):
     return value
 
 
+def _class_plain(cls, name):
+    if isinstance(cls, type):
+        for klass in cls.__mro__:
+            if name not in klass.__dict__:
+                continue
+            value = klass.__dict__[name]
+            if _descriptor(value):
+                continue
+            return value
+        return None
+    return _plain(cls, name, True)
+
+
 def _int_or_null(value):
     if type(value) is int:
         return value
@@ -60,9 +73,9 @@ def _row(obj):
         sim = None
     tuned = _plain(obj, "_super_affordances", False)
     guids = []
-    if type(tuned) in (list, tuple):
+    if type(tuned) in (list, tuple, frozenset, set):
         for affordance in tuned:
-            guid = _int_or_null(_plain(affordance, "guid64", True))
+            guid = _int_or_null(_class_plain(affordance, "guid64"))
             if guid is not None:
                 guids.append(guid)
     unique = sorted(set(guids))

@@ -140,6 +140,44 @@ class TunedModuleTests(unittest.TestCase):
         self.assertEqual(row["affordance_guid64s"], list(range(1, 65)))
         self.assertTrue(row["truncated"])
 
+    def test_class_affordances_guid_on_class_mro(self):
+        aff_a = type("AffA", (), {"guid64": 123})
+        aff_b = type("AffB", (), {"guid64": 45})
+
+        class _Parent(object):
+            guid64 = 9
+
+        class _ChildAff(_Parent):
+            pass
+
+        class _Desc(object):
+            @property
+            def guid64(self):
+                return 999
+
+        class _Pair(object):
+            _super_affordances = (aff_a, aff_b, _ChildAff, _Desc)
+
+        class _Frozen(object):
+            _super_affordances = frozenset((aff_b, aff_a))
+
+        class _AsSet(object):
+            _super_affordances = set((aff_a,))
+
+        pair = _Pair()
+        pair.__dict__["id"] = 30
+        frozen = _Frozen()
+        frozen.__dict__["id"] = 31
+        as_set = _AsSet()
+        as_set.__dict__["id"] = 32
+        path = os.path.join(self._dir(), "class-guid.jsonl")
+        scan = TunedScan([pair, frozen, as_set], path, budget_ms=1000.0, clock=_clock([0.0]))
+        scan.step()
+        rows = {row["object_id"]: row for row in _rows(path) if row["kind"] == "tuned_on_class"}
+        self.assertEqual(rows["30"]["affordance_guid64s"], [9, 45, 123])
+        self.assertEqual(rows["31"]["affordance_guid64s"], [45, 123])
+        self.assertEqual(rows["32"]["affordance_guid64s"], [123])
+
     def test_error_row_continues(self):
         bad = _Bad()
         bad.__dict__["id"] = 8
