@@ -23,7 +23,7 @@ class Spool:
         self._con = sqlite3.connect(str(path))
         self._con.row_factory = sqlite3.Row
         version = self._con.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             raise RuntimeError("unsupported spool user_version %s" % version)
         if version == 0:
             self._con.executescript("""
@@ -62,6 +62,12 @@ class Spool:
                 );
             """)
             self._con.execute("PRAGMA user_version = 1")
+            self._con.commit()
+            version = 1
+        if version < 2:
+            self._con.execute(
+                "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+            self._con.execute("PRAGMA user_version = 2")
             self._con.commit()
 
     def close(self):
@@ -136,6 +142,28 @@ class Spool:
     def latest_record(self):
         row = self._con.execute("SELECT json FROM rows ORDER BY rowid DESC LIMIT 1").fetchone()
         return json.loads(row["json"]) if row else None
+
+    def rows_after(self, rowid, limit=500):
+        rows = self._con.execute(
+            "SELECT rowid AS rid, json FROM rows WHERE rowid > ? ORDER BY rowid LIMIT ?",
+            (int(rowid), int(limit))).fetchall()
+        for row in rows:
+            yield int(row["rid"]), json.loads(row["json"])
+
+    def get_kv(self, key):
+        row = self._con.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+        return None if row is None else row["v"]
+
+    def put_kv(self, key, value):
+        self.put_many_kv({key: value})
+
+    def put_many_kv(self, items):
+        with self._con:
+            for key, value in items.items():
+                self._con.execute(
+                    """INSERT INTO kv (k, v) VALUES (?, ?)
+                       ON CONFLICT(k) DO UPDATE SET v=excluded.v""",
+                    (key, value))
 
     def enqueue_observation(self, obs, now_ms):
         normalized = validate_observation(obs, now_ms)
