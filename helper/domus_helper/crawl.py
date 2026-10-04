@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import atlas, telemetry
 from .crawl_protocol import RETRY_CODES, name_blocked
-from .mcp_server import DomusTools, SafetyError
+from .mcp_server import CommandFailed, DomusTools, SafetyError
 from .paths import Paths
 
 
@@ -203,8 +203,12 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
                 "object_id": item["object_id"], "guid64": str(item["guid64"])})
         except SafetyError as error:
             raise CrawlStop(str(error))
+        except CommandFailed as error:
+            # A probe refusal comes back as inbox status REJECTED; its lines still
+            # carry TRIAL_REJECT <CODE> / PUSH_FAILED, so classify them the same way.
+            reply = error.reply
         last_send = monotonic()
-        kind, experiment_id, code = _classify(reply.result.get("lines"))
+        kind, experiment_id, code = _classify((reply.result or {}).get("lines"))
         _append(log_path, {
             "kind": "send", "guid64": item["guid64"], "name": item["name"],
             "object_id": item["object_id"], "reply": kind, "code": code,

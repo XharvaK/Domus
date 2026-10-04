@@ -59,6 +59,9 @@ class Clock:
         self.t += seconds
 
 
+from domus_helper.mcp_server import CommandFailed
+
+
 class FakeTools:
     def __init__(self, tmp_path):
         self.paths = Paths(tmp_path / "sims", tmp_path / "game")
@@ -82,6 +85,10 @@ class FakeTools:
         if self._raise and self._raise[0] == "command":
             raise self._raise[1]
         line = self.replies.pop(0)
+        if line.startswith("TRIAL_REJECT") or line.startswith("PUSH_FAILED"):
+            # Like the live probe: a refused or failed trial is inbox status REJECTED.
+            raise CommandFailed(Reply("c", "REJECTED", None, {"ok": False, "lines": [line]},
+                                      "agent:test"))
         return Reply("c", "OK", None, {"ok": True, "lines": [line]}, "agent:test")
 
 
