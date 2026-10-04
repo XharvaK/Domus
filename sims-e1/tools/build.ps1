@@ -40,7 +40,7 @@ py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[3], doraise=Tr
 '@
 $moduleNames = @("__init__", "probe", "observers", "snapshot", "schema", "writer",
                  "e2_admission", "e2_lineage", "e2_registry", "e2_cards", "e2_actuator", "e2_control", "cmdbox", "e2_trial",
-                 "atlas", "tuned", "preflight", "food")
+                 "atlas", "tuned", "preflight", "food", "situation")
 foreach ($moduleName in $moduleNames) {
     $source = Join-Path $sourceRoot ("ashley_e1\" + $moduleName + ".py")
     $destination = Join-Path $stageRoot ("ashley_e1\" + $moduleName + ".pyc")
