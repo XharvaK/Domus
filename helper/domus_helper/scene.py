@@ -76,16 +76,30 @@ def _text(resolve, key):
         return None
 
 
-def _name(row, resolve):
-    """The recipe's display name. multi_serving_name is the portion label
-    ("Party Size (8)"), never the dish's name."""
+def _name(row, resolve, catalog=None):
+    """The game's display name: the recipe's for crafted things (multi_serving_name is
+    the portion label, "Party Size (8)", never the dish's name), else the catalogue's
+    ("Pure Simplicity Sink"), else the tuning name."""
     craft = row.get("craft") or {}
     text = _text(resolve, craft.get("name_key"))
     if text:
         return text, "GAME_TEXT"
+    entry = _catalog(catalog, row)
+    text = _text(resolve, entry.get("name_key")) if entry else None
+    if text:
+        return text, "CATALOG"
     if craft.get("recipe"):
         return craft["recipe"], "TUNING_NAME"
     return row.get("class") or "unknown", "TUNING_NAME"
+
+
+def _catalog(catalog, row):
+    if catalog is None or not row.get("definition_id"):
+        return None
+    try:
+        return catalog(row["definition_id"])
+    except Exception:
+        return None
 
 
 def _is_notable(value):
@@ -111,12 +125,13 @@ def condition(states):
     return sorted(found)
 
 
-def near_line(row, body, resolve):
-    """The short line every near object gets."""
-    name, source = _name(row, resolve)
+def near_line(row, body, resolve, catalog=None):
+    """The short line every near object gets. `kind` is the tuning family, so a
+    catalogue name ("The YumCooker") still reads as a stove."""
+    name, source = _name(row, resolve, catalog)
     craft = row.get("craft") or {}
     fact = {"id": row["object_id"], "name": name, "name_source": source,
-            "room": row.get("room"),
+            "kind": family(row.get("class")), "room": row.get("room"),
             "distance_m": _distance(row.get("position"), (body or {}).get("position"))}
     marks = condition(row.get("states"))
     if marks:
@@ -132,9 +147,12 @@ def near_line(row, body, resolve):
     return fact
 
 
-def near_fact(row, body, resolve, offers):
-    fact = near_line(row, body, resolve)
+def near_fact(row, body, resolve, offers, catalog=None):
+    fact = near_line(row, body, resolve, catalog)
     fact["class"] = row.get("class")
+    entry = _catalog(catalog, row)
+    if entry and entry.get("price") is not None:
+        fact["catalog_price"] = entry["price"]
     fact["states"] = row.get("states") or {}
     if offers is not None:
         fact["offers"] = offers
@@ -167,7 +185,7 @@ def offers_for(object_id, preflight_rows):
     return {"allowed": sorted(set(allowed)), "refused": refused[:6]}
 
 
-def layers(header, objects, *, resolve=None, preflight_rows=None):
+def layers(header, objects, *, resolve=None, preflight_rows=None, catalog=None):
     body = (header or {}).get("body") or {}
     body_room = body.get("room")
     near, far = [], []
@@ -184,7 +202,7 @@ def layers(header, objects, *, resolve=None, preflight_rows=None):
              "far": [], "far_omitted": 0, "available": {}}
     kept = []
     for _, object_id, row in near:
-        line = near_line(row, body, resolve)
+        line = near_line(row, body, resolve, catalog)
         if _bytes(scene["near"] + [line]) > BUDGET["near"]:
             scene["near_omitted"] += 1
             continue
@@ -194,7 +212,8 @@ def layers(header, objects, *, resolve=None, preflight_rows=None):
              + [i for i, row in enumerate(kept) if not _has_condition(row)])
     for index in order:
         row = kept[index]
-        fact = near_fact(row, body, resolve, offers_for(row["object_id"], preflight_rows))
+        fact = near_fact(row, body, resolve, offers_for(row["object_id"], preflight_rows),
+                         catalog)
         trial = list(scene["near"])
         trial[index] = fact
         if _bytes(trial) > BUDGET["near"]:
@@ -206,8 +225,9 @@ def layers(header, objects, *, resolve=None, preflight_rows=None):
         servings = _servings(row.get("stats"))
         if not marks and servings is None and not row.get("craft"):
             continue
-        name, _ = _name(row, resolve)
-        line = {"id": object_id, "name": name, "room": row.get("room"),
+        name, _ = _name(row, resolve, catalog)
+        line = {"id": object_id, "name": name, "kind": family(row.get("class")),
+                "room": row.get("room"),
                 "distance_m": None if distance >= 1e9 else distance}
         if marks:
             line["states"] = marks
@@ -239,6 +259,7 @@ def _latest(folder, prefix):
 def main(argv=None):
     from .mcp_server import tools
     from .paths import Paths
+    from .catalog import Catalog
     from .strings import Resolver
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--file")
@@ -264,7 +285,8 @@ def main(argv=None):
     if preflight is not None:
         with open(preflight, encoding="utf-8") as handle:
             rows = [json.loads(line) for line in handle if line.strip()]
-    scene = layers(header, objects, resolve=Resolver(paths), preflight_rows=rows)
+    scene = layers(header, objects, resolve=Resolver(paths), preflight_rows=rows,
+                   catalog=Catalog(paths))
     print(json.dumps(scene, indent=1, ensure_ascii=False))
     return 0
 

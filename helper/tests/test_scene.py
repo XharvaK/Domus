@@ -53,7 +53,7 @@ def test_far_lines_and_name_fallback():
                    states={"Freshness": "Freshness_Spoiled"},
                    craft={"recipe": "recipe_Food_GrilledCheese", "name_key": "77"})
     result = scene.layers({"body": BODY}, [spoiled])
-    assert result["far"] == [{"id": "9", "name": "recipe_Food_GrilledCheese", "room": "6",
+    assert result["far"] == [{"id": "9", "name": "recipe_Food_GrilledCheese", "kind": "Food", "room": "6",
                               "distance_m": 15.0, "states": ["Freshness_Spoiled"]}]
 
 
