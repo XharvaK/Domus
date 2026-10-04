@@ -1,0 +1,5733 @@
+{
+  "age": {
+    "bladder": {
+      "first_distress_sim_min": 502.02,
+      "first_low_sim_min": 71.35,
+      "flat": false,
+      "frac_over_2000": 0.7291,
+      "hours_by_band": {
+        "distress": 6.521,
+        "low": 52.913,
+        "ok": 107.433,
+        "other": 0.0
+      },
+      "iqr": [
+        1749,
+        11844
+      ],
+      "max": 84077,
+      "median": 5180,
+      "n": 1886,
+      "p90": 20042,
+      "value_max": 100.0,
+      "value_min": 10.0
+    },
+    "energy": {
+      "first_distress_sim_min": null,
+      "first_low_sim_min": 4.77,
+      "flat": false,
+      "frac_over_2000": 0.666,
+      "hours_by_band": {
+        "distress": 0.0,
+        "low": 48.448,
+        "ok": 118.418,
+        "other": 0.0
+      },
+      "iqr": [
+        1267,
+        9625
+      ],
+      "max": 112368,
+      "median": 4005,
+      "n": 1886,
+      "p90": 16524,
+      "value_max": 100.0,
+      "value_min": 26.0
+    },
+    "fun": {
+      "first_distress_sim_min": null,
+      "first_low_sim_min": 7739.93,
+      "flat": false,
+      "frac_over_2000": 0.7858,
+      "hours_by_band": {
+        "distress": 0.0,
+        "low": 0.238,
+        "ok": 166.629,
+        "other": 0.0
+      },
+      "iqr": [
+        2359,
+        11958
+      ],
+      "max": 157589,
+      "median": 5628,
+      "n": 1886,
+      "p90": 19603,
+      "value_max": 100.0,
+      "value_min": 50.0
+    },
+    "hunger": {
+      "first_distress_sim_min": null,
+      "first_low_sim_min": 305.87,
+      "flat": false,
+      "frac_over_2000": 0.737,
+      "hours_by_band": {
+        "distress": 0.0,
+        "low": 74.251,
+        "ok": 92.616,
+        "other": 0.0
+      },
+      "iqr": [
+        1861,
+        11958
+      ],
+      "max": 166184,
+      "median": 5248,
+      "n": 1886,
+      "p90": 20313,
+      "value_max": 100.0,
+      "value_min": 22.0
+    },
+    "hygiene": {
+      "first_distress_sim_min": 4766.49,
+      "first_low_sim_min": 1546.74,
+      "flat": false,
+      "frac_over_2000": 0.7953,
+      "hours_by_band": {
+        "distress": 7.126,
+        "low": 37.273,
+        "ok": 122.467,
+        "other": 0.0
+      },
+      "iqr": [
+        2458,
+        12382
+      ],
+      "max": 166184,
+      "median": 5985,
+      "n": 1886,
+      "p90": 20749,
+      "value_max": 100.0,
+      "value_min": 4.0
+    },
+    "social": {
+      "first_distress_sim_min": 4.77,
+      "first_low_sim_min": 6662.4,
+      "flat": false,
+      "frac_over_2000": 0.8091,
+      "hours_by_band": {
+        "distress": 144.687,
+        "low": 22.18,
+        "ok": 0.0,
+        "other": 0.0
+      },
+      "iqr": [
+        2677,
+        12643
+      ],
+      "max": 157589,
+      "median": 6386,
+      "n": 1886,
+      "p90": 20565,
+      "value_max": 45.0,
+      "value_min": 0.0
+    }
+  },
+  "age_all_max": 166184,
+  "age_all_median": 5417,
+  "age_all_p90": 19614,
+  "age_frac_over_2000": 0.7537,
+  "age_when_value_changed_median": 2092,
+  "age_when_value_same_median": 7329,
+  "always_through_trace_keys": [
+    [
+      "need:bladder::distress",
+      6
+    ],
+    [
+      "need:hygiene::distress",
+      2
+    ],
+    [
+      "need:hunger::distress",
+      1
+    ],
+    [
+      "need:energy::ok",
+      1
+    ],
+    [
+      "need:social::distress",
+      1
+    ]
+  ],
+  "any_running_guids": 54,
+  "arousal_ge_theta_row_fraction_NOT_a_fire_rate": {
+    "1.00": 0.7879,
+    "1.25": 0.7474,
+    "1.50": 0.7112,
+    "1.75": 0.6733,
+    "2.00": 0.6371,
+    "2.25": 0.5991,
+    "2.50": 0.5629,
+    "2.75": 0.531,
+    "3.00": 0.5095
+  },
+  "arousal_median": 3.0958,
+  "atlas_builds": [
+    [
+      "1.128.90.1030",
+      8256
+    ]
+  ],
+  "atlas_columns": [
+    "build",
+    "guid64",
+    "name",
+    "is_super",
+    "is_social",
+    "target_type",
+    "allow_autonomous",
+    "allow_user_directed",
+    "require_current_posture",
+    "posture_preferences",
+    "static_commodities_json",
+    "ladder"
+  ],
+  "atlas_counts": {
+    "allow_autonomous": 4239,
+    "autonomous_only": 1874,
+    "both_flags": 2365,
+    "neither_flag": 679,
+    "not_allow_autonomous": 4017,
+    "not_social": 6791,
+    "rows": 8256,
+    "social": 1465,
+    "super": 6033,
+    "user_directed_only": 3338
+  },
+  "autonomy_ambiguous_or_open_flag": 2,
+  "autonomy_closed": 268,
+  "autonomy_still_open": 1,
+  "autonomy_table": [
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 33975,
+      "iqr_sim_min": [
+        9.436,
+        9.669
+      ],
+      "iqr_ticks": [
+        14154,
+        14504
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          15
+        ],
+        [
+          "energy",
+          12
+        ],
+        [
+          "hygiene",
+          11
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          42
+        ]
+      ],
+      "median_sim_min": 9.525,
+      "median_ticks": 14287,
+      "n_closed": 42,
+      "name": "Bed_Undercovers_Cry",
+      "pre_motive_median": {
+        "bladder": 68.0,
+        "energy": 69.0,
+        "fun": 100.0,
+        "hunger": 62.0,
+        "hygiene": 78.0,
+        "social": 0.0
+      },
+      "replaced": 5,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434027",
+          42
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13117,
+      "iqr_sim_min": [
+        14.126,
+        14.612
+      ],
+      "iqr_ticks": [
+        21189,
+        21918
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "energy",
+          15
+        ],
+        [
+          "hunger",
+          8
+        ],
+        [
+          "hygiene",
+          6
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          31
+        ]
+      ],
+      "median_sim_min": 14.355,
+      "median_ticks": 21532,
+      "n_closed": 31,
+      "name": "book_read",
+      "pre_motive_median": {
+        "bladder": 76.0,
+        "energy": 63.0,
+        "fun": 99.0,
+        "hunger": 60.0,
+        "hygiene": 85.0,
+        "social": 0.0
+      },
+      "replaced": 3,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043791406968",
+          5
+        ],
+        [
+          "118245043791406965",
+          5
+        ],
+        [
+          "118245043791406971",
+          3
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 9111,
+      "iqr_sim_min": [
+        42.308,
+        85.199
+      ],
+      "iqr_ticks": [
+        63462,
+        127799
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "energy",
+          8
+        ],
+        [
+          "hunger",
+          8
+        ],
+        [
+          "bladder",
+          8
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          30
+        ]
+      ],
+      "median_sim_min": 57.153,
+      "median_ticks": 85729,
+      "n_closed": 30,
+      "name": "tv_WatchNews",
+      "pre_motive_median": {
+        "bladder": 65.0,
+        "energy": 67.0,
+        "fun": 99.0,
+        "hunger": 69.0,
+        "hygiene": 82.0,
+        "social": 0.0
+      },
+      "replaced": 3,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434056",
+          30
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 2,
+      "guid": 76988,
+      "iqr_sim_min": [
+        9.029,
+        14.014
+      ],
+      "iqr_ticks": [
+        13544,
+        21021
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "energy",
+          10
+        ],
+        [
+          "hygiene",
+          7
+        ],
+        [
+          "hunger",
+          6
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          27
+        ]
+      ],
+      "median_sim_min": 9.641,
+      "median_ticks": 14462,
+      "n_closed": 27,
+      "name": "book_read_browse",
+      "pre_motive_median": {
+        "bladder": 73.0,
+        "energy": 65.0,
+        "fun": 99.0,
+        "hunger": 62.0,
+        "hygiene": 86.0,
+        "social": 0.0
+      },
+      "replaced": 2,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 1,
+      "targets": [
+        [
+          "118245043791406972",
+          6
+        ],
+        [
+          "118245043791406974",
+          5
+        ],
+        [
+          "118245043791406965",
+          3
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 13433,
+      "iqr_sim_min": [
+        9.501,
+        14.847
+      ],
+      "iqr_ticks": [
+        14252,
+        22270
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          12
+        ],
+        [
+          "hygiene",
+          2
+        ],
+        [
+          "bladder",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          13
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "median_sim_min": 13.298,
+      "median_ticks": 19947,
+      "n_closed": 14,
+      "name": "generic_consume_food",
+      "pre_motive_median": {
+        "bladder": 69.0,
+        "energy": 72.0,
+        "fun": 97.0,
+        "hunger": 31.0,
+        "hygiene": 58.0,
+        "social": 0.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "388461051375517993",
+          1
+        ],
+        [
+          "388461051389281431",
+          1
+        ],
+        [
+          "388461051393869049",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 100109,
+      "iqr_sim_min": [
+        4.667,
+        4.821
+      ],
+      "iqr_ticks": [
+        7000,
+        7231
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          6
+        ],
+        [
+          "energy",
+          5
+        ],
+        [
+          "bladder",
+          2
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          12
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "median_sim_min": 4.802,
+      "median_ticks": 7203,
+      "n_closed": 13,
+      "name": "sink_washDish_After_Eat_Counter",
+      "pre_motive_median": {
+        "bladder": 68.0,
+        "energy": 79.0,
+        "fun": 95.0,
+        "hunger": 86.0,
+        "hygiene": 61.0,
+        "social": 0.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434054",
+          13
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14241,
+      "iqr_sim_min": [
+        4.667,
+        4.788
+      ],
+      "iqr_ticks": [
+        7000,
+        7182
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          8
+        ],
+        [
+          "energy",
+          3
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          12
+        ]
+      ],
+      "median_sim_min": 4.751,
+      "median_ticks": 7126,
+      "n_closed": 12,
+      "name": "sink_washHands",
+      "pre_motive_median": {
+        "bladder": 100.0,
+        "energy": 76.0,
+        "fun": 98.0,
+        "hunger": 62.0,
+        "hygiene": 68.0,
+        "social": 0.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434023",
+          12
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14427,
+      "iqr_sim_min": [
+        4.727,
+        9.501
+      ],
+      "iqr_ticks": [
+        7091,
+        14252
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "bladder",
+          11
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          10
+        ],
+        [
+          "bladder",
+          2
+        ]
+      ],
+      "median_sim_min": 9.338,
+      "median_ticks": 14007,
+      "n_closed": 11,
+      "name": "toilet-use-sitting",
+      "pre_motive_median": {
+        "bladder": 21.0,
+        "energy": 74.0,
+        "fun": 99.0,
+        "hunger": 55.0,
+        "hygiene": 62.0,
+        "social": 0.0
+      },
+      "replaced": 3,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434022",
+          11
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 99414,
+      "iqr_sim_min": [
+        13.916,
+        18.975
+      ],
+      "iqr_ticks": [
+        20874,
+        28462
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "bladder",
+          4
+        ],
+        [
+          "hygiene",
+          3
+        ],
+        [
+          "energy",
+          2
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          10
+        ]
+      ],
+      "median_sim_min": 14.159,
+      "median_ticks": 21238,
+      "n_closed": 10,
+      "name": "phone_BrowseWebsites_AutonomousOnly",
+      "pre_motive_median": {
+        "bladder": 49.0,
+        "energy": 56.0,
+        "fun": 99.0,
+        "hunger": 64.0,
+        "hygiene": 82.0,
+        "social": 0.0
+      },
+      "replaced": 4,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          null,
+          10
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13094,
+      "iqr_sim_min": [
+        376.611,
+        524.563
+      ],
+      "iqr_ticks": [
+        564917,
+        786844
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "energy",
+          7
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          6
+        ],
+        [
+          "energy",
+          1
+        ]
+      ],
+      "median_sim_min": 420.289,
+      "median_ticks": 630433,
+      "n_closed": 7,
+      "name": "bed_sleep",
+      "pre_motive_median": {
+        "bladder": 54.0,
+        "energy": 36.0,
+        "fun": 99.0,
+        "hunger": 61.0,
+        "hygiene": 71.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434027",
+          7
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14354,
+      "iqr_sim_min": [
+        4.671,
+        4.788
+      ],
+      "iqr_ticks": [
+        7007,
+        7182
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          3
+        ],
+        [
+          "energy",
+          2
+        ],
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          7
+        ]
+      ],
+      "median_sim_min": 4.769,
+      "median_ticks": 7154,
+      "n_closed": 7,
+      "name": "tableDining_Clean",
+      "pre_motive_median": {
+        "bladder": 78.0,
+        "energy": 61.0,
+        "fun": 100.0,
+        "hunger": 65.0,
+        "hygiene": 68.0,
+        "social": 0.0
+      },
+      "replaced": 4,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434033",
+          7
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 221200,
+      "iqr_sim_min": [
+        0.699,
+        4.919
+      ],
+      "iqr_ticks": [
+        1049,
+        7378
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          2
+        ],
+        [
+          "hunger",
+          2
+        ],
+        [
+          "bladder",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          6
+        ]
+      ],
+      "median_sim_min": 4.547,
+      "median_ticks": 6820,
+      "n_closed": 6,
+      "name": "autonomous_ObjectPicker_PutAway_Books",
+      "pre_motive_median": {
+        "bladder": 72.0,
+        "energy": 79.0,
+        "fun": 99.0,
+        "hunger": 56.0,
+        "hygiene": 85.0,
+        "social": 0.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 2,
+      "still_open": 0,
+      "targets": [
+        [
+          null,
+          6
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 26172,
+      "iqr_sim_min": [
+        4.079,
+        4.895
+      ],
+      "iqr_ticks": [
+        6119,
+        7343
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          2
+        ],
+        [
+          "energy",
+          2
+        ],
+        [
+          "bladder",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          6
+        ]
+      ],
+      "median_sim_min": 4.718,
+      "median_ticks": 7077,
+      "n_closed": 6,
+      "name": "put_down_anywhere",
+      "pre_motive_median": {
+        "bladder": 57.0,
+        "energy": 58.0,
+        "fun": 100.0,
+        "hunger": 55.0,
+        "hygiene": 81.0,
+        "social": 0.0
+      },
+      "replaced": 4,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 1,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043791406964",
+          2
+        ],
+        [
+          "118245043791406968",
+          1
+        ],
+        [
+          "118245043791406973",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13991,
+      "iqr_sim_min": [
+        4.818,
+        42.439
+      ],
+      "iqr_ticks": [
+        7227,
+        63659
+      ],
+      "is_social": 1,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          3
+        ],
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          4
+        ]
+      ],
+      "median_sim_min": 39.588,
+      "median_ticks": 59382,
+      "n_closed": 4,
+      "name": "sim_BeAffectionate",
+      "pre_motive_median": {
+        "bladder": 56.0,
+        "energy": 61.0,
+        "fun": 94.0,
+        "hunger": 62.0,
+        "hygiene": 49.0,
+        "social": 0.0
+      },
+      "replaced": 3,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789501256",
+          2
+        ],
+        [
+          "118245043789500156",
+          1
+        ],
+        [
+          "118245043789500154",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 13950,
+      "iqr_sim_min": [
+        23.912,
+        47.851
+      ],
+      "iqr_ticks": [
+        35868,
+        71776
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          4
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          3
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "median_sim_min": 31.273,
+      "median_ticks": 46909,
+      "n_closed": 4,
+      "name": "shower_TakeShower",
+      "pre_motive_median": {
+        "bladder": 58.0,
+        "energy": 91.0,
+        "fun": 81.0,
+        "hunger": 65.0,
+        "hygiene": 4.0,
+        "social": 4.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434051",
+          4
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13998,
+      "iqr_sim_min": [
+        42.439,
+        60.359
+      ],
+      "iqr_ticks": [
+        63659,
+        90539
+      ],
+      "is_social": 1,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          2
+        ],
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          3
+        ]
+      ],
+      "median_sim_min": 54.697,
+      "median_ticks": 82046,
+      "n_closed": 3,
+      "name": "sim_Chat",
+      "pre_motive_median": {
+        "bladder": 56.0,
+        "energy": 61.0,
+        "fun": 97.0,
+        "hunger": 62.0,
+        "hygiene": 51.0,
+        "social": 0.0
+      },
+      "replaced": 2,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789500156",
+          1
+        ],
+        [
+          "118245043789501256",
+          1
+        ],
+        [
+          "118245043789500154",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 77329,
+      "iqr_sim_min": [
+        0.766,
+        5.581
+      ],
+      "iqr_ticks": [
+        1149,
+        8371
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          1
+        ],
+        [
+          "hunger",
+          1
+        ],
+        [
+          "energy",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          3
+        ]
+      ],
+      "median_sim_min": 4.886,
+      "median_ticks": 7329,
+      "n_closed": 3,
+      "name": "autonomous_bookshelf_read_picker",
+      "pre_motive_median": {
+        "bladder": 81.0,
+        "energy": 67.0,
+        "fun": 99.0,
+        "hunger": 54.0,
+        "hygiene": 89.0,
+        "social": 8.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 1,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434032",
+          3
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 14489,
+      "iqr_sim_min": [
+        14.331,
+        80.659
+      ],
+      "iqr_ticks": [
+        21497,
+        120988
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "bladder",
+          2
+        ],
+        [
+          "fun",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          3
+        ]
+      ],
+      "median_sim_min": 59.851,
+      "median_ticks": 89776,
+      "n_closed": 3,
+      "name": "tv-watch-sports",
+      "pre_motive_median": {
+        "bladder": 55.0,
+        "energy": 81.0,
+        "fun": 78.0,
+        "hunger": 62.0,
+        "hygiene": 100.0,
+        "social": 5.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434056",
+          3
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 77412,
+      "iqr_sim_min": [
+        4.975,
+        5.469
+      ],
+      "iqr_ticks": [
+        7462,
+        8203
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "energy",
+          2
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          3
+        ]
+      ],
+      "median_sim_min": 5.269,
+      "median_ticks": 7904,
+      "n_closed": 3,
+      "name": "autonomous_Bookshelf_Browse_Picker",
+      "pre_motive_median": {
+        "bladder": 74.0,
+        "energy": 54.0,
+        "fun": 100.0,
+        "hunger": 75.0,
+        "hygiene": 84.0,
+        "social": 0.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434032",
+          3
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14239,
+      "iqr_sim_min": [
+        2.717,
+        5.538
+      ],
+      "iqr_ticks": [
+        4076,
+        8307
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          2
+        ],
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          2
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "median_sim_min": 4.723,
+      "median_ticks": 7084,
+      "n_closed": 3,
+      "name": "sink_Clean",
+      "pre_motive_median": {
+        "bladder": 75.0,
+        "energy": 85.0,
+        "fun": 98.0,
+        "hunger": 25.0,
+        "hygiene": 12.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434023",
+          3
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14426,
+      "iqr_sim_min": [
+        1.364,
+        4.718
+      ],
+      "iqr_ticks": [
+        2046,
+        7077
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          2
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          2
+        ]
+      ],
+      "median_sim_min": 1.364,
+      "median_ticks": 2046,
+      "n_closed": 2,
+      "name": "toilet-flush",
+      "pre_motive_median": {
+        "bladder": 63.0,
+        "energy": 73.0,
+        "fun": 97.0,
+        "hunger": 31.0,
+        "hygiene": 68.0,
+        "social": 0.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434022",
+          2
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13993,
+      "iqr_sim_min": [
+        4.779,
+        4.807
+      ],
+      "iqr_ticks": [
+        7168,
+        7210
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "bladder",
+          2
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ],
+        [
+          "bladder",
+          1
+        ]
+      ],
+      "median_sim_min": 4.779,
+      "median_ticks": 7168,
+      "n_closed": 2,
+      "name": "sim_BladderDistress",
+      "pre_motive_median": {
+        "bladder": 13.0,
+        "energy": 30.0,
+        "fun": 62.0,
+        "hunger": 24.0,
+        "hygiene": 31.0,
+        "social": 12.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          null,
+          2
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 29854,
+      "iqr_sim_min": [
+        4.709,
+        4.774
+      ],
+      "iqr_ticks": [
+        7063,
+        7161
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "energy",
+          2
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          2
+        ]
+      ],
+      "median_sim_min": 4.709,
+      "median_ticks": 7063,
+      "n_closed": 2,
+      "name": "sink_Clean_Slotted",
+      "pre_motive_median": {
+        "bladder": 55.0,
+        "energy": 46.0,
+        "fun": 98.0,
+        "hunger": 50.0,
+        "hygiene": 83.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434054",
+          2
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 13949,
+      "iqr_sim_min": [
+        4.699,
+        4.797
+      ],
+      "iqr_ticks": [
+        7049,
+        7196
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "energy",
+          1
+        ],
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          2
+        ]
+      ],
+      "median_sim_min": 4.699,
+      "median_ticks": 7049,
+      "n_closed": 2,
+      "name": "shower_Clean",
+      "pre_motive_median": {
+        "bladder": 61.0,
+        "energy": 38.0,
+        "fun": 100.0,
+        "hunger": 37.0,
+        "hygiene": 80.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434051",
+          2
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14491,
+      "iqr_sim_min": [
+        4.905,
+        7.849
+      ],
+      "iqr_ticks": [
+        7357,
+        11773
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          2
+        ]
+      ],
+      "median_sim_min": 4.905,
+      "median_ticks": 7357,
+      "n_closed": 2,
+      "name": "tv_PickChannelAutonomously",
+      "pre_motive_median": {
+        "bladder": 43.0,
+        "energy": 50.0,
+        "fun": 100.0,
+        "hunger": 43.0,
+        "hygiene": 42.0,
+        "social": 0.0
+      },
+      "replaced": 2,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434056",
+          2
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 14097,
+      "iqr_sim_min": [
+        2.732,
+        4.279
+      ],
+      "iqr_ticks": [
+        4098,
+        6419
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          2
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ],
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "median_sim_min": 2.732,
+      "median_ticks": 4098,
+      "n_closed": 2,
+      "name": "sim_HygieneDistress",
+      "pre_motive_median": {
+        "bladder": 58.0,
+        "energy": 86.0,
+        "fun": 58.0,
+        "hunger": 22.0,
+        "hygiene": 12.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          null,
+          2
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13277,
+      "iqr_sim_min": [
+        14.392,
+        14.471
+      ],
+      "iqr_ticks": [
+        21588,
+        21707
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          2
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "hygiene",
+          2
+        ]
+      ],
+      "median_sim_min": 14.392,
+      "median_ticks": 21588,
+      "n_closed": 2,
+      "name": "counter_MakeFood_Staging_Basic",
+      "pre_motive_median": {
+        "bladder": 72.0,
+        "energy": 83.0,
+        "fun": 56.0,
+        "hunger": 22.0,
+        "hygiene": 9.0,
+        "social": 30.0
+      },
+      "replaced": 1,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434013",
+          2
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 100104,
+      "iqr_sim_min": [
+        4.746,
+        4.746
+      ],
+      "iqr_ticks": [
+        7119,
+        7119
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.746,
+      "median_ticks": 7119,
+      "n_closed": 1,
+      "name": "sink_washDishes_Counter",
+      "pre_motive_median": {
+        "bladder": 94.0,
+        "energy": 94.0,
+        "fun": 97.0,
+        "hunger": 90.0,
+        "hygiene": 75.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434054",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14424,
+      "iqr_sim_min": [
+        4.718,
+        4.718
+      ],
+      "iqr_ticks": [
+        7077,
+        7077
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.718,
+      "median_ticks": 7077,
+      "n_closed": 1,
+      "name": "Throw_Away_Outdoor",
+      "pre_motive_median": {
+        "bladder": 73.0,
+        "energy": 77.0,
+        "fun": 99.0,
+        "hunger": 64.0,
+        "hygiene": 66.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434048",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 30917,
+      "iqr_sim_min": [
+        4.988,
+        4.988
+      ],
+      "iqr_ticks": [
+        7482,
+        7482
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.988,
+      "median_ticks": 7482,
+      "n_closed": 1,
+      "name": "SocialPickerSI",
+      "pre_motive_median": {
+        "bladder": 42.0,
+        "energy": 52.0,
+        "fun": 93.0,
+        "hunger": 33.0,
+        "hygiene": 64.0,
+        "social": 14.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789433309",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 29829,
+      "iqr_sim_min": [
+        4.783,
+        4.783
+      ],
+      "iqr_ticks": [
+        7175,
+        7175
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "bladder",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.783,
+      "median_ticks": 7175,
+      "n_closed": 1,
+      "name": "counter_Clean",
+      "pre_motive_median": {
+        "bladder": 46.0,
+        "energy": 83.0,
+        "fun": 100.0,
+        "hunger": 51.0,
+        "hygiene": 96.0,
+        "social": 3.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789433999",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 75242,
+      "iqr_sim_min": [
+        5.147,
+        5.147
+      ],
+      "iqr_ticks": [
+        7721,
+        7721
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "bladder",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 5.147,
+      "median_ticks": 7721,
+      "n_closed": 1,
+      "name": "eat_to_clean_from_sit",
+      "pre_motive_median": {
+        "bladder": 23.0,
+        "energy": 98.0,
+        "fun": 96.0,
+        "hunger": 55.0,
+        "hygiene": 61.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "388461051422574764",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 13388,
+      "iqr_sim_min": [
+        4.709,
+        4.709
+      ],
+      "iqr_ticks": [
+        7063,
+        7063
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.709,
+      "median_ticks": 7063,
+      "n_closed": 1,
+      "name": "fridge_CookAutonomously",
+      "pre_motive_median": {
+        "bladder": 62.0,
+        "energy": 65.0,
+        "fun": 100.0,
+        "hunger": 37.0,
+        "hygiene": 50.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789433997",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 74885,
+      "iqr_sim_min": [
+        4.755,
+        4.755
+      ],
+      "iqr_ticks": [
+        7133,
+        7133
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.755,
+      "median_ticks": 7133,
+      "n_closed": 1,
+      "name": "sink_washDish_After_Eat",
+      "pre_motive_median": {
+        "bladder": 59.0,
+        "energy": 62.0,
+        "fun": 98.0,
+        "hunger": 98.0,
+        "hygiene": 48.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434023",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 14431,
+      "iqr_sim_min": [
+        9.441,
+        9.441
+      ],
+      "iqr_ticks": [
+        14161,
+        14161
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 9.441,
+      "median_ticks": 14161,
+      "n_closed": 1,
+      "name": "toilet_Clean",
+      "pre_motive_median": {
+        "bladder": 100.0,
+        "energy": 82.0,
+        "fun": 99.0,
+        "hunger": 65.0,
+        "hygiene": 92.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434022",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 37819,
+      "iqr_sim_min": [
+        5.231,
+        5.231
+      ],
+      "iqr_ticks": [
+        7847,
+        7847
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 5.231,
+      "median_ticks": 7847,
+      "n_closed": 1,
+      "name": "Put_Away_Books",
+      "pre_motive_median": {
+        "bladder": 91.0,
+        "energy": 76.0,
+        "fun": 100.0,
+        "hunger": 55.0,
+        "hygiene": 97.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043791406966",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 13642,
+      "iqr_sim_min": [
+        6.062,
+        6.062
+      ],
+      "iqr_ticks": [
+        9093,
+        9093
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 6.062,
+      "median_ticks": 9093,
+      "n_closed": 1,
+      "name": "mirror_SelfPepTalk",
+      "pre_motive_median": {
+        "bladder": 59.0,
+        "energy": 62.0,
+        "fun": 96.0,
+        "hunger": 68.0,
+        "hygiene": 48.0,
+        "social": 23.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434030",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13395,
+      "iqr_sim_min": [
+        2.07,
+        2.07
+      ],
+      "iqr_ticks": [
+        3105,
+        3105
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "median_sim_min": 2.07,
+      "median_ticks": 3105,
+      "n_closed": 1,
+      "name": "fridge_CreateTray",
+      "pre_motive_median": {
+        "bladder": 75.0,
+        "energy": 85.0,
+        "fun": 58.0,
+        "hunger": 22.0,
+        "hygiene": 11.0,
+        "social": 31.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789433997",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 269311,
+      "iqr_sim_min": [
+        4.844,
+        4.844
+      ],
+      "iqr_ticks": [
+        7266,
+        7266
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "hygiene",
+          1
+        ]
+      ],
+      "median_sim_min": 4.844,
+      "median_ticks": 7266,
+      "n_closed": 1,
+      "name": "counter_Ico_Transition_placeOnCounter",
+      "pre_motive_median": {
+        "bladder": 71.0,
+        "energy": 82.0,
+        "fun": 55.0,
+        "hunger": 22.0,
+        "hygiene": 8.0,
+        "social": 30.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "388461051468977386",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 13091,
+      "iqr_sim_min": [
+        114.107,
+        114.107
+      ],
+      "iqr_ticks": [
+        171160,
+        171160
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ],
+        [
+          "energy",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 114.107,
+      "median_ticks": 171160,
+      "n_closed": 1,
+      "name": "bed_Nap",
+      "pre_motive_median": {
+        "bladder": 79.0,
+        "energy": 37.0,
+        "fun": 100.0,
+        "hunger": 37.0,
+        "hygiene": 83.0,
+        "social": 13.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789434027",
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 0,
+      "ambiguous": 0,
+      "guid": 14141,
+      "iqr_sim_min": [
+        4.685,
+        4.685
+      ],
+      "iqr_ticks": [
+        7028,
+        7028
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.685,
+      "median_ticks": 7028,
+      "n_closed": 1,
+      "name": "sim_SocialDistress",
+      "pre_motive_median": {
+        "bladder": 71.0,
+        "energy": 52.0,
+        "fun": 99.0,
+        "hunger": 32.0,
+        "hygiene": 78.0,
+        "social": 13.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          null,
+          1
+        ]
+      ]
+    },
+    {
+      "allow_autonomous": 1,
+      "ambiguous": 0,
+      "guid": 13397,
+      "iqr_sim_min": [
+        4.979,
+        4.979
+      ],
+      "iqr_ticks": [
+        7468,
+        7468
+      ],
+      "is_social": 0,
+      "is_super": 1,
+      "lowest_actionable_mode": [
+        [
+          "hunger",
+          1
+        ]
+      ],
+      "lowest_mode": [
+        [
+          "social",
+          1
+        ]
+      ],
+      "median_sim_min": 4.979,
+      "median_ticks": 7468,
+      "n_closed": 1,
+      "name": "fridge_GrabSnackAutonomously",
+      "pre_motive_median": {
+        "bladder": 67.0,
+        "energy": 72.0,
+        "fun": 98.0,
+        "hunger": 37.0,
+        "hygiene": 92.0,
+        "social": 0.0
+      },
+      "replaced": 0,
+      "short_replaced_lt_60sim_s": 0,
+      "short_then_idle_lt_60sim_s": 0,
+      "still_open": 0,
+      "targets": [
+        [
+          "118245043789433997",
+          1
+        ]
+      ]
+    }
+  ],
+  "autonomy_used_and_offered": 27,
+  "autonomy_used_guids": 42,
+  "autonomy_used_not_offered": [
+    13117,
+    13433,
+    13991,
+    13993,
+    13998,
+    14097,
+    14141,
+    26172,
+    30917,
+    37819,
+    75242,
+    76988,
+    99414,
+    221200,
+    269311
+  ],
+  "calendar_first": "23:11:01.960 day:1 week:0",
+  "calendar_last": "22:10:13.000 day:1 week:1",
+  "calendar_wraps": 7,
+  "calibration_autonomy_durations": [
+    {
+      "affordance_id": "100104",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7119,
+        7119
+      ],
+      "median_ticks": 7119,
+      "median_wall_ms": 1038,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "100109",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7000,
+        7231
+      ],
+      "median_ticks": 7203,
+      "median_wall_ms": 1030,
+      "n": 13,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13091",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        171160,
+        171160
+      ],
+      "median_ticks": 171160,
+      "median_wall_ms": 5090,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13094",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        564917,
+        786844
+      ],
+      "median_ticks": 630433,
+      "median_wall_ms": 18387,
+      "n": 7,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13117",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        21189,
+        21918
+      ],
+      "median_ticks": 21532,
+      "median_wall_ms": 3087,
+      "n": 31,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13277",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        21588,
+        21707
+      ],
+      "median_ticks": 21588,
+      "median_wall_ms": 3090,
+      "n": 2,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13388",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7063,
+        7063
+      ],
+      "median_ticks": 7063,
+      "median_wall_ms": 1033,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13395",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        3105,
+        3105
+      ],
+      "median_ticks": 3105,
+      "median_wall_ms": 3077,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13397",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7468,
+        7468
+      ],
+      "median_ticks": 7468,
+      "median_wall_ms": 971,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13433",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        14252,
+        22270
+      ],
+      "median_ticks": 19947,
+      "median_wall_ms": 3086,
+      "n": 14,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13642",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        9093,
+        9093
+      ],
+      "median_ticks": 9093,
+      "median_wall_ms": 1061,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13949",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7049,
+        7196
+      ],
+      "median_ticks": 7049,
+      "median_wall_ms": 1009,
+      "n": 2,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13950",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        35868,
+        71776
+      ],
+      "median_ticks": 46909,
+      "median_wall_ms": 10041,
+      "n": 4,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13991",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7227,
+        63659
+      ],
+      "median_ticks": 59382,
+      "median_wall_ms": 8183,
+      "n": 4,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13993",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7168,
+        7210
+      ],
+      "median_ticks": 7168,
+      "median_wall_ms": 1024,
+      "n": 2,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "13998",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        63659,
+        90539
+      ],
+      "median_ticks": 82046,
+      "median_wall_ms": 11271,
+      "n": 3,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14097",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        4098,
+        6419
+      ],
+      "median_ticks": 4098,
+      "median_wall_ms": 1039,
+      "n": 2,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14141",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7028,
+        7028
+      ],
+      "median_ticks": 7028,
+      "median_wall_ms": 1004,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14239",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        4076,
+        8307
+      ],
+      "median_ticks": 7084,
+      "median_wall_ms": 1029,
+      "n": 3,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14241",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7000,
+        7182
+      ],
+      "median_ticks": 7126,
+      "median_wall_ms": 1025,
+      "n": 12,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14354",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7007,
+        7182
+      ],
+      "median_ticks": 7154,
+      "median_wall_ms": 1015,
+      "n": 7,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14424",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7077,
+        7077
+      ],
+      "median_ticks": 7077,
+      "median_wall_ms": 992,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14426",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        2046,
+        7077
+      ],
+      "median_ticks": 2046,
+      "median_wall_ms": 1013,
+      "n": 2,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14427",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7091,
+        14252
+      ],
+      "median_ticks": 14007,
+      "median_wall_ms": 2003,
+      "n": 11,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14431",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        14161,
+        14161
+      ],
+      "median_ticks": 14161,
+      "median_wall_ms": 2029,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14489",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        21497,
+        120988
+      ],
+      "median_ticks": 89776,
+      "median_wall_ms": 17285,
+      "n": 3,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "14491",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7357,
+        11773
+      ],
+      "median_ticks": 7357,
+      "median_wall_ms": 947,
+      "n": 2,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "221200",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        1049,
+        7378
+      ],
+      "median_ticks": 6820,
+      "median_wall_ms": 990,
+      "n": 6,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "26172",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        6119,
+        7343
+      ],
+      "median_ticks": 7077,
+      "median_wall_ms": 994,
+      "n": 6,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "269311",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7266,
+        7266
+      ],
+      "median_ticks": 7266,
+      "median_wall_ms": 1009,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "29829",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7175,
+        7175
+      ],
+      "median_ticks": 7175,
+      "median_wall_ms": 1018,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "29854",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7063,
+        7161
+      ],
+      "median_ticks": 7063,
+      "median_wall_ms": 1014,
+      "n": 2,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "30917",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7482,
+        7482
+      ],
+      "median_ticks": 7482,
+      "median_wall_ms": 998,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "33975",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        14154,
+        14504
+      ],
+      "median_ticks": 14287,
+      "median_wall_ms": 2045,
+      "n": 42,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "37819",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7847,
+        7847
+      ],
+      "median_ticks": 7847,
+      "median_wall_ms": 1007,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "74885",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7133,
+        7133
+      ],
+      "median_ticks": 7133,
+      "median_wall_ms": 1018,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "75242",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7721,
+        7721
+      ],
+      "median_ticks": 7721,
+      "median_wall_ms": 970,
+      "n": 1,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "76988",
+      "ambiguous": 2,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        13544,
+        21021
+      ],
+      "median_ticks": 14462,
+      "median_wall_ms": 2079,
+      "n": 27,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "77329",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        1149,
+        8371
+      ],
+      "median_ticks": 7329,
+      "median_wall_ms": 977,
+      "n": 3,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "77412",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        7462,
+        8203
+      ],
+      "median_ticks": 7904,
+      "median_wall_ms": 966,
+      "n": 3,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "9111",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        63462,
+        127799
+      ],
+      "median_ticks": 85729,
+      "median_wall_ms": 12243,
+      "n": 30,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    },
+    {
+      "affordance_id": "99414",
+      "ambiguous": 0,
+      "control": "AUTONOMY",
+      "iqr_ticks": [
+        20874,
+        28462
+      ],
+      "median_ticks": 21238,
+      "median_wall_ms": 3031,
+      "n": 10,
+      "source_norm": "UNKNOWN",
+      "source_raw": "InteractionSource.AUTONOMY"
+    }
+  ],
+  "calibration_coverage": {
+    "affordances": 97,
+    "autonomy_spans": 268,
+    "gaps": 2,
+    "ticks_by_speed": {
+      "NORMAL": 426720,
+      "PAUSED": 721,
+      "SPEED3": 9804818,
+      "SUPER_SPEED3": 4789363
+    },
+    "wall_ms_by_speed": {
+      "NORMAL": 398334,
+      "PAUSED": 5128,
+      "SPEED3": 1385939,
+      "SUPER_SPEED3": 136693
+    }
+  },
+  "calm_posture_only": 140,
+  "calm_postures": [
+    [
+      "sit",
+      326
+    ],
+    [
+      "stand",
+      166
+    ],
+    [
+      "bed_Undercovers",
+      41
+    ],
+    [
+      "shower",
+      37
+    ],
+    [
+      "toilet_sit",
+      3
+    ]
+  ],
+  "calm_rows": 573,
+  "calm_with_autonomy_si": 433,
+  "cancel_by_source": {
+    "InteractionSource.BODY_CANCEL_AOP": 106,
+    "InteractionSource.CARRY_CANCEL_AOP": 41
+  },
+  "cancel_interaction_ids": 147,
+  "choice_match": {
+    "closed": 268,
+    "effect_actionable": [
+      36,
+      132
+    ],
+    "effect_any": [
+      4,
+      132
+    ],
+    "lex_actionable": [
+      47,
+      195
+    ],
+    "lex_any": [
+      9,
+      195
+    ],
+    "lowest_includes_social": 256
+  },
+  "commands": {
+    "arm": 1,
+    "calibrate": 1,
+    "start": 1,
+    "status": 4
+  },
+  "control_hours": 43.3848,
+  "control_n": {
+    "bladder": 648,
+    "energy": 648,
+    "fun": 648,
+    "hunger": 648,
+    "hygiene": 648,
+    "social": 648
+  },
+  "control_rate_per_game_hour": {
+    "bladder": -1.291,
+    "energy": -3.688,
+    "fun": -3.342,
+    "hunger": 4.61,
+    "hygiene": -0.738,
+    "social": -0.761
+  },
+  "control_stale_skipped": {
+    "bladder": 596,
+    "energy": 594,
+    "fun": 604,
+    "hunger": 596,
+    "hygiene": 604,
+    "social": 606
+  },
+  "counterfactual": "NOT_HONEST",
+  "decision_reasons": {
+    "(False, None)": 1059,
+    "(True, 'always_through')": 10,
+    "(True, 'threshold')": 91
+  },
+  "decision_theta_values": {
+    "1.0": 1160
+  },
+  "decisions_dropped_by_wall_filter": 0,
+  "decisions_kept": 1160,
+  "decisions_rows": 1160,
+  "drops_to_normal": [
+    {
+      "calendar": "07:57:33.560 day:2 week:0",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          19,
+          "distress"
+        ],
+        "energy": [
+          100,
+          "ok"
+        ],
+        "fun": [
+          100,
+          "ok"
+        ],
+        "hunger": [
+          33,
+          "low"
+        ],
+        "hygiene": [
+          74,
+          "ok"
+        ],
+        "social": [
+          0,
+          "distress"
+        ]
+      },
+      "posture": "bed_Sleep",
+      "running": [
+        "bed_sleep",
+        "generic_Bed_Sleep"
+      ],
+      "seq": 50,
+      "to": "NORMAL"
+    },
+    {
+      "calendar": "09:28:31.920 day:3 week:0",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          68,
+          "ok"
+        ],
+        "energy": [
+          99,
+          "ok"
+        ],
+        "fun": [
+          70,
+          "ok"
+        ],
+        "hunger": [
+          37,
+          "low"
+        ],
+        "hygiene": [
+          40,
+          "low"
+        ],
+        "social": [
+          9,
+          "distress"
+        ]
+      },
+      "posture": "bed_Sleep",
+      "running": [
+        "bed_sleep",
+        "generic_Bed_Sleep"
+      ],
+      "seq": 334,
+      "to": "NORMAL"
+    },
+    {
+      "calendar": "07:38:26.520 day:4 week:0",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          29,
+          "low"
+        ],
+        "energy": [
+          100,
+          "ok"
+        ],
+        "fun": [
+          98,
+          "ok"
+        ],
+        "hunger": [
+          26,
+          "low"
+        ],
+        "hygiene": [
+          64,
+          "ok"
+        ],
+        "social": [
+          0,
+          "distress"
+        ]
+      },
+      "posture": "bed_Sleep",
+      "running": [
+        "bed_sleep",
+        "generic_Bed_Sleep"
+      ],
+      "seq": 811,
+      "to": "NORMAL"
+    },
+    {
+      "calendar": "07:50:08.880 day:5 week:0",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          59,
+          "ok"
+        ],
+        "energy": [
+          100,
+          "ok"
+        ],
+        "fun": [
+          99,
+          "ok"
+        ],
+        "hunger": [
+          25,
+          "low"
+        ],
+        "hygiene": [
+          14,
+          "distress"
+        ],
+        "social": [
+          0,
+          "distress"
+        ]
+      },
+      "posture": "bed_Sleep",
+      "running": [
+        "bed_sleep",
+        "generic_Bed_Sleep"
+      ],
+      "seq": 1031,
+      "to": "NORMAL"
+    },
+    {
+      "calendar": "06:03:58.120 day:6 week:0",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          16,
+          "distress"
+        ],
+        "energy": [
+          96,
+          "ok"
+        ],
+        "fun": [
+          99,
+          "ok"
+        ],
+        "hunger": [
+          60,
+          "ok"
+        ],
+        "hygiene": [
+          64,
+          "ok"
+        ],
+        "social": [
+          0,
+          "distress"
+        ]
+      },
+      "posture": "bed_Sleep",
+      "running": [
+        "bed_sleep",
+        "generic_Bed_Sleep"
+      ],
+      "seq": 1251,
+      "to": "NORMAL"
+    },
+    {
+      "calendar": "05:14:41.000 day:0 week:1",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          78,
+          "ok"
+        ],
+        "energy": [
+          83,
+          "ok"
+        ],
+        "fun": [
+          58,
+          "ok"
+        ],
+        "hunger": [
+          23,
+          "low"
+        ],
+        "hygiene": [
+          15,
+          "distress"
+        ],
+        "social": [
+          31,
+          "low"
+        ]
+      },
+      "posture": "bed_Sleep",
+      "running": [
+        "bed_sleep",
+        "generic_Bed_Sleep"
+      ],
+      "seq": 1490,
+      "to": "NORMAL"
+    },
+    {
+      "calendar": "19:02:07.160 day:0 week:1",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          75,
+          "ok"
+        ],
+        "energy": [
+          50,
+          "low"
+        ],
+        "fun": [
+          99,
+          "ok"
+        ],
+        "hunger": [
+          37,
+          "low"
+        ],
+        "hygiene": [
+          83,
+          "ok"
+        ],
+        "social": [
+          13,
+          "distress"
+        ]
+      },
+      "posture": "bed_Nap",
+      "running": [
+        "bed_Nap"
+      ],
+      "seq": 1675,
+      "to": "NORMAL"
+    },
+    {
+      "calendar": "07:40:17.040 day:1 week:1",
+      "from": "SUPER_SPEED3",
+      "motives": {
+        "bladder": [
+          17,
+          "distress"
+        ],
+        "energy": [
+          100,
+          "ok"
+        ],
+        "fun": [
+          100,
+          "ok"
+        ],
+        "hunger": [
+          25,
+          "low"
+        ],
+        "hygiene": [
+          53,
+          "ok"
+        ],
+        "social": [
+          7,
+          "distress"
+        ]
+      },
+      "posture": "bed_Sleep",
+      "running": [
+        "bed_sleep",
+        "generic_Bed_Sleep"
+      ],
+      "seq": 1756,
+      "to": "NORMAL"
+    }
+  ],
+  "effects": [
+    {
+      "allow_autonomous": 0,
+      "guid": 9111,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -2.657,
+          "hours": 29.3863,
+          "n": 370,
+          "per_game_hour": -3.947,
+          "stale_skipped": 362
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.328,
+          "hours": 29.3863,
+          "n": 370,
+          "per_game_hour": -4.015,
+          "stale_skipped": 355
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 4.601,
+          "hours": 29.3863,
+          "n": 370,
+          "per_game_hour": 1.259,
+          "stale_skipped": 361
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.667,
+          "hours": 29.3863,
+          "n": 370,
+          "per_game_hour": -6.057,
+          "stale_skipped": 360
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -1.44,
+          "hours": 29.3863,
+          "n": 370,
+          "per_game_hour": -2.178,
+          "stale_skipped": 363
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.488,
+          "hours": 29.3863,
+          "n": 370,
+          "per_game_hour": -0.272,
+          "stale_skipped": 363
+        }
+      },
+      "n_spans_running": 30,
+      "name": "tv_WatchNews"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 13094,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -2.704,
+          "hours": 51.3134,
+          "n": 129,
+          "per_game_hour": -3.995,
+          "stale_skipped": 128
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 12.243,
+          "hours": 51.3134,
+          "n": 129,
+          "per_game_hour": 8.555,
+          "stale_skipped": 1
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 3.323,
+          "hours": 51.3134,
+          "n": 129,
+          "per_game_hour": -0.019,
+          "stale_skipped": 128
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -8.975,
+          "hours": 51.3134,
+          "n": 129,
+          "per_game_hour": -4.365,
+          "stale_skipped": 128
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -1.64,
+          "hours": 51.3134,
+          "n": 129,
+          "per_game_hour": -2.378,
+          "stale_skipped": 128
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 51.3134,
+          "n": 129,
+          "per_game_hour": 0.0,
+          "stale_skipped": 128
+        }
+      },
+      "n_spans_running": 7,
+      "name": "bed_sleep"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 13117,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -3.595,
+          "hours": 7.5729,
+          "n": 114,
+          "per_game_hour": -4.886,
+          "stale_skipped": 112
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.009,
+          "hours": 7.5729,
+          "n": 114,
+          "per_game_hour": -3.697,
+          "stale_skipped": 113
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 11.793,
+          "hours": 7.5729,
+          "n": 114,
+          "per_game_hour": 8.451,
+          "stale_skipped": 113
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.42,
+          "hours": 7.5729,
+          "n": 114,
+          "per_game_hour": -5.81,
+          "stale_skipped": 112
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -1.771,
+          "hours": 7.5729,
+          "n": 114,
+          "per_game_hour": -2.509,
+          "stale_skipped": 113
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.1,
+          "hours": 7.5729,
+          "n": 114,
+          "per_game_hour": -0.66,
+          "stale_skipped": 113
+        }
+      },
+      "n_spans_running": 31,
+      "name": "book_read"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 14489,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -3.768,
+          "hours": 2.5696,
+          "n": 107,
+          "per_game_hour": -5.059,
+          "stale_skipped": 94
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 0.185,
+          "hours": 2.5696,
+          "n": 107,
+          "per_game_hour": -3.503,
+          "stale_skipped": 93
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 26.303,
+          "hours": 2.5696,
+          "n": 107,
+          "per_game_hour": 22.961,
+          "stale_skipped": 93
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.447,
+          "hours": 2.5696,
+          "n": 107,
+          "per_game_hour": -5.838,
+          "stale_skipped": 95
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -1.208,
+          "hours": 2.5696,
+          "n": 107,
+          "per_game_hour": -1.946,
+          "stale_skipped": 97
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": -0.407,
+          "hours": 2.5696,
+          "n": 107,
+          "per_game_hour": -1.168,
+          "stale_skipped": 97
+        }
+      },
+      "n_spans_running": 3,
+      "name": "tv-watch-sports"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 33975,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -6.859,
+          "hours": 6.8714,
+          "n": 99,
+          "per_game_hour": -8.15,
+          "stale_skipped": 99
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -3.443,
+          "hours": 6.8714,
+          "n": 99,
+          "per_game_hour": -7.131,
+          "stale_skipped": 99
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -3.498,
+          "hours": 6.8714,
+          "n": 99,
+          "per_game_hour": -6.84,
+          "stale_skipped": 99
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -15.088,
+          "hours": 6.8714,
+          "n": 99,
+          "per_game_hour": -10.478,
+          "stale_skipped": 99
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -2.61,
+          "hours": 6.8714,
+          "n": 99,
+          "per_game_hour": -3.347,
+          "stale_skipped": 99
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": -0.113,
+          "hours": 6.8714,
+          "n": 99,
+          "per_game_hour": -0.873,
+          "stale_skipped": 99
+        }
+      },
+      "n_spans_running": 42,
+      "name": "Bed_Undercovers_Cry"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 76988,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -3.654,
+          "hours": 4.651,
+          "n": 76,
+          "per_game_hour": -4.945,
+          "stale_skipped": 12
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 0.033,
+          "hours": 4.651,
+          "n": 76,
+          "per_game_hour": -3.655,
+          "stale_skipped": 11
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 13.448,
+          "hours": 4.651,
+          "n": 76,
+          "per_game_hour": 10.105,
+          "stale_skipped": 71
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.415,
+          "hours": 4.651,
+          "n": 76,
+          "per_game_hour": -5.805,
+          "stale_skipped": 11
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -1.843,
+          "hours": 4.651,
+          "n": 76,
+          "per_game_hour": -2.58,
+          "stale_skipped": 73
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.116,
+          "hours": 4.651,
+          "n": 76,
+          "per_game_hour": -0.645,
+          "stale_skipped": 73
+        }
+      },
+      "n_spans_running": 27,
+      "name": "book_read_browse"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 13950,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -4.275,
+          "hours": 2.5155,
+          "n": 71,
+          "per_game_hour": -5.566,
+          "stale_skipped": 68
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.287,
+          "hours": 2.5155,
+          "n": 71,
+          "per_game_hour": -3.975,
+          "stale_skipped": 68
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -1.031,
+          "hours": 2.5155,
+          "n": 71,
+          "per_game_hour": -4.373,
+          "stale_skipped": 68
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.573,
+          "hours": 2.5155,
+          "n": 71,
+          "per_game_hour": -5.963,
+          "stale_skipped": 67
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 121.986,
+          "hours": 2.5155,
+          "n": 71,
+          "per_game_hour": 121.249,
+          "stale_skipped": 61
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": -0.034,
+          "hours": 2.5155,
+          "n": 71,
+          "per_game_hour": -0.795,
+          "stale_skipped": 68
+        }
+      },
+      "n_spans_running": 4,
+      "name": "shower_TakeShower"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 13433,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -3.577,
+          "hours": 3.2866,
+          "n": 55,
+          "per_game_hour": -4.868,
+          "stale_skipped": 49
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 0.037,
+          "hours": 3.2866,
+          "n": 55,
+          "per_game_hour": -3.651,
+          "stale_skipped": 49
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -1.526,
+          "hours": 3.2866,
+          "n": 55,
+          "per_game_hour": -4.868,
+          "stale_skipped": 49
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": 123.789,
+          "hours": 3.2866,
+          "n": 55,
+          "per_game_hour": 128.399,
+          "stale_skipped": 47
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -2.001,
+          "hours": 3.2866,
+          "n": 55,
+          "per_game_hour": -2.738,
+          "stale_skipped": 49
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.152,
+          "hours": 3.2866,
+          "n": 55,
+          "per_game_hour": -0.609,
+          "stale_skipped": 49
+        }
+      },
+      "n_spans_running": 14,
+      "name": "generic_consume_food"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 14427,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 442.092,
+          "hours": 1.4632,
+          "n": 34,
+          "per_game_hour": 440.801,
+          "stale_skipped": 8
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.413,
+          "hours": 1.4632,
+          "n": 34,
+          "per_game_hour": -4.1,
+          "stale_skipped": 30
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -2.809,
+          "hours": 1.4632,
+          "n": 34,
+          "per_game_hour": -6.151,
+          "stale_skipped": 30
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.077,
+          "hours": 1.4632,
+          "n": 34,
+          "per_game_hour": -5.467,
+          "stale_skipped": 30
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -39.584,
+          "hours": 1.4632,
+          "n": 34,
+          "per_game_hour": -40.321,
+          "stale_skipped": 26
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 1.4632,
+          "n": 34,
+          "per_game_hour": 0.0,
+          "stale_skipped": 30
+        }
+      },
+      "n_spans_running": 11,
+      "name": "toilet-use-sitting"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 100109,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -4.081,
+          "hours": 1.1169,
+          "n": 21,
+          "per_game_hour": -5.372,
+          "stale_skipped": 4
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.789,
+          "hours": 1.1169,
+          "n": 21,
+          "per_game_hour": -4.476,
+          "stale_skipped": 4
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 29.306,
+          "hours": 1.1169,
+          "n": 21,
+          "per_game_hour": 25.964,
+          "stale_skipped": 18
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.877,
+          "hours": 1.1169,
+          "n": 21,
+          "per_game_hour": -6.267,
+          "stale_skipped": 4
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -2.844,
+          "hours": 1.1169,
+          "n": 21,
+          "per_game_hour": -3.581,
+          "stale_skipped": 20
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": -1.03,
+          "hours": 1.1169,
+          "n": 21,
+          "per_game_hour": -1.791,
+          "stale_skipped": 21
+        }
+      },
+      "n_spans_running": 13,
+      "name": "sink_washDish_After_Eat_Counter"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 99414,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -2.898,
+          "hours": 1.1937,
+          "n": 15,
+          "per_game_hour": -4.189,
+          "stale_skipped": 15
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.501,
+          "hours": 1.1937,
+          "n": 15,
+          "per_game_hour": -4.189,
+          "stale_skipped": 15
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 5.855,
+          "hours": 1.1937,
+          "n": 15,
+          "per_game_hour": 2.513,
+          "stale_skipped": 15
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -9.636,
+          "hours": 1.1937,
+          "n": 15,
+          "per_game_hour": -5.027,
+          "stale_skipped": 15
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -2.613,
+          "hours": 1.1937,
+          "n": 15,
+          "per_game_hour": -3.351,
+          "stale_skipped": 15
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": -0.077,
+          "hours": 1.1937,
+          "n": 15,
+          "per_game_hour": -0.838,
+          "stale_skipped": 15
+        }
+      },
+      "n_spans_running": 10,
+      "name": "phone_BrowseWebsites_AutonomousOnly"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 14241,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -7.487,
+          "hours": 1.0254,
+          "n": 13,
+          "per_game_hour": -8.777,
+          "stale_skipped": 12
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -2.164,
+          "hours": 1.0254,
+          "n": 13,
+          "per_game_hour": -5.852,
+          "stale_skipped": 12
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -1.534,
+          "hours": 1.0254,
+          "n": 13,
+          "per_game_hour": -4.876,
+          "stale_skipped": 12
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.461,
+          "hours": 1.0254,
+          "n": 13,
+          "per_game_hour": -5.852,
+          "stale_skipped": 12
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 69.981,
+          "hours": 1.0254,
+          "n": 13,
+          "per_game_hour": 69.244,
+          "stale_skipped": 11
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 1.0254,
+          "n": 13,
+          "per_game_hour": 0.0,
+          "stale_skipped": 12
+        }
+      },
+      "n_spans_running": 12,
+      "name": "sink_washHands"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 26172,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -11.115,
+          "hours": 0.403,
+          "n": 6,
+          "per_game_hour": -12.406,
+          "stale_skipped": 6
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -3.756,
+          "hours": 0.403,
+          "n": 6,
+          "per_game_hour": -7.444,
+          "stale_skipped": 6
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -4.101,
+          "hours": 0.403,
+          "n": 6,
+          "per_game_hour": -7.444,
+          "stale_skipped": 6
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -17.016,
+          "hours": 0.403,
+          "n": 6,
+          "per_game_hour": -12.406,
+          "stale_skipped": 6
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -6.706,
+          "hours": 0.403,
+          "n": 6,
+          "per_game_hour": -7.444,
+          "stale_skipped": 6
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.403,
+          "n": 6,
+          "per_game_hour": 0.0,
+          "stale_skipped": 6
+        }
+      },
+      "n_spans_running": 7,
+      "name": "put_down_anywhere"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 14239,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.2163,
+          "n": 6,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.2163,
+          "n": 6,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 21.835,
+          "hours": 0.2163,
+          "n": 6,
+          "per_game_hour": 18.493,
+          "stale_skipped": 4
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -9.233,
+          "hours": 0.2163,
+          "n": 6,
+          "per_game_hour": -4.623,
+          "stale_skipped": 2
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -17.755,
+          "hours": 0.2163,
+          "n": 6,
+          "per_game_hour": -18.493,
+          "stale_skipped": 4
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.2163,
+          "n": 6,
+          "per_game_hour": 0.0,
+          "stale_skipped": 6
+        }
+      },
+      "n_spans_running": 3,
+      "name": "sink_Clean"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 13277,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -4.946,
+          "hours": 0.4811,
+          "n": 6,
+          "per_game_hour": -6.236,
+          "stale_skipped": 6
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.47,
+          "hours": 0.4811,
+          "n": 6,
+          "per_game_hour": -4.158,
+          "stale_skipped": 6
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -0.815,
+          "hours": 0.4811,
+          "n": 6,
+          "per_game_hour": -4.158,
+          "stale_skipped": 6
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -4.61,
+          "hours": 0.4811,
+          "n": 6,
+          "per_game_hour": 0.0,
+          "stale_skipped": 6
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -3.42,
+          "hours": 0.4811,
+          "n": 6,
+          "per_game_hour": -4.158,
+          "stale_skipped": 6
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.4811,
+          "n": 6,
+          "per_game_hour": 0.0,
+          "stale_skipped": 6
+        }
+      },
+      "n_spans_running": 2,
+      "name": "counter_MakeFood_Staging_Basic"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 221200,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -10.672,
+          "hours": 0.3344,
+          "n": 5,
+          "per_game_hour": -11.963,
+          "stale_skipped": 4
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 0.697,
+          "hours": 0.3344,
+          "n": 5,
+          "per_game_hour": -2.991,
+          "stale_skipped": 4
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 0.352,
+          "hours": 0.3344,
+          "n": 5,
+          "per_game_hour": -2.991,
+          "stale_skipped": 4
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.591,
+          "hours": 0.3344,
+          "n": 5,
+          "per_game_hour": -5.981,
+          "stale_skipped": 4
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 0.738,
+          "hours": 0.3344,
+          "n": 5,
+          "per_game_hour": 0.0,
+          "stale_skipped": 4
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.3344,
+          "n": 5,
+          "per_game_hour": 0.0,
+          "stale_skipped": 4
+        }
+      },
+      "n_spans_running": 6,
+      "name": "autonomous_ObjectPicker_PutAway_Books"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 14097,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -15.824,
+          "hours": 0.1169,
+          "n": 5,
+          "per_game_hour": -17.115,
+          "stale_skipped": 5
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.1169,
+          "n": 5,
+          "per_game_hour": 0.0,
+          "stale_skipped": 5
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 3.342,
+          "hours": 0.1169,
+          "n": 5,
+          "per_game_hour": 0.0,
+          "stale_skipped": 5
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -4.61,
+          "hours": 0.1169,
+          "n": 5,
+          "per_game_hour": 0.0,
+          "stale_skipped": 5
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 0.738,
+          "hours": 0.1169,
+          "n": 5,
+          "per_game_hour": 0.0,
+          "stale_skipped": 5
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.1169,
+          "n": 5,
+          "per_game_hour": 0.0,
+          "stale_skipped": 5
+        }
+      },
+      "n_spans_running": 2,
+      "name": "sim_HygieneDistress"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 13998,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -6.231,
+          "hours": 0.2659,
+          "n": 4,
+          "per_game_hour": -7.522,
+          "stale_skipped": 4
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.073,
+          "hours": 0.2659,
+          "n": 4,
+          "per_game_hour": -3.761,
+          "stale_skipped": 4
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -0.419,
+          "hours": 0.2659,
+          "n": 4,
+          "per_game_hour": -3.761,
+          "stale_skipped": 4
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -12.132,
+          "hours": 0.2659,
+          "n": 4,
+          "per_game_hour": -7.522,
+          "stale_skipped": 4
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -3.023,
+          "hours": 0.2659,
+          "n": 4,
+          "per_game_hour": -3.761,
+          "stale_skipped": 4
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 4.522,
+          "hours": 0.2659,
+          "n": 4,
+          "per_game_hour": 3.761,
+          "stale_skipped": 4
+        }
+      },
+      "n_spans_running": 3,
+      "name": "sim_Chat"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 14426,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.1014,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.1014,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 3.342,
+          "hours": 0.1014,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -4.61,
+          "hours": 0.1014,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 20.468,
+          "hours": 0.1014,
+          "n": 3,
+          "per_game_hour": 19.73,
+          "stale_skipped": 3
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.1014,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        }
+      },
+      "n_spans_running": 2,
+      "name": "toilet-flush"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 77329,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.1872,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.1872,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 3.342,
+          "hours": 0.1872,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -4.61,
+          "hours": 0.1872,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 0.738,
+          "hours": 0.1872,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.1872,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        }
+      },
+      "n_spans_running": 3,
+      "name": "autonomous_bookshelf_read_picker"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 77412,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.2619,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.2619,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 3.342,
+          "hours": 0.2619,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -8.428,
+          "hours": 0.2619,
+          "n": 3,
+          "per_game_hour": -3.819,
+          "stale_skipped": 2
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 0.738,
+          "hours": 0.2619,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.2619,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        }
+      },
+      "n_spans_running": 3,
+      "name": "autonomous_Bookshelf_Browse_Picker"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 14354,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.2514,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": -0.289,
+          "hours": 0.2514,
+          "n": 3,
+          "per_game_hour": -3.977,
+          "stale_skipped": 3
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 11.296,
+          "hours": 0.2514,
+          "n": 3,
+          "per_game_hour": 7.954,
+          "stale_skipped": 3
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -4.61,
+          "hours": 0.2514,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -3.239,
+          "hours": 0.2514,
+          "n": 3,
+          "per_game_hour": -3.977,
+          "stale_skipped": 3
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.2514,
+          "n": 3,
+          "per_game_hour": 0.0,
+          "stale_skipped": 3
+        }
+      },
+      "n_spans_running": 7,
+      "name": "tableDining_Clean"
+    },
+    {
+      "allow_autonomous": 0,
+      "guid": 13993,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.1598,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.1598,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 3.342,
+          "hours": 0.1598,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -10.869,
+          "hours": 0.1598,
+          "n": 2,
+          "per_game_hour": -6.26,
+          "stale_skipped": 2
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 0.738,
+          "hours": 0.1598,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.1598,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        }
+      },
+      "n_spans_running": 2,
+      "name": "sim_BladderDistress"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 29854,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.158,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.158,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 22.324,
+          "hours": 0.158,
+          "n": 2,
+          "per_game_hour": 18.982,
+          "stale_skipped": 2
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -4.61,
+          "hours": 0.158,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -5.59,
+          "hours": 0.158,
+          "n": 2,
+          "per_game_hour": -6.327,
+          "stale_skipped": 2
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.158,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        }
+      },
+      "n_spans_running": 2,
+      "name": "sink_Clean_Slotted"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 13949,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": 1.291,
+          "hours": 0.1583,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.1583,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": 9.66,
+          "hours": 0.1583,
+          "n": 2,
+          "per_game_hour": 6.318,
+          "stale_skipped": 2
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -4.61,
+          "hours": 0.1583,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": 0.738,
+          "hours": 0.1583,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.1583,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        }
+      },
+      "n_spans_running": 2,
+      "name": "shower_Clean"
+    },
+    {
+      "allow_autonomous": 1,
+      "guid": 14491,
+      "is_super": 1,
+      "motives": {
+        "bladder": {
+          "control_per_game_hour": -1.291,
+          "excess_per_game_hour": -8.119,
+          "hours": 0.2126,
+          "n": 2,
+          "per_game_hour": -9.409,
+          "stale_skipped": 2
+        },
+        "energy": {
+          "control_per_game_hour": -3.688,
+          "excess_per_game_hour": 3.688,
+          "hours": 0.2126,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        },
+        "fun": {
+          "control_per_game_hour": -3.342,
+          "excess_per_game_hour": -1.362,
+          "hours": 0.2126,
+          "n": 2,
+          "per_game_hour": -4.705,
+          "stale_skipped": 2
+        },
+        "hunger": {
+          "control_per_game_hour": 4.61,
+          "excess_per_game_hour": -14.019,
+          "hours": 0.2126,
+          "n": 2,
+          "per_game_hour": -9.409,
+          "stale_skipped": 2
+        },
+        "hygiene": {
+          "control_per_game_hour": -0.738,
+          "excess_per_game_hour": -3.967,
+          "hours": 0.2126,
+          "n": 2,
+          "per_game_hour": -4.705,
+          "stale_skipped": 2
+        },
+        "social": {
+          "control_per_game_hour": -0.761,
+          "excess_per_game_hour": 0.761,
+          "hours": 0.2126,
+          "n": 2,
+          "per_game_hour": 0.0,
+          "stale_skipped": 2
+        }
+      },
+      "n_spans_running": 2,
+      "name": "tv_PickChannelAutonomously"
+    }
+  ],
+  "experiment_phases": {
+    "CALIBRATE_SPEED": 26,
+    "CALIBRATE_START": 1
+  },
+  "fire_reasons_in_window": {
+    "always_through": 9,
+    "threshold": 71
+  },
+  "fires_in_telemetry_window": 80,
+  "fires_per_unpaused_wall_min": 2.5001,
+  "gaps_span_walk": 2,
+  "idle_postures_when_no_si": [
+    [
+      "stand",
+      125
+    ],
+    [
+      "sit",
+      8
+    ],
+    [
+      "bed_Undercovers",
+      7
+    ]
+  ],
+  "kinds": {
+    "command_event": 7,
+    "experiment_event": 27,
+    "lineage_event": 2,
+    "presence_snapshot": 1886,
+    "session_checkpoint": 32,
+    "session_open": 1
+  },
+  "need_fresh_ticks": 2000,
+  "never_field_overlap": {
+    "allow_autonomous_false_or_null": 359,
+    "debug_or_cheat": 68,
+    "is_social": 3,
+    "other_autonomous": 190,
+    "picker": 61
+  },
+  "never_partition": {
+    "not_allow_autonomous": 359,
+    "other_autonomous_unused": 190,
+    "social": 1
+  },
+  "never_used_offered": 550,
+  "offered_autonomous": 212,
+  "offered_social": 3,
+  "offered_super": 577,
+  "offered_unique": 577,
+  "overlap_si_hours": 4.0146,
+  "poor_examples": [
+    {
+      "distress": [
+        "bladder"
+      ],
+      "guid": 13993,
+      "lexicon_serves": [],
+      "lowest_actionable": [
+        "bladder"
+      ],
+      "name": "sim_BladderDistress",
+      "seq": 294,
+      "sim_s": 286.7,
+      "values": {
+        "bladder": 14,
+        "energy": 33,
+        "fun": 74,
+        "hunger": 24,
+        "hygiene": 54,
+        "social": 12
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 14097,
+      "lexicon_serves": [],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "sim_HygieneDistress",
+      "seq": 1038,
+      "sim_s": 256.8,
+      "values": {
+        "bladder": 58,
+        "energy": 99,
+        "fun": 99,
+        "hunger": 25,
+        "hygiene": 12,
+        "social": 0
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 14239,
+      "lexicon_serves": [],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "sink_Clean",
+      "seq": 1040,
+      "sim_s": 283.4,
+      "values": {
+        "bladder": 56,
+        "energy": 99,
+        "fun": 98,
+        "hunger": 25,
+        "hygiene": 12,
+        "social": 0
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 13433,
+      "lexicon_serves": [
+        "hunger"
+      ],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "generic_consume_food",
+      "seq": 1043,
+      "sim_s": 866.3,
+      "values": {
+        "bladder": 55,
+        "energy": 97,
+        "fun": 100,
+        "hunger": 24,
+        "hygiene": 9,
+        "social": 0
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 33975,
+      "lexicon_serves": [],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "Bed_Undercovers_Cry",
+      "seq": 1050,
+      "sim_s": 567.0,
+      "values": {
+        "bladder": 52,
+        "energy": 95,
+        "fun": 100,
+        "hunger": 84,
+        "hygiene": 7,
+        "social": 0
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 13117,
+      "lexicon_serves": [
+        "fun"
+      ],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "book_read",
+      "seq": 1053,
+      "sim_s": 824.9,
+      "values": {
+        "bladder": 51,
+        "energy": 94,
+        "fun": 99,
+        "hunger": 83,
+        "hygiene": 6,
+        "social": 0
+      }
+    },
+    {
+      "distress": [
+        "bladder"
+      ],
+      "guid": 13993,
+      "lexicon_serves": [],
+      "lowest_actionable": [
+        "bladder"
+      ],
+      "name": "sim_BladderDistress",
+      "seq": 1464,
+      "sim_s": 288.4,
+      "values": {
+        "bladder": 13,
+        "energy": 30,
+        "fun": 62,
+        "hunger": 30,
+        "hygiene": 31,
+        "social": 33
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 14097,
+      "lexicon_serves": [],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "sim_HygieneDistress",
+      "seq": 1495,
+      "sim_s": 163.9,
+      "values": {
+        "bladder": 76,
+        "energy": 86,
+        "fun": 58,
+        "hunger": 22,
+        "hygiene": 12,
+        "social": 31
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 14239,
+      "lexicon_serves": [],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "sink_Clean",
+      "seq": 1505,
+      "sim_s": 163.0,
+      "values": {
+        "bladder": 75,
+        "energy": 85,
+        "fun": 57,
+        "hunger": 22,
+        "hygiene": 12,
+        "social": 31
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 13395,
+      "lexicon_serves": [
+        "hunger"
+      ],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "fridge_CreateTray",
+      "seq": 1518,
+      "sim_s": 124.2,
+      "values": {
+        "bladder": 75,
+        "energy": 85,
+        "fun": 58,
+        "hunger": 22,
+        "hygiene": 11,
+        "social": 31
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 13277,
+      "lexicon_serves": [
+        "hunger"
+      ],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "counter_MakeFood_Staging_Basic",
+      "seq": 1525,
+      "sim_s": 863.5,
+      "values": {
+        "bladder": 74,
+        "energy": 84,
+        "fun": 57,
+        "hunger": 22,
+        "hygiene": 10,
+        "social": 31
+      }
+    },
+    {
+      "distress": [
+        "hygiene"
+      ],
+      "guid": 13277,
+      "lexicon_serves": [
+        "hunger"
+      ],
+      "lowest_actionable": [
+        "hygiene"
+      ],
+      "name": "counter_MakeFood_Staging_Basic",
+      "seq": 1529,
+      "sim_s": 868.3,
+      "values": {
+        "bladder": 72,
+        "energy": 83,
+        "fun": 56,
+        "hunger": 22,
+        "hygiene": 9,
+        "social": 30
+      }
+    }
+  ],
+  "postures": [
+    [
+      "stand",
+      781
+    ],
+    [
+      "sit",
+      725
+    ],
+    [
+      "bed_Sleep",
+      132
+    ],
+    [
+      "bed_Undercovers",
+      123
+    ],
+    [
+      "shower",
+      73
+    ],
+    [
+      "toilet_sit",
+      35
+    ],
+    [
+      "cook",
+      8
+    ],
+    [
+      "bed_Nap",
+      5
+    ],
+    [
+      "showerClean",
+      4
+    ]
+  ],
+  "presence_entries": 0,
+  "presence_rows": 1886,
+  "probe_version": "2.7.0",
+  "proposal_count": 31,
+  "queued_autonomy_guids": 72,
+  "rows": 1955,
+  "running_social_affordance_guids": [
+    13991,
+    13998
+  ],
+  "salience_sum_ge_theta_matches_fired": {
+    "match": 840,
+    "mismatch": 230,
+    "no_traces": 90
+  },
+  "salience_sum_ge_theta_row_fraction_NOT_a_fire_rate": {
+    "1.00": 0.2065,
+    "1.25": 0.128,
+    "1.50": 0.085,
+    "1.75": 0.0626,
+    "2.00": 0.0467,
+    "2.25": 0.0364,
+    "2.50": 0.0252,
+    "2.75": 0.0168,
+    "3.00": 0.0103
+  },
+  "session": "c964da78-8841-41c4-ab87-3895fb228b2d",
+  "session_id_in_traces": {
+    "dt2b_fixture_id": 1,
+    "live_session_id": 1
+  },
+  "sim_hours": 166.986,
+  "sim_minutes": 10019.18,
+  "sim_s_per_wall_s": {
+    "NORMAL": 42.85,
+    "SPEED3": 283.106,
+    "SUPER_SPEED3": 1401.495
+  },
+  "single_si_hours": 119.4674,
+  "sleep_spans": [
+    {
+      "end_seq": 50,
+      "energy_after": 100,
+      "energy_before": 36,
+      "name": "generic_Bed_Sleep",
+      "posture": "bed_Sleep",
+      "seq": 31,
+      "sim_min": 420.29,
+      "source": "InteractionSource.POSTURE_GRAPH",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 50,
+      "energy_after": 100,
+      "energy_before": 36,
+      "name": "bed_sleep",
+      "posture": "bed_Sleep",
+      "seq": 31,
+      "sim_min": 420.29,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 334,
+      "energy_after": 100,
+      "energy_before": 26,
+      "name": "bed_sleep",
+      "posture": "bed_Sleep",
+      "seq": 314,
+      "sim_min": 445.26,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 334,
+      "energy_after": 100,
+      "energy_before": 26,
+      "name": "generic_Bed_Sleep",
+      "posture": "bed_Sleep",
+      "seq": 314,
+      "sim_min": 445.26,
+      "source": "InteractionSource.POSTURE_GRAPH",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 811,
+      "energy_after": 100,
+      "energy_before": 36,
+      "name": "generic_Bed_Sleep",
+      "posture": "bed_Sleep",
+      "seq": 793,
+      "sim_min": 413.31,
+      "source": "InteractionSource.POSTURE_GRAPH",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 811,
+      "energy_after": 100,
+      "energy_before": 36,
+      "name": "bed_sleep",
+      "posture": "bed_Sleep",
+      "seq": 793,
+      "sim_min": 413.31,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1031,
+      "energy_after": 100,
+      "energy_before": 37,
+      "name": "generic_Bed_Sleep",
+      "posture": "bed_Sleep",
+      "seq": 1008,
+      "sim_min": 524.56,
+      "source": "InteractionSource.POSTURE_GRAPH",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1031,
+      "energy_after": 100,
+      "energy_before": 37,
+      "name": "bed_sleep",
+      "posture": "bed_Sleep",
+      "seq": 1008,
+      "sim_min": 524.56,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1251,
+      "energy_after": 97,
+      "energy_before": 35,
+      "name": "generic_Bed_Sleep",
+      "posture": "bed_Sleep",
+      "seq": 1234,
+      "sim_min": 376.61,
+      "source": "InteractionSource.POSTURE_GRAPH",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1251,
+      "energy_after": 97,
+      "energy_before": 35,
+      "name": "bed_sleep",
+      "posture": "bed_Sleep",
+      "seq": 1234,
+      "sim_min": 376.61,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1490,
+      "energy_after": 86,
+      "energy_before": 26,
+      "name": "bed_sleep",
+      "posture": "bed_Sleep",
+      "seq": 1474,
+      "sim_min": 362.61,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1490,
+      "energy_after": 86,
+      "energy_before": 26,
+      "name": "generic_Bed_Sleep",
+      "posture": "bed_Sleep",
+      "seq": 1474,
+      "sim_min": 362.61,
+      "source": "InteractionSource.POSTURE_GRAPH",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1675,
+      "energy_after": 52,
+      "energy_before": 37,
+      "name": "bed_Nap",
+      "posture": "bed_Nap",
+      "seq": 1669,
+      "sim_min": 114.11,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1756,
+      "energy_after": 100,
+      "energy_before": 37,
+      "name": "bed_sleep",
+      "posture": "bed_Sleep",
+      "seq": 1733,
+      "sim_min": 536.15,
+      "source": "InteractionSource.AUTONOMY",
+      "speed_at_start": "SUPER_SPEED3"
+    },
+    {
+      "end_seq": 1756,
+      "energy_after": 100,
+      "energy_before": 37,
+      "name": "generic_Bed_Sleep",
+      "posture": "bed_Sleep",
+      "seq": 1733,
+      "sim_min": 536.15,
+      "source": "InteractionSource.POSTURE_GRAPH",
+      "speed_at_start": "SUPER_SPEED3"
+    }
+  ],
+  "social_entries": 0,
+  "social_value_counts": [
+    [
+      0,
+      1000
+    ],
+    [
+      7,
+      89
+    ],
+    [
+      8,
+      73
+    ],
+    [
+      5,
+      70
+    ],
+    [
+      6,
+      67
+    ],
+    [
+      9,
+      63
+    ]
+  ],
+  "speed_pairs": {
+    "NORMAL": 390,
+    "SPEED3": 1354,
+    "SUPER_SPEED3": 134
+  },
+  "speeds_presence": {
+    "NORMAL": 390,
+    "PAUSED": 5,
+    "SPEED3": 1357,
+    "SUPER_SPEED3": 134
+  },
+  "ticks_first": 4246549,
+  "ticks_last": 19275325,
+  "ticks_per_sim_s": {
+    "NORMAL": 25.0,
+    "SPEED3": 25.0,
+    "SUPER_SPEED3": 25.0
+  },
+  "ticks_per_wall_s": {
+    "NORMAL": 1071.262,
+    "SPEED3": 7077.658,
+    "SUPER_SPEED3": 35037.368
+  },
+  "top_trace_keys": [
+    [
+      "interaction:118245043779534861:13983:ended",
+      83.06136040835848
+    ],
+    [
+      "need:fun::ok",
+      40.48875756798449
+    ],
+    [
+      "interaction:118245043779534861:31564:ended",
+      29.15130534621676
+    ],
+    [
+      "need:hunger::ok",
+      29.083191695121798
+    ],
+    [
+      "need:hunger::low",
+      26.740857298664814
+    ],
+    [
+      "need:hygiene::ok",
+      23.11297762983375
+    ],
+    [
+      "need:bladder::ok",
+      20.378524212942008
+    ],
+    [
+      "need:bladder::low",
+      19.858118455756085
+    ],
+    [
+      "need:energy::low",
+      18.661421675145178
+    ],
+    [
+      "need:hygiene::low",
+      17.369629949434398
+    ],
+    [
+      "interaction:118245043779534861:13983:started",
+      17.01269549744244
+    ],
+    [
+      "need:energy::ok",
+      15.864729817700935
+    ],
+    [
+      "interaction:118245043779534861:13135:ended",
+      13.93715341761492
+    ],
+    [
+      "posture:118245043779534861::stand",
+      13.639019897047808
+    ],
+    [
+      "interaction:118245043779534861:31564:started",
+      11.921923543497543
+    ]
+  ],
+  "trace_family_salience": [
+    [
+      "interaction",
+      402.4985900868756
+    ],
+    [
+      "need",
+      225.7855194417438
+    ],
+    [
+      "posture",
+      61.598728460261114
+    ],
+    [
+      "lineage",
+      4.4
+    ],
+    [
+      "gap",
+      2.2
+    ]
+  ],
+  "tuned_keys": [
+    "kind",
+    "probe_version",
+    "sims_build",
+    "started_ms",
+    "total"
+  ],
+  "tuned_rows": 321,
+  "unpaused_wall_min": 31.999,
+  "unused_other_autonomous_names": [
+    "Bed_Undercovers_Hide",
+    "Dish_Collection_From_Object_As_Dish",
+    "Dish_Collection_From_Object_As_Trash",
+    "Dish_Collection_From_Sim_As_Dish",
+    "Empty_Trash",
+    "GardenPlant_View_generic",
+    "GardeningFruit_Plant_All_Pot",
+    "GardeningFruit_Plant_Continuation",
+    "GardeningFruit_Plant_Planter_continuation",
+    "GardeningFruit_Plant_Pot_continuation",
+    "Gardening_EatHarvestable",
+    "Gardening_Ghost_Decay_Plants",
+    "Gardening_Harvest_Continuation",
+    "Gardening_Harvest_Unit_autonomous",
+    "Gardening_Harvest_Unit_autonomous_low",
+    "Gardening_KillWild_All",
+    "Gardening_KillWild_Continuation",
+    "Gardening_Spray_All",
+    "Gardening_Spray_All_Area",
+    "Gardening_Spray_Continuation",
+    "Gardening_Spray_Unit_autonomous",
+    "Gardening_Tend_All",
+    "Gardening_Tend_Continuation_spray",
+    "Gardening_Tend_Continuation_water",
+    "Gardening_Tend_Continuation_weed",
+    "Gardening_Tend_Continuation_weed_Planter",
+    "Gardening_Tend_Start",
+    "Gardening_Water_All_Area",
+    "Gardening_Water_All_low",
+    "Gardening_Water_Continuation",
+    "Gardening_Water_Planter_Start",
+    "Gardening_Water_Unit_autonomous",
+    "Gardening_Water_with_Tears",
+    "Gardening_Weed_All",
+    "Gardening_Weed_All_Area",
+    "Gardening_Weed_All_Area_Planter",
+    "Gardening_Weed_All_Planter",
+    "Gardening_Weed_Area_Continuation",
+    "Gardening_Weed_Continuation",
+    "Gardening_Weed_Planter_Area_Continuation"
+  ],
+  "urgent_rows_actionable_low_or_distress": 1305,
+  "wall_first": 1791105081003,
+  "wall_last": 1791107008112,
+  "week_max": 1,
+  "week_min": 0
+}
