@@ -17,7 +17,7 @@ APPROVED_GAME_ROOTS = {
 PRODUCTION_MODULES = (
     "__init__", "probe", "observers", "snapshot", "schema", "writer",
     "e2_admission", "e2_lineage", "e2_registry", "e2_cards", "e2_actuator", "e2_control", "cmdbox",
-    "e2_trial", "preflight", "food",
+    "e2_trial", "preflight", "food", "situation",
 )
 # DS3: build_buy also holds world mutators; only its read-only room lookup may be
 # imported, and only by name (never `import build_buy`).

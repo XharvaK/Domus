@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 6
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v6"
-PROBE_VERSION = "2.12.0"
+PROBE_VERSION = "2.13.0"
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
@@ -72,7 +72,7 @@ EXPERIMENT_PHASES = (
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
-            "calibrate", "trial", "preflight", "food_scan")
+            "calibrate", "trial", "preflight", "food_scan", "situation_scan")
 
 
 def _command_id(value):

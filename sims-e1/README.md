@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.12.0 (DS3 senses: place, company, moodlets)
+## Current build: 2.13.0 (S1 situation scan)
 
-The source is version `2.12.0` (`src/ashley_e1/__init__.py`,
+The source is version `2.13.0` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 5, schema 4 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.12.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.13.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -38,6 +38,10 @@ The crawl asks for a fresh preflight when it starts. After a relief trial it wai
 ## Live hardening (DA6F)
 
 The second session (2.11.1) added these. A motive's `value` is the game's current value: the probe applies the game's own rate formula to the cached value without writing it, so a reading is current at any game speed (`age_ticks` 0). Only if a rate cannot be read does it report the cache and its age. Sleep and work switch the game to speed 3, where rows are about 37000 ticks apart. A maintained interaction trial ends 30 s after it finishes, not at its 180 s window, and a relief trial's verdict carries the need's start, peak, and end (`relief=energy energy=24->100->100`). The crawl does not push a trial into a body distress it can already see, and its stop names the need. Preflight and the food scan tick four times a second at the same 5 ms budget and show progress on `status`. The food scan matches name words, not substrings ("eat" no longer matches cheat or death), reads menus only from classes that have one, and names recipes. `remove.ps1` without `-Version` removes every installed probe package.
+
+## Situation (S1)
+
+`situation_scan` (inbox, LAB only) writes one fact row per object on the lot to `atlas/situation_<build>_<ms>.jsonl`, in 5 ms chunks four times a second: class, definition, position, room, every object state by name (freshness, dish location, dirtiness, ...), statistics and commodities by name with current values (servings among them), and for crafted things the recipe, its display-name string keys and the crafter as the game records it. Plain attribute reads only; no tests and no pushes. The helper's `python -m domus_helper.scene` turns a scan into three layers: near (her room or within 4 m) with full facts and the game's own options, far (one line per object with a notable game state, servings or a recipe), and available (counts by kind). Each layer has a byte budget, order is deterministic, and omissions are counted.
 
 ## Senses (DS3, telemetry schema 6)
 
@@ -75,8 +79,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.12.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.12.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.13.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.13.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under
