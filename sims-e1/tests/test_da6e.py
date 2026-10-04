@@ -151,9 +151,15 @@ class DistressRemedy(unittest.TestCase):
                          T.NEED_DISTRESS)
         self.assertEqual(T.trial_check(self.view(food_route="auto_craft")),
                          T.NEED_DISTRESS, "food does not cure energy")
-        both = [{"id": "energy", "band": "distress"}, {"id": "hunger", "band": "distress"}]
-        self.assertEqual(T.trial_check(self.view(motives=both, tuning_name="bed_sleep")),
-                         T.NEED_DISTRESS, "one cure must cover every distress")
+        # After sleep: hunger 20, bladder 19, fun 12. One cure at a time.
+        woke = [{"id": "hunger", "band": "distress"}, {"id": "bladder", "band": "distress"},
+                {"id": "fun", "band": "distress"}]
+        self.assertIsNone(T.trial_check(self.view(motives=woke, tuning_name="toilet-use-sitting")))
+        self.assertIsNone(T.trial_check(self.view(motives=woke, food_route="auto_craft")))
+        self.assertEqual(T.trial_check(self.view(motives=woke, tuning_name="bed_sleep")),
+                         T.NEED_DISTRESS)
+        self.assertEqual(T.trial_check(self.view(motives=woke, tuning_name="tv_WatchNews")),
+                         T.NEED_DISTRESS, "fun is not a body need")
         hunger = [{"id": "hunger", "band": "distress"}]
         self.assertIsNone(T.trial_check(self.view(motives=hunger, food_route="auto_craft")))
         unread = [{"band": "distress"}]
@@ -167,6 +173,12 @@ class DistressRemedy(unittest.TestCase):
         self.assertEqual(T.relief_motives(motives, "bed_sleep", None), ["energy"])
         self.assertEqual(T.relief_motives(motives, "toilet-use-sitting", None), [])
         self.assertEqual(T.relief_motives(motives, "tv_WatchNews", None), [])
+        low = [{"id": "bladder", "band": "low"}, {"id": "hygiene", "band": "low"}]
+        self.assertEqual(T.relief_motives(low, "toilet-use-sitting", None), ["bladder"])
+        self.assertEqual(T.relief_motives(low, "toilet_Clean", None), [])
+        self.assertEqual(T.relief_motives(low, "shower_TakeShower_Brisk", None), ["hygiene"])
+        self.assertEqual(T.relief_motives(low, "shower_Clean", None), [])
+        self.assertEqual(T.relief_motives(low, "shower_UpgradeSelfCleaning", None), [])
 
 
 class ReliefLeftRunning(_Replay):

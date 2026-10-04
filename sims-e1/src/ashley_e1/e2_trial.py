@@ -30,13 +30,17 @@ DENY_NAME_PARTS = (
 )
 
 # D8 (live 2026-10-04): with energy in distress the guard refused bed and food too,
-# and with autonomy off nothing could help her. A trial that relieves every
-# distressed body motive is the cure, not a risk. Hunger is relieved by a food route.
+# and with autonomy off nothing could help her. A trial that relieves a distressed
+# body motive is a cure, not a risk; after sleep she woke with hunger and bladder
+# both in distress, so one cure at a time. Hunger is relieved by a food route.
+# Lot names (atlas 1.128.90.1030): bed_sleep, bed_Nap, sofa_Nap, toilet-use-sitting,
+# shower_TakeShower*. Cleaning or upgrading the same object is not relief.
 RELIEF_NAME_PARTS = {
     "energy": ("sleep", "nap"),
-    "bladder": ("toilet",),
-    "hygiene": ("shower", "bath"),
+    "bladder": ("toilet-use", "toilet_use"),
+    "hygiene": ("takeshower", "take_shower", "takebath", "take_bath"),
 }
+RELIEF_DENY_PARTS = ("clean", "upgrade", "repair", "unclog", "fix")
 LOW_BAND = ("low", "distress")
 
 POSTURE_SOURCE = "InteractionSource.POSTURE_GRAPH"
@@ -81,7 +85,7 @@ def trial_check(view):
         if (isinstance(motive, dict) and motive.get("band") == "distress" and
                 motive.get("id") not in NON_BODILY_MOTIVES):
             distressed.append(motive.get("id"))
-    if distressed and not all(
+    if distressed and not any(
             relieves(motive_id, view.get("tuning_name"), view.get("food_route"))
             for motive_id in distressed):
         return NEED_DISTRESS
@@ -107,6 +111,8 @@ def relieves(motive_id, tuning_name, food_route):
     if not parts or type(tuning_name) is not str:
         return False
     low = tuning_name.lower()
+    if any(part in low for part in RELIEF_DENY_PARTS):
+        return False
     return any(part in low for part in parts)
 
 

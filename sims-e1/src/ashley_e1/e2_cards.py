@@ -316,7 +316,10 @@ def _need_effect(card, state, row):
     if origin is None:
         return False, None
     if _stale(_motive(origin, motive_id)) or _stale(_motive(row, motive_id)):
-        return False, "stale_value"
+        # D14: a stale cache is no reading for this row, not an ambiguity for the
+        # trial. Live ages reached 29338 ticks against the 30000 limit; a latched
+        # reason would void a whole meal over one late cache refresh.
+        return False, None
     if not _family_running(row, family):
         end_tick = _end_tick(rows, family)
         now_tick = _ticks(row)
