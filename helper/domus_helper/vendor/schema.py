@@ -3,12 +3,14 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 5
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v5"
-PROBE_VERSION = "2.11.5"
-ACCEPTED_SCHEMA_VERSIONS = (4, 5)
+OBSERVATION_SCHEMA_VERSION = 6
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v6"
+PROBE_VERSION = "2.12.0"
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6)
 SIMS_BUILD = "1.128.90.1030"
-MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
+# DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
+# 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
+MAX_SERIALIZED_RECORD_BYTES = 16 * 1024
 MAX_ID_LENGTH = 64
 MAX_DISPLAY_TEXT_LENGTH = 160
 MAX_REASON_LENGTH = 128
@@ -369,7 +371,9 @@ def _validate_string_tree(value, key="value"):
         elif key in ("note",):
             bounded_string(value, MAX_NOTE_LENGTH, key, False)
         elif key in ("affordance_text", "game_text", "calendar", "posture", "room",
-                      "posture_name", "detail_text", "finishing_type", "type"):
+                      "posture_name", "detail_text", "finishing_type", "type",
+                      # DS3: names and texts that are not ids.
+                      "name", "doing", "mood_type", "tuning_name"):
             bounded_string(value, MAX_DISPLAY_TEXT_LENGTH, key, False)
         else:
             bounded_string(value, MAX_ID_LENGTH, key, False)
@@ -534,12 +538,49 @@ def _validate_motives(value):
                      "motive.age_ticks must be a non-negative int")
 
 
-def _validate_presence(value):
+PRESENCE_V6 = {"id", "active_household", "level", "is_body", "household_id", "name",
+               "position", "room", "posture", "doing", "doing_target", "distance_m"}
+
+
+def _number_or_none(value, label):
+    if value is not None:
+        _require(isinstance(value, (int, float)) and not isinstance(value, bool),
+                 "%s must be numeric" % label)
+
+
+def _validate_position(value, label):
+    """DS3: {x, y, z, level} in game units, or None."""
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == {"x", "y", "z", "level"},
+             "%s shape" % label)
+    for axis in ("x", "y", "z"):
+        _require(isinstance(value[axis], (int, float)) and not isinstance(value[axis], bool),
+                 "%s.%s must be numeric" % (label, axis))
+    if value["level"] is not None:
+        _require(type(value["level"]) is int, "%s.level must be int" % label)
+
+
+def _validate_presence(value, version=5):
     _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
     for item in value:
         _require(isinstance(item, dict), "presence entry must be an object")
-        _require(set(item) == {"id", "active_household", "level"},
+        _require(set(item) == (PRESENCE_V6 if version >= 6 else
+                               {"id", "active_household", "level"}),
                  "presence shape")
+        if version >= 6:
+            _require(type(item.get("is_body")) is bool, "presence.is_body must be bool")
+            for key in ("household_id", "room", "doing_target"):
+                if item.get(key) is not None:
+                    _require(isinstance(item[key], str), "presence.%s must be a string" % key)
+                    string_id(item[key], "presence.%s" % key)
+            if item.get("name") is not None:
+                bounded_string(item["name"], 128, "presence.name", False)
+            for key in ("posture", "doing"):
+                if item.get(key) is not None:
+                    bounded_string(item[key], MAX_DISPLAY_TEXT_LENGTH, "presence.%s" % key, False)
+            _validate_position(item.get("position"), "presence.position")
+            _number_or_none(item.get("distance_m"), "presence.distance_m")
         _require(isinstance(item.get("id"), str), "presence.id must be a string")
         string_id(item["id"], "presence.id")
         _require(type(item.get("active_household")) is bool,
@@ -554,7 +595,7 @@ def _validate_social(value, version):
               "affordance_text", "target_id", "source_raw",
               "source_norm", "source_confidence", "present",
               "membership"}
-    if version == 5:
+    if version >= 5:
         fields = set(fields)
         fields.add("actor_id")
     for item in value:
@@ -565,7 +606,7 @@ def _validate_social(value, version):
         _require(item.get("source_confidence") in SOURCE_CONFIDENCES,
                  "invalid social source_confidence")
         _require(type(item.get("present")) is bool, "social.present must be bool")
-        if version == 5:
+        if version >= 5:
             _require(isinstance(item.get("actor_id"), str), "social.actor_id must be a string")
             string_id(item["actor_id"], "social.actor_id")
 
@@ -574,7 +615,7 @@ def _validate_mood(value, version):
     if value is None:
         return
     fields = {"type", "intensity"}
-    if version == 5:
+    if version >= 5:
         fields = set(fields)
         fields.add("name")
     _require(isinstance(value, dict) and set(value) == fields, "mood shape")
@@ -584,7 +625,7 @@ def _validate_mood(value, version):
         _require(isinstance(value["intensity"], (int, float)) and
                  not isinstance(value["intensity"], bool),
                  "mood.intensity must be numeric")
-    if version == 5 and value["name"] is not None:
+    if version >= 5 and value["name"] is not None:
         bounded_string(value["name"], 128, "mood.name", False)
 
 
@@ -592,9 +633,12 @@ def _validate_signals(value, version):
     _require(isinstance(value, list) and len(value) <= MAX_SIGNALS, "sim_signals")
     fields = {"kind", "tuning_id", "game_text", "magnitude", "consequences",
               "native_override"}
-    if version == 5:
+    if version >= 5:
         fields = set(fields)
         fields.add("tuning_name")
+    if version >= 6:
+        # DS3: the moodlet's own blueprint (name, string key, mood, visibility).
+        fields |= {"text_key", "mood_type", "visible"}
     for item in value:
         _require(isinstance(item, dict), "signal must be an object")
         _require(set(item) == fields, "signal shape")
@@ -605,7 +649,7 @@ def _validate_signals(value, version):
         if item.get("game_text") is not None:
             bounded_string(item["game_text"], MAX_DISPLAY_TEXT_LENGTH,
                            "signal.game_text", False)
-        if version == 5 and item.get("tuning_name") is not None:
+        if version >= 5 and item.get("tuning_name") is not None:
             bounded_string(item["tuning_name"], 128, "signal.tuning_name", False)
         if item.get("consequences") is not None:
             bounded_string(item["consequences"], MAX_ID_LENGTH,
@@ -615,6 +659,14 @@ def _validate_signals(value, version):
         if item.get("native_override") is not None:
             _require(item["native_override"] == "UNKNOWN",
                      "invalid signal native_override")
+        if version >= 6:
+            if item.get("text_key") is not None:
+                _require(isinstance(item["text_key"], str), "signal.text_key must be a string")
+                string_id(item["text_key"], "signal.text_key")
+            if item.get("mood_type") is not None:
+                bounded_string(item["mood_type"], 128, "signal.mood_type", False)
+            if item.get("visible") is not None:
+                _require(type(item["visible"]) is bool, "signal.visible must be bool")
 
 
 def _validate_payload_contracts(row):
@@ -732,7 +784,12 @@ def _validate_common(row):
         _require(isinstance(row["telemetry_session_id"], str),
                  "telemetry_session_id must be a string")
     _validate_id_fields(row.get("save"), ("save_slot_guid", "slot_id"), "save")
-    _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room", "position"), "zone")
+    if version >= 6:
+        # DS3: zone, lot and room are ids; position is {x, y, z, level}.
+        _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room"), "zone")
+        _validate_position(row["zone"].get("position"), "zone.position")
+    else:
+        _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room", "position"), "zone")
     _validate_id_fields(row.get("body"), ("sim_id",), "body")
     if row.get("body").get("instantiated") is not None:
         _require(type(row["body"]["instantiated"]) is bool, "body.instantiated")
@@ -758,7 +815,7 @@ def _validate_common(row):
     _validate_interactions(row.get("interactions"))
     _validate_motives(row.get("motives"))
     _validate_signals(row.get("sim_signals"), version)
-    _validate_presence(row.get("presence"))
+    _validate_presence(row.get("presence"), version)
     _validate_social(row.get("social"), version)
     _validate_mood(row.get("mood"), version)
     _require(isinstance(row.get("missingness"), dict), "missingness")
@@ -809,7 +866,7 @@ def validate_record(row):
         _validate_common(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
-    _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds 8 KiB")
+    _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds 16 KiB")
     kind = row["event_kind"]
     if kind in ("session_open", "presence_snapshot", "save_observation"):
         _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)

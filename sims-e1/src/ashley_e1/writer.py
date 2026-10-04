@@ -12,7 +12,9 @@ from . import schema
 
 QUEUE_CAPACITY = 1024
 MAX_ACTIVE_FILE_BYTES = 8 * 1024 * 1024
-MAX_ROTATED_SIBLINGS_PER_SESSION = 4
+# D38 (2026-10-04): 4 rotations x 8 MiB stopped a session after about 2.6 h of play;
+# the directory cap is the real ceiling.
+MAX_ROTATED_SIBLINGS_PER_SESSION = 24
 MAX_TELEMETRY_DIR_BYTES = 200 * 1024 * 1024
 MAX_SAMPLING_FLUSH_INTERVAL_SECONDS = 5.0
 LEDGER_FILENAME = "ashley_e2_lineage_ledger.jsonl"

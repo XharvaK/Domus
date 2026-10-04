@@ -6,6 +6,24 @@ _LINEAGE = re.compile(r"[A-Z_]{1,32}")
 _FACTS_LIMIT = 2048
 _PORTRAIT_LIMIT = 8192
 _WINDOW_MS = 600_000
+# The game's Days enum (tunable_time.Days, bytecode 1.128): SUNDAY = 0 ... SATURDAY = 6,
+# the same index DateAndTime.day() prints as "day:N".
+_WEEKDAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+_CALENDAR = re.compile(r"(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)? day:(\d+) week:(\d+)")
+
+
+def game_time(calendar):
+    """DS3: the game clock from DateAndTime.__str__ ("HH:MM:SS.mmm day:D week:W"), or None."""
+    if not isinstance(calendar, str):
+        return None
+    match = _CALENDAR.fullmatch(calendar.strip())
+    if match is None:
+        return None
+    hour, minute, _, day, week = (int(part) for part in match.groups())
+    if hour > 23 or minute > 59 or day > 6:
+        return None
+    return {"hour": hour, "minute": minute, "weekday": _WEEKDAYS[day], "day_index": day,
+            "week": week}
 
 
 def _bytes(value):
@@ -55,16 +73,47 @@ def _portrait(row):
         running.append(str(text)[:80])
     zone = row.get("zone") or {}
     game = row.get("game") or {}
+    # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
+    company = []
+    for item in row.get("presence") or []:
+        if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
+            continue
+        doing = item.get("doing")
+        company.append({"id": str(item["id"]), "name": item.get("name"),
+                        "room": item.get("room"), "distance_m": item.get("distance_m"),
+                        "doing": str(doing)[:80] if doing is not None else None})
+    moodlets = []
+    for item in row.get("sim_signals") or []:
+        if not isinstance(item, dict) or item.get("kind") != "MOODLET" or item.get("visible") is False:
+            continue
+        moodlets.append({"id": item.get("tuning_id"), "name": item.get("tuning_name"),
+                         "text_key": item.get("text_key"), "weight": item.get("magnitude"),
+                         "mood": item.get("mood_type")})
+    addressed = []
+    for item in row.get("social") or []:
+        if isinstance(item, dict):
+            text = item.get("affordance_text")
+            addressed.append({"by": item.get("actor_id"),
+                              "interaction": str(text)[:80] if text is not None else None})
+    mood = row.get("mood") or {}
     portrait = {
         "needs": needs,
         "posture": posture,
         "running": running[:8],
-        "zone": {"zone_id": zone.get("zone_id"), "lot_id": zone.get("lot_id")},
+        "zone": {"zone_id": zone.get("zone_id"), "lot_id": zone.get("lot_id"),
+                 "room": zone.get("room")},
+        "time": game_time(game.get("calendar")),
         "clock_speed": game.get("clock_speed"),
         "paused": game.get("paused") is True,
+        "mood": mood.get("name") if isinstance(mood, dict) else None,
+        "moodlets": moodlets[:8],
+        "company": company[:7],
+        "addressed_by": addressed[:4],
     }
-    while portrait["running"] and _bytes(portrait) > _PORTRAIT_LIMIT:
-        portrait["running"].pop()
+    # Shed the least essential first: running list, then moodlets, then company.
+    for key in ("running", "moodlets", "company"):
+        while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:
+            portrait[key].pop()
     return portrait
 
 

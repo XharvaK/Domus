@@ -18,15 +18,27 @@ from test_ds1_senses import FakeSimInfo, FakeTracker, FakeBuffs
 
 
 class FakeSim(object):
+    """A game Sim object (what instanced_sims_on_active_lot_gen yields). It carries
+    sim_info and has no get_sim_instance (D37: the old reader called it)."""
+
     def __init__(self, sim_id, household_id=None, level=None, selectable=True,
-                 si_state=None, queue=None, on_lot=True):
+                 si_state=None, queue=None, on_lot=True, at=None):
         self._sim_id = sim_id
+        self.id = sim_id
         self._household_id = household_id
         self._level = level
         self._selectable = selectable
         self.si_state = si_state
         self.queue = queue
         self._on_lot = on_lot
+        self.sim_info = None
+        self.zone_id = 7
+        self.posture = None
+        x, z = at if at is not None else (0.0, 0.0)
+        self.position = types.SimpleNamespace(x=x, y=0.0, z=z)
+
+    def get_sim_instance(self, *args, **kwargs):
+        raise AttributeError("a Sim has no get_sim_instance")
 
     @property
     def level(self):
@@ -39,12 +51,16 @@ class FakeSim(object):
 
 class FakeSimInfoEntry(object):
     def __init__(self, sim_id, sim=None, household=None, household_id=None,
-                 selectable=True):
+                 selectable=True, first_name=None, last_name=None):
         self.id = sim_id
         self._sim = sim
         self.household = household
         self.household_id = household_id
         self._selectable = selectable
+        self.first_name = first_name
+        self.last_name = last_name
+        if sim is not None:
+            sim.sim_info = self
 
     def get_sim_instance(self, allow_hidden_flags=None):
         del allow_hidden_flags
@@ -75,9 +91,20 @@ class Manager(object):
 
     def instanced_sims_on_active_lot_gen(self, allow_hidden_flags=None,
                                          include_spawn_point=None):
+        """Like the game (SimInfoManager, bytecode 1.128): instanced Sim objects."""
         del allow_hidden_flags, include_spawn_point
         for entry in self._entries:
-            yield entry
+            if entry._sim is not None:
+                yield entry._sim
+
+
+def presence_row(sim_id, active_household=False, level=None, is_body=False,
+                 household_id=None, name=None, position=None, room=None,
+                 posture=None, doing=None, doing_target=None, distance_m=None):
+    return {"id": sim_id, "active_household": active_household, "level": level,
+            "is_body": is_body, "household_id": household_id, "name": name,
+            "position": position, "room": room, "posture": posture, "doing": doing,
+            "doing_target": doing_target, "distance_m": distance_m}
 
 
 class PresenceTests(unittest.TestCase):
@@ -94,8 +121,9 @@ class PresenceTests(unittest.TestCase):
         entry = FakeSimInfoEntry("lab", sim=sim, household="hh1", household_id="hh1")
         probe = self.context([entry])
         presence, truncated = probe.observers.read_presence("lab")
-        self.assertEqual(presence, [{"id": "lab", "active_household": True,
-                                     "level": None}])
+        self.assertEqual(presence, [presence_row(
+            "lab", active_household=True, is_body=True, household_id="hh1",
+            position={"x": 0.0, "y": 0.0, "z": 0.0, "level": None})])
         self.assertFalse(truncated)
 
     def test_cap_eight_sets_truncation_and_skips_no_instance(self):
@@ -114,8 +142,9 @@ class PresenceTests(unittest.TestCase):
         entry = FakeSimInfoEntry("s1", sim=sim, household="hh9", household_id="hh9")
         probe = self.context([entry], active_household="hh1")
         presence, _ = probe.observers.read_presence("lab")
-        self.assertEqual(presence, [{"id": "s1", "active_household": False,
-                                     "level": 3}])
+        self.assertEqual(presence, [presence_row(
+            "s1", level=3, household_id="hh9",
+            position={"x": 0.0, "y": 0.0, "z": 0.0, "level": 3})])
 
     def test_social_keeps_lab_targeted_drops_others(self):
         lab = LabSim("lab")

@@ -385,3 +385,35 @@ def test_status_thalamus_block_without_secrets(paths, tmp_path, monkeypatch):
     assert block["scorer"] == "NullScorer"
     blob = json.dumps(bridge.status())
     assert "super-secret-token-value" not in blob and "127.0.0.1" not in blob
+
+
+def test_ds3_portrait_has_time_room_company_moodlets():
+    """DS3: she could not know the game time, the room, or who else is here."""
+    from domus_helper.thalamus import observation
+    assert observation.game_time("13:10:04.200 day:3 week:0") == {
+        "hour": 13, "minute": 10, "weekday": "Wednesday", "day_index": 3, "week": 0}
+    assert observation.game_time("garbage") is None
+    assert observation.game_time("25:00:00.000 day:1 week:0") is None
+    row = {
+        "game": {"calendar": "07:05:00.000 day:0 week:2", "clock_speed": "NORMAL",
+                 "paused": False},
+        "zone": {"zone_id": "1", "lot_id": "2", "room": "3", "position": None},
+        "presence": [{"id": "100", "is_body": True, "name": "E1 Proband"},
+                     {"id": "200", "is_body": False, "name": "Bella Goth", "room": "3",
+                      "distance_m": 1.0, "doing": "<class 'social_Chat'>"}],
+        "sim_signals": [
+            {"kind": "MOODLET", "tuning_id": "902", "tuning_name": "Buff_Hungry",
+             "text_key": "3291712568", "magnitude": "w:2", "mood_type": "Mood_Uncomfortable",
+             "visible": True},
+            {"kind": "MOODLET", "tuning_id": "901", "tuning_name": "Buff_Hidden",
+             "text_key": None, "magnitude": "w:0", "mood_type": None, "visible": False}],
+        "social": [{"actor_id": "200", "affordance_text": "<class 'social_Chat'>"}],
+        "mood": {"type": "1", "intensity": 1, "name": "Mood_Uncomfortable"},
+    }
+    portrait = observation._portrait(row)
+    assert portrait["time"]["weekday"] == "Sunday" and portrait["time"]["hour"] == 7
+    assert portrait["zone"]["room"] == "3"
+    assert [item["name"] for item in portrait["company"]] == ["Bella Goth"]
+    assert [item["name"] for item in portrait["moodlets"]] == ["Buff_Hungry"]
+    assert portrait["addressed_by"] == [{"by": "200", "interaction": "<class 'social_Chat'>"}]
+    assert portrait["mood"] == "Mood_Uncomfortable"

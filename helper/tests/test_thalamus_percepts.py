@@ -282,3 +282,26 @@ def test_interaction_origin_marks_the_bodys_own_actions():
                        "2": "game", "3": "native_reaction"}
     ended = ext.step(_row(2, ticks=5, observed=[]))
     assert {p.object: dict(p.facts)["origin"] for p in ended if p.kind == "interaction"} == origins
+
+
+def test_ds3_presence_facts_skip_her_body_and_room_moves():
+    """DS3 (schema 6): her own body is listed but never arrives; an arrival carries
+    who and where; moving rooms is an env percept."""
+    ext = Extractor()
+    body = {"id": "100", "is_body": True, "name": "E1 Proband", "room": "3"}
+    bella = {"id": "200", "is_body": False, "name": "Bella Goth", "room": "3",
+             "distance_m": 1.0, "doing": "<class 'social_Chat'>"}
+    first = ext.step(_row(1, include_presence=True, presence=[body], social=[],
+                          extra={"zone": {"zone_id": "1", "lot_id": "9", "room": "3",
+                                          "position": None}}))
+    assert [p for p in first if p.kind == "presence"] == []
+    second = ext.step(_row(2, include_presence=True, presence=[body, bella], social=[],
+                           extra={"zone": {"zone_id": "1", "lot_id": "9", "room": "4",
+                                           "position": None}}))
+    arrived = [p for p in second if p.kind == "presence"]
+    assert [(p.subject, p.bucket) for p in arrived] == [("200", "arrived")]
+    facts = dict(arrived[0].facts)
+    assert facts["name"] == "Bella Goth" and facts["room"] == "3"
+    assert facts["distance_m"] == "1.0" and facts["doing"] == "<class 'social_Chat'>"
+    room = [p for p in second if p.kind == "env" and p.subject == "room"]
+    assert [(p.object, dict(p.facts)["from_room"]) for p in room] == [("4", "3")]

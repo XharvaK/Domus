@@ -178,7 +178,9 @@ class SensesTests(unittest.TestCase):
         entries = [FakeBuff(1000 + i, "Happy", i) for i in range(17)]
         row = make_row({"ticks": 10}, FakeSimInfo(FakeTracker(), FakeBuffs(entries)))
         self.assertEqual(len(row["sim_signals"]), 16)
-        self.assertEqual(row["sim_signals"][0]["magnitude"], "w:0")
+        # DS3: heavier moodlets first; the lightest (w:0) is the one cut.
+        self.assertEqual(row["sim_signals"][0]["magnitude"], "w:16")
+        self.assertNotIn("w:0", [signal["magnitude"] for signal in row["sim_signals"]])
         self.assertIsNone(row["sim_signals"][0]["game_text"])
 
         class Broken(object):
