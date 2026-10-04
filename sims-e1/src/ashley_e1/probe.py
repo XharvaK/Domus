@@ -666,11 +666,31 @@ def _food_affordance_row(affordance, object_id):
         mro = []
         for cls in e2_actuator._mro(affordance):
             mro.append(str(cls.__name__))
-        favorite_none = affordance.favorite_recipe is None
-        auto = affordance.auto_pick
+        # D1 (live 2026-10-04, 704/704 rows AttributeError): these exist only on some
+        # classes (bytecode: favorite_recipe on crafting, auto_pick on object pickers,
+        # use_pie_menu on PickerSuperInteractionMixin). Absent is data, not an error.
+        try:
+            favorite_none = affordance.favorite_recipe is None
+        except AttributeError:
+            favorite_none = None
+        try:
+            auto = affordance.auto_pick
+        except AttributeError:
+            auto = None
         auto_name = None if auto is None else type(auto).__name__
-        pie = affordance.use_pie_menu
+        try:
+            pie = affordance.use_pie_menu
+        except AttributeError:
+            pie = None
         use_pie = bool(pie()) if callable(pie) else None
+        try:
+            user_directed = affordance.allow_user_directed
+        except AttributeError:
+            user_directed = None
+        try:
+            autonomous = affordance.allow_autonomous
+        except AttributeError:
+            autonomous = None
         return {
             "kind": "food_affordance",
             "object_id": object_id,
@@ -679,27 +699,38 @@ def _food_affordance_row(affordance, object_id):
             "mro": mro,
             "excluded": e2_actuator.excluded(affordance),
             "food_route": e2_actuator.food_route(affordance),
-            "allow_user_directed": _flag_value(affordance.allow_user_directed),
-            "allow_autonomous": _flag_value(affordance.allow_autonomous),
+            "allow_user_directed": _flag_value(user_directed),
+            "allow_autonomous": _flag_value(autonomous),
             "use_pie_menu": use_pie,
             "favorite_recipe_is_none": favorite_none,
             "auto_pick": auto_name,
         }
     except Exception as error:
-        return {"kind": "food_affordance", "object_id": object_id, "error": type(error).__name__}
+        return {"kind": "food_affordance", "object_id": object_id,
+                "error": food.error_text(error)}
 
 
 def _food_menu_rows(affordance, obj, context, object_id, guid):
+    # D2: picker_rows_gen is a flexmethod; __get__ binds (cls, None) already
+    # (bytecode sims4/utils: partial(func, owner, instance)). Pass target, context.
     try:
-        generated = affordance.picker_rows_gen(None, obj, context)
+        generated = iter(affordance.picker_rows_gen(obj, context))
     except Exception as error:
         return [{
             "kind": "food_menu", "object_id": object_id, "guid64": guid,
-            "error": type(error).__name__,
+            "error": food.error_text(error),
         }]
     rows = []
-    for item in generated:
-        if len(rows) >= food.MENU_CAP:
+    while len(rows) < food.MENU_CAP:
+        try:
+            item = next(generated)
+        except StopIteration:
+            break
+        except Exception as error:
+            rows.append({
+                "kind": "food_menu", "object_id": object_id, "guid64": guid,
+                "error": food.error_text(error),
+            })
             break
         try:
             tag = item.tag
@@ -720,7 +751,7 @@ def _food_menu_rows(affordance, obj, context, object_id, guid):
         except Exception as error:
             rows.append({
                 "kind": "food_menu", "object_id": object_id, "guid64": guid,
-                "error": type(error).__name__,
+                "error": food.error_text(error),
             })
     return rows
 

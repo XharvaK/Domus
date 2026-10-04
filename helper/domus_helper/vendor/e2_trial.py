@@ -29,6 +29,20 @@ DENY_NAME_PARTS = (
     "ask_to", "social",
 )
 
+# D8 (live 2026-10-04): with energy in distress the guard refused bed and food too,
+# and with autonomy off nothing could help her. A trial that relieves a distressed
+# body motive is a cure, not a risk; after sleep she woke with hunger and bladder
+# both in distress, so one cure at a time. Hunger is relieved by a food route.
+# Lot names (atlas 1.128.90.1030): bed_sleep, bed_Nap, sofa_Nap, toilet-use-sitting,
+# shower_TakeShower*. Cleaning or upgrading the same object is not relief.
+RELIEF_NAME_PARTS = {
+    "energy": ("sleep", "nap"),
+    "bladder": ("toilet-use", "toilet_use"),
+    "hygiene": ("takeshower", "take_shower", "takebath", "take_bath"),
+}
+RELIEF_DENY_PARTS = ("clean", "upgrade", "repair", "unclog", "fix")
+LOW_BAND = ("low", "distress")
+
 POSTURE_SOURCE = "InteractionSource.POSTURE_GRAPH"
 RUNNING_MEMBERSHIPS = ("RUNNING", "QUEUED_AND_RUNNING")
 STORM_LIMIT = 5
@@ -66,10 +80,15 @@ def trial_check(view):
         return e2_admission.AFFORDANCE_NOT_OFFERED
     if obj.get("excluded"):
         return TRIAL_EXCLUDED
+    distressed = []
     for motive in view.get("motives") or ():
         if (isinstance(motive, dict) and motive.get("band") == "distress" and
                 motive.get("id") not in NON_BODILY_MOTIVES):
-            return NEED_DISTRESS
+            distressed.append(motive.get("id"))
+    if distressed and not any(
+            relieves(motive_id, view.get("tuning_name"), view.get("food_route"))
+            for motive_id in distressed):
+        return NEED_DISTRESS
     own = view.get("own_open_ids") or ()
     for entry in view.get("entries") or ():
         if entry.get("interaction_id") in own:
@@ -82,6 +101,30 @@ def trial_check(view):
     if view.get("paused") is not False:
         return e2_admission.CLOCK_PAUSED
     return None
+
+
+def relieves(motive_id, tuning_name, food_route):
+    """True when this affordance is the plain cure for one body motive."""
+    if motive_id == "hunger":
+        return food_route is not None
+    parts = RELIEF_NAME_PARTS.get(motive_id)
+    if not parts or type(tuning_name) is not str:
+        return False
+    low = tuning_name.lower()
+    if any(part in low for part in RELIEF_DENY_PARTS):
+        return False
+    return any(part in low for part in parts)
+
+
+def relief_motives(motives, tuning_name, food_route):
+    """Low or distressed body motives this affordance relieves (D13)."""
+    found = []
+    for motive in motives or ():
+        if (isinstance(motive, dict) and motive.get("band") in LOW_BAND and
+                motive.get("id") not in NON_BODILY_MOTIVES and
+                relieves(motive.get("id"), tuning_name, food_route)):
+            found.append(motive.get("id"))
+    return found
 
 
 class StormCounter:

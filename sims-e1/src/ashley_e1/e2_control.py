@@ -37,8 +37,10 @@ def _now():
 
 
 def _hunger_span(experiment):
+    """D7: start, peak and end. The end of a long window hides a meal (31->80->40)."""
     before = None
     after = None
+    peak = None
     for row in experiment._rows_since:
         item = None
         for motive in row.get("motives") or []:
@@ -53,7 +55,9 @@ def _hunger_span(experiment):
         if before is None:
             before = value
         after = value
-    return _num(before), _num(after)
+        if peak is None or value > peak:
+            peak = value
+    return _num(before), _num(peak), _num(after)
 
 
 def _num(value):
@@ -63,27 +67,19 @@ def _num(value):
 
 
 def _food_hold(experiment):
-    """A31: leave a cook running while hunger is still rising."""
+    """A31/D11: a running food or relief family is never cancelled. Hunger does not
+    rise while she cooks, so "still rising" would cancel a cook halfway (R-PICK §5).
+    D13: a sleep pushed for low energy is the cure; cutting it at 180 s defeats it."""
     rows = list(experiment._rows_since)
     if not rows:
         return False
     ids = set(experiment.children)
     ids.add(experiment.interaction_id)
-    running = False
     for entry in (rows[-1].get("interactions") or {}).get("observed") or []:
         if (entry.get("interaction_id") in ids and
                 entry.get("membership") in e2_registry.RUNNING_MEMBERSHIPS):
-            running = True
-    values = []
-    for row in rows:
-        for motive in row.get("motives") or []:
-            if isinstance(motive, dict) and motive.get("id") == "hunger":
-                value = motive.get("value")
-                if not isinstance(value, bool) and isinstance(value, (int, float)):
-                    values.append(value)
-                break
-    rising = len(values) >= 2 and values[-1] > values[-2]
-    return running and rising
+            return True
+    return False
 
 
 def _queued_never_started(experiment):
@@ -454,6 +450,7 @@ class E2Control:
                 continuation=(), card=card, control_rows=control_rows,
                 window_seconds=window, food_route=route)
             experiment.tuning_name = tuning_name
+            experiment.relief = e2_trial.relief_motives(view["motives"], tuning_name, route)
             experiment.interaction_ref = interaction
             self.experiments[experiment_id] = experiment
             self.open_ids.add(interaction_id)
@@ -462,6 +459,8 @@ class E2Control:
             self._watch_finish(experiment, interaction)
             self._experiment_event("PUSHED", experiment_id=experiment_id,
                                    object_id=object_id, interaction_id=interaction_id,
+                                   detail=("relief=%s" % ",".join(experiment.relief)
+                                           if experiment.relief else None),
                                    guid64=guid64, card_class=card["card_class"],
                                    tuning_name=tuning_name, claims=dict(experiment.claims))
             self._say(connection, "TRIAL_PUSHED %s interaction %s" %
@@ -497,6 +496,8 @@ class E2Control:
         view["excluded_ids"] = EXCLUDED_OBJECT_IDS
         view["own_open_ids"] = self.open_ids
         view["motives"] = motives
+        view["tuning_name"] = _tuning_name(offers[0]) if offers else None
+        view["food_route"] = e2_actuator.food_route(offers[0]) if offers else None
         view["object"] = {"exists": obj is not None, "offer_count": len(offers),
                           "excluded": excluded, "sit_offer_count": view["object"]["sit_offer_count"]}
         return view, sim, obj, offers, context
@@ -560,7 +561,7 @@ class E2Control:
             sim = None
         if interaction is None and not children:
             return
-        if experiment.food_route and _food_hold(experiment):
+        if (experiment.food_route or experiment.relief) and _food_hold(experiment):
             if _queued_never_started(experiment) and interaction is not None:
                 try:
                     e2_actuator.cancel_own(interaction)
@@ -569,7 +570,8 @@ class E2Control:
             self._experiment_event("TRIAL_CLEANUP", experiment_id=experiment.experiment_id,
                                    object_id=experiment.object_id,
                                    interaction_id=experiment.interaction_id,
-                                   detail="food_left_running")
+                                   detail=("food_left_running" if experiment.food_route
+                                           else "relief_left_running"))
             return
         if experiment.claims["FINISHED"] or interaction is None:
             result = "ALREADY_FINISHED" if interaction is None or experiment.claims["FINISHED"] else "CANCELLED"
@@ -595,8 +597,9 @@ class E2Control:
         self.open_ids.discard(experiment.interaction_id)
         detail = ""
         if experiment.food_route:
-            before, after = _hunger_span(experiment)
-            detail = "route=%s hunger=%s->%s " % (experiment.food_route, before, after)
+            before, peak, after = _hunger_span(experiment)
+            detail = "route=%s hunger=%s->%s->%s " % (
+                experiment.food_route, before, peak, after)
         detail += "foreign_roots=%d incomplete_rows=%d continuation=%d mixers=%d family=%d" % (
             len(experiment.foreign_roots), experiment.incomplete_rows,
             len(experiment.continuation_entries), len(experiment.child_mixers),

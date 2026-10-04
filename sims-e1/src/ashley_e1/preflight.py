@@ -7,6 +7,7 @@ import json
 import os
 import time
 
+from . import food
 from . import schema
 from .writer import append_atlas_line
 
@@ -59,7 +60,7 @@ class PreflightScan(object):
                     "guid64": job.get("guid64"),
                     "name": job.get("name"),
                     "ok": False,
-                    "reason": type(error).__name__,
+                    "reason": food.error_text(error),
                 }
                 self._errors += 1
             append_atlas_line(self.partial, _line(row))

@@ -6,11 +6,13 @@ import sys
 import time
 from pathlib import Path
 
-from . import atlas, telemetry
+from . import atlas, relief_survey, telemetry
 from .crawl_protocol import PROTOCOL_SKIP, RETRY_CODES, name_blocked
 
 # Dialog-free food guids run only through `python -m domus_helper.food` (DA6D).
 FOOD_GUIDS = (13388, 13397)
+# A sleep at normal speed is about 8 real minutes; a slow-speed sleep is longer.
+LEFT_RUNNING_MAX_S = 45 * 60
 from .vendor.schema import PROBE_VERSION
 from .mcp_server import CommandFailed, DomusTools, SafetyError
 from .paths import Paths
@@ -202,6 +204,101 @@ def matching_preflight(atlas_dir, tuned_path):
     return rows
 
 
+def wait_preflight(atlas_dir, since, timeout, sleep=time.sleep, monotonic=time.monotonic):
+    """Rows of the first preflight file finished after `since` (D9)."""
+    deadline = monotonic() + timeout
+    while True:
+        folder = Path(atlas_dir)
+        files = [path for path in folder.glob("preflight_*.jsonl")
+                 if path.is_file() and not path.name.endswith(".partial")
+                 and path.stat().st_mtime >= since]
+        files.sort(key=lambda path: (path.stat().st_mtime_ns, path.name))
+        for path in reversed(files):
+            _build, rows = load_tuned(path)
+            if rows and rows[-1].get("kind") == "preflight_footer":
+                return rows
+        if monotonic() >= deadline:
+            raise TimeoutError("preflight footer")
+        sleep(1.0)
+
+
+def fresh_preflight(client, timeout=600, sleep=time.sleep, monotonic=time.monotonic):
+    """D9 (live 2026-10-04): the crawl used only an older preflight file, and none
+    existed, so nothing was filtered. Ask for one and wait for its footer."""
+    since = time.time() - 1
+    client.command("preflight", {})
+    return wait_preflight(client.paths.atlas_dir, since, timeout, sleep, monotonic)
+
+
+def _cleanup_detail(rows, experiment_id):
+    for row in rows or ():
+        e2 = row.get("e2") or {}
+        if e2.get("phase") == "TRIAL_CLEANUP" and e2.get("experiment_id") == experiment_id:
+            return e2.get("detail") or ""
+    return None
+
+
+def _needs_of(row):
+    found = []
+    for item in (row or {}).get("motives") or []:
+        if isinstance(item, dict):
+            found.append({"id": item.get("id"), "value": item.get("value")})
+    return found
+
+
+def wait_left_running(read_rows, experiment_id, sleep, monotonic, timeout=None):
+    """D13: a relief (sleep, toilet, a meal) is left running past its verdict. Wait
+    until she is idle again and return the needs then: the relief telemetry."""
+    if timeout is None:
+        timeout = LEFT_RUNNING_MAX_S
+    deadline = monotonic() + 5.0
+    detail = None
+    for _ in range(20):
+        detail = _cleanup_detail(read_rows(), experiment_id)
+        if detail is not None or monotonic() >= deadline:
+            break
+        sleep(0.25)
+    if not detail or not detail.endswith("_left_running"):
+        return None
+    deadline = monotonic() + timeout
+    idle_since = None
+    for _ in range(int(timeout) + 1):
+        if monotonic() >= deadline:
+            break
+        latest = _latest_presence(read_rows())
+        if _body_idle(latest):
+            if idle_since is None:
+                idle_since = monotonic()
+            elif monotonic() - idle_since >= 5.0:
+                return {"needs_finish": _needs_of(latest), "detail": detail}
+        else:
+            idle_since = None
+        sleep(1.0)
+    return {"needs_finish": [], "detail": detail, "timeout": True}
+
+
+IDLE_SOURCES = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_CANCEL_AOP",
+                "InteractionSource.CARRY_CANCEL_AOP")
+
+
+def _latest_presence(rows):
+    found = None
+    for row in rows or ():
+        if row.get("event_kind") == "presence_snapshot":
+            found = row
+    return found
+
+
+def _body_idle(row):
+    """No running action except posture: she has finished what she was doing."""
+    entries = ((row or {}).get("interactions") or {}).get("observed") or []
+    for entry in entries:
+        if (entry.get("membership") in ("RUNNING", "QUEUED_AND_RUNNING") and
+                entry.get("source_raw") not in IDLE_SOURCES):
+            return False
+    return True
+
+
 def environment_line(rows):
     """One line for objects whose every tested affordance failed for the same reason."""
     grouped = {}
@@ -333,7 +430,8 @@ def reconcile(log_path, telemetry_rows, atlas_db, build, session):
 def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
           dry_run=False, verdict_timeout_s=600, limit=10**9, readonly=False,
           sleep=time.sleep, monotonic=time.monotonic, telemetry_rows=None,
-          session="none", skip=(), preflight_rows=None, use_preflight=True):
+          session="none", skip=(), preflight_rows=None, use_preflight=True,
+          survey=False):
     if not 1 <= per_hour <= 60:
         raise ValueError("per-hour")
     if max_trials < 1 or verdict_timeout_s <= 0:
@@ -387,11 +485,18 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
         elif (status.get("lineage_class"), status.get("designated_sim_id")) != origin:
             changed = "lineage_class" if status.get("lineage_class") != origin[0] else "designated_sim_id"
             raise CrawlStop("%s changed" % changed)
-        candidates = plan(build, tuned_rows, atlas_db, limit, readonly=False, skip=skip,
-                          preflight_rows=active)
-        if not candidates:
-            return 0
-        item = candidates[0]
+        item = None
+        if survey:
+            now_rows = telemetry_rows() if telemetry_rows else _live_rows(client.paths)
+            need = relief_survey.low_need(relief_survey.motives_of(_latest_presence(now_rows)))
+            if need is not None:
+                item = relief_survey.cure_for(need, active)
+        if item is None:
+            candidates = plan(build, tuned_rows, atlas_db, limit, readonly=False, skip=skip,
+                              preflight_rows=active)
+            if not candidates:
+                return 0
+            item = candidates[0]
         if last_send is not None:
             gap = interval - (monotonic() - last_send)
             if gap > 0:
@@ -453,14 +558,24 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
         atlas.record_trial(
             atlas_db, build, experiment_key, item["guid64"], item["object_id"],
             outcome, code, ambiguous, tuning, session, probe_version=PROBE_VERSION)
-        _append(log_path, {
+        relief = None
+        if kind == "TRIAL_PUSHED" and found is not None:
+            relief = wait_left_running(
+                (lambda: telemetry_rows() if telemetry_rows else _live_rows(client.paths)),
+                experiment_id, sleep, monotonic)
+        payload = {
             "kind": "outcome", "n": recorded, "guid64": item["guid64"],
             "object_id": item["object_id"], "outcome": outcome, "code": code,
             "experiment_id": experiment_id, "needs_before": needs_before,
-            "needs_after": needs_after,
-        })
-        print("trial %d %s %s %s -> %s (%s)" % (
-            recorded, item["guid64"], item["name"], item["object_id"], outcome, code))
+            "needs_after": needs_after, "relief": item.get("relief"),
+        }
+        if relief is not None:
+            payload["needs_finish"] = relief["needs_finish"]
+            payload["cleanup"] = relief["detail"]
+        _append(log_path, payload)
+        print("trial %d %s %s %s -> %s (%s)%s" % (
+            recorded, item["guid64"], item["name"], item["object_id"], outcome, code,
+            (" relief=%s" % item["relief"]) if item.get("relief") else ""))
         outcomes.append(outcome)
         if code == "NEED_DISTRESS":
             distress += 1
@@ -511,6 +626,8 @@ def main(argv=None):
     # need parts she does not carry, so each push fails and five latch TRIAL_STORM.
     parser.add_argument("--skip", action="append", default=[])
     parser.add_argument("--no-preflight", action="store_true")
+    # Telemetry, not her policy: measure a low need's cure before the next trial.
+    parser.add_argument("--relief-survey", action="store_true")
     args = parser.parse_args(argv)
     paths = Paths.from_env()
     try:
@@ -523,8 +640,12 @@ def main(argv=None):
         if not build:
             raise ValueError("tuned scan has no sims_build")
         preflight_rows = None
+        client = DomusTools(paths=paths)
         if not args.no_preflight:
-            preflight_rows = matching_preflight(tuned_path.parent, tuned_path)
+            if args.dry_run:
+                preflight_rows = matching_preflight(tuned_path.parent, tuned_path)
+            else:
+                preflight_rows = fresh_preflight(client)
         session = "none"
         if not args.dry_run:
             try:
@@ -532,11 +653,12 @@ def main(argv=None):
             except FileNotFoundError:
                 session = "none"
         return drive(
-            client=DomusTools(paths=paths), build=build, tuned_rows=rows,
+            client=client, build=build, tuned_rows=rows,
             atlas_db=paths.atlas_db, per_hour=args.per_hour, max_trials=args.max_trials,
             dry_run=args.dry_run, verdict_timeout_s=args.verdict_timeout_s,
             limit=args.limit, session=session, skip=tuple(args.skip),
-            preflight_rows=preflight_rows, use_preflight=not args.no_preflight)
+            preflight_rows=preflight_rows, use_preflight=not args.no_preflight,
+            survey=args.relief_survey)
     except CrawlStop as error:
         print(str(error))
         return 2

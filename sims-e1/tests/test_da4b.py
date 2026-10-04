@@ -230,7 +230,8 @@ class NeedTickTests(unittest.TestCase):
         stale = _need_row(5, 90000, 40, [ours], age=40000)
         effect, reason = self.cards.evaluate_effect(
             card, self._state([start, stale], start["monotonic_ns"], control), stale)
-        self.assertEqual((effect, reason), (False, "stale_value"))
+        # D14 (DA6E): a stale cache is no reading for this row, not a trial ambiguity.
+        self.assertEqual((effect, reason), (False, None))
 
     def test_social_card_schema_5_passes_and_schema_4_stays_unobserved(self):
         card = {"card_class": "social", "affordance_guid64": None, "object_id": "sim-b",

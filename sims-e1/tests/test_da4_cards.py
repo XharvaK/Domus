@@ -147,7 +147,6 @@ class CardTests(unittest.TestCase):
         cases = {
             "no_control": dict(control=[_hunger(20, [], 10)]),
             "missing_motive": dict(drop_motive=True),
-            "stale_value": dict(age=self.cards.NEED_FRESH_TICKS + 1),
             "incomplete_row": dict(complete=False),
             "gap": dict(gap=True),
             "overlapping_si": dict(overlap=True),
@@ -170,6 +169,19 @@ class CardTests(unittest.TestCase):
                                     complete=options.get("complete", True)))
             self.assertIn(reason, exp.ambiguous, reason)
             self.assertEqual(exp.close(), self.reg.OUTCOME_UNKNOWN, reason)
+
+    def test_stale_rows_are_no_reading_not_an_ambiguity(self):
+        """D14 (DA6E): live motive ages reached 29338 of 30000 ticks."""
+        card = self._need_card()
+        ours = _entry("100", SCRIPT, "RUNNING", CHAIR)
+        exp = self._experiment(card, self._control(), signature=None, pushed=int(30 * 1e9))
+        stale = self.cards.NEED_FRESH_TICKS + 1
+        exp.observe(_hunger(31, [ours], 10, age=stale))
+        exp.observe(_hunger(35, [ours], 40, age=stale))
+        exp.observe(_hunger(39, [ours], 40, age=stale))
+        self.assertEqual(exp.ambiguous, [])
+        self.assertFalse(exp.claims["EFFECT_OBSERVED"])
+        self.assertEqual(exp.close(), self.reg.OUTCOME_UNKNOWN)
 
     def test_social_target_is_unobserved(self):
         """schema social entries have no participant identity, only a target."""

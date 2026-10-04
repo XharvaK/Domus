@@ -13,6 +13,10 @@ WINDOW_SECONDS = 60.0
 TRIAL_WINDOW_SECONDS = 180.0
 # A cooked meal is eaten after the crafting phases. Hunger, not the 180 s card, judges it.
 FOOD_TRIAL_WINDOW_SECONDS = 600.0
+# D6 (live 2026-10-04): a 40 s snack held her for the whole 600 s window, about ten
+# sim-hours idle. A need trial closes once its effect held, or once its family has
+# been gone this long (the card's own grace has passed by then).
+NEED_SETTLE_SECONDS = 30.0
 MAINTAIN_SECONDS = 10.0
 SIGNATURE_WINDOW_SECONDS = 30.0
 CONTINUATION_WINDOW_SECONDS = 30.0
@@ -57,6 +61,8 @@ class Experiment:
         self.control_rows = list(control_rows or ())
         self.window_seconds = window_seconds
         self.food_route = food_route
+        # D13: low body motives this trial relieves; a relief trial is not cut short.
+        self.relief = []
         self.ambiguous = []
         self._rows_since = []
         self.known_ids = set(i for i in baseline_ids if i is not None)
@@ -71,6 +77,7 @@ class Experiment:
         self.children = []
         self.finished_ns = None
         self.child_live_ns = None
+        self.family_live_ns = None
         self.incomplete_rows = 0
         self.started_ns = None
         self.effect_since_ns = None
@@ -97,7 +104,18 @@ class Experiment:
             entry.get("interaction_id") == self.interaction_id and
             entry.get("membership") in RUNNING_MEMBERSHIPS for entry in _entries(row))
         family_open = self._family_open(row, mono)
+        # D5: once a need trial's family has run and left, new entries are the game's
+        # aftermath (collect dish, wash dish, put away), not rivals of the meal.
+        # Between crafting phases the family is briefly not live; family_open keeps
+        # the A32 handoff grace so the next phase child is still ours.
+        aftermath = (self.card.get("card_class") == "need" and self.claims["STARTED"] and
+                     not family_open)
         for entry in _entries(row):
+            if aftermath:
+                iid = entry.get("interaction_id")
+                if iid is not None:
+                    self.known_ids.add(iid)
+                continue
             iid = entry.get("interaction_id")
             if iid is not None and iid == self.interaction_id:
                 ours = entry
@@ -159,6 +177,11 @@ class Experiment:
         if self._child_running(row) and self.started_ns is None:
             self.started_ns = mono
             self.claims["STARTED"] = True
+        if self.children:
+            # D12: the push can finish before the first poll; its child proves it queued.
+            self.claims["ENQUEUED"] = True
+        if type(mono) is int and self._family_live(row):
+            self.family_live_ns = mono
         if self.card["card_class"] != "posture":
             self._rows_since.append(row)
         effect_held, reason = e2_cards.evaluate_effect(self.card, {
@@ -197,7 +220,29 @@ class Experiment:
             self.claims["MAINTAINED_10S"] = True
         if mono - self.pushed_mono_ns >= self.window_seconds * 1e9:
             self.close()
+        elif self._need_settled(mono):
+            self.close()
         return [key for key in CLAIM_ORDER if self.claims[key] and not before[key]]
+
+    def _family_live(self, row):
+        for entry in _entries(row):
+            iid = entry.get("interaction_id")
+            if ((iid == self.interaction_id or iid in self.children) and
+                    entry.get("membership") in OURS_LIVE):
+                return True
+        return False
+
+    def _need_settled(self, mono):
+        """D6: a need trial ends with its effect, not with the window."""
+        if self.card.get("card_class") != "need" or type(mono) is not int:
+            return False
+        if self.claims["MAINTAINED_10S"]:
+            return True
+        if not self.claims["STARTED"]:
+            return mono - self.pushed_mono_ns >= TRIAL_WINDOW_SECONDS * 1e9
+        if type(self.family_live_ns) is not int:
+            return False
+        return mono - self.family_live_ns >= NEED_SETTLE_SECONDS * 1e9
 
     def finish(self, finishing_type, mono_ns=None):
         if self.finishing_type is None:
