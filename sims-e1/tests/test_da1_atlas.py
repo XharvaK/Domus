@@ -192,6 +192,15 @@ class AtlasProbeTests(unittest.TestCase):
         self.assertFalse(self.probe._inbox_dispatch(command("atlas_dump"), again))
         self.assertEqual(again.code, "ATLAS_BUSY")
 
+    def test_atlas_ticks_at_scan_rate(self):
+        """D32 (live 2.11.3: ~15 rows per 1 s tick, ~9 min for 8256 rows)."""
+        self.manager._tuned_classes = {"a": _Affordance(1)}
+        reply = self.probe._InboxReply("helper")
+        self.assertTrue(self.probe._inbox_dispatch(command("atlas_dump"), reply))
+        spans = [kwargs["time_span"] for _handle, _args, kwargs in self.calls["alarms"]
+                 if kwargs.get("owner") is self.probe._ATLAS_ALARM_OWNER]
+        self.assertEqual(spans, [self.probe.SCAN_TICK_S])
+
     def test_partial_until_done_then_footer_matches(self):
         self.manager._tuned_classes = {index: _Affordance(index) for index in range(3)}
         reply = self.probe._InboxReply("helper")
