@@ -220,7 +220,7 @@ class Experiment:
             self.claims["MAINTAINED_10S"] = True
         if mono - self.pushed_mono_ns >= self.window_seconds * 1e9:
             self.close()
-        elif self._need_settled(mono):
+        elif self._settled(mono):
             self.close()
         return [key for key in CLAIM_ORDER if self.claims[key] and not before[key]]
 
@@ -232,9 +232,23 @@ class Experiment:
                 return True
         return False
 
-    def _need_settled(self, mono):
-        """D6: a need trial ends with its effect, not with the window."""
-        if self.card.get("card_class") != "need" or type(mono) is not int:
+    def _settled(self, mono):
+        """D6: a need trial ends with its effect, not with the window. D26 (live
+        sleep: she woke at row 1381, the verdict waited for the 180 s window at 1519):
+        a maintained interaction ends 30 s after its finished family was last live."""
+        if type(mono) is not int:
+            return False
+        if self.card.get("card_class") == "interaction":
+            if not (self.claims["MAINTAINED_10S"] and self.claims["FINISHED"]):
+                return False
+            last = self.family_live_ns
+            if type(last) is not int or (type(self.finished_ns) is int and
+                                         self.finished_ns > last):
+                last = self.finished_ns
+            if type(last) is not int:
+                return False
+            return mono - last >= NEED_SETTLE_SECONDS * 1e9
+        if self.card.get("card_class") != "need":
             return False
         if self.claims["MAINTAINED_10S"]:
             return True

@@ -107,6 +107,54 @@ def summarize(rows):
     return table
 
 
+def menus_of(rows):
+    """D19-D21: one line per scanned menu (object, the class that offers it)."""
+    found = {}
+    for row in rows:
+        if row.get("kind") != "food_menu" or row.get("error"):
+            continue
+        key = (str(row.get("object_id")), row.get("guid64"))
+        item = found.setdefault(key, {"object_id": key[0], "guid64": key[1], "recipes": 0,
+                                      "enabled": 0, "prices": [], "names": []})
+        item["recipes"] += 1
+        if row.get("is_enable") is True:
+            item["enabled"] += 1
+        price = row.get("price")
+        if isinstance(price, (int, float)) and not isinstance(price, bool):
+            item["prices"].append(price)
+        if len(item["names"]) < 5 and row.get("recipe_name"):
+            item["names"].append(row.get("recipe_name"))
+    menus = []
+    for item in found.values():
+        prices = item.pop("prices")
+        item["price_min"] = min(prices) if prices else None
+        item["price_max"] = max(prices) if prices else None
+        menus.append(item)
+    return menus
+
+
+def report(rows):
+    """D21: label every column; food routes first, then the rest, then menus."""
+    table = summarize(rows)
+    table.sort(key=lambda row: (row["route"] is None, str(row["name"])))
+    lines = []
+    for row in table:
+        lines.append("route=%s guid=%s %s obj=%s excluded=%s" % (
+            row["route"], row["guid64"], row["name"], row["object_id"], row["excluded"]))
+    menus = menus_of(rows)
+    for menu in menus:
+        lines.append("menu obj=%s via=%s recipes=%d enabled=%d price=%s-%s e.g. %s" % (
+            menu["object_id"], menu["guid64"], menu["recipes"], menu["enabled"],
+            menu["price_min"], menu["price_max"], ", ".join(menu["names"])))
+    errors = errors_of(rows)
+    for text, count in errors[:5]:
+        lines.append("error x%d %s" % (count, text))
+    lines.append("rows %d routes %d menus %d errors %d" % (
+        len(table), sum(1 for row in table if row["route"]), len(menus),
+        sum(count for _text, count in errors)))
+    return lines
+
+
 def _refused(preflight_rows, object_id, guid):
     for row in preflight_rows or ():
         if row.get("kind") != "preflight":
@@ -171,7 +219,7 @@ def scan(client, timeout=120, sleep=time.sleep):
     since = time.time()
     client.command("food_scan", {})
     _path, rows = wait_footer(client.paths.atlas_dir, since, timeout, sleep)
-    return summarize(rows), errors_of(rows)
+    return rows
 
 
 def fallback_rows(preflight_rows):
@@ -267,14 +315,8 @@ def main(argv=None):
     client = DomusTools(paths=Paths.from_env())
     try:
         if args.scan:
-            table, errors = scan(client)
-            for row in table:
-                print("%s %s %s excluded=%s menu=%s enabled=%s price=%s" % (
-                    row["route"], row["guid64"], row["name"], row["excluded"],
-                    row["menu"], row["enabled"], row["cheapest"]))
-            for text, count in errors[:5]:
-                print("error x%d %s" % (count, text))
-            print("rows %d errors %d" % (len(table), sum(count for _text, count in errors)))
+            for line in report(scan(client)):
+                print(line)
             return 0
         return eat(client)
     except Exception as error:

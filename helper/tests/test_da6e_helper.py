@@ -112,7 +112,7 @@ def _survey_drive(tmp_path, survey):
     _import(db, "1.1", [_affordance(1, "sit")])
     tools = FakeTools(tmp_path)
     tools.replies = ["TRIAL_PUSHED exp1 interaction 5"]
-    tools.rows = [_presence({"bladder": 15}), _verdict("exp1")]
+    tools.rows = [_presence({"bladder": 30}), _verdict("exp1")]
     clock = Clock()
     preflight = [_pf(1, "sit", object_id="1"), _pf(2, "toilet-use-sitting", object_id="7")]
     _drive(tools, db, [_tuned(1, [1])], clock, max_trials=1, preflight_rows=preflight,

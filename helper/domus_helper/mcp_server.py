@@ -213,7 +213,7 @@ def food_options() -> dict:
     path = food_reader.latest_food(folder)
     rows = food_reader._rows(path)
     return {"file": path.name, "rows": food_reader.summarize(rows),
-            "errors": food_reader.errors_of(rows)[:5]}
+            "menus": food_reader.menus_of(rows), "errors": food_reader.errors_of(rows)[:5]}
 
 
 @server.tool()

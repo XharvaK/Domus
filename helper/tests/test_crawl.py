@@ -290,7 +290,8 @@ def test_stop_rules(tmp_path, capsys):
     assert code == 2 and "TRIAL_STORM" in line
 
     code, line, _, _ = run(["TRIAL_REJECT NEED_DISTRESS", "TRIAL_REJECT NEED_DISTRESS"])
-    assert code == 2 and line == "the lab Sim needs care: feed/rest her, then restart"
+    # D23: the stop names the need when the rows show it; none here.
+    assert code == 2 and line == "the lab Sim needs care: a body need is in distress, then restart"
 
     case = tmp_path / "lineage"
     case.mkdir()

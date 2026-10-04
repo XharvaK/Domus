@@ -392,7 +392,22 @@ def _inbox_status():
                 verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
                 inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS,
                 motive_diag=observers.motive_diag(),
-                atlas=_atlas_progress(), tuned=_tuned_progress())
+                atlas=_atlas_progress(), tuned=_tuned_progress(),
+                preflight=_scan_progress(_PREFLIGHT), food=_scan_progress(_FOOD))
+
+
+_IDLE_SCAN = {"state": "idle", "done": 0, "total": 0, "chunks": 0, "max_chunk_ms": 0,
+              "file": None}
+# D22 (live 2026-10-04): a 6025-row preflight at one 5 ms chunk per second took
+# ten minutes and looked stuck. Same budget per chunk, four chunks per second
+# (clock.interval_in_real_seconds -> TimeSpan(ceil(seconds * 1000)) takes a float).
+SCAN_TICK_S = 0.25
+
+
+def _scan_progress(scan):
+    if scan is None:
+        return dict(_IDLE_SCAN)
+    return scan.progress()
 
 
 def _refuse_observe_only(connection, name):
@@ -643,7 +658,7 @@ def _dispatch_preflight(connection):
         folder, "preflight_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
     _PREFLIGHT = preflight.PreflightScan(jobs, path, _run)
     _PREFLIGHT_HANDLE = alarms.add_alarm_real_time(
-        owner=_PREFLIGHT_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        owner=_PREFLIGHT_ALARM_OWNER, time_span=interval_in_real_seconds(SCAN_TICK_S),
         callback=_preflight_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True
@@ -710,6 +725,30 @@ def _food_affordance_row(affordance, object_id):
                 "error": food.error_text(error)}
 
 
+def _recipe_name(tag):
+    """D19 (live: every recipe read 'TuningBlueprint'): a menu tag is a lazy
+    TuningBlueprint instance (bytecode sims4/tuning/instances: __name__ is a property,
+    tuning_name a slot). Its own name first, the class name last."""
+    for read in (lambda: tag.__name__, lambda: tag.tuning_name):
+        try:
+            value = read()
+        except AttributeError:
+            continue
+        if type(value) is str and value:
+            return value
+    return type(tag).__name__
+
+
+def _has_menu(affordance):
+    """D20 (live: the stove's first crafting class was autonomous and has no
+    picker_rows_gen): only a class that offers a picker can show a menu."""
+    try:
+        affordance.picker_rows_gen
+    except AttributeError:
+        return False
+    return True
+
+
 def _food_menu_rows(affordance, obj, context, object_id, guid):
     # D2: picker_rows_gen is a flexmethod; __get__ binds (cls, None) already
     # (bytecode sims4/utils: partial(func, owner, instance)). Pass target, context.
@@ -734,10 +773,7 @@ def _food_menu_rows(affordance, obj, context, object_id, guid):
             break
         try:
             tag = item.tag
-            if isinstance(tag, type):
-                recipe_name = tag.__name__
-            else:
-                recipe_name = type(tag).__name__
+            recipe_name = _recipe_name(tag)
             rows.append({
                 "kind": "food_menu",
                 "object_id": object_id,
@@ -818,7 +854,8 @@ def _dispatch_food_scan(connection):
                 except Exception:
                     continue
             if object_id not in menus and any(
-                    type(item) is str and item.startswith("StartCrafting") for item in mro_names):
+                    type(item) is str and item.startswith("StartCrafting")
+                    for item in mro_names) and _has_menu(affordance):
                 menus[object_id] = {
                     "menu": True, "object_id": object_id, "guid64": guid,
                     "obj": obj, "affordance": affordance,
@@ -839,7 +876,7 @@ def _dispatch_food_scan(connection):
         folder, "food_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
     _FOOD = food.FoodScan(jobs, path, _run)
     _FOOD_HANDLE = alarms.add_alarm_real_time(
-        owner=_FOOD_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        owner=_FOOD_ALARM_OWNER, time_span=interval_in_real_seconds(SCAN_TICK_S),
         callback=_food_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True

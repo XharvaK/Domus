@@ -189,6 +189,24 @@ def _verdict_row(rows, experiment_id):
     return None
 
 
+BODY_MOTIVES = ("bladder", "hunger", "energy", "hygiene")
+DISTRESS_AT = 20
+
+
+def distress_text(rows):
+    """D23: name the body needs in distress (probe band: value <= 20), or None."""
+    found = []
+    for item in (_latest_presence(rows) or {}).get("motives") or ():
+        if not isinstance(item, dict) or item.get("id") not in BODY_MOTIVES:
+            continue
+        value = item.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if item.get("band") == "distress" or value <= DISTRESS_AT:
+            found.append("%s %d" % (item.get("id"), value))
+    return ", ".join(found) or None
+
+
 def matching_preflight(atlas_dir, tuned_path):
     """Rows from the newest preflight file that is newer than the tuned scan."""
     folder = Path(atlas_dir)
@@ -204,9 +222,29 @@ def matching_preflight(atlas_dir, tuned_path):
     return rows
 
 
-def wait_preflight(atlas_dir, since, timeout, sleep=time.sleep, monotonic=time.monotonic):
+# D22 (live 2026-10-04): a fixed 600 s wait met a 600 s preflight. Wait while the
+# partial file grows; give up after this long without growth, or at the hard cap.
+PREFLIGHT_STALL_S = 120.0
+
+
+def _partial_size(folder, since):
+    size = 0
+    for path in folder.glob("preflight_*.jsonl.partial"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if stat.st_mtime >= since:
+            size += stat.st_size
+    return size
+
+
+def wait_preflight(atlas_dir, since, timeout, sleep=time.sleep, monotonic=time.monotonic,
+                   stall=PREFLIGHT_STALL_S):
     """Rows of the first preflight file finished after `since` (D9)."""
     deadline = monotonic() + timeout
+    last_size = -1
+    grew_at = monotonic()
     while True:
         folder = Path(atlas_dir)
         files = [path for path in folder.glob("preflight_*.jsonl")
@@ -217,12 +255,19 @@ def wait_preflight(atlas_dir, since, timeout, sleep=time.sleep, monotonic=time.m
             _build, rows = load_tuned(path)
             if rows and rows[-1].get("kind") == "preflight_footer":
                 return rows
-        if monotonic() >= deadline:
+        now = monotonic()
+        size = _partial_size(folder, since)
+        if size != last_size:
+            last_size = size
+            grew_at = now
+        if now >= deadline:
             raise TimeoutError("preflight footer")
+        if now - grew_at >= stall:
+            raise TimeoutError("preflight stalled for %d s" % int(now - grew_at))
         sleep(1.0)
 
 
-def fresh_preflight(client, timeout=600, sleep=time.sleep, monotonic=time.monotonic):
+def fresh_preflight(client, timeout=1800, sleep=time.sleep, monotonic=time.monotonic):
     """D9 (live 2026-10-04): the crawl used only an older preflight file, and none
     existed, so nothing was filtered. Ask for one and wait for its footer."""
     since = time.time() - 1
@@ -486,12 +531,22 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
             changed = "lineage_class" if status.get("lineage_class") != origin[0] else "designated_sim_id"
             raise CrawlStop("%s changed" % changed)
         item = None
+        now_rows = telemetry_rows() if telemetry_rows else _live_rows(client.paths)
         if survey:
-            now_rows = telemetry_rows() if telemetry_rows else _live_rows(client.paths)
             need = relief_survey.low_need(relief_survey.motives_of(_latest_presence(now_rows)))
             if need is not None:
                 item = relief_survey.cure_for(need, active)
+                # D24 (live): no cure found fell back to an unfiltered plan and pushed
+                # a shower upgrade into bladder distress.
+                if item is None:
+                    raise CrawlStop("relief survey: %s is low and no preflight-approved "
+                                    "cure for it is on the lot" % need)
         if item is None:
+            # D23 (live): two trials were pushed into a distress the rows already showed.
+            distressed = distress_text(now_rows)
+            if distressed is not None:
+                raise CrawlStop("the lab Sim needs care: %s (distress); no trial pushed"
+                                % distressed)
             candidates = plan(build, tuned_rows, atlas_db, limit, readonly=False, skip=skip,
                               preflight_rows=active)
             if not candidates:
@@ -580,7 +635,10 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
         if code == "NEED_DISTRESS":
             distress += 1
             if distress >= 2:
-                raise CrawlStop("the lab Sim needs care: feed/rest her, then restart")
+                distressed = distress_text(
+                    telemetry_rows() if telemetry_rows else _live_rows(client.paths))
+                raise CrawlStop("the lab Sim needs care: %s, then restart"
+                                % (distressed or "a body need is in distress"))
         else:
             distress = 0
         if len(outcomes) >= 5 and all(item == "PUSH_FAILED" for item in outcomes[-5:]):
@@ -641,11 +699,14 @@ def main(argv=None):
             raise ValueError("tuned scan has no sims_build")
         preflight_rows = None
         client = DomusTools(paths=paths)
-        if not args.no_preflight:
-            if args.dry_run:
-                preflight_rows = matching_preflight(tuned_path.parent, tuned_path)
-            else:
-                preflight_rows = fresh_preflight(client)
+        if args.no_preflight or args.dry_run:
+            # D24 (live): --no-preflight dropped all filtering instead of reusing the
+            # preflight that had just finished. It now means "do not run a new one".
+            preflight_rows = matching_preflight(tuned_path.parent, tuned_path)
+            print("preflight: %s" % ("reusing the newest file" if preflight_rows
+                                     else "none newer than the tuned scan; unfiltered"))
+        else:
+            preflight_rows = fresh_preflight(client)
         session = "none"
         if not args.dry_run:
             try:
@@ -657,7 +718,7 @@ def main(argv=None):
             atlas_db=paths.atlas_db, per_hour=args.per_hour, max_trials=args.max_trials,
             dry_run=args.dry_run, verdict_timeout_s=args.verdict_timeout_s,
             limit=args.limit, session=session, skip=tuple(args.skip),
-            preflight_rows=preflight_rows, use_preflight=not args.no_preflight,
+            preflight_rows=preflight_rows, use_preflight=preflight_rows is not None,
             survey=args.relief_survey)
     except CrawlStop as error:
         print(str(error))

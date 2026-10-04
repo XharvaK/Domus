@@ -219,6 +219,42 @@ def _load_field(entry, field):
     raise AttributeError(field)
 
 
+# Bytecode date_and_time: REAL_MILLISECONDS_PER_SIM_SECOND = 25, so a sim minute is
+# 1500 ticks.
+TICKS_PER_SIM_MINUTE = 1500.0
+
+
+def _current_value(entry, value, age):
+    """D25 (live: at speed 3 the cache of every need she was not refilling was up to
+    47554 ticks old). The game's own ContinuousStatistic._update_value, without its
+    write (bytecode statistics/continuous_statistic): change rate, or decay toward
+    convergence. Every call here was checked for stores across the game's statistic
+    classes; get_value and _update_value are never called. None if unreadable."""
+    try:
+        tracker = entry._tracker
+        if tracker is not None and tracker.should_suppress_calculations() is True:
+            return value
+        if age <= 0:
+            return value
+        minutes = age / TICKS_PER_SIM_MINUTE
+        change = float(entry._get_change_rate_without_decay())
+        decay = float(entry.get_decay_rate())
+        new = None
+        if change == 0 and decay != 0:
+            target = float(entry.convergence_value)
+            until = entry._calculate_minutes_until_value_is_reached_through_decay(target)
+            if until is not None and minutes > float(until):
+                new = target
+            rate = decay
+        else:
+            rate = change
+        if new is None:
+            new = value + minutes * rate
+        return float(new)
+    except Exception:
+        return None
+
+
 def _read_cached_motive(entry, now_ticks):
     """Return (row or None, fault or None). Fault is set only for a known motive."""
     guid = _motive_guid(entry)
@@ -258,6 +294,11 @@ def _read_cached_motive(entry, now_ticks):
     except (TypeError, ValueError):
         return None, "row_error:_last_update"
     if age < 0:
+        age = 0
+    current = _current_value(entry, value, age)
+    if current is not None:
+        # age_ticks is the age of the reading: 0 when this is the game's current value.
+        value = max(low, min(high, current))
         age = 0
     if high == low:
         normalized = None
