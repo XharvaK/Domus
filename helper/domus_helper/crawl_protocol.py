@@ -14,7 +14,10 @@ DENY_SUBSTRINGS = e2_trial.DENY_NAME_PARTS + HELPER_EXTRA_DENY
 
 RETRY_CODES = ("BODY_BUSY", "CLOCK_PAUSED")
 
-OUTCOMES = ("PASS", "OUTCOME_UNKNOWN", "TRIAL_REJECT", "PUSH_FAILED", "TIMEOUT")
+OUTCOMES = ("PASS", "OUTCOME_UNKNOWN", "TRIAL_REJECT", "PUSH_FAILED", "TIMEOUT",
+           "INTERRUPTED", "STALE_TARGET", "NEVER_STARTED", "PUSH_REFUSED")
+# Chained resume and completed-display affordances are not trials (DA6C).
+PROTOCOL_SKIP = ("_Resume", "CompletedDisplay")
 
 
 def name_blocked(name):

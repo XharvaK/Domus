@@ -56,6 +56,14 @@ def _int_or_null(value):
     return None
 
 
+def affordances_of(obj):
+    """The class-tuned super affordances, read as data (same source as the scan)."""
+    tuned = _plain(obj, "_super_affordances", False)
+    if type(tuned) not in (list, tuple, frozenset, set):
+        return []
+    return list(tuned)
+
+
 def _row(obj):
     found = _plain(obj, "id", True)
     object_id = None if _int_or_null(found) is None else str(found)

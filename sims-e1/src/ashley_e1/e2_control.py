@@ -324,22 +324,7 @@ class E2Control:
             self.experiments[experiment_id] = experiment
             self.open_ids.add(interaction_id)
 
-            def _finished(finished_interaction, _experiment=experiment):
-                try:
-                    finishing = str(finished_interaction.finishing_type)
-                except Exception:
-                    finishing = "UNREADABLE"
-                _experiment.finish(finishing[:schema.MAX_DISPLAY_TEXT_LENGTH])
-                self._experiment_event("FINISHED_CALLBACK",
-                                       experiment_id=_experiment.experiment_id,
-                                       interaction_id=_experiment.interaction_id,
-                                       finishing_type=_experiment.finishing_type,
-                                       claims=dict(_experiment.claims))
-
-            try:
-                e2_actuator.watch_finish(interaction, _finished)
-            except Exception:
-                pass
+            self._watch_finish(experiment, interaction)
             self._experiment_event("PUSHED", experiment_id=experiment_id, token=token,
                                    object_id=object_id, interaction_id=interaction_id,
                                    claims=dict(experiment.claims))
@@ -372,7 +357,14 @@ class E2Control:
             self.experiment_counter += 1
             experiment_id = "%s-%d" % (self._session_id()[:8], self.experiment_counter)
             pushed_ns = time.perf_counter_ns()
-            interaction, detail = e2_actuator.push_affordance(sim, obj, offers[0], context)
+            interaction, detail, kind = e2_actuator.push_affordance(
+                sim, obj, offers[0], context)
+            if interaction is None and kind == "refused":
+                reason = (detail or "")[:schema.MAX_DETAIL_LENGTH]
+                self._experiment_event("PUSH_REFUSED", experiment_id=experiment_id,
+                                       object_id=object_id, guid64=guid64, detail=reason)
+                self._say(connection, "PUSH_REFUSED %s" % reason)
+                return False
             if interaction is None:
                 self.storm.fail()
                 self._experiment_event("PUSH_FAILED", experiment_id=experiment_id,
@@ -394,22 +386,8 @@ class E2Control:
             self.experiments[experiment_id] = experiment
             self.open_ids.add(interaction_id)
 
-            def _finished(finished_interaction, _experiment=experiment):
-                try:
-                    finishing = str(finished_interaction.finishing_type)
-                except Exception:
-                    finishing = "UNREADABLE"
-                _experiment.finish(finishing[:schema.MAX_DISPLAY_TEXT_LENGTH])
-                self._experiment_event("FINISHED_CALLBACK",
-                                       experiment_id=_experiment.experiment_id,
-                                       interaction_id=_experiment.interaction_id,
-                                       finishing_type=_experiment.finishing_type,
-                                       claims=dict(_experiment.claims))
-
-            try:
-                e2_actuator.watch_finish(interaction, _finished)
-            except Exception:
-                pass
+            experiment.sim_ref = sim
+            self._watch_finish(experiment, interaction)
             self._experiment_event("PUSHED", experiment_id=experiment_id,
                                    object_id=object_id, interaction_id=interaction_id,
                                    guid64=guid64, card_class="interaction",
@@ -451,10 +429,33 @@ class E2Control:
                           "excluded": excluded, "sit_offer_count": view["object"]["sit_offer_count"]}
         return view, sim, obj, offers, context
 
+    def _watch_finish(self, experiment, interaction):
+        def _finished(finished_interaction, _experiment=experiment):
+            try:
+                finishing = str(finished_interaction.finishing_type)
+            except Exception:
+                finishing = "UNREADABLE"
+            mono = None
+            if observers is not None:
+                try:
+                    mono = observers._monotonic_ns()
+                except Exception:
+                    mono = None
+            _experiment.finish(finishing[:schema.MAX_DISPLAY_TEXT_LENGTH], mono)
+            self._experiment_event("FINISHED_CALLBACK",
+                                   experiment_id=_experiment.experiment_id,
+                                   interaction_id=_experiment.interaction_id,
+                                   finishing_type=_experiment.finishing_type,
+                                   claims=dict(_experiment.claims))
+
+        try:
+            e2_actuator.watch_finish(interaction, _finished)
+        except Exception:
+            return
+
     def _close_experiment(self, experiment):
         experiment.close()
         self._emit_verdict(experiment)
-        self._end_trial_action(experiment)
 
     def _end_trial_action(self, experiment):
         """A25: a trial's own action does not outlive its verdict.
@@ -465,27 +466,52 @@ class E2Control:
         try:
             interaction = experiment.interaction_ref
         except AttributeError:
-            return
+            interaction = None
         experiment.interaction_ref = None
-        if interaction is None:
+        try:
+            children = list(experiment.children)
+        except AttributeError:
+            children = []
+        try:
+            sim = experiment.sim_ref
+        except AttributeError:
+            sim = None
+        if interaction is None and not children:
             return
-        if experiment.claims["FINISHED"]:
-            result = "ALREADY_FINISHED"
+        if experiment.claims["FINISHED"] or interaction is None:
+            result = "ALREADY_FINISHED" if interaction is None or experiment.claims["FINISHED"] else "CANCELLED"
         else:
             try:
                 e2_actuator.cancel_own(interaction)
                 result = "CANCELLED"
             except Exception as error:
                 result = ("CANCEL_FAILED:%s" % type(error).__name__)[:schema.MAX_DETAIL_LENGTH]
+        if interaction is None:
+            result = "ALREADY_FINISHED"
+        try:
+            cancelled = e2_actuator.cancel_ids(sim, children)
+        except Exception:
+            cancelled = 0
+        if cancelled:
+            result = ("%s children=%d" % (result, cancelled))[:schema.MAX_DETAIL_LENGTH]
         self._experiment_event("TRIAL_CLEANUP", experiment_id=experiment.experiment_id,
                                object_id=experiment.object_id,
                                interaction_id=experiment.interaction_id, detail=result)
 
     def _emit_verdict(self, experiment):
         self.open_ids.discard(experiment.interaction_id)
-        detail = "foreign_roots=%d incomplete_rows=%d continuation=%d mixers=%d" % (
+        detail = "foreign_roots=%d incomplete_rows=%d continuation=%d mixers=%d family=%d" % (
             len(experiment.foreign_roots), experiment.incomplete_rows,
-            len(experiment.continuation_entries), len(experiment.child_mixers))
+            len(experiment.continuation_entries), len(experiment.child_mixers),
+            len(experiment.children))
+        finishing = experiment.finishing_type
+        natural = finishing == "FinishingType.NATURAL"
+        user_cancel = finishing == "FinishingType.USER_CANCEL"
+        if finishing is not None and not natural and not user_cancel:
+            detail += " interrupted=%s" % finishing
+        if (experiment.verdict == e2_registry.OUTCOME_UNKNOWN and
+                not experiment.claims["STARTED"]):
+            detail += " never_started=1"
         detail = detail[:schema.MAX_DETAIL_LENGTH]
         extra = {}
         card = experiment.card
@@ -505,6 +531,7 @@ class E2Control:
                                code=experiment.verdict, claims=dict(experiment.claims),
                                finishing_type=experiment.finishing_type, detail=detail,
                                **extra)
+        self._end_trial_action(experiment)
 
     # ----------------------------------------------------------------- speed
     def cmd_pause(self, connection):

@@ -2,18 +2,22 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.9.3 (DA6A trial command)
+## Current build: 2.10.0 (DA6C failure classes)
 
-The source is version `2.9.3` (`src/ashley_e1/__init__.py`,
+The source is version `2.10.0` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 5, schema 4 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.9.3 has not yet passed its E2 first-load gate or trials; those run on the
+2.10.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
 with an interaction card. Sit and sit_trial are unchanged. After the verdict the probe
 cancels only the interaction it pushed for that trial, so the next trial finds an idle body (A25).
+
+## Crawl (DA6)
+
+`preflight` (LAB only, not during calibrate) asks the game which tuned offers it would refuse and writes `preflight_<build>_<ms>.jsonl` beside the tuned scan. The crawl plans only rows that preflight marked ok when that file is newer than the tuned scan (`--no-preflight` turns the filter off). Game refusals are `PUSH_REFUSED` and are not push failures. A missing object is `STALE_TARGET` and stays plannable on another object; three of those in one run repeat the tuned scan and the preflight. A push that never runs is `NEVER_STARTED`. A displacement before attribution is `INTERRUPTED`. Natural finishes and script-children of our own push can pass. At the start the crawl prints one environment line naming objects whose every tested affordance was refused for the same reason, so a burnt or broken object can be repaired before trials. Outcome lines carry `needs_before` and `needs_after`. `OUTCOME_UNKNOWN` rows from probes before 2.10.0 stay in the ledger and do not count toward qualification.
 
 Owner commands (also available through the local command inbox when the zone reaches RUNNING):
 
@@ -43,8 +47,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.9.3
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.9.3
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.10.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.10.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

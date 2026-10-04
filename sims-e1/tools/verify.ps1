@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.9.3",
+    [string]$Version = "2.10.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$HostPythonPath = "",
     [switch]$SkipReproducible

@@ -17,7 +17,7 @@ APPROVED_GAME_ROOTS = {
 PRODUCTION_MODULES = (
     "__init__", "probe", "observers", "snapshot", "schema", "writer",
     "e2_admission", "e2_lineage", "e2_registry", "e2_cards", "e2_actuator", "e2_control", "cmdbox",
-    "e2_trial",
+    "e2_trial", "preflight",
 )
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
