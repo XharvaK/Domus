@@ -156,6 +156,16 @@ class PollOnceTests(unittest.TestCase):
             "zone_id": "777", "lot_id": "888", "room": "3",
             "position": {"x": 2.0, "y": 0.0, "z": 3.0, "level": 0}})
 
+    def test_session_open_accepts_the_v6_place(self):
+        """D39 (live 2026-10-05): session_open still validated zone.position as a string
+        id, so the first v6 sample was refused and sampling stopped silently."""
+        row = self.row()
+        self.probe._TELEMETRY_SESSION_ID = row["telemetry_session_id"]
+        self.probe._ARMED_NAME = "LAB_E1_FORK"
+        opened = self.probe._session_open_from(row)
+        self.probe.schema.validate_record(opened)
+        self.assertEqual(opened["zone"]["position"]["level"], 0)
+
     def test_company_body_first_then_nearest(self):
         """D37: instanced_sims_on_active_lot_gen yields Sims; presence was always empty."""
         presence = self.row()["presence"]

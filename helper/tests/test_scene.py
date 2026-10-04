@@ -25,7 +25,7 @@ FLOWERS = [_obj(str(100 + i), "object_GardeningFlower_Chrysanthemum", 30.0 + i, 
 
 
 def test_layers_near_far_available():
-    texts = {"11": "Eggs and Toast"}
+    texts = {"10": "Eggs and Toast", "11": "Party Size (8)"}
     rows = [{"kind": "preflight", "object_id": "1", "name": "generic_food_Grab", "ok": True},
             {"kind": "preflight", "object_id": "1", "name": "Food_CallToMeal", "ok": False,
              "reason": "No valid sims to call."},
@@ -37,6 +37,8 @@ def test_layers_near_far_available():
     platter = result["near"][0]
     assert platter["name"] == "Eggs and Toast" and platter["name_source"] == "GAME_TEXT"
     assert platter["servings_left"] == 7.0 and platter["made_by"] == "E1 Proband"
+    assert platter["portion"] == "Party Size (8)"
+    assert platter["condition"] == ["Freshness_Fresh"]
     assert platter["offers"] == {"allowed": ["generic_food_Grab"], "refused": [
         {"name": "Food_CallToMeal", "game_reason": "No valid sims to call."}]}
     assert result["near"][1]["states"] == {"Freshness": "Freshness_Spoiled"}
@@ -56,11 +58,11 @@ def test_far_lines_and_name_fallback():
 
 
 def test_budgets_count_omissions_and_order_is_stable():
-    crowd = [_obj(str(i), "object_counter", 1.0 + i * 0.01, "3",
+    crowd = [_obj(str(i), "object_counter", 1.0 + i * 0.001, "3",
                   states={"state_%d" % k: "value_%d" % k for k in range(10)})
-             for i in range(40)]
+             for i in range(160)]
     first = scene.layers({"body": BODY}, crowd)
     second = scene.layers({"body": BODY}, list(reversed(crowd)))
     assert first == second
     assert len(json.dumps(first["near"], separators=(",", ":"))) <= scene.BUDGET["near"]
-    assert first["near_omitted"] == 40 - len(first["near"]) > 0
+    assert first["near_omitted"] == 160 - len(first["near"]) > 0
