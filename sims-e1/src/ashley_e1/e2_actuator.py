@@ -39,6 +39,17 @@ def find_object(object_id):
     return manager.get(numeric)
 
 
+def offered(obj, context, cap=64):
+    """Read: what the object offers now, as a trial sees it (class-tuned and
+    component-given, such as a served plate's eat). At most cap."""
+    found = []
+    for affordance in obj.super_affordances(context):
+        if len(found) >= cap:
+            break
+        found.append(affordance)
+    return found
+
+
 def sit_offers(obj, context):
     """Read: sit affordances (guid64 31564) the object itself offers."""
     return offers_for(obj, context, SIT_AFFORDANCE_GUID)

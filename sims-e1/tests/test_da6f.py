@@ -323,3 +323,61 @@ class RejectCodeTests(Hosted):
         self.assertEqual(code(["other", "TRIAL_REJECT OBJECT_EXCLUDED x"]), "OBJECT_EXCLUDED")
         self.assertIsNone(code([]))
         self.assertIsNone(code(["TRIAL_PUSHED a-1 interaction 50", None]))
+
+
+class Collect_Clean_Dish(object):
+    guid64 = 13173
+
+
+class generic_consume_food(object):
+    guid64 = 13433
+
+
+class _Plate(object):
+    _super_affordances = (Collect_Clean_Dish,)
+
+    def __init__(self, object_id):
+        self.id = int(object_id)
+        self.offered_calls = 0
+
+    def super_affordances(self, context=None):
+        self.offered_calls += 1
+        yield Collect_Clean_Dish
+        yield generic_consume_food
+
+
+class ComponentOfferTests(Hosted):
+    """D35: 2c815d4c-2 cooked a grilled cheese; the plate's eat (generic_consume_food,
+    from its consumable component) was in neither preflight nor the food scan."""
+
+    def _rows(self, command, scan_attr, tick):
+        from test_da6c import PreflightTests
+        PreflightTests._manager(self, {self.plate.id: self.plate})
+        connection = self.probe._InboxReply("helper")
+        self.assertTrue(self.probe._inbox_dispatch({"command": command, "args": {}},
+                                                   connection), connection.code)
+        scan = getattr(self.probe, scan_attr)
+        while scan.state == "running":
+            tick()
+        import json
+        with open(scan.out_path, encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+
+    def setUp(self):
+        super(ComponentOfferTests, self).setUp()
+        self.ready()
+        self.assertTrue(self.probe._start_inbox_pump("import"))
+        self.base.sim.test_super_affordance = lambda affordance, obj, context: True
+        self.plate = _Plate("845576415849939098")
+
+    def test_preflight_lists_the_plate_eat_once(self):
+        rows = self._rows("preflight", "_PREFLIGHT", self.probe._preflight_tick)
+        names = [row["name"] for row in rows if row["kind"] == "preflight"]
+        self.assertEqual(sorted(names), ["Collect_Clean_Dish", "generic_consume_food"])
+        self.assertEqual(self.plate.offered_calls, 1)
+
+    def test_food_scan_names_the_plate_eat(self):
+        _load_pure()
+        from ashley_e1 import food
+        self.assertTrue(food.name_hit("generic_consume_food", 13433))
+        self.assertFalse(food.name_hit("Collect_Clean_Dish", 13173))
