@@ -51,6 +51,9 @@ class Bridge:
         else:
             self.detected_build = detected_build
         self.monitor = AttachmentMonitor(self.detected_build)
+        # S0: moodlet names in the game's own words (local string index; None if absent).
+        from .strings import Resolver
+        self._resolve_text = Resolver(self.paths)
         creds = load_credentials(self.paths)
         if client is _AUTO:
             self.client = None if creds.disabled else AshleyClient(creds.url, creds.token)
@@ -199,6 +202,7 @@ class Bridge:
                     "guid": self._extractor.guid,
                     "lineage_class": self._extractor.lineage_class,
                     "row": self._last_row,
+                    "resolve_text": self._resolve_text,
                 })
                 scorer = run_scorer(self.scorer, json.loads(json.dumps(obs)))
                 if self.client is not None and not self._telemetry_only:
@@ -259,6 +263,7 @@ def main(argv=None):
             if archived_at is None or now - archived_at >= ARCHIVE_EVERY_S:
                 archived_at = now
                 _archive_quietly(now)
+                _strings_quietly()
             bridge.tick(int(now * 1000))
             time.sleep(args.interval)
         except KeyboardInterrupt:
@@ -268,6 +273,20 @@ def main(argv=None):
 # D38: the probe stops recording at 200 MiB of telemetry; finished sessions older
 # than a day move to the helper's data folder (verified gzip) at start and every 6 h.
 ARCHIVE_EVERY_S = 6 * 3600
+
+
+def _strings_quietly():
+    """S0: build or refresh the local string index (skipped when nothing changed)."""
+    from pathlib import Path
+    from . import strings
+    from .paths import DEFAULT_GAME_ROOT
+    paths = Paths.from_env()
+    if paths.game_root is None:
+        paths = Paths(paths.sims_root, Path(DEFAULT_GAME_ROOT))
+    try:
+        strings.build(paths)
+    except Exception as error:
+        print("string index skipped: %s" % type(error).__name__)
 
 
 def _archive_quietly(now):

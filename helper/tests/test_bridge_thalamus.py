@@ -410,7 +410,9 @@ def test_ds3_portrait_has_time_room_company_moodlets():
         "social": [{"actor_id": "200", "affordance_text": "<class 'social_Chat'>"}],
         "mood": {"type": "1", "intensity": 1, "name": "Mood_Uncomfortable"},
     }
-    portrait = observation._portrait(row)
+    portrait = observation._portrait(row, {"3291712568": "Hungry"}.get)
+    assert portrait["moodlets"][0]["text"] == "Hungry"
+    assert observation._portrait(row)["moodlets"][0]["text"] is None
     assert portrait["time"]["weekday"] == "Sunday" and portrait["time"]["hour"] == 7
     assert portrait["zone"]["room"] == "3"
     assert [item["name"] for item in portrait["company"]] == ["Bella Goth"]

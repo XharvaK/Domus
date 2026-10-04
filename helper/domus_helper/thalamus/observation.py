@@ -55,7 +55,18 @@ def _fit_strings(facts):
     return fitted
 
 
-def _portrait(row):
+def _resolve(resolve, key):
+    if resolve is None or key is None:
+        return None
+    try:
+        text = resolve(key)
+    except Exception:
+        return None
+    return text[:80] if isinstance(text, str) else None
+
+
+def _portrait(row, resolve=None):
+    """resolve: string key -> the game's own text (S0), or None when unknown."""
     row = row or {}
     needs = {}
     for item in row.get("motives") or []:
@@ -87,8 +98,8 @@ def _portrait(row):
         if not isinstance(item, dict) or item.get("kind") != "MOODLET" or item.get("visible") is False:
             continue
         moodlets.append({"id": item.get("tuning_id"), "name": item.get("tuning_name"),
-                         "text_key": item.get("text_key"), "weight": item.get("magnitude"),
-                         "mood": item.get("mood_type")})
+                         "text": _resolve(resolve, item.get("text_key")),
+                         "weight": item.get("magnitude"), "mood": item.get("mood_type")})
     addressed = []
     for item in row.get("social") or []:
         if isinstance(item, dict):
@@ -159,5 +170,5 @@ def build(decision, ctx):
         "expires_at_ms": source + _WINDOW_MS,
         "lineage_class": lineage,
         "percepts": percepts,
-        "portrait": _portrait(row),
+        "portrait": _portrait(row, ctx.get("resolve_text")),
     }
