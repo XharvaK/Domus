@@ -70,6 +70,16 @@ def wait_footer(atlas_dir, since, timeout, sleep):
         sleep(0.25)
 
 
+def errors_of(rows):
+    """D10: an all-error scan printed 706 rows of None. Count and show the reasons."""
+    found = {}
+    for row in rows:
+        if row.get("kind") in ("food_affordance", "food_menu") and row.get("error"):
+            key = str(row.get("error"))[:120]
+            found[key] = found.get(key, 0) + 1
+    return sorted(found.items(), key=lambda item: -item[1])
+
+
 def summarize(rows):
     menus = {}
     for row in rows:
@@ -78,7 +88,7 @@ def summarize(rows):
         menus.setdefault(str(row.get("object_id")), []).append(row)
     table = []
     for row in rows:
-        if row.get("kind") != "food_affordance":
+        if row.get("kind") != "food_affordance" or row.get("error"):
             continue
         items = menus.get(str(row.get("object_id")), [])
         enabled = [item for item in items if item.get("is_enable") is True]
@@ -161,7 +171,25 @@ def scan(client, timeout=120, sleep=time.sleep):
     since = time.time()
     client.command("food_scan", {})
     _path, rows = wait_footer(client.paths.atlas_dir, since, timeout, sleep)
-    return summarize(rows)
+    return summarize(rows), errors_of(rows)
+
+
+def fallback_rows(preflight_rows):
+    """D10: without a usable scan, the probe-approved fridge routes still feed her.
+    The probe decides the card from the class (food_route), not from this row."""
+    found = []
+    for row in preflight_rows or ():
+        if row.get("kind") != "preflight" or row.get("ok") is not True:
+            continue
+        try:
+            guid = int(row.get("guid64"))
+        except (TypeError, ValueError):
+            continue
+        if guid in (SNACK_GUID, COOK_GUID):
+            found.append({"kind": "food_affordance", "object_id": row.get("object_id"),
+                          "guid64": guid, "name": row.get("name"),
+                          "food_route": "auto_craft"})
+    return found
 
 
 def eat(client, timeout=EAT_TIMEOUT_S, sleep=time.sleep, monotonic=time.monotonic,
@@ -183,6 +211,8 @@ def eat(client, timeout=EAT_TIMEOUT_S, sleep=time.sleep, monotonic=time.monotoni
         raise ValueError("food scan has no sims_build")
     preflight = _newest_preflight(path.parent)
     picked = choose(rows, preflight)
+    if picked is None:
+        picked = choose(fallback_rows(preflight), preflight)
     if picked is None:
         print("eat no-route")
         return 2
@@ -237,10 +267,14 @@ def main(argv=None):
     client = DomusTools(paths=Paths.from_env())
     try:
         if args.scan:
-            for row in scan(client):
+            table, errors = scan(client)
+            for row in table:
                 print("%s %s %s excluded=%s menu=%s enabled=%s price=%s" % (
                     row["route"], row["guid64"], row["name"], row["excluded"],
                     row["menu"], row["enabled"], row["cheapest"]))
+            for text, count in errors[:5]:
+                print("error x%d %s" % (count, text))
+            print("rows %d errors %d" % (len(table), sum(count for _text, count in errors)))
             return 0
         return eat(client)
     except Exception as error:

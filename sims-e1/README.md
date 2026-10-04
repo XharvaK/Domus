@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.11.0 (DA6D food routes)
+## Current build: 2.11.1 (DA6E live hardening)
 
-The source is version `2.11.0` (`src/ashley_e1/__init__.py`,
+The source is version `2.11.1` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 5, schema 4 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.11.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.11.1 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -25,9 +25,15 @@ Two pushes never open a dialog when the source is the probe's script source. `au
 
 Every other picker stays excluded, including the user-directed fridge pickers (77672, 13387, 76891–76905, 75761, 156400–156404) and ordering, catering, and purchase pickers. `Interaction.test` does not read `allow_user_directed`, so exclusion is the class route, not that tuning flag. Social and deny-name checks still apply to a food route.
 
-`food_scan` (LAB, not during calibrate) writes `food_<build>_<ms>.jsonl` and reads each crafting menu with `picker_rows_gen` and no instance, which does not reserve ingredients. `python -m domus_helper.food --eat` pushes one route, preferring an auto-pick leftover or snack, then snack 13397, then cook 13388, and skips a route preflight refused. The crawl never plans 13388 or 13397. The card is hunger, direction +1, over 600 s. A food trial's family is left running at the verdict when someone is still running and hunger is still rising; a push that is still only queued is cancelled.
+`food_scan` (LAB, not during calibrate) writes `food_<build>_<ms>.jsonl` and reads each crafting menu with `picker_rows_gen` and no instance, which does not reserve ingredients. `python -m domus_helper.food --eat` pushes one route, preferring an auto-pick leftover or snack, then snack 13397, then cook 13388, and skips a route preflight refused. The crawl never plans 13388 or 13397. The card is hunger, direction +1, judged over the whole family (the push hands off to the game's own phases), with a 600 s ceiling. It closes once the effect has held 10 s, or 30 s after the family was last live. A running food family is never cancelled; a push that is still only queued is cancelled.
 
 On the first live run, watch household funds, a platter left out, whether the stove is used, and a fire.
+
+## Live hardening (DA6E)
+
+The first real-needs session (2.11.0, no fill cheat) showed each of these. With a body need in distress the trial guard still admits a cure for it: food for hunger, sleep or a nap for energy, the toilet for bladder, a shower or bath for hygiene. Cleaning or upgrading the same object is never a cure. A trial pushed while a need it relieves is low is a relief trial: its running action is never cut at the verdict. A stale motive reading is no reading for that row, not an ambiguity for the trial.
+
+The crawl asks for a fresh preflight when it starts. After a relief trial it waits for her to finish and logs `needs_finish`. `crawl --relief-survey` is an opt-in lab mode: when a body need is at or under 35 it measures that need's cure before the next trial. That is telemetry for the references Ashley reads. It is not her policy; what she does is her own decision.
 
 Owner commands (also available through the local command inbox when the zone reaches RUNNING):
 
@@ -57,8 +63,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.11.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.11.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.11.1
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.11.1
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under
