@@ -12,6 +12,8 @@ from clock import ClockSpeedMode, GameSpeedChangeSource  # TARGET_BYTECODE 1.128
 from interactions.context import InteractionContext, QueueInsertStrategy  # TARGET_BYTECODE 1.128.
 from interactions.priority import Priority  # TARGET_BYTECODE 1.128.
 
+from . import e2_trial
+
 SIT_AFFORDANCE_GUID = 31564
 PAUSE_REASON = "ashley_e2_pause"
 RELEASE_REASON = "ashley_e2_release"
@@ -36,18 +38,48 @@ def find_object(object_id):
 
 def sit_offers(obj, context):
     """Read: sit affordances (guid64 31564) the object itself offers."""
+    return offers_for(obj, context, SIT_AFFORDANCE_GUID)
+
+
+def offers_for(obj, context, guid64):
+    """Read: affordances the object offers whose guid64 equals the request."""
+    wanted = int(guid64)
     offers = []
     for affordance in obj.super_affordances(context):
         try:
-            if int(affordance.guid64) == SIT_AFFORDANCE_GUID:
+            if int(affordance.guid64) == wanted:
                 offers.append(affordance)
         except (TypeError, ValueError, AttributeError):
             continue
     return offers
 
 
-def push_sit(sim, obj, affordance, context):
-    """Act: push exactly one admitted sit. Returns (interaction_or_None, detail)."""
+def excluded(affordance):
+    """None when a parameter-free trial may push this affordance, else a reason."""
+    for cls in _mro(affordance):
+        try:
+            if "Picker" in cls.__name__:
+                return "picker"
+        except Exception:
+            continue
+    try:
+        social = affordance.is_social
+    except Exception:
+        social = False
+    if social is True:
+        return "social"
+    try:
+        low = str(affordance.__name__).lower()
+    except Exception:
+        low = ""
+    for part in e2_trial.DENY_NAME_PARTS:
+        if part in low:
+            return "deny_name"
+    return None
+
+
+def push_affordance(sim, obj, affordance, context):
+    """Act: push exactly one affordance. Returns (interaction_or_None, detail)."""
     result = sim.push_super_affordance(affordance, obj, context)
     try:
         execute_result = result.execute_result
@@ -63,6 +95,11 @@ def push_sit(sim, obj, affordance, context):
     if interaction is None:
         return None, _bounded(repr(execute_result))
     return interaction, None
+
+
+def push_sit(sim, obj, affordance, context):
+    """Act: push exactly one admitted sit. Returns (interaction_or_None, detail)."""
+    return push_affordance(sim, obj, affordance, context)
 
 
 def watch_finish(interaction, callback):
@@ -92,3 +129,11 @@ def unsubscribe_saves(callback):
 
 def _bounded(text):
     return str(text)[:128]
+
+
+def _mro(affordance):
+    target = affordance if isinstance(affordance, type) else type(affordance)
+    try:
+        return target.mro()
+    except Exception:
+        return ()

@@ -65,6 +65,19 @@ def validate_card(card):
     return card
 
 
+def interaction_card(object_id, affordance_guid64):
+    card = {
+        "card_class": "interaction",
+        "affordance_guid64": int(affordance_guid64),
+        "object_id": object_id,
+        "signature": None,
+        "motive": None,
+        "direction": None,
+        "min_net_delta": NEED_MIN_NET_DELTA,
+    }
+    return validate_card(card)
+
+
 def posture_card(object_id, signature, affordance_guid64=None):
     card = {
         "card_class": "posture",

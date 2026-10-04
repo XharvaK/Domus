@@ -3,11 +3,16 @@ import json
 
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
-            'calibrate')
+            'calibrate', 'trial')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
 KEYS = {'v', 'id', 'issued_at_ms', 'expires_at_ms', 'issuer', 'command', 'args'}
+
+
+def _digits(value):
+    return (type(value) is str and 1 <= len(value) <= 20 and
+            all(ch in '0123456789' for ch in value))
 
 
 def valid_hex(value, length):
@@ -75,6 +80,9 @@ def parse(raw_bytes, now_ms, used_ids):
                 all(ch in '0123456789' for ch in args['object_id']))
     elif good and name == 'sit':
         good = set(args) == {'token'} and valid_hex(args['token'], 16)
+    elif good and name == 'trial':
+        good = (set(args) == {'object_id', 'guid64'} and
+                _digits(args.get('object_id')) and _digits(args.get('guid64')))
     elif good:
         good = not args
     if not good:

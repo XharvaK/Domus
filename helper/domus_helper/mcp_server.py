@@ -15,7 +15,7 @@ from .paths import Paths
 from .vendor.cmdbox import valid_issuer
 
 LAB_NAMES = {"LAB_E1", "LAB_E1_FORK"}
-ACTUATING = {"arm", "start", "prepare", "sit", "sit_trial", "pause", "release"}
+ACTUATING = {"arm", "start", "prepare", "sit", "sit_trial", "pause", "release", "trial"}
 
 
 class SafetyError(RuntimeError):
@@ -139,6 +139,11 @@ def sit(token: str) -> dict:
 @server.tool()
 def sit_trial(object_id: str) -> dict:
     return asdict(tools().command("sit_trial", {"object_id": object_id}))
+
+
+@server.tool()
+def trial(object_id: str, guid64: str) -> dict:
+    return asdict(tools().command("trial", {"object_id": object_id, "guid64": guid64}))
 
 
 @server.tool()

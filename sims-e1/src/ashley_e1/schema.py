@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 5
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v5"
-PROBE_VERSION = "2.8.0"
+PROBE_VERSION = "2.9.0"
 ACCEPTED_SCHEMA_VERSIONS = (4, 5)
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
@@ -56,7 +56,8 @@ E2_EVENT_KINDS = ("experiment_event", "speed_event", "lineage_event", "command_e
 E2_PAYLOAD_KEYS = {
     "command_event": ("id", "issuer", "command", "status", "code"),
     "experiment_event": ("phase", "code", "experiment_id", "object_id", "token",
-                         "interaction_id", "claims", "finishing_type", "detail"),
+                         "interaction_id", "claims", "finishing_type", "detail",
+                         "guid64", "card_class", "tuning_name", "ambiguous"),
     "speed_event": ("phase", "code", "detail"),
     "lineage_event": ("record", "guid", "slot_id", "sim_id", "ticks",
                       "loaded_from_slot_id", "lineage_class", "session_uuid"),
@@ -64,11 +65,11 @@ E2_PAYLOAD_KEYS = {
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
     "ADMIT_REJECT", "PUSHED", "PUSH_FAILED", "CLAIM", "FINISHED_CALLBACK",
-    "VERDICT", "CALIBRATE_START", "CALIBRATE_SPEED",
+    "VERDICT", "CALIBRATE_START", "CALIBRATE_SPEED", "TRIAL_REJECT",
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
-            "calibrate")
+            "calibrate", "trial")
 
 
 def _command_id(value):
@@ -454,6 +455,11 @@ def _validate_e2(row):
     if kind not in E2_EVENT_KINDS:
         _require(payload is None, "%s carries e2 payload" % kind)
         return
+    if kind == "experiment_event" and isinstance(payload, dict):
+        # Probe 2.9.0 adds these. Schema 5 rows written before that omit them.
+        for key in ("guid64", "card_class", "tuning_name", "ambiguous"):
+            if key not in payload:
+                payload[key] = None
     _require(isinstance(payload, dict) and
              set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
@@ -480,6 +486,18 @@ def _validate_e2(row):
                            "finishing_type", False)
         if payload["detail"] is not None:
             bounded_string(payload["detail"], MAX_DETAIL_LENGTH, "detail", False)
+        if payload["guid64"] is not None:
+            string_id(payload["guid64"], "experiment guid64")
+        if payload["card_class"] is not None:
+            _require(payload["card_class"] in ("posture", "need", "interaction", "social"),
+                     "experiment card_class")
+        if payload["tuning_name"] is not None:
+            bounded_string(payload["tuning_name"], 128, "experiment tuning_name", False)
+        ambiguous = payload["ambiguous"]
+        if ambiguous is not None:
+            _require(type(ambiguous) is list and len(ambiguous) <= 16, "experiment ambiguous")
+            for item in ambiguous:
+                bounded_string(item, 64, "experiment ambiguous", False)
     elif kind == "speed_event":
         _require(payload["phase"] in SPEED_PHASES, "speed phase")
         for key in ("code", "detail"):

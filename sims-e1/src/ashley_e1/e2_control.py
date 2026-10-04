@@ -8,8 +8,10 @@ The host supplies emit/state callables so this module never imports probe.
 import time
 
 from . import e2_admission
+from . import e2_cards
 from . import e2_lineage
 from . import e2_registry
+from . import e2_trial
 from . import schema
 from . import snapshot
 
@@ -34,15 +36,25 @@ def _now():
     return time.perf_counter()
 
 
+def _tuning_name(affordance):
+    target = affordance if isinstance(affordance, type) else type(affordance)
+    try:
+        name = target.__name__
+    except Exception:
+        name = ""
+    return str(name)[:128]
+
+
 class E2Control:
     def __init__(self, emit, get_state, get_session_id, get_armed_snapshot,
-                 get_writer, output):
+                 get_writer, output, get_armed_name=None):
         self._emit_row = emit
         self._state = get_state
         self._session_id = get_session_id
         self._armed_snapshot = get_armed_snapshot
         self._writer = get_writer
         self._output = output
+        self._armed_name = get_armed_name or (lambda: None)
         self._reset_state()
 
     # ------------------------------------------------------------------ state
@@ -59,6 +71,7 @@ class E2Control:
         self.save_subscribed = False
         self.pause_request = None
         self.experiment_counter = 0
+        self.storm = e2_trial.StormCounter()
 
     def available(self):
         return (e2_actuator is not None and observers is not None and
@@ -338,6 +351,104 @@ class E2Control:
             self._say(connection, "ADMIT_REJECT %s" % code)
             return False
 
+    def cmd_trial(self, object_id, guid64, connection):
+        """Push one parameter-free affordance and judge it with an interaction card."""
+        if not self.available():
+            self._say(connection, "E2_UNAVAILABLE")
+            return False
+        if self.storm.latched():
+            self._experiment_event("TRIAL_REJECT", object_id=object_id, guid64=guid64,
+                                   code=e2_trial.TRIAL_STORM)
+            self._say(connection, "TRIAL_REJECT %s" % e2_trial.TRIAL_STORM)
+            return False
+        try:
+            view, sim, obj, offers, context = self._trial_view(object_id, guid64)
+            code = e2_trial.trial_check(view)
+            if code is not None:
+                self._experiment_event("TRIAL_REJECT", object_id=object_id, guid64=guid64,
+                                       code=code)
+                self._say(connection, "TRIAL_REJECT %s" % code)
+                return False
+            self.experiment_counter += 1
+            experiment_id = "%s-%d" % (self._session_id()[:8], self.experiment_counter)
+            pushed_ns = time.perf_counter_ns()
+            interaction, detail = e2_actuator.push_affordance(sim, obj, offers[0], context)
+            if interaction is None:
+                self.storm.fail()
+                self._experiment_event("PUSH_FAILED", experiment_id=experiment_id,
+                                       object_id=object_id, guid64=guid64,
+                                       detail=(detail or "")[:schema.MAX_DETAIL_LENGTH])
+                self._say(connection, "PUSH_FAILED")
+                return False
+            self.storm.clear()
+            interaction_id = str(interaction.id)
+            tuning_name = _tuning_name(offers[0])
+            card = e2_cards.interaction_card(object_id, guid64)
+            experiment = e2_registry.Experiment(
+                experiment_id, None, object_id, view["sim_id"], interaction_id, pushed_ns,
+                None, [entry.get("interaction_id") for entry in view["entries"]],
+                continuation=(), card=card)
+            experiment.tuning_name = tuning_name
+            self.experiments[experiment_id] = experiment
+            self.open_ids.add(interaction_id)
+
+            def _finished(finished_interaction, _experiment=experiment):
+                try:
+                    finishing = str(finished_interaction.finishing_type)
+                except Exception:
+                    finishing = "UNREADABLE"
+                _experiment.finish(finishing[:schema.MAX_DISPLAY_TEXT_LENGTH])
+                self._experiment_event("FINISHED_CALLBACK",
+                                       experiment_id=_experiment.experiment_id,
+                                       interaction_id=_experiment.interaction_id,
+                                       finishing_type=_experiment.finishing_type,
+                                       claims=dict(_experiment.claims))
+
+            try:
+                e2_actuator.watch_finish(interaction, _finished)
+            except Exception:
+                pass
+            self._experiment_event("PUSHED", experiment_id=experiment_id,
+                                   object_id=object_id, interaction_id=interaction_id,
+                                   guid64=guid64, card_class="interaction",
+                                   tuning_name=tuning_name, claims=dict(experiment.claims))
+            self._say(connection, "TRIAL_PUSHED %s interaction %s" %
+                      (experiment_id, interaction_id))
+            return True
+        except observers.LabIdentityAmbiguous:
+            code = e2_admission.BODY_UNAVAILABLE
+            self._experiment_event("TRIAL_REJECT", object_id=object_id, guid64=guid64, code=code)
+            self._say(connection, "TRIAL_REJECT %s" % code)
+            return False
+        except Exception as error:
+            code = "E2_EXCEPTION:%s" % type(error).__name__
+            self._experiment_event("TRIAL_REJECT", object_id=object_id, guid64=guid64,
+                                   code=code[:64])
+            self._say(connection, "TRIAL_REJECT %s" % code)
+            return False
+
+    def _trial_view(self, object_id, guid64):
+        view, sim, obj, _sit_offers, context = self._view(object_id)
+        offers = []
+        if obj is not None:
+            offers = e2_actuator.offers_for(obj, context, guid64)
+        excluded = bool(offers) and e2_actuator.excluded(offers[0]) is not None
+        motives = []
+        try:
+            sim_info, _sim = observers.select_lab_body(
+                services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+            motives = observers.read_motives(sim_info, view.get("ticks") or 0) or []
+        except Exception:
+            motives = []
+        view["armed_name"] = self._armed_name()
+        view["object_id"] = object_id
+        view["excluded_ids"] = EXCLUDED_OBJECT_IDS
+        view["own_open_ids"] = self.open_ids
+        view["motives"] = motives
+        view["object"] = {"exists": obj is not None, "offer_count": len(offers),
+                          "excluded": excluded, "sit_offer_count": view["object"]["sit_offer_count"]}
+        return view, sim, obj, offers, context
+
     def _close_experiment(self, experiment):
         experiment.close()
         self._emit_verdict(experiment)
@@ -348,11 +459,24 @@ class E2Control:
             len(experiment.foreign_roots), experiment.incomplete_rows,
             len(experiment.continuation_entries))
         detail = detail[:schema.MAX_DETAIL_LENGTH]
+        extra = {}
+        card = experiment.card
+        if card.get("card_class") == "interaction":
+            guid = card.get("affordance_guid64")
+            extra["guid64"] = None if guid is None else str(guid)
+            extra["card_class"] = "interaction"
+            try:
+                tuning_name = experiment.tuning_name
+            except AttributeError:
+                tuning_name = None
+            extra["tuning_name"] = tuning_name
+            extra["ambiguous"] = list(experiment.ambiguous)[:16]
         self._experiment_event("VERDICT", experiment_id=experiment.experiment_id,
                                object_id=experiment.object_id,
                                interaction_id=experiment.interaction_id,
                                code=experiment.verdict, claims=dict(experiment.claims),
-                               finishing_type=experiment.finishing_type, detail=detail)
+                               finishing_type=experiment.finishing_type, detail=detail,
+                               **extra)
 
     # ----------------------------------------------------------------- speed
     def cmd_pause(self, connection):

@@ -123,7 +123,7 @@ _STATE = "UNARMED"
 _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
-_OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release")
+_OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -156,6 +156,7 @@ _E2 = e2_control.E2Control(
     get_armed_snapshot=lambda: _ARMED_SNAPSHOT,
     get_writer=lambda: _WRITER,
     output=_output,
+    get_armed_name=lambda: _ARMED_NAME,
 )
 
 _ARM_NATIVE_TO_CANONICAL = {
@@ -223,6 +224,19 @@ def _dispatch_e2_release(*args, _session_id=0, **kwargs):
     if args or kwargs:
         return False
     return _E2.cmd_release(_session_id)
+
+
+def _dispatch_e2_trial(*args, _session_id=0, **kwargs):
+    if len(args) != 2 or kwargs:
+        return False
+    object_id, guid64 = args
+    if type(object_id) is not str or type(guid64) is not str:
+        return False
+    if not object_id.isdigit() or not guid64.isdigit():
+        return False
+    if not (1 <= len(object_id) <= 20 and 1 <= len(guid64) <= 20):
+        return False
+    return _E2.cmd_trial(object_id, guid64, _session_id)
 
 
 class _InboxReply:
@@ -396,6 +410,8 @@ def _inbox_dispatch(cmd, connection):
         if not _dispatch_e2_prepare(args['object_id'], _session_id=connection):
             return False
         return _dispatch_e2_sit(_E2.last_prepared_token, _session_id=connection)
+    if name == 'trial':
+        return _dispatch_e2_trial(args['object_id'], args['guid64'], _session_id=connection)
     if name == 'atlas_dump':
         return _dispatch_atlas_dump(connection)
     if name == 'tuned_scan':
@@ -913,6 +929,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
     _WRITER_IDLE = False
     _STATE = "ARMED"
     _E2.on_arm()
+    _E2.storm.clear()
     return True
 
 

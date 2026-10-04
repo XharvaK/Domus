@@ -6,7 +6,7 @@ from conftest import replier
 
 @pytest.mark.parametrize("tool,args", [(mcp.status, ()), (mcp.arm, ("lab_e1",)),
     (mcp.start, ()), (mcp.stop, ()), (mcp.disarm, ()), (mcp.prepare, ("1",)),
-    (mcp.sit, ("a" * 16,)), (mcp.sit_trial, ("1",)), (mcp.pause, ()),
+    (mcp.sit, ("a" * 16,)), (mcp.sit_trial, ("1",)), (mcp.trial, ("1", "2")), (mcp.pause, ()),
     (mcp.release, ()), (mcp.verdicts, ()), (mcp.telemetry, ([],)), (mcp.lineage, ()),
     (mcp.detected_build, ()), (mcp.fingerprints, ())])
 def test_all_tools_require_game(paths, monkeypatch, tool, args):
@@ -16,7 +16,7 @@ def test_all_tools_require_game(paths, monkeypatch, tool, args):
     assert not list(paths.inbox.iterdir())
 
 
-@pytest.mark.parametrize("name", ["start", "prepare", "sit", "sit_trial", "pause", "release"])
+@pytest.mark.parametrize("name", ["start", "prepare", "sit", "sit_trial", "trial", "pause", "release"])
 def test_actuation_requires_lab(paths, monkeypatch, name):
     monkeypatch.setattr(mcp, "game_running", lambda: True)
     with replier(paths, lambda row: dict(status="OK", code=None,

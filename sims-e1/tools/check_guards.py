@@ -17,6 +17,7 @@ APPROVED_GAME_ROOTS = {
 PRODUCTION_MODULES = (
     "__init__", "probe", "observers", "snapshot", "schema", "writer",
     "e2_admission", "e2_lineage", "e2_registry", "e2_cards", "e2_actuator", "e2_control", "cmdbox",
+    "e2_trial",
 )
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
@@ -38,7 +39,7 @@ ACTUATOR_ONLY_CALLS = {
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.
 PURE_FILES = {"e2_admission.py", "e2_lineage.py", "e2_registry.py", "e2_cards.py",
-              "writer.py", "schema.py", "snapshot.py", "cmdbox.py"}
+              "e2_trial.py", "writer.py", "schema.py", "snapshot.py", "cmdbox.py"}
 FORBIDDEN_CALL_NAMES = FORBIDDEN_CALL_NAMES | (ACTUATOR_ONLY_CALLS - {"push_super_affordance"})
 
 
