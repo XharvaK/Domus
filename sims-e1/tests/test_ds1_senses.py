@@ -197,7 +197,9 @@ class SensesTests(unittest.TestCase):
     def test_mood_present_and_none(self):
         row = make_row({"ticks": 10},
                        FakeSimInfo(FakeTracker(), FakeBuffs(mood=FakeBuff(777), intensity=4)))
-        self.assertEqual(row["mood"], {"type": "777", "intensity": 4})
+        self.assertEqual(row["mood"]["type"], "777")
+        self.assertEqual(row["mood"]["intensity"], 4)
+        self.assertIn("name", row["mood"])
         row = make_row({"ticks": 10}, FakeSimInfo(FakeTracker(), FakeBuffs()))
         self.assertIsNone(row["mood"])
 

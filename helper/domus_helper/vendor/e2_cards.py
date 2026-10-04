@@ -5,8 +5,12 @@ actuation. An ambiguity is not an effect.
 """
 
 NEED_MIN_NET_DELTA = 5.0
-NEED_FRESH_TICKS = 2000
-NEED_CONTROL_SECONDS = 20.0
+# Motive values are lazy caches. DA5 calibration 2026-10-04: median age_ticks
+# 5417, median age when a value changes 2092, p90 19614. 30000 ticks is 20
+# sim-minutes and blocks only readings staler than that observed tail.
+NEED_FRESH_TICKS = 30000
+NEED_CONTROL_TICKS = 45000  # 30 sim-minutes of control rows before the push
+NEED_GRACE_TICKS = 15000  # 10 sim-minutes after our interaction leaves
 GAP_SECONDS = 5.0
 
 CARD_CLASSES = ("posture", "need", "interaction", "social")
@@ -16,10 +20,8 @@ MOTIVES = ("social", "hygiene", "bladder", "energy", "fun", "hunger")
 RUNNING_MEMBERSHIPS = ("RUNNING", "QUEUED_AND_RUNNING")
 POSTURE_SOURCE = "InteractionSource.POSTURE_GRAPH"
 
-# Social rows (schema._validate_social) carry entry_key, interaction_id,
-# affordance, target_id, source, and membership. They do not name the other
-# Sim as a participant, so a matching target_id only restates our target.
-# The class cannot see that the target Sim is in the interaction.
+# Schema 4 social rows do not name the other Sim. Schema 5 adds actor_id.
+# A social card stores that Sim id in object_id (see validate_card).
 SOCIAL_UNOBSERVED = "social_target_unobserved"
 
 
@@ -28,6 +30,7 @@ def _number(value):
 
 
 def validate_card(card):
+    """Closed card. For card_class "social", object_id is the other Sim's id."""
     if not isinstance(card, dict) or set(card) != set(CARD_KEYS):
         raise ValueError("card shape")
     kind = card.get("card_class")
@@ -101,21 +104,51 @@ def _running(entry):
     return entry is not None and entry.get("membership") in RUNNING_MEMBERSHIPS
 
 
-def _control_points(card, control_rows, pushed_ns):
-    window = NEED_CONTROL_SECONDS * 1e9
+def _game(row):
+    game = row.get("game")
+    return game if isinstance(game, dict) else {}
+
+
+def _ticks(row):
+    ticks = _game(row).get("ticks")
+    if type(ticks) is int:
+        return ticks
+    return None
+
+
+def _paused(row):
+    return _game(row).get("paused") is True
+
+
+def _push_tick(rows):
+    found = []
+    for row in rows:
+        ticks = _ticks(row)
+        if ticks is not None:
+            found.append(ticks)
+    if not found:
+        return None
+    return min(found)
+
+
+def _control_points(card, control_rows, push_tick):
+    """Least-squares inputs in motive points per game tick. Paused rows add none."""
+    if type(push_tick) is not int:
+        return 0, []
+    window_start = push_tick - NEED_CONTROL_TICKS
     points = []
     counted = 0
     for row in control_rows or []:
-        mono = row.get("monotonic_ns")
-        if type(mono) is not int:
+        if _paused(row):
             continue
-        if mono >= pushed_ns or mono < pushed_ns - window:
+        ticks = _ticks(row)
+        if ticks is None or ticks >= push_tick or ticks < window_start:
             continue
         counted += 1
         item = _motive(row, card["motive"])
         if item is None or not _number(item.get("value")):
             continue
-        points.append((mono / 1e9, float(item["value"])))
+        points.append((float(ticks), float(item["value"])))
     return counted, points
 
 
@@ -159,11 +192,37 @@ def _stale(item):
     return type(age) is int and age > NEED_FRESH_TICKS
 
 
+def _since_start(rows, started, start_row):
+    since = []
+    seen = False
+    for item in rows:
+        if item is start_row or item.get("monotonic_ns") == started:
+            seen = True
+        if seen:
+            since.append(item)
+    return since
+
+
+def _end_tick(rows, interaction_id):
+    """Tick of the first row after our interaction has left, if it has left."""
+    seen_running = False
+    for item in rows:
+        if _paused(item):
+            continue
+        running = _running(_ours(item, interaction_id))
+        if running:
+            seen_running = True
+            continue
+        if seen_running:
+            return _ticks(item)
+    return None
+
+
 def _need_effect(card, state, row):
     rows = list(state.get("rows_since_push") or [])
     if not rows or rows[-1] is not row:
         rows.append(row)
-    counted, points = _control_points(card, state.get("control_rows"), state.get("pushed_mono_ns"))
+    counted, points = _control_points(card, state.get("control_rows"), _push_tick(rows))
     if counted < 2:
         return False, "no_control"
     motive_id = card["motive"]
@@ -177,8 +236,6 @@ def _need_effect(card, state, row):
             if item.get("monotonic_ns") == started:
                 start_row = item
                 break
-    if _stale(_motive(start_row, motive_id)) or _stale(_motive(row, motive_id)):
-        return False, "stale_value"
     for item in rows:
         if item.get("observation_complete") is not True:
             return False, "incomplete_row"
@@ -190,26 +247,60 @@ def _need_effect(card, state, row):
         if type(mono) is int:
             previous = mono
     interaction_id = state.get("interaction_id")
-    for entry in _entries(row):
-        if entry.get("interaction_id") == interaction_id:
-            continue
-        if (entry.get("membership") in RUNNING_MEMBERSHIPS and
-                entry.get("source_raw") != POSTURE_SOURCE):
-            return False, "overlapping_si"
+    for item in rows:
+        for entry in _entries(item):
+            if entry.get("interaction_id") == interaction_id:
+                continue
+            if (entry.get("membership") in RUNNING_MEMBERSHIPS and
+                    entry.get("source_raw") != POSTURE_SOURCE):
+                return False, "overlapping_si"
     if started is None or start_row is None:
         return False, None
-    if not _running(_ours(row, interaction_id)):
+    since = _since_start(rows, started, start_row)
+    if not any(not _paused(item) for item in since):
+        return False, "paused_only"
+    if _paused(row):
         return False, None
-    start_value = _motive(start_row, motive_id).get("value")
+    origin = start_row if not _paused(start_row) else next(
+        item for item in since if not _paused(item))
+    if _stale(_motive(origin, motive_id)) or _stale(_motive(row, motive_id)):
+        return False, "stale_value"
+    if not _running(_ours(row, interaction_id)):
+        end_tick = _end_tick(rows, interaction_id)
+        now_tick = _ticks(row)
+        if (end_tick is None or now_tick is None or
+                now_tick - end_tick > NEED_GRACE_TICKS):
+            return False, None
+    start_value = _motive(origin, motive_id).get("value")
     now_value = _motive(row, motive_id).get("value")
     if not _number(start_value) or not _number(now_value):
         return False, "missing_motive"
     slope = _slope(points)
     if slope is None:
         return False, "no_control"
-    elapsed = (row.get("monotonic_ns") - started) / 1e9
+    origin_tick = _ticks(origin)
+    now_tick = _ticks(row)
+    if origin_tick is None or now_tick is None:
+        return False, None
+    elapsed = now_tick - origin_tick
     net = card["direction"] * (float(now_value) - float(start_value) - slope * elapsed)
     return net >= card["min_net_delta"], None
+
+
+def _social_effect(card, state, row):
+    if row.get("schema_version") != 5:
+        return False, SOCIAL_UNOBSERVED
+    target = card.get("object_id")
+    ours = _ours(row, state.get("interaction_id"))
+    if not _running(ours) or ours.get("target_id") != target:
+        return False, None
+    for entry in row.get("social") or []:
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("actor_id") == target and
+                entry.get("membership") in RUNNING_MEMBERSHIPS):
+            return True, None
+    return False, None
 
 
 def evaluate_effect(card, experiment_state, row):
@@ -223,5 +314,5 @@ def evaluate_effect(card, experiment_state, row):
     if kind == "need":
         return _need_effect(card, state, row)
     if kind == "social":
-        return False, SOCIAL_UNOBSERVED
+        return _social_effect(card, state, row)
     return False, "bad_card"

@@ -300,6 +300,8 @@ class Extractor:
             if identity in self._social:
                 continue
             source = item.get("source_sim")
+            if source is None:
+                source = item.get("actor_id")
             source_s = "" if source is None else str(source)
             urgency = "always_through" if source_s and source_s == self.owner_sim_id else "normal"
             percepts.append(Percept(

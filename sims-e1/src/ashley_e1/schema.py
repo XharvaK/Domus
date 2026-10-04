@@ -3,9 +3,10 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 4
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v4"
-PROBE_VERSION = "2.7.0"
+OBSERVATION_SCHEMA_VERSION = 5
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v5"
+PROBE_VERSION = "2.8.0"
+ACCEPTED_SCHEMA_VERSIONS = (4, 5)
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
 MAX_ID_LENGTH = 64
@@ -528,39 +529,53 @@ def _validate_presence(value):
             _require(type(item["level"]) is int, "presence.level must be int")
 
 
-def _validate_social(value):
+def _validate_social(value, version):
     _require(isinstance(value, list) and len(value) <= MAX_SOCIAL, "social")
+    fields = {"entry_key", "interaction_id", "affordance_id",
+              "affordance_text", "target_id", "source_raw",
+              "source_norm", "source_confidence", "present",
+              "membership"}
+    if version == 5:
+        fields = set(fields)
+        fields.add("actor_id")
     for item in value:
         _require(isinstance(item, dict), "social entry must be an object")
-        _require(set(item) == {"entry_key", "interaction_id", "affordance_id",
-                               "affordance_text", "target_id", "source_raw",
-                               "source_norm", "source_confidence", "present",
-                               "membership"},
-                 "social interaction shape")
+        _require(set(item) == fields, "social interaction shape")
         _require(item.get("membership") in MEMBERSHIPS, "invalid social membership")
         _require(item.get("source_norm") in SOURCE_NORMS, "invalid social source_norm")
         _require(item.get("source_confidence") in SOURCE_CONFIDENCES,
                  "invalid social source_confidence")
         _require(type(item.get("present")) is bool, "social.present must be bool")
+        if version == 5:
+            _require(isinstance(item.get("actor_id"), str), "social.actor_id must be a string")
+            string_id(item["actor_id"], "social.actor_id")
 
 
-def _validate_mood(value):
+def _validate_mood(value, version):
     if value is None:
         return
-    _require(isinstance(value, dict) and set(value) == {"type", "intensity"},
-             "mood shape")
+    fields = {"type", "intensity"}
+    if version == 5:
+        fields = set(fields)
+        fields.add("name")
+    _require(isinstance(value, dict) and set(value) == fields, "mood shape")
     if value["type"] is not None:
         bounded_string(value["type"], MAX_ID_LENGTH, "mood.type", False)
     if value["intensity"] is not None:
         _require(isinstance(value["intensity"], (int, float)) and
                  not isinstance(value["intensity"], bool),
                  "mood.intensity must be numeric")
+    if version == 5 and value["name"] is not None:
+        bounded_string(value["name"], 128, "mood.name", False)
 
 
-def _validate_signals(value):
+def _validate_signals(value, version):
     _require(isinstance(value, list) and len(value) <= MAX_SIGNALS, "sim_signals")
     fields = {"kind", "tuning_id", "game_text", "magnitude", "consequences",
               "native_override"}
+    if version == 5:
+        fields = set(fields)
+        fields.add("tuning_name")
     for item in value:
         _require(isinstance(item, dict), "signal must be an object")
         _require(set(item) == fields, "signal shape")
@@ -571,6 +586,8 @@ def _validate_signals(value):
         if item.get("game_text") is not None:
             bounded_string(item["game_text"], MAX_DISPLAY_TEXT_LENGTH,
                            "signal.game_text", False)
+        if version == 5 and item.get("tuning_name") is not None:
+            bounded_string(item["tuning_name"], 128, "signal.tuning_name", False)
         if item.get("consequences") is not None:
             bounded_string(item["consequences"], MAX_ID_LENGTH,
                            "signal.consequences", False)
@@ -668,7 +685,8 @@ def _validate_payload_contracts(row):
 def _validate_common(row):
     _require(set(row).issubset(COMMON_KEYS), "unknown schema field")
     _require(type(row.get("schema_version")) is int and
-             row["schema_version"] == OBSERVATION_SCHEMA_VERSION, "schema_version")
+             row["schema_version"] in ACCEPTED_SCHEMA_VERSIONS, "schema_version")
+    version = row["schema_version"]
     _require(row.get("event_kind") in EVENT_KINDS, "event_kind")
     _require(type(row.get("written_sequence")) is int and row["written_sequence"] >= 0,
              "written_sequence")
@@ -720,10 +738,10 @@ def _validate_common(row):
              row["writer"]["rotation_index"] >= 0, "writer.rotation_index")
     _validate_interactions(row.get("interactions"))
     _validate_motives(row.get("motives"))
-    _validate_signals(row.get("sim_signals"))
+    _validate_signals(row.get("sim_signals"), version)
     _validate_presence(row.get("presence"))
-    _validate_social(row.get("social"))
-    _validate_mood(row.get("mood"))
+    _validate_social(row.get("social"), version)
+    _validate_mood(row.get("mood"), version)
     _require(isinstance(row.get("missingness"), dict), "missingness")
     for field, item in row["missingness"].items():
         bounded_string(field, MAX_ID_LENGTH, "missingness field", False)
@@ -731,6 +749,12 @@ def _validate_common(row):
         _require(item.get("status") in MISSINGNESS_STATUSES, "missingness status")
         if item.get("detail") is not None:
             bounded_string(item["detail"], MAX_DETAIL_LENGTH, "missingness detail", False)
+
+
+def validate_row(row):
+    """Validate one telemetry row. Schema 4 keeps its old shapes; schema 5 adds names."""
+    validate_record(row)
+    return row
 
 
 def validate_record(row):
@@ -745,7 +769,7 @@ def validate_record(row):
         _require(row.get("telemetry_session_id") is None, "load_disabled session id")
         _require(row.get("boot_id") is not None, "load_disabled boot id")
         _require(type(row.get("schema_version")) is int and
-                 row["schema_version"] == OBSERVATION_SCHEMA_VERSION,
+                 row["schema_version"] in ACCEPTED_SCHEMA_VERSIONS,
                  "load_disabled schema_version")
         _require(type(row.get("written_sequence")) is int and row["written_sequence"] >= 0,
                  "load_disabled written_sequence")

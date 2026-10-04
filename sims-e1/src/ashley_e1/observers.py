@@ -337,6 +337,27 @@ def read_motives(sim_info, now_ticks):
         _store_motive_diag(stage, seen, matched)
 
 
+def _bounded_name(value, field):
+    try:
+        if not isinstance(value, str):
+            return None
+        return schema.bounded_string(value, 128, field, False)
+    except Exception:
+        return None
+
+
+def _tuning_name(entry):
+    """Class name only. No method calls on the buff."""
+    try:
+        raw = type(entry).__name__
+    except Exception:
+        try:
+            raw = entry.__class__.__name__
+        except Exception:
+            return None
+    return _bounded_name(raw, "signal.tuning_name")
+
+
 def _describe_buff(entry):
     try:
         tuning = str(entry.guid64)
@@ -356,8 +377,9 @@ def _describe_buff(entry):
         tuning_id = str(schema.string_id(tuning, "signal.tuning_id"))
     except Exception:
         return None
-    return {"kind": "MOODLET", "tuning_id": tuning_id, "game_text": None,
-            "magnitude": magnitude, "consequences": None, "native_override": None}
+    return {"kind": "MOODLET", "tuning_id": tuning_id, "tuning_name": _tuning_name(entry),
+            "game_text": None, "magnitude": magnitude, "consequences": None,
+            "native_override": None}
 
 
 def read_moodlets(sim_info):
@@ -412,7 +434,12 @@ def read_mood(sim_info):
         mood_id = str(schema.string_id(mood_type, "mood.type"))
     except Exception:
         return None
-    return {"type": mood_id, "intensity": intensity}
+    try:
+        mood_name = mood.__name__
+    except Exception:
+        mood_name = None
+    return {"type": mood_id, "intensity": intensity,
+            "name": _bounded_name(mood_name, "mood.name")}
 
 
 def read_senses(sim_info, now_ticks, game):
@@ -536,6 +563,28 @@ def _target_matches(entry, lab_sim, lab_sim_id):
     return False
 
 
+def _targeted_entries(container, lab_sim, lab_sim_id):
+    found = []
+    if container is None:
+        return found
+    try:
+        iterator = iter(container)
+    except TypeError:
+        return found
+    while True:
+        try:
+            entry = next(iterator)
+        except StopIteration:
+            break
+        except Exception:
+            continue
+        if entry is None:
+            continue
+        if _target_matches(entry, lab_sim, lab_sim_id):
+            found.append(entry)
+    return found
+
+
 def read_social(lab_sim_id, lab_sim, candidates):
     social = []
     truncated = False
@@ -549,39 +598,33 @@ def read_social(lab_sim_id, lab_sim, candidates):
         if raw_id is not None and str(raw_id) == str(lab_sim_id):
             continue
         try:
+            actor = schema.string_id(raw_id, "social.actor_id")
+            actor_id = None if actor is None else str(actor)
+        except Exception:
+            continue
+        if not actor_id:
+            continue
+        try:
             sim = candidate.get_sim_instance(allow_hidden_flags=ALL_HIDDEN_REASONS)
         except Exception:
             continue
         if sim is None:
             continue
-        for container in (sim.si_state, sim.queue):
-            if container is None:
+        try:
+            queued = _targeted_entries(sim.queue, lab_sim, lab_sim_id)
+            running = _targeted_entries(sim.si_state, lab_sim, lab_sim_id)
+            merged, queue_truncated, running_truncated = snapshot.merge_interactions(
+                queued, running, _describe_interaction)
+        except Exception:
+            continue
+        if queue_truncated or running_truncated:
+            truncated = True
+        for row in merged:
+            row["actor_id"] = actor_id
+            if len(social) >= schema.MAX_SOCIAL:
+                truncated = True
                 continue
-            try:
-                iterator = iter(container)
-            except TypeError:
-                continue
-            while True:
-                try:
-                    entry = next(iterator)
-                except StopIteration:
-                    break
-                except Exception:
-                    continue
-                if entry is None:
-                    continue
-                if not _target_matches(entry, lab_sim, lab_sim_id):
-                    continue
-                try:
-                    row = _describe_interaction(entry)
-                    row["entry_key"] = snapshot.entry_key(entry)
-                    row["membership"] = "QUEUED"
-                except Exception:
-                    continue
-                if len(social) >= schema.MAX_SOCIAL:
-                    truncated = True
-                    continue
-                social.append(row)
+            social.append(row)
     return social, truncated
 
 

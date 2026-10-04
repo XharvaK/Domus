@@ -19,9 +19,13 @@ def _evidence(folder):
 
 
 def _hunger(mono_s, entries, value, complete=True, age=0):
+    # Need cards measure control and elapsed in game.ticks. These rows keep the
+    # same order as their wall stamps so the flat-control and gap cases stay put.
     return {"monotonic_ns": int(mono_s * 1e9), "observation_complete": complete,
             "interactions": {"observed": [dict(e) for e in entries]},
             "motives": [{"id": "hunger", "value": value, "band": "FINE", "age_ticks": age}],
+            "game": {"ticks": int(mono_s), "calendar": None, "clock_speed": "NORMAL",
+                     "paused": False},
             "body": {"posture": {}}}
 
 

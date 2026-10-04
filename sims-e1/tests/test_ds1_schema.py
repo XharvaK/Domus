@@ -36,14 +36,14 @@ def presence_row(**overrides):
 
 def full_signal(index=0):
     return {"kind": "MOODLET", "tuning_id": "12345678901234567890",
-            "game_text": "x" * 160, "magnitude": "w:99",
+            "tuning_name": None, "game_text": "x" * 160, "magnitude": "w:99",
             "consequences": "UNKNOWN", "native_override": "UNKNOWN"}
 
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 4)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v4")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 5)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v5")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -53,7 +53,7 @@ class SchemaV4Tests(unittest.TestCase):
         row = presence_row(
             presence=[{"id": "1", "active_household": True, "level": 2}],
             social=[],
-            mood={"type": "123", "intensity": 5},
+            mood={"type": "123", "intensity": 5, "name": None},
             motives=[{"id": "hunger", "value": 50, "band": "ok",
                        "age_ticks": 100}],
         )
@@ -133,7 +133,7 @@ class SchemaV4Tests(unittest.TestCase):
             presence=[{"id": "1" * 64, "active_household": True,
                        "level": 2 ** 30} for _ in range(8)],
             social=[dict(entry, affordance_text="t" * 160) for _ in range(4)],
-            mood={"type": "1" * 64, "intensity": 1.5},
+            mood={"type": "1" * 64, "intensity": 1.5, "name": None},
             motives=[{"id": "m" * 64, "value": 50, "band": "ok",
                        "age_ticks": 2 ** 30} for _ in range(12)],
             sim_signals=[full_signal() for _ in range(16)],
@@ -160,7 +160,7 @@ class SchemaV4Tests(unittest.TestCase):
             presence=[{"id": "1" * 20, "active_household": True, "level": None}
                       for _ in range(8)],
             social=[dict(entry) for _ in range(4)],
-            mood={"type": "12345", "intensity": 7},
+            mood={"type": "12345", "intensity": 7, "name": None},
             motives=[{"id": "m%d" % i, "value": 50, "band": "ok",
                        "age_ticks": 100} for i in range(6)],
             sim_signals=[full_signal() for _ in range(16)],
