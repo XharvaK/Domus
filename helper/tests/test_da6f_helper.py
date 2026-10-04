@@ -24,3 +24,46 @@ def test_report_labels_routes_first_and_one_line_per_menu():
                         "e.g. recipe_MacAndCheese, recipe_Salad")
     assert lines[3] == "error x1 AttributeError: x"
     assert lines[-1] == "rows 2 routes 1 menus 1 errors 1"
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def sleep(self, seconds):
+        self.t += seconds
+
+    def monotonic(self):
+        return self.t
+
+
+def test_preflight_wait_follows_a_growing_partial_past_ten_minutes(tmp_path):
+    """D22: 6025 rows at 10 rows/s met a fixed 600 s wait."""
+    import json
+    from domus_helper import crawl
+    clock = _Clock()
+    partial = tmp_path / "preflight_1.1_5.jsonl.partial"
+    partial.write_text("{}\n", encoding="utf-8")
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        if clock.t < 700:
+            with partial.open("a", encoding="utf-8") as handle:
+                handle.write("{}\n")
+        else:
+            (tmp_path / "preflight_1.1_5.jsonl").write_text(
+                json.dumps({"kind": "preflight_footer"}) + "\n", encoding="utf-8")
+
+    rows = crawl.wait_preflight(tmp_path, 0, 1800, sleep, clock.monotonic)
+    assert rows[-1]["kind"] == "preflight_footer"
+    assert clock.t >= 700
+
+
+def test_preflight_wait_gives_up_on_a_stalled_partial(tmp_path):
+    import pytest
+    from domus_helper import crawl
+    clock = _Clock()
+    (tmp_path / "preflight_1.1_5.jsonl.partial").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(TimeoutError, match="stalled"):
+        crawl.wait_preflight(tmp_path, 0, 1800, clock.sleep, clock.monotonic)
+    assert 120 <= clock.t < 130

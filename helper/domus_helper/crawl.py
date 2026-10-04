@@ -204,9 +204,29 @@ def matching_preflight(atlas_dir, tuned_path):
     return rows
 
 
-def wait_preflight(atlas_dir, since, timeout, sleep=time.sleep, monotonic=time.monotonic):
+# D22 (live 2026-10-04): a fixed 600 s wait met a 600 s preflight. Wait while the
+# partial file grows; give up after this long without growth, or at the hard cap.
+PREFLIGHT_STALL_S = 120.0
+
+
+def _partial_size(folder, since):
+    size = 0
+    for path in folder.glob("preflight_*.jsonl.partial"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if stat.st_mtime >= since:
+            size += stat.st_size
+    return size
+
+
+def wait_preflight(atlas_dir, since, timeout, sleep=time.sleep, monotonic=time.monotonic,
+                   stall=PREFLIGHT_STALL_S):
     """Rows of the first preflight file finished after `since` (D9)."""
     deadline = monotonic() + timeout
+    last_size = -1
+    grew_at = monotonic()
     while True:
         folder = Path(atlas_dir)
         files = [path for path in folder.glob("preflight_*.jsonl")
@@ -217,12 +237,19 @@ def wait_preflight(atlas_dir, since, timeout, sleep=time.sleep, monotonic=time.m
             _build, rows = load_tuned(path)
             if rows and rows[-1].get("kind") == "preflight_footer":
                 return rows
-        if monotonic() >= deadline:
+        now = monotonic()
+        size = _partial_size(folder, since)
+        if size != last_size:
+            last_size = size
+            grew_at = now
+        if now >= deadline:
             raise TimeoutError("preflight footer")
+        if now - grew_at >= stall:
+            raise TimeoutError("preflight stalled for %d s" % int(now - grew_at))
         sleep(1.0)
 
 
-def fresh_preflight(client, timeout=600, sleep=time.sleep, monotonic=time.monotonic):
+def fresh_preflight(client, timeout=1800, sleep=time.sleep, monotonic=time.monotonic):
     """D9 (live 2026-10-04): the crawl used only an older preflight file, and none
     existed, so nothing was filtered. Ask for one and wait for its footer."""
     since = time.time() - 1

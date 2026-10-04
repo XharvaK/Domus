@@ -392,7 +392,22 @@ def _inbox_status():
                 verdicts=[dict(row) for row in _INBOX_VERDICTS], inbox='on',
                 inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS,
                 motive_diag=observers.motive_diag(),
-                atlas=_atlas_progress(), tuned=_tuned_progress())
+                atlas=_atlas_progress(), tuned=_tuned_progress(),
+                preflight=_scan_progress(_PREFLIGHT), food=_scan_progress(_FOOD))
+
+
+_IDLE_SCAN = {"state": "idle", "done": 0, "total": 0, "chunks": 0, "max_chunk_ms": 0,
+              "file": None}
+# D22 (live 2026-10-04): a 6025-row preflight at one 5 ms chunk per second took
+# ten minutes and looked stuck. Same budget per chunk, four chunks per second
+# (clock.interval_in_real_seconds -> TimeSpan(ceil(seconds * 1000)) takes a float).
+SCAN_TICK_S = 0.25
+
+
+def _scan_progress(scan):
+    if scan is None:
+        return dict(_IDLE_SCAN)
+    return scan.progress()
 
 
 def _refuse_observe_only(connection, name):
@@ -643,7 +658,7 @@ def _dispatch_preflight(connection):
         folder, "preflight_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
     _PREFLIGHT = preflight.PreflightScan(jobs, path, _run)
     _PREFLIGHT_HANDLE = alarms.add_alarm_real_time(
-        owner=_PREFLIGHT_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        owner=_PREFLIGHT_ALARM_OWNER, time_span=interval_in_real_seconds(SCAN_TICK_S),
         callback=_preflight_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True
@@ -861,7 +876,7 @@ def _dispatch_food_scan(connection):
         folder, "food_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
     _FOOD = food.FoodScan(jobs, path, _run)
     _FOOD_HANDLE = alarms.add_alarm_real_time(
-        owner=_FOOD_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        owner=_FOOD_ALARM_OWNER, time_span=interval_in_real_seconds(SCAN_TICK_S),
         callback=_food_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True

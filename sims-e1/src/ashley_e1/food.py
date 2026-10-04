@@ -133,6 +133,21 @@ class FoodScan(object):
         os.replace(self.partial, self.out_path)
         self.state = "done"
 
+    def progress(self):
+        """D22: the same shape as the atlas and tuned blocks on status."""
+        if self.state == "done":
+            path = self.out_path
+        else:
+            path = self.partial
+        return {
+            "state": self.state,
+            "done": self._index,
+            "total": len(self._jobs),
+            "chunks": self.chunks,
+            "max_chunk_ms": max(self._chunk_ms) if self._chunk_ms else 0,
+            "file": path,
+        }
+
 
 def error_text(error):
     """D3: type and message, bounded. A bare type name needed another live round."""
@@ -154,6 +169,7 @@ def _error_row(job, error):
         "guid64": job.get("guid64"),
         "error": error_text(error),
     }
+
 
 
 def _line(row):
