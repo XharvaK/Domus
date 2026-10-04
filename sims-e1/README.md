@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.11.4 (DA6G live hardening)
+## Current build: 2.11.5 (DA6G live hardening)
 
-The source is version `2.11.4` (`src/ashley_e1/__init__.py`,
+The source is version `2.11.5` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 5, schema 4 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.11.4 has not yet passed its E2 first-load gate or trials; those run on the
+2.11.5 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -41,7 +41,7 @@ The second session (2.11.1) added these. A motive's `value` is the game's curren
 
 ## Live hardening (DA6G)
 
-The third session (2.11.2) added these. The atlas reads the game's own map of what each interaction does to each need: `Interaction._autonomy_ads`, the table the game's autonomy uses, read attribute by attribute without calling the game (`autonomy_ads`: stat, name, and up to four operations with amount and advertise). Any interaction trial ends 30 s after it finishes, including one shorter than the 10 s maintenance mark. A verdict names the needs that rose during it (`rose=hygiene 82->100->99`). Once our action has finished and no child of ours runs, the game's own autonomy on the same object (a toilet's flush, a distress reflex: toilet, flush, wash hands) is aftermath at once, not a rival; a late script or user push is still a rival. Preflight refuses the excluded E1 sofa, so the crawl never plans it. Every scan (atlas, tuned, preflight, food) ticks four times a second at the same 5 ms budget. The game acts on a Sim's body distress even with autonomy off; that is her body's own action, and the helper's interaction percepts say so (`origin`: native_autonomy, script, pie_menu, game).
+The third session (2.11.2) added these. The atlas reads the game's own map of what each interaction does to each need: `Interaction._autonomy_ads`, the table the game's autonomy uses, read attribute by attribute without calling the game (`autonomy_ads`: stat, name, and up to four operations with amount and advertise). Any interaction trial ends 30 s after it finishes, including one shorter than the 10 s maintenance mark. A verdict names the needs that rose during it (`rose=hygiene 82->100->99`). Once our action has finished and no child of ours runs, the game's own autonomy on the same object (a toilet's flush, a distress reflex: toilet, flush, wash hands) is aftermath at once, not a rival; a late push with user intent (pie menu, script with user intent) is still a rival, while the game's own reactions (source SCRIPT or REACTION, such as a bad smell) are not. Preflight refuses the excluded E1 sofa, so the crawl never plans it. Every scan (atlas, tuned, preflight, food) ticks four times a second at the same 5 ms budget. The game acts on a Sim's body distress even with autonomy off; that is her body's own action, and the helper's interaction percepts say so (`origin`: native_autonomy, native_reaction, script, pie_menu, game). Preflight and the food scan list what an object offers through its components as well as its class tuning, so a served plate shows its eat (`generic_consume_food`); cooking serves the food, and eating it is a separate act. A refused trial names its code in the inbox reply.
 
 Owner commands (also available through the local command inbox when the zone reaches RUNNING):
 
@@ -71,8 +71,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.11.4
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.11.4
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.11.5
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.11.5
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under
