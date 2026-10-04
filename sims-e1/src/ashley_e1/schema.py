@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 5
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v5"
-PROBE_VERSION = "2.10.0"
+PROBE_VERSION = "2.11.0"
 ACCEPTED_SCHEMA_VERSIONS = (4, 5)
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
@@ -70,7 +70,7 @@ EXPERIMENT_PHASES = (
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
-            "calibrate", "trial", "preflight")
+            "calibrate", "trial", "preflight", "food_scan")
 
 
 def _command_id(value):

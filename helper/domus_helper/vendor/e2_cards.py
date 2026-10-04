@@ -65,6 +65,19 @@ def validate_card(card):
     return card
 
 
+def need_card(object_id, affordance_guid64, motive, direction):
+    card = {
+        "card_class": "need",
+        "affordance_guid64": int(affordance_guid64),
+        "object_id": object_id,
+        "signature": None,
+        "motive": motive,
+        "direction": int(direction),
+        "min_net_delta": NEED_MIN_NET_DELTA,
+    }
+    return validate_card(card)
+
+
 def interaction_card(object_id, affordance_guid64):
     card = {
         "card_class": "interaction",
@@ -262,9 +275,11 @@ def _need_effect(card, state, row):
         if type(mono) is int:
             previous = mono
     interaction_id = state.get("interaction_id")
+    children = set(state.get("children") or ())
     for item in rows:
         for entry in _entries(item):
-            if entry.get("interaction_id") == interaction_id:
+            iid = entry.get("interaction_id")
+            if iid == interaction_id or iid in children:
                 continue
             if (entry.get("membership") in RUNNING_MEMBERSHIPS and
                     entry.get("source_raw") != POSTURE_SOURCE):

@@ -11,6 +11,8 @@ from . import e2_cards
 WINDOW_SECONDS = 60.0
 # DA6 trials may route across the lot first (first live crawl: start at ~67-70 s).
 TRIAL_WINDOW_SECONDS = 180.0
+# A cooked meal is eaten after the crafting phases. Hunger, not the 180 s card, judges it.
+FOOD_TRIAL_WINDOW_SECONDS = 600.0
 MAINTAIN_SECONDS = 10.0
 SIGNATURE_WINDOW_SECONDS = 30.0
 CONTINUATION_WINDOW_SECONDS = 30.0
@@ -37,7 +39,8 @@ def _posture(row):
 class Experiment:
     def __init__(self, experiment_id, token, object_id, sim_id, interaction_id,
                  pushed_mono_ns, signature, baseline_ids, continuation=(),
-                 card=None, control_rows=None, window_seconds=WINDOW_SECONDS):
+                 card=None, control_rows=None, window_seconds=WINDOW_SECONDS,
+                 food_route=None):
         self.experiment_id = experiment_id
         self.token = token
         self.object_id = object_id
@@ -53,6 +56,7 @@ class Experiment:
         self.card = card
         self.control_rows = list(control_rows or ())
         self.window_seconds = window_seconds
+        self.food_route = food_route
         self.ambiguous = []
         self._rows_since = []
         self.known_ids = set(i for i in baseline_ids if i is not None)
@@ -66,6 +70,7 @@ class Experiment:
         # A27: a SCRIPT child the game pushes after our own interaction.
         self.children = []
         self.finished_ns = None
+        self.child_live_ns = None
         self.incomplete_rows = 0
         self.started_ns = None
         self.effect_since_ns = None
@@ -202,12 +207,24 @@ class Experiment:
 
     def _family_open(self, row, mono):
         """A27: our push is live, or it finished naturally within the last 5 s."""
-        if self.card.get("card_class") != "interaction":
+        kind = self.card.get("card_class")
+        if kind != "interaction" and not (kind == "need" and self.food_route):
             return False
         for entry in _entries(row):
             if (entry.get("interaction_id") == self.interaction_id and
                     entry.get("membership") in OURS_LIVE):
                 return True
+        # A crafting chain hands off phase to phase (cook, then serve, then eat)
+        # long after our own push ended: a live child keeps the family open too.
+        for entry in _entries(row):
+            if (entry.get("interaction_id") in self.children and
+                    entry.get("membership") in OURS_LIVE):
+                if type(mono) is int:
+                    self.child_live_ns = mono
+                return True
+        if (type(self.child_live_ns) is int and type(mono) is int and
+                0 <= mono - self.child_live_ns <= FAMILY_SECONDS * 1e9):
+            return True
         if self.finishing_type != "FinishingType.NATURAL":
             return False
         if type(self.finished_ns) is not int or type(mono) is not int:

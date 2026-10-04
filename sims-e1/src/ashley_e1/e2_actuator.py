@@ -57,14 +57,41 @@ def offers_for(obj, context, guid64):
     return offers
 
 
-def excluded(affordance):
-    """None when a parameter-free trial may push this affordance, else a reason."""
+def food_route(affordance):
+    """Dialog-free food push, or None. Order and catering stay excluded (A30)."""
+    names = []
     for cls in _mro(affordance):
         try:
-            if "Picker" in cls.__name__:
-                return "picker"
+            names.append(cls.__name__)
         except Exception:
             continue
+    if ("StartCraftingAutonomouslySuperInteraction" in names and
+            "StartCraftingOrderAutonomouslySuperInteraction" not in names):
+        return "auto_craft"
+    try:
+        low = str(affordance.__name__).lower()
+    except Exception:
+        low = ""
+    if "AutonomousObjectPickerInteraction" in names:
+        return "auto_pick"
+    if "ObjectPickerInteraction" in names and ("leftover" in low or "snack" in low):
+        return "auto_pick"
+    return None
+
+
+def excluded(affordance):
+    """None when a parameter-free trial may push this affordance, else a reason.
+
+    A30: a food route is still a picker class, but the push does not open a dialog.
+    Social and deny-name checks still apply. Every other picker stays excluded.
+    """
+    if food_route(affordance) is None:
+        for cls in _mro(affordance):
+            try:
+                if "Picker" in cls.__name__:
+                    return "picker"
+            except Exception:
+                continue
     try:
         social = affordance.is_social
     except Exception:
