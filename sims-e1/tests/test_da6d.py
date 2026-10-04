@@ -10,6 +10,18 @@ from test_e2 import CHAIR, _load_pure
 SCRIPT = "InteractionSource.SCRIPT_WITH_USER_INTENT"
 
 
+class _flexmethod(object):
+    """The game's sims4.utils.flexmethod (bytecode): __get__ returns
+    functools.partial(func, owner, instance), so a class call binds inst=None."""
+
+    def __init__(self, func):
+        self.func = func
+
+    def __get__(self, instance, owner):
+        import functools
+        return functools.partial(self.func, owner, instance)
+
+
 class Picker(object):
     pass
 
@@ -45,13 +57,17 @@ class fridge_GrabSnackAutonomously(StartCraftingAutonomouslySuperInteraction):
     def use_pie_menu(cls):
         return False
 
-    @classmethod
+    @_flexmethod
     def picker_rows_gen(cls, inst, target, context):
+        # D2: the live scan passed (None, obj, ctx) and shifted every argument.
+        assert inst is None and isinstance(target, _Fridge), (inst, target)
         yield _RecipeRow(recipe_CookPasta, 5, True, 10, 1)
         yield _BoomRow()
 
 
 class fridge_CookAutonomously(StartCraftingAutonomouslySuperInteraction):
+    """D1: bare like most live classes: no favorite_recipe, auto_pick, use_pie_menu,
+    allow_* (live 2026-10-04: 704/704 rows raised AttributeError)."""
     guid64 = 13388
 
 
@@ -135,7 +151,8 @@ class FoodRouteTests(unittest.TestCase):
 
 class _Fridge(object):
     _super_affordances = (
-        fridge_GrabSnackAutonomously, fridge_HaveMeal, _Unreadable, sell_items_picker)
+        fridge_GrabSnackAutonomously, fridge_HaveMeal, _Unreadable, sell_items_picker,
+        fridge_CookAutonomously)
 
     def __init__(self, object_id):
         self.id = int(object_id)
@@ -163,6 +180,14 @@ class FoodScanTests(Hosted):
         self.assertEqual(by_name["fridge_GrabSnackAutonomously"]["food_route"], "auto_craft")
         self.assertIsNone(by_name["fridge_GrabSnackAutonomously"]["excluded"])
         self.assertEqual(by_name["fridge_HaveMeal"]["excluded"], "picker")
+        bare = by_name["fridge_CookAutonomously"]
+        self.assertNotIn("error", bare)
+        self.assertEqual(bare["food_route"], "auto_craft")
+        self.assertIsNone(bare["favorite_recipe_is_none"])
+        self.assertIsNone(bare["use_pie_menu"])
+        errors = [row["error"] for row in body if row.get("error")]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("RuntimeError: scan", errors[0])
         self.assertTrue(any(row.get("error") for row in body))
         menu = [row for row in rows if row["kind"] == "food_menu"]
         self.assertEqual(menu[0]["recipe_name"], "recipe_CookPasta")

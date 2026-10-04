@@ -19,6 +19,10 @@ CARD_KEYS = ("card_class", "affordance_guid64", "object_id", "signature",
 MOTIVES = ("social", "hygiene", "bladder", "energy", "fun", "hunger")
 RUNNING_MEMBERSHIPS = ("RUNNING", "QUEUED_AND_RUNNING")
 POSTURE_SOURCE = "InteractionSource.POSTURE_GRAPH"
+# Standing, sitting down or carrying is the body, not a rival action (live 2026-10-04:
+# a BODY_CANCEL_AOP sim-stand ran after the snack and latched overlapping_si).
+IDLE_SOURCES = (POSTURE_SOURCE, "InteractionSource.BODY_CANCEL_AOP",
+                "InteractionSource.CARRY_CANCEL_AOP")
 
 # Schema 4 social rows do not name the other Sim. Schema 5 adds actor_id.
 # A social card stores that Sim id in object_id (see validate_card).
@@ -231,13 +235,22 @@ def _since_start(rows, started, start_row):
     return since
 
 
-def _end_tick(rows, interaction_id):
-    """Tick of the first row after our interaction has left, if it has left."""
+def _family_running(row, family):
+    """D4: the push hands off to game-pushed children (snack: push 994 never ran;
+    its child generic_consume_food ate). Any of them running is ours running."""
+    for iid in family:
+        if _running(_ours(row, iid)):
+            return True
+    return False
+
+
+def _end_tick(rows, family):
+    """Tick of the first row after the whole family has left, if it has left."""
     seen_running = False
     for item in rows:
         if _paused(item):
             continue
-        running = _running(_ours(item, interaction_id))
+        running = _family_running(item, family)
         if running:
             seen_running = True
             continue
@@ -276,13 +289,19 @@ def _need_effect(card, state, row):
             previous = mono
     interaction_id = state.get("interaction_id")
     children = set(state.get("children") or ())
+    family = set(children)
+    family.add(interaction_id)
     for item in rows:
+        # D5: overlap matters only while our family runs. After the meal the game's
+        # own cleanup (collect dish, wash dish) runs on autonomy and is not a rival.
+        if not _family_running(item, family):
+            continue
         for entry in _entries(item):
             iid = entry.get("interaction_id")
-            if iid == interaction_id or iid in children:
+            if iid in family:
                 continue
             if (entry.get("membership") in RUNNING_MEMBERSHIPS and
-                    entry.get("source_raw") != POSTURE_SOURCE):
+                    entry.get("source_raw") not in IDLE_SOURCES):
                 return False, "overlapping_si"
     if started is None or start_row is None:
         return False, None
@@ -291,12 +310,15 @@ def _need_effect(card, state, row):
         return False, "paused_only"
     if _paused(row):
         return False, None
-    origin = start_row if not _paused(start_row) else next(
-        item for item in since if not _paused(item))
+    # D4: measure from the push, not from the first running row. Live snack: hunger
+    # jumped 31 -> 48 before the child's first running poll; the slope covers the walk.
+    origin = next((item for item in rows if not _paused(item)), None)
+    if origin is None:
+        return False, None
     if _stale(_motive(origin, motive_id)) or _stale(_motive(row, motive_id)):
         return False, "stale_value"
-    if not _running(_ours(row, interaction_id)):
-        end_tick = _end_tick(rows, interaction_id)
+    if not _family_running(row, family):
+        end_tick = _end_tick(rows, family)
         now_tick = _ticks(row)
         if (end_tick is None or now_tick is None or
                 now_tick - end_tick > NEED_GRACE_TICKS):

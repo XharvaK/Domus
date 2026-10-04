@@ -91,13 +91,25 @@ class FoodScan(object):
         self.state = "done"
 
 
+def error_text(error):
+    """D3: type and message, bounded. A bare type name needed another live round."""
+    try:
+        message = str(error)
+    except Exception:
+        message = ""
+    text = type(error).__name__
+    if message:
+        text = "%s: %s" % (text, message)
+    return text[:160]
+
+
 def _error_row(job, error):
     kind = "food_menu" if job.get("menu") else "food_affordance"
     return {
         "kind": kind,
         "object_id": job.get("object_id"),
         "guid64": job.get("guid64"),
-        "error": type(error).__name__,
+        "error": error_text(error),
     }
 
 
