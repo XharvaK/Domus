@@ -142,11 +142,29 @@ def apply_size_budget(row):
         _mark_truncated(row)
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
+    objects = row.get("objects")
+    if isinstance(objects, dict) and (objects.get("changed") or objects.get("created")
+                                      or objects.get("destroyed")):
+        # S5: object events go before company; a truncated list says so.
+        row["objects"] = dict(objects, changed=[], created=objects["created"][:2],
+                              destroyed=objects["destroyed"][:2], truncated=True)
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
     if len(row.get("presence", ())) > 4:
         row["presence"] = list(row["presence"][:4])
         _mark_truncated(row)
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
+    # S5: relationship detail of the farthest Sims next: labels go, two tracks stay.
+    for item in reversed(row.get("presence", ())):
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+        relationship = item.get("relationship") if isinstance(item, dict) else None
+        if isinstance(relationship, dict) and (relationship.get("labels") or
+                                               len(relationship.get("tracks") or ()) > 2):
+            item["relationship"] = dict(relationship, labels=[],
+                                        tracks=list(relationship.get("tracks") or ())[:2])
+            _mark_truncated(row)
     for signal in row.get("sim_signals", ()):
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row

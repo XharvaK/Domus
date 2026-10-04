@@ -38,7 +38,8 @@ def full_signal(index=0):
     return {"kind": "MOODLET", "tuning_id": "12345678901234567890",
             "tuning_name": None, "game_text": "x" * 160, "magnitude": "w:99",
             "consequences": "UNKNOWN", "native_override": "UNKNOWN",
-            "text_key": "4294967295", "mood_type": "Mood_" + "x" * 60, "visible": True}
+            "text_key": "4294967295", "mood_type": "Mood_" + "x" * 60, "visible": True,
+            "reason_key": "4294967295", "minutes_left": 1440.5}
 
 
 def full_presence(index=0):
@@ -46,13 +47,16 @@ def full_presence(index=0):
             "is_body": False, "household_id": "1" * 64, "name": "n" * 128,
             "position": {"x": 1.25, "y": 0.0, "z": -3.5, "level": 2 ** 30},
             "room": "2" * 64, "posture": "p" * 160, "doing": "d" * 160,
-            "doing_target": "3" * 64, "distance_m": 12.3}
+            "doing_target": "3" * 64, "distance_m": 12.3,
+            "relationship": {"known": True,
+                             "tracks": [{"track": "t" * 128, "value": -100.0}] * 4,
+                             "labels": [{"label": "l" * 128, "text_key": "4294967295"}] * 6}}
 
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 6)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v6")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 7)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v7")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -60,7 +64,7 @@ class SchemaV4Tests(unittest.TestCase):
 
     def test_presence_snapshot_carries_senses(self):
         row = presence_row(
-            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5}],
+            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None}],
             social=[],
             mood={"type": "123", "intensity": 5, "name": None},
             motives=[{"id": "hunger", "value": 50, "band": "ok",

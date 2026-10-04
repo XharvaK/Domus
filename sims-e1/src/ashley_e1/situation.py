@@ -139,6 +139,78 @@ def _craft(obj):
     return row
 
 
+def _tags(obj):
+    """Catalogue tags (`definition.build_buy_tags`), by name, at most 12."""
+    try:
+        tags = list(obj.definition.build_buy_tags or ())
+    except Exception:
+        return None
+    names = set()
+    for tag in tags:
+        try:
+            name = tag.name
+        except Exception:
+            name = None
+        if not isinstance(name, str):
+            try:
+                name = str(int(tag))
+            except Exception:
+                continue
+        names.add(name[:64])
+    return sorted(names)[:12]
+
+
+def _users(obj):
+    """Who holds a reservation on it (ReservationMixin `_reservation_handlers`; the
+    `in_use` property reads only that), parts included. Sim ids, at most 4."""
+    holders = []
+    for owner in [obj] + list(_parts(obj)):
+        try:
+            handlers = list(owner._reservation_handlers or ())
+        except Exception:
+            continue
+        for handler in handlers:
+            try:
+                holders.append(_int_id(handler.sim.id))
+            except Exception:
+                holders.append(None)
+    return sorted({holder for holder in holders if holder is not None})[:4], bool(holders)
+
+
+def _parts(obj):
+    try:
+        return tuple(obj.parts or ())
+    except Exception:
+        return ()
+
+
+def _rates(obj, now_ticks):
+    """Per game minute, for commodities that move (freshness among them), from the
+    D25-checked decay math: the change over the next 60 game minutes."""
+    found = {}
+    try:
+        items = list(obj.commodity_tracker._statistics.items())
+    except Exception:
+        return found
+    for stat_type, instance in items:
+        name = _name(stat_type)
+        if name is None or instance is None:
+            continue
+        try:
+            value = float(instance._value)
+            updated = instance._last_update
+        except Exception:
+            continue
+        age = now_ticks - updated if type(updated) is int and type(now_ticks) is int \
+            and now_ticks >= updated else 0
+        now = observers._current_value(instance, value, age)
+        later = observers._current_value(instance, value, age + 60 * observers.TICKS_PER_SIM_MINUTE)
+        if now is None or later is None or later == now:
+            continue
+        found[name] = round((later - now) / 60.0, 4)
+    return {key: found[key] for key in sorted(found)[:8]}
+
+
 def object_fact(obj, now_ticks):
     """One object's facts, or None for Sims and unreadable objects."""
     try:
@@ -157,11 +229,15 @@ def object_fact(obj, now_ticks):
     except Exception:
         definition_id = None
     position = observers._position(obj)
+    users, in_use = _users(obj)
     return {
         "kind": "object", "object_id": object_id, "definition_id": definition_id,
         "class": _name(type(obj)), "position": position,
         "room": observers._room(obj, position),
         "states": _states(obj), "stats": _stats(obj, now_ticks), "craft": _craft(obj),
+        # S1 extras (2.14.0): catalogue tags, who is using it, how its commodities move.
+        "tags": _tags(obj), "in_use": in_use, "used_by": users,
+        "rates": _rates(obj, now_ticks),
     }
 
 

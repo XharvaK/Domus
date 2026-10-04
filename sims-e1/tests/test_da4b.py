@@ -99,7 +99,7 @@ class MoodNameTests(unittest.TestCase):
         self.assertIsNone(row["sim_signals"][0]["tuning_name"])
         self.assertIsNone(row["mood"]["name"])
         _probe, probe, _calls = load_probe()
-        self.assertEqual(probe.schema.OBSERVATION_SCHEMA_VERSION, 6)
+        self.assertEqual(probe.schema.OBSERVATION_SCHEMA_VERSION, 7)
 
 
 class SchemaDualTests(unittest.TestCase):
@@ -131,7 +131,7 @@ class SchemaDualTests(unittest.TestCase):
             "kind": "MOODLET", "tuning_id": "37", "tuning_name": "CryInBed",
             "game_text": None, "magnitude": "w:1", "consequences": None,
             "native_override": None, "text_key": "123", "mood_type": "Mood_Sad",
-            "visible": True}]
+            "visible": True, "reason_key": None, "minutes_left": None}]
         self.schema.validate_row(with_actor)
         five = dict(current, schema_version=5)
         self.schema.validate_row(five)

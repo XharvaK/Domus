@@ -195,7 +195,8 @@ class PollOnceTests(unittest.TestCase):
             "kind": "MOODLET", "tuning_id": "902", "tuning_name": "Buff_Hungry",
             "game_text": None, "magnitude": "w:2", "consequences": None,
             "native_override": None, "text_key": str(0xc4338c38),
-            "mood_type": "Mood_Uncomfortable", "visible": True})
+            "mood_type": "Mood_Uncomfortable", "visible": True,
+            "reason_key": None, "minutes_left": None})
         self.assertEqual(signals[1]["tuning_name"], "Buff_HiddenTracker")
         self.assertIs(signals[1]["visible"], False)
 

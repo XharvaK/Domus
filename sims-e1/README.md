@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.13.1 (S1 situation scan; D39 session_open fix)
+## Current build: 2.14.0 (S5 senses: relationships, moodlet reason and time left, object events)
 
-The source is version `2.13.1` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 6, schema 4 and 5 rows still validate). It is no longer read-only:
+The source is version `2.14.0` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 7, schema 4 to 6 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.13.1 has not yet passed its E2 first-load gate or trials; those run on the
+2.14.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -38,6 +38,10 @@ The crawl asks for a fresh preflight when it starts. After a relief trial it wai
 ## Live hardening (DA6F)
 
 The second session (2.11.1) added these. A motive's `value` is the game's current value: the probe applies the game's own rate formula to the cached value without writing it, so a reading is current at any game speed (`age_ticks` 0). Only if a rate cannot be read does it report the cache and its age. Sleep and work switch the game to speed 3, where rows are about 37000 ticks apart. A maintained interaction trial ends 30 s after it finishes, not at its 180 s window, and a relief trial's verdict carries the need's start, peak, and end (`relief=energy energy=24->100->100`). The crawl does not push a trial into a body distress it can already see, and its stop names the need. Preflight and the food scan tick four times a second at the same 5 ms budget and show progress on `status`. The food scan matches name words, not substrings ("eat" no longer matches cheat or death), reads menus only from classes that have one, and names recipes. `remove.ps1` without `-Version` removes every installed probe package.
+
+## Outcome senses (S5, schema 7)
+
+Each present Sim other than her body carries `relationship`: the friendship, romance and other tracks between them with current values, and the visible labels ("Friends") as string keys, or `known: false` when they have not met. It is read from the relationship service's own records (smaller Sim id first), never through `get_relationship_score`, which can create a relationship. Each moodlet carries `reason_key` (the game's reason, e.g. a spoiled meal) and `minutes_left` for timed moodlets, read from the Sim's commodity tracker without the buff's `commodity` property, which can create one. Observation rows carry `objects`: objects created and destroyed on the lot since the previous sample, and state changes (freshness, dirtiness, ...) of the 16 nearest objects within 4 m. A zone change, the first sample or a pause in sampling starts a new baseline with no events. The size budget trims object events before company, and relationship detail of the farthest Sims next. Situation rows add catalogue tags, who holds the object (`in_use`, `used_by`) and per-minute rates of moving commodities (freshness among them). Time until spoiled stays unknown: the game ties the threshold to state tuning the probe does not read.
 
 ## Situation (S1)
 
@@ -79,8 +83,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.13.1
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.13.1
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.14.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.14.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under
