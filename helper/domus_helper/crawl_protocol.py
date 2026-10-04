@@ -1,13 +1,8 @@
-"""mirror of the probe's e2_trial.py (DA6A); the Architect replaces this with the vendored module at merge"""
+"""Crawl-side protocol constants. The deny list is the probe's own (vendored e2_trial.py), so the helper never sends what the probe would refuse."""
 
-DENY_SUBSTRINGS = (
-    "debug", "cheat", "testing", "tutorial", "sell", "delete", "destroy",
-    "demolish", "burn", "fire", "kill", "death", "grim", "woohoo", "trybaby",
-    "try_for_baby", "propose", "breakup", "divorce", "adopt", "moveout",
-    "move_out", "travel", "goto", "go_here", "leave", "career", "job", "quit",
-    "retire", "buy", "purchase", "order", "call_", "phone_call", "invite",
-    "ask_to", "social",
-)
+from domus_helper.vendor import e2_trial
+
+DENY_SUBSTRINGS = e2_trial.DENY_NAME_PARTS
 
 RETRY_CODES = ("BODY_BUSY", "CLOCK_PAUSED")
 

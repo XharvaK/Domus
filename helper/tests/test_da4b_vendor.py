@@ -8,7 +8,7 @@ from domus_helper import calibration
 
 def test_revendored_files_match_probe():
     root = Path(__file__).resolve().parents[2]
-    for module in ("schema", "cmdbox", "e2_cards", "e2_trial"):
+    for module in ("schema", "cmdbox", "e2_cards", "e2_trial", "e2_admission", "e2_lineage"):
         source = root / "sims-e1" / "src" / "ashley_e1" / (module + ".py")
         vendor = root / "helper" / "domus_helper" / "vendor" / (module + ".py")
         assert ast.dump(ast.parse(source.read_text(encoding="utf-8"))) == ast.dump(
