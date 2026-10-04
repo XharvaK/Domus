@@ -276,9 +276,10 @@ ARCHIVE_EVERY_S = 6 * 3600
 
 
 def _strings_quietly():
-    """S0: build or refresh the local string index (skipped when nothing changed)."""
+    """S0: build or refresh the local string and catalogue indexes (each skipped when
+    nothing changed)."""
     from pathlib import Path
-    from . import strings
+    from . import catalog, strings
     from .paths import DEFAULT_GAME_ROOT
     paths = Paths.from_env()
     if paths.game_root is None:
@@ -287,6 +288,10 @@ def _strings_quietly():
         strings.build(paths)
     except Exception as error:
         print("string index skipped: %s" % type(error).__name__)
+    try:
+        catalog.build(paths)
+    except Exception as error:
+        print("catalogue index skipped: %s" % type(error).__name__)
 
 
 def _archive_quietly(now):
