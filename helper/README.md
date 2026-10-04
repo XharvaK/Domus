@@ -118,6 +118,21 @@ tick when wall time jumps more than 30 seconds ahead of the monotonic clock),
 `version_mismatch` (row `sims_build` differs from the detected build;
 `telemetry_only` is true). The spool is `%LOCALAPPDATA%\Domus\spool.db`.
 
+## Crawl (DA6)
+
+The lab save must be `LAB_E1_FORK`, with aging off and **autonomy off** so foreign roots do not drown attribution. Keep speed at normal or 3, and keep the Sim fed.
+
+```powershell
+python -m domus_helper.crawl --per-hour 30 --max-trials 200 --verdict-timeout-s 600
+python -m domus_helper.crawl --dry-run --tuned-file C:\path\tuned.jsonl
+```
+
+`--per-hour` defaults to 30 and cannot exceed 60. It is the minimum spacing between `trial` sends. `--dry-run` prints the plan and sends nothing. The driver sends only when status is `SAMPLING`, the armed save is `LAB_E1_FORK`, and calibrate is off. Otherwise it waits 10 seconds. `BODY_BUSY` and `CLOCK_PAUSED` wait 15 seconds and retry the same candidate without a ledger row.
+
+The process exits 2 on: 5 consecutive `PUSH_FAILED`, or 8 of the last 10; a `TRIAL_STORM` reply; `NEED_DISTRESS` twice in a row (`the lab Sim needs care: feed/rest her, then restart`); a change of `lineage_class` or `designated_sim_id` from the start of the run; a build-mismatch `SafetyError`; or `--max-trials`. One JSONL line per send and per outcome is appended under the helper data dir at `runs/crawl_<session>.jsonl`.
+
+`qualification()` (and the same atlas function) reports, per guid64, `pass_n`, `unknown_n`, `reject_n`, `push_failed_n`, and `state`. `QUALIFIED` means at least 3 `PASS` and zero `OUTCOME_UNKNOWN`. `FAILED` means 3 unknowns, 2 `PUSH_FAILED`, or a `TRIAL_EXCLUDED` reject. No rows is `UNTESTED`. Anything else is `IN_PROGRESS`. MCP `trials`, `qualification`, and `crawl_plan` only read.
+
 Test from `helper/`: `.venv/bin/python -m pytest` (on Windows use
 `.venv/Scripts/python.exe`). Tests fake the inbox/replier and process check;
 no game or credentials are needed. The vendored cmdbox and full schema v4

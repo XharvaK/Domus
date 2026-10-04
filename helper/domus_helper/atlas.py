@@ -43,7 +43,19 @@ CREATE TABLE IF NOT EXISTS cards (
     created_ms INTEGER NOT NULL,
     PRIMARY KEY (build, card_id)
 );
-PRAGMA user_version = 2;
+CREATE TABLE IF NOT EXISTS trials (
+    build TEXT,
+    experiment_id TEXT PRIMARY KEY,
+    guid64 INTEGER,
+    object_id TEXT,
+    outcome TEXT CHECK (outcome IN ('PASS','OUTCOME_UNKNOWN','TRIAL_REJECT','PUSH_FAILED','TIMEOUT')),
+    code TEXT,
+    ambiguous_json TEXT,
+    tuning_name TEXT,
+    session TEXT,
+    created_ms INTEGER
+);
+PRAGMA user_version = 3;
 """
 
 _CARDS_DDL = """
@@ -57,6 +69,21 @@ CREATE TABLE IF NOT EXISTS cards (
     origin TEXT NOT NULL CHECK (origin IN ('learned','owner','proposed')),
     created_ms INTEGER NOT NULL,
     PRIMARY KEY (build, card_id)
+);
+"""
+
+_TRIALS_DDL = """
+CREATE TABLE IF NOT EXISTS trials (
+    build TEXT,
+    experiment_id TEXT PRIMARY KEY,
+    guid64 INTEGER,
+    object_id TEXT,
+    outcome TEXT CHECK (outcome IN ('PASS','OUTCOME_UNKNOWN','TRIAL_REJECT','PUSH_FAILED','TIMEOUT')),
+    code TEXT,
+    ambiguous_json TEXT,
+    tuning_name TEXT,
+    session TEXT,
+    created_ms INTEGER
 );
 """
 
@@ -78,9 +105,14 @@ def _connect(db_path):
         connection.executescript(_DDL)
     elif version == 1:
         connection.executescript(_CARDS_DDL)
-        connection.execute("PRAGMA user_version = 2")
+        connection.executescript(_TRIALS_DDL)
+        connection.execute("PRAGMA user_version = 3")
         connection.commit()
-    elif version != 2:
+    elif version == 2:
+        connection.executescript(_TRIALS_DDL)
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+    elif version != 3:
         connection.close()
         raise AtlasImportError("unsupported user_version")
     return connection
@@ -265,4 +297,104 @@ def list_cards(db_path, build, card_class=None):
             "created_ms": row["created_ms"],
             "card": json.loads(row["body_json"]),
         })
+    return found
+
+
+def _open(db_path, *, readonly):
+    if not readonly:
+        return _connect(db_path)
+    path = Path(db_path).resolve()
+    uri = "file:///" + path.as_posix() + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def record_trial(db_path, build, experiment_id, guid64, object_id, outcome, code,
+                 ambiguous_json, tuning_name, session, created_ms=None):
+    if outcome not in ("PASS", "OUTCOME_UNKNOWN", "TRIAL_REJECT", "PUSH_FAILED", "TIMEOUT"):
+        raise AtlasImportError("outcome")
+    if not isinstance(experiment_id, str) or not experiment_id:
+        raise AtlasImportError("experiment_id")
+    connection = _connect(db_path)
+    try:
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO trials (
+                    build, experiment_id, guid64, object_id, outcome, code,
+                    ambiguous_json, tuning_name, session, created_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (build, experiment_id, guid64, object_id, outcome, code,
+                 ambiguous_json, tuning_name, session,
+                 int(time.time() * 1000) if created_ms is None else created_ms))
+    finally:
+        connection.close()
+
+
+def trials_for(db_path, build, guid64=None, *, readonly=False):
+    connection = _open(db_path, readonly=readonly)
+    try:
+        if not _has(connection, "trials"):
+            return []
+        clauses = ["build = ?"]
+        params = [build]
+        if guid64 is not None:
+            clauses.append("guid64 = ?")
+            params.append(int(guid64))
+        rows = connection.execute(
+            "SELECT * FROM trials WHERE " + " AND ".join(clauses)
+            + " ORDER BY created_ms, experiment_id", params).fetchall()
+    finally:
+        connection.close()
+    return [{key: row[key] for key in row.keys()} for row in rows]
+
+
+def _has(connection, table):
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,)).fetchone()
+    return row is not None
+
+
+def qualification(db_path, build, *, readonly=False):
+    connection = _open(db_path, readonly=readonly)
+    try:
+        guids = []
+        if _has(connection, "affordances"):
+            guids.extend(row["guid64"] for row in connection.execute(
+                "SELECT guid64 FROM affordances WHERE build = ?", (build,)))
+        trials = []
+        if _has(connection, "trials"):
+            trials = connection.execute(
+                "SELECT guid64, outcome, code FROM trials WHERE build = ?",
+                (build,)).fetchall()
+    finally:
+        connection.close()
+    buckets = {}
+    for guid in guids:
+        buckets.setdefault(int(guid), [])
+    for row in trials:
+        buckets.setdefault(int(row["guid64"]), []).append(row)
+    found = []
+    for guid, rows in buckets.items():
+        pass_n = sum(row["outcome"] == "PASS" for row in rows)
+        unknown_n = sum(row["outcome"] == "OUTCOME_UNKNOWN" for row in rows)
+        reject_n = sum(row["outcome"] == "TRIAL_REJECT" for row in rows)
+        push_failed_n = sum(row["outcome"] == "PUSH_FAILED" for row in rows)
+        excluded = any(row["code"] == "TRIAL_EXCLUDED" for row in rows)
+        if unknown_n >= 3 or push_failed_n >= 2 or excluded:
+            state = "FAILED"
+        elif pass_n >= 3 and unknown_n == 0:
+            state = "QUALIFIED"
+        elif not rows:
+            state = "UNTESTED"
+        else:
+            state = "IN_PROGRESS"
+        found.append({
+            "guid64": guid, "pass_n": pass_n, "unknown_n": unknown_n,
+            "reject_n": reject_n, "push_failed_n": push_failed_n, "state": state,
+        })
+    found.sort(key=lambda item: item["guid64"])
     return found

@@ -34,7 +34,7 @@ def test_migration_keeps_affordances_and_imports(tmp_path):
     connection.close()
     atlas.list_cards(db, "1.1")
     connection = sqlite3.connect(db)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
     assert connection.execute("SELECT name FROM affordances").fetchone()[0] == "sit"
     assert connection.execute("SELECT build FROM imports").fetchone()[0] == "1.1"
     connection.close()
