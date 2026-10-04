@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.13.0 (S1 situation scan)
+## Current build: 2.13.1 (S1 situation scan; D39 session_open fix)
 
-The source is version `2.13.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 5, schema 4 rows still validate). It is no longer read-only:
+The source is version `2.13.1` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 6, schema 4 and 5 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.13.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.13.1 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -79,8 +79,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.13.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.13.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.13.1
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.13.1
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

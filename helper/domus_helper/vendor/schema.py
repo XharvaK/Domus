@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 6
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v6"
-PROBE_VERSION = "2.13.0"
+PROBE_VERSION = "2.13.1"
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
@@ -402,6 +402,15 @@ def _validate_attestation(value):
                 string_id(value[key], "attestation.%s" % key)
 
 
+def _validate_zone(row):
+    if row["schema_version"] >= 6:
+        # DS3: zone, lot and room are ids; position is {x, y, z, level}.
+        _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room"), "zone")
+        _validate_position(row["zone"].get("position"), "zone.position")
+    else:
+        _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room", "position"), "zone")
+
+
 def _validate_id_fields(value, fields, label):
     _require(isinstance(value, dict), "%s must be an object" % label)
     expected = {
@@ -784,12 +793,7 @@ def _validate_common(row):
         _require(isinstance(row["telemetry_session_id"], str),
                  "telemetry_session_id must be a string")
     _validate_id_fields(row.get("save"), ("save_slot_guid", "slot_id"), "save")
-    if version >= 6:
-        # DS3: zone, lot and room are ids; position is {x, y, z, level}.
-        _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room"), "zone")
-        _validate_position(row["zone"].get("position"), "zone.position")
-    else:
-        _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room", "position"), "zone")
+    _validate_zone(row)
     _validate_id_fields(row.get("body"), ("sim_id",), "body")
     if row.get("body").get("instantiated") is not None:
         _require(type(row["body"]["instantiated"]) is bool, "body.instantiated")
@@ -878,7 +882,7 @@ def validate_record(row):
                  row["attestation"]["snapshot_sim"] is not None,
                  "session_open snapshot")
         _validate_id_fields(row.get("save"), ("save_slot_guid", "slot_id"), "save")
-        _validate_id_fields(row.get("zone"), ("zone_id", "lot_id", "room", "position"), "zone")
+        _validate_zone(row)  # D39: was the v5 check, which refused every v6 session_open
         _validate_id_fields(row.get("body"), ("sim_id",), "body")
     if kind == "presence_snapshot":
         _require(type(row.get("observation_complete")) is bool,
