@@ -381,3 +381,51 @@ class ComponentOfferTests(Hosted):
         from ashley_e1 import food
         self.assertTrue(food.name_hit("generic_consume_food", 13433))
         self.assertFalse(food.name_hit("Collect_Clean_Dish", 13173))
+
+
+class LiveReactionAftermathReplay(_Replay):
+    """2c815d4c-3: generic_consume_food FINISHED row 958; dish to the sink, then the
+    game's reaction_SmellBad (source SCRIPT) at a spoiled tray at 970; VERDICT
+    OUTCOME_UNKNOWN foreign_roots=1 rose=hunger 35->100->98."""
+
+    def _finished_then(self, source):
+        import types
+        self.ready()
+        self._clock()
+        self._motives(energy=70, hunger=60)
+        self.base.ticks = 1000
+        self.base.objects[CHAIR] = _Offer(CHAIR, [bed_sleep])
+        self.assertTrue(self.trial(guid64="13094")[0])
+        experiment = list(self.probe._E2.experiments.values())[-1]
+        pushed = experiment.interaction_ref
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=pushed.id, guid64=13094, affordance="x",
+            target=types.SimpleNamespace(id=int(CHAIR)),
+            context=types.SimpleNamespace(source=SCRIPT))]
+        for _ in range(12):
+            self._step()
+        self.base.sim.si_state = []
+        pushed.finishing_type = "FinishingType.NATURAL"
+        pushed.callbacks[0](pushed)
+        for _ in range(8):
+            self._step()
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=911, guid64=24661, affordance="x",
+            target=types.SimpleNamespace(id=744245394127586618),
+            context=types.SimpleNamespace(source=source))]
+        steps = 0
+        while not experiment.closed and steps < 300:
+            self._step()
+            steps += 1
+        self.assertTrue(experiment.closed)
+        return experiment
+
+    def test_game_reaction_after_finish_is_not_a_rival(self):
+        experiment = self._finished_then("InteractionSource.SCRIPT")
+        self.assertEqual(experiment.foreign_roots, [])
+        self.assertEqual(experiment.verdict, "PASS")
+
+    def test_a_late_push_with_intent_is_still_a_rival(self):
+        experiment = self._finished_then(SCRIPT)
+        self.assertEqual(len(experiment.foreign_roots), 1)
+        self.assertEqual(experiment.verdict, "OUTCOME_UNKNOWN")

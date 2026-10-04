@@ -111,8 +111,9 @@ class Experiment:
         # D30 (live sink_washHands: after ours finished, the bladder reflex ran toilet,
         # flush, then her own AUTONOMY sink_washHands on our sink; that counted as a
         # rival and a clean PASS became OUTCOME_UNKNOWN): an interaction trial's
-        # aftermath begins when it has finished and its family is gone. A late script or
-        # user push stays a rival (A27: it may be a slow phase of ours or someone else's).
+        # aftermath begins when it has finished and its family is gone. A late push with
+        # user intent stays a rival (A27: it may be a slow phase of ours or someone
+        # else's); the game's own SCRIPT reactions do not (D36).
         need_aftermath = (not family_open and self.card.get("card_class") == "need" and
                           self.claims["STARTED"])
         # D33 (live toilet-use-sitting: the game queued its own toilet-flush one row
@@ -123,7 +124,7 @@ class Experiment:
                             self.card.get("card_class") == "interaction")
         for entry in _entries(row):
             if need_aftermath or (native_aftermath and entry.get("source_raw") not in
-                                  e2_admission.BUSY_SOURCES):
+                                  e2_admission.INTENT_SOURCES):
                 iid = entry.get("interaction_id")
                 if iid is not None:
                     self.known_ids.add(iid)
