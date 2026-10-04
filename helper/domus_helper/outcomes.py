@@ -43,6 +43,8 @@ _ORIGINS = {
 SLEEP = re.compile(r"^bed_sleep$", re.I)
 NAP = re.compile(r"nap", re.I)
 DIARY_SPACING_MIN = 12 * 60
+# Standing idle is the absence of an act, not one ("nothing followed" is a fact).
+IDLE = frozenset(("sim-stand", "stand_Passive"))
 SLEEP_CONFIRM_MIN = 30
 FOLLOW_WINDOW_MIN = 30
 MAX_FOLLOWED = 4
@@ -95,6 +97,8 @@ def _live_acts(row):
             continue
         source = entry.get("source_raw")
         if source == "InteractionSource.POSTURE_GRAPH" or entry.get("interaction_id") is None:
+            continue
+        if _affordance_name(entry.get("affordance_text")) in IDLE:
             continue
         found[str(entry["interaction_id"])] = entry
     return found
@@ -160,6 +164,13 @@ def acts(rows, session=None):
         after = samples[last + 1] if last + 1 < len(samples) and \
             not _gap(samples[last], samples[last + 1]) else samples[last]
         key = str(entry["interaction_id"])
+        # When the next sample already holds an act that began as this one ended
+        # (Grab a Serving -> eating), that sample's change belongs to the next act:
+        # this act is measured to its own last sample.
+        shared = any(other not in live[last]
+                     for other in (live[last + 1] if last + 1 < len(live) else {}))
+        if shared:
+            after = samples[last]
         start, end = samples[first]["minute"], samples[last]["minute"]
         record = {
             "kind": "outcome", "v": OUTCOME_VERSION,
@@ -174,7 +185,8 @@ def acts(rows, session=None):
                      "start_minute": start, "end_minute": end,
                      "game_minutes": None if start is None or end is None else end - start,
                      "samples": last - first + 1},
-            "needs": _needs(before["motives"], after["motives"]),
+            "needs": dict(_needs(before["motives"], after["motives"]),
+                          measured_to="own_last_sample" if shared else "next_sample"),
             "moodlets": _moodlet_diff(before["moodlets"], after["moodlets"]),
             "company": samples[first]["company"],
             "experiment": experiments.get(key),
