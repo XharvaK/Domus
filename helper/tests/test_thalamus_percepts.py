@@ -265,3 +265,19 @@ def test_percept_lineage_on_need_after_lineage():
     changed = ext.step(_row(3, ticks=2, motives=[_motive("bladder", 40, "low")]))
     assert changed[0].lineage == "3:abc"
     assert isinstance(changed[0], Percept)
+
+
+def test_interaction_origin_marks_the_bodys_own_actions():
+    """Owner ruling (DA6F O1): the game's distress reflex is her body acting, reported
+    as origin native_autonomy, not as an error; her pushed actions are script."""
+    ext = Extractor()
+    started = ext.step(_row(1, ticks=0, observed=[
+        _entry(13993, iid="d", text="sim_BladderDistress"),
+        _entry(13949, iid="s", source="InteractionSource.SCRIPT_WITH_USER_INTENT"),
+        _entry(1, iid="p", source="InteractionSource.PIE_MENU"),
+        _entry(2, iid="g", source="InteractionSource.POSTURE_GRAPH")]))
+    origins = {p.object: dict(p.facts)["origin"] for p in started if p.kind == "interaction"}
+    assert origins == {"13993": "native_autonomy", "13949": "script", "1": "pie_menu",
+                       "2": "game"}
+    ended = ext.step(_row(2, ticks=5, observed=[]))
+    assert {p.object: dict(p.facts)["origin"] for p in ended if p.kind == "interaction"} == origins

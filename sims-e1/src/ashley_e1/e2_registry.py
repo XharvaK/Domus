@@ -108,10 +108,18 @@ class Experiment:
         # aftermath (collect dish, wash dish, put away), not rivals of the meal.
         # Between crafting phases the family is briefly not live; family_open keeps
         # the A32 handoff grace so the next phase child is still ours.
-        aftermath = (self.card.get("card_class") == "need" and self.claims["STARTED"] and
-                     not family_open)
+        # D30 (live sink_washHands: after ours finished, the bladder reflex ran toilet,
+        # flush, then her own AUTONOMY sink_washHands on our sink; that counted as a
+        # rival and a clean PASS became OUTCOME_UNKNOWN): an interaction trial's
+        # aftermath begins when it has finished and its family is gone. A late script or
+        # user push stays a rival (A27: it may be a slow phase of ours or someone else's).
+        need_aftermath = (not family_open and self.card.get("card_class") == "need" and
+                          self.claims["STARTED"])
+        native_aftermath = (not family_open and self.claims["FINISHED"] and
+                            self.card.get("card_class") == "interaction")
         for entry in _entries(row):
-            if aftermath:
+            if need_aftermath or (native_aftermath and entry.get("source_raw") not in
+                                  e2_admission.BUSY_SOURCES):
                 iid = entry.get("interaction_id")
                 if iid is not None:
                     self.known_ids.add(iid)
@@ -235,11 +243,14 @@ class Experiment:
     def _settled(self, mono):
         """D6: a need trial ends with its effect, not with the window. D26 (live
         sleep: she woke at row 1381, the verdict waited for the 180 s window at 1519):
-        a maintained interaction ends 30 s after its finished family was last live."""
+        an interaction ends 30 s after its finished family was last live. D27 (live
+        shower_Clean finished NATURAL 5 s after attribution and waited out the window):
+        a finish settles it whether or not it reached MAINTAINED_10S; no claim can be
+        earned once its family is gone."""
         if type(mono) is not int:
             return False
         if self.card.get("card_class") == "interaction":
-            if not (self.claims["MAINTAINED_10S"] and self.claims["FINISHED"]):
+            if not self.claims["FINISHED"]:
                 return False
             last = self.family_live_ns
             if type(last) is not int or (type(self.finished_ns) is int and

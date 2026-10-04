@@ -285,7 +285,8 @@ class PreflightTests(Hosted):
         self.base.sim.test_super_affordance = test_affordance
         stove = _Stove(CHAIR)
         fridge = _Fridge("118245043789434088")
-        self._manager({stove.id: stove, fridge.id: fridge})
+        sofa = _Fridge("118245043789434044")
+        self._manager({stove.id: stove, fridge.id: fridge, sofa.id: sofa})
         scan_cls = self.probe.preflight.PreflightScan
         original = scan_cls.__init__
 
@@ -316,6 +317,11 @@ class PreflightTests(Hosted):
         self.assertFalse(by_key[(CHAIR, "upgrade_Stove")]["ok"])
         self.assertIn("state check", by_key[(CHAIR, "upgrade_Stove")]["reason"])
         self.assertNotIn("FoodPicker", calls)
+        # D31: the excluded E1 sofa is refused in preflight, not at the trial.
+        sofa_row = by_key[("118245043789434044", "bed_Nap")]
+        self.assertFalse(sofa_row["ok"])
+        self.assertEqual(sofa_row["reason"], "OBJECT_EXCLUDED")
+        self.assertEqual(calls.count("bed_Nap"), 2)
         self.assertFalse(os.path.isfile(scan.partial))
 
 

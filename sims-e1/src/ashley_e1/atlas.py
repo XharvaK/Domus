@@ -54,6 +54,56 @@ def _static_commodities(value):
     return sorted(set(guids))[:32]
 
 
+def _number(value):
+    if type(value) in (int, float):
+        return value
+    return None
+
+
+def _ad_stat(ad_list):
+    stat = _missing(lambda: ad_list._stat_type)
+    guid = _missing(lambda: stat.guid64)
+    name = _missing(lambda: stat.__name__)
+    return (guid if type(guid) is int else None,
+            name[:64] if type(name) is str else None)
+
+
+def _ad_ops(ad_list):
+    ops = []
+    try:
+        listed = list(_missing(lambda: ad_list._op_list) or ())
+    except TypeError:
+        return ops
+    for op in listed[:4]:
+        name = type(op).__name__
+        ops.append({
+            "op": name[:48],
+            "amount": _number(_missing(lambda: op._amount)),
+            "advertise": _bool_or_null(_missing(lambda: op._advertise)),
+        })
+    return ops
+
+
+def _autonomy_ads(value):
+    """DA6G: what the game says an interaction does to each statistic. Bytecode
+    (interactions/base/interaction, utils/autonomy_op_list, statistics/statistic_ops):
+    Interaction._autonomy_ads maps a stat type to an AutonomyAdList whose _stat_type
+    and _op_list are plain attributes; an op's _amount and _advertise are set in
+    __init__. Nothing here calls a method on them."""
+    if value is None:
+        return None
+    try:
+        lists = list(value.values())
+    except (AttributeError, TypeError):
+        return None
+    ads = []
+    for ad_list in lists:
+        guid, name = _ad_stat(ad_list)
+        ads.append({"stat": guid, "name": name, "ops": _ad_ops(ad_list)})
+    ads.sort(key=lambda ad: (ad["name"] or "", ad["stat"] or 0))
+    return ads[:16]
+
+
 def _affordance_row(cls):
     guid = _missing(lambda: cls.guid64)
     name = _missing(lambda: cls.__name__)
@@ -74,6 +124,7 @@ def _affordance_row(cls):
         "require_current_posture": _bool_or_null(_missing(lambda: cls._require_current_posture)),
         "posture_preferences": None if posture is None else type(posture).__name__,
         "static_commodities": _static_commodities(_missing(lambda: cls._static_commodities)),
+        "autonomy_ads": _autonomy_ads(_missing(lambda: cls._autonomy_ads)),
     }
 
 

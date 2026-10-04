@@ -64,6 +64,35 @@ def _motive_span(experiment, motive_id):
     return _num(before), _num(peak), _num(after)
 
 
+RISE_AT = 5
+
+
+def _risen(experiment, skip):
+    """D28 (live shower_TakeShower PASS, hygiene 82->100, detail silent): the needs
+    that rose by RISE_AT or more during a trial, largest rise first."""
+    spans = {}
+    for row in experiment._rows_since:
+        for motive in row.get("motives") or []:
+            if not isinstance(motive, dict):
+                continue
+            motive_id = motive.get("id")
+            value = motive.get("value")
+            if (not isinstance(motive_id, str) or motive_id in skip or
+                    isinstance(value, bool) or not isinstance(value, (int, float))):
+                continue
+            span = spans.get(motive_id)
+            if span is None:
+                spans[motive_id] = [value, value, value]
+                continue
+            span[2] = value
+            if value > span[1]:
+                span[1] = value
+    risen = [(span[1] - span[0], motive_id, span) for motive_id, span in spans.items()
+             if span[1] - span[0] >= RISE_AT]
+    risen.sort(key=lambda item: (-item[0], item[1]))
+    return [(motive_id, span) for _rise, motive_id, span in risen]
+
+
 def _num(value):
     if value is None:
         return "?"
@@ -615,6 +644,13 @@ class E2Control:
             len(experiment.foreign_roots), experiment.incomplete_rows,
             len(experiment.continuation_entries), len(experiment.child_mixers),
             len(experiment.children))
+        skip = set(experiment.relief)
+        if experiment.food_route:
+            skip.add("hunger")
+        for motive_id, span in _risen(experiment, skip):
+            # After the counts: if the detail is too long, these are cut first.
+            detail += " rose=%s %s->%s->%s" % (
+                motive_id, _num(span[0]), _num(span[1]), _num(span[2]))
         finishing = experiment.finishing_type
         natural = finishing == "FinishingType.NATURAL"
         user_cancel = finishing == "FinishingType.USER_CANCEL"

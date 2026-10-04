@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.11.2 (DA6F live hardening)
+## Current build: 2.11.3 (DA6G live hardening)
 
-The source is version `2.11.2` (`src/ashley_e1/__init__.py`,
+The source is version `2.11.3` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 5, schema 4 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.11.2 has not yet passed its E2 first-load gate or trials; those run on the
+2.11.3 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -39,6 +39,10 @@ The crawl asks for a fresh preflight when it starts. After a relief trial it wai
 
 The second session (2.11.1) added these. A motive's `value` is the game's current value: the probe applies the game's own rate formula to the cached value without writing it, so a reading is current at any game speed (`age_ticks` 0). Only if a rate cannot be read does it report the cache and its age. Sleep and work switch the game to speed 3, where rows are about 37000 ticks apart. A maintained interaction trial ends 30 s after it finishes, not at its 180 s window, and a relief trial's verdict carries the need's start, peak, and end (`relief=energy energy=24->100->100`). The crawl does not push a trial into a body distress it can already see, and its stop names the need. Preflight and the food scan tick four times a second at the same 5 ms budget and show progress on `status`. The food scan matches name words, not substrings ("eat" no longer matches cheat or death), reads menus only from classes that have one, and names recipes. `remove.ps1` without `-Version` removes every installed probe package.
 
+## Live hardening (DA6G)
+
+The third session (2.11.2) added these. The atlas reads the game's own map of what each interaction does to each need: `Interaction._autonomy_ads`, the table the game's autonomy uses, read attribute by attribute without calling the game (`autonomy_ads`: stat, name, and up to four operations with amount and advertise). Any interaction trial ends 30 s after it finishes, including one shorter than the 10 s maintenance mark. A verdict names the needs that rose during it (`rose=hygiene 82->100->99`). Once our action has finished, the game's own autonomy on the same object (a distress reflex: toilet, flush, wash hands) is aftermath, not a rival; a late script or user push is still a rival. Preflight refuses the excluded E1 sofa, so the crawl never plans it. The game acts on a Sim's body distress even with autonomy off; that is her body's own action, and the helper's interaction percepts say so (`origin`: native_autonomy, script, pie_menu, game).
+
 Owner commands (also available through the local command inbox when the zone reaches RUNNING):
 
 | Command | Stage | What it does |
@@ -67,8 +71,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.11.2
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.11.2
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.11.3
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.11.3
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

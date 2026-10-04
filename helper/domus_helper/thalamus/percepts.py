@@ -7,6 +7,19 @@ from domus_helper.thalamus.types import Percept
 _USER = "InteractionSource.SCRIPT_WITH_USER_INTENT"
 _CANCEL = "InteractionSource.BODY_CANCEL_AOP"
 _TEXT_CAP = 120
+# Who started an interaction. The game acts on her body's distress even with autonomy
+# off (live DA6F: sim_BladderDistress, then toilet). That is her body's own action
+# (design 12.3, NATIVE_AUTONOMY), reported as a fact, never as an override or error.
+_ORIGINS = {
+    "InteractionSource.AUTONOMY": "native_autonomy",
+    "InteractionSource.SCRIPT": "script",
+    "InteractionSource.SCRIPT_WITH_USER_INTENT": "script",
+    "InteractionSource.PIE_MENU": "pie_menu",
+}
+
+
+def _origin(source):
+    return _ORIGINS.get(source, "game")
 
 
 def _text(value):
@@ -239,7 +252,8 @@ class Extractor:
                 "interaction", sim_s, str(affordance), "ended", surprise=surprise,
                 pressure=pressure, lineage=self.lineage_id,
                 facts=_facts(ticks, (("affordance_text", _text(
-                    (closing or entry).get("affordance_text"))),))))
+                    (closing or entry).get("affordance_text"))),
+                    ("origin", _origin(entry.get("source_raw")))))))
             self._open.pop(identity, None)
         for identity, entry in running.items():
             if identity in prior_running:
@@ -247,7 +261,8 @@ class Extractor:
             percepts.append(Percept(
                 "interaction", sim_s, str(entry.get("affordance_id")), "started",
                 lineage=self.lineage_id,
-                facts=_facts(ticks, (("affordance_text", _text(entry.get("affordance_text"))),))))
+                facts=_facts(ticks, (("affordance_text", _text(entry.get("affordance_text"))),
+                                     ("origin", _origin(entry.get("source_raw")))))))
         return percepts
 
     def _clear_duration(self, span, ticks, paused):

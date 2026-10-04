@@ -54,6 +54,7 @@ from . import preflight
 from . import cmdbox
 from . import tuned
 from . import e2_actuator
+from . import e2_admission
 from . import e2_control
 from . import observers
 from . import schema
@@ -633,10 +634,15 @@ def _dispatch_preflight(connection):
                 name = ""
             if type(name) is not str:
                 name = ""
+            excluded = e2_actuator.excluded(affordance)
+            if object_id in e2_control.EXCLUDED_OBJECT_IDS:
+                # D31 (live: the crawl spent a trial and a rate slot on sofa_Nap, then
+                # TRIAL_REJECT OBJECT_EXCLUDED): the E1 witness sofa is never a target.
+                excluded = e2_admission.OBJECT_EXCLUDED
             jobs.append({
                 "object_id": object_id, "guid64": guid, "name": name[:128],
                 "obj": obj, "affordance": affordance,
-                "excluded": e2_actuator.excluded(affordance),
+                "excluded": excluded,
             })
 
     def _run(job, _sim=sim, _context=context):
