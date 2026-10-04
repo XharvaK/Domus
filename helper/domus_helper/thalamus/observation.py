@@ -103,16 +103,34 @@ def _portrait(row, resolve=None):
         if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
             continue
         doing = item.get("doing")
-        company.append({"id": str(item["id"]), "name": item.get("name"),
-                        "room": item.get("room"), "distance_m": item.get("distance_m"),
-                        "doing": _affordance_name(doing)})
+        entry = {"id": str(item["id"]), "name": item.get("name"),
+                 "room": item.get("room"), "distance_m": item.get("distance_m"),
+                 "doing": _affordance_name(doing)}
+        relationship = item.get("relationship")
+        if isinstance(relationship, dict):
+            # S5: what the game holds between them; labels in the game's words.
+            entry["relationship"] = {
+                "met": relationship.get("known"),
+                "tracks": {track.get("track"): track.get("value")
+                           for track in relationship.get("tracks") or []
+                           if isinstance(track, dict)},
+                "labels": [_resolve(resolve, label.get("text_key")) or label.get("label")
+                           for label in relationship.get("labels") or []
+                           if isinstance(label, dict)]}
+        company.append(entry)
     moodlets = []
     for item in row.get("sim_signals") or []:
         if not isinstance(item, dict) or item.get("kind") != "MOODLET" or item.get("visible") is False:
             continue
-        moodlets.append({"id": item.get("tuning_id"), "name": item.get("tuning_name"),
-                         "text": _resolve(resolve, item.get("text_key")),
-                         "weight": item.get("magnitude"), "mood": item.get("mood_type")})
+        moodlet = {"id": item.get("tuning_id"), "name": item.get("tuning_name"),
+                   "text": _resolve(resolve, item.get("text_key")),
+                   "weight": item.get("magnitude"), "mood": item.get("mood_type")}
+        # S5: the game's reason ("From Eating Spoiled Food") and game minutes left.
+        if item.get("reason_key") is not None:
+            moodlet["reason"] = _resolve(resolve, item.get("reason_key"))
+        if item.get("minutes_left") is not None:
+            moodlet["minutes_left"] = item.get("minutes_left")
+        moodlets.append(moodlet)
     addressed = []
     for item in row.get("social") or []:
         if isinstance(item, dict):

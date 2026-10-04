@@ -81,13 +81,26 @@ def _sample(row):
                     "id": str(item["tuning_id"]), "name": item.get("tuning_name"),
                     "text_key": item.get("text_key"), "visible": item.get("visible")}
     company = None
+    relationships = None
     if (row.get("schema_version") or 0) >= 6 and isinstance(row.get("presence"), list):
         company = sorted({str(item.get("name") or item.get("id")) for item in row["presence"]
                           if isinstance(item, dict) and not item.get("is_body")})
+    if (row.get("schema_version") or 0) >= 7 and isinstance(row.get("presence"), list):
+        relationships = {}
+        for item in row["presence"]:
+            relationship = item.get("relationship") if isinstance(item, dict) else None
+            if isinstance(relationship, dict):
+                relationships[str(item.get("name") or item.get("id"))] = {
+                    "tracks": {t.get("track"): t.get("value")
+                               for t in relationship.get("tracks") or []},
+                    "labels": sorted(l.get("label") for l in relationship.get("labels") or [])}
+    objects = row.get("objects") if (row.get("schema_version") or 0) >= 7 else None
     return {"wall_ms": row.get("wall_timestamp_ms"),
             "calendar": (row.get("game") or {}).get("calendar"),
             "minute": game_minute((row.get("game") or {}).get("calendar")),
-            "motives": motives, "moodlets": moodlets, "company": company}
+            "motives": motives, "moodlets": moodlets, "company": company,
+            "relationships": relationships,
+            "objects": objects if isinstance(objects, dict) else None}
 
 
 def _live_acts(row):
@@ -117,6 +130,39 @@ def _needs(before, after):
             "after": {key: after[key] for key in keys},
             "delta": {key: round(after[key] - before[key], 1) for key in keys
                       if round(after[key] - before[key], 1) != 0}}
+
+
+def _relationship_changes(before, after):
+    """S5: track changes and labels gained or lost with each Sim seen at both ends."""
+    if before is None or after is None:
+        return None
+    changes = []
+    for name in sorted(set(before) & set(after)):
+        a, b = before[name], after[name]
+        deltas = {track: round(b["tracks"][track] - a["tracks"][track], 1)
+                  for track in sorted(set(a["tracks"]) & set(b["tracks"]))
+                  if a["tracks"][track] is not None and b["tracks"][track] is not None
+                  and round(b["tracks"][track] - a["tracks"][track], 1) != 0}
+        gained = sorted(set(b["labels"]) - set(a["labels"]))
+        lost = sorted(set(a["labels"]) - set(b["labels"]))
+        if deltas or gained or lost:
+            changes.append({"with": name, "tracks": deltas, "labels_gained": gained,
+                            "labels_lost": lost})
+    return changes
+
+
+def _object_changes(samples):
+    """S5: object events reported by the samples of an act (after its first one).
+    None when any sample is unsensed or starts a new baseline."""
+    found = {"created": [], "destroyed": [], "changed": [], "truncated": False}
+    for sample in samples:
+        events = sample["objects"]
+        if events is None or events.get("baseline"):
+            return None
+        for key in ("created", "destroyed", "changed"):
+            found[key].extend(events.get(key) or [])
+        found["truncated"] = found["truncated"] or bool(events.get("truncated"))
+    return found
 
 
 def _experiments(rows):
@@ -161,8 +207,8 @@ def acts(rows, session=None):
     for first, last, entry in closed:
         before = samples[first - 1] if first > 0 and not _gap(samples[first - 1], samples[first]) \
             else samples[first]
-        after = samples[last + 1] if last + 1 < len(samples) and \
-            not _gap(samples[last], samples[last + 1]) else samples[last]
+        after_index = last + 1 if last + 1 < len(samples) and \
+            not _gap(samples[last], samples[last + 1]) else last
         key = str(entry["interaction_id"])
         # When the next sample already holds an act that began as this one ended
         # (Grab a Serving -> eating), that sample's change belongs to the next act:
@@ -170,7 +216,8 @@ def acts(rows, session=None):
         shared = any(other not in live[last]
                      for other in (live[last + 1] if last + 1 < len(live) else {}))
         if shared:
-            after = samples[last]
+            after_index = last
+        after = samples[after_index]
         start, end = samples[first]["minute"], samples[last]["minute"]
         record = {
             "kind": "outcome", "v": OUTCOME_VERSION,
@@ -189,11 +236,18 @@ def acts(rows, session=None):
                           measured_to="own_last_sample" if shared else "next_sample"),
             "moodlets": _moodlet_diff(before["moodlets"], after["moodlets"]),
             "company": samples[first]["company"],
+            "relationships": _relationship_changes(before["relationships"],
+                                                   after["relationships"]),
+            # Events each sample reports happened since the one before it.
+            "objects": None if samples[first]["objects"] is None else
+            _object_changes(samples[first + 1:after_index + 1]),
             "experiment": experiments.get(key),
             "followed_by": [],
-            "unknown": ["objects", "relationships"],  # S5
             "_order": (first, last),
         }
+        # Anything not sensed in these rows (schema 6 and older) stays UNKNOWN.
+        record["unknown"] = [name for name in ("objects", "relationships")
+                             if record[name] is None]
         records.append(record)
     records.sort(key=lambda item: (item["_order"][0], item["act_id"]))
     _link_followers(records)
