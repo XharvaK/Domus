@@ -366,3 +366,16 @@ def test_mcp_tools_without_game(tmp_path, monkeypatch):
     plan = mcp_server.crawl_plan(limit=5)
     assert plan[0]["guid64"] == 1
     assert plan[0]["object_id"] == "4"
+
+
+def test_helper_extra_deny_covers_the_reviewed_families():
+    from domus_helper import crawl_protocol as cp
+    for name in ("object_Bane_Sabotage_Stove", "Ghost_Possess_Break_Electrocution",
+                 "object_Hire_Repair_Service", "door_SetFrontDoor",
+                 "utilities_AddUtility_PowerProduction_Large", "sim_DeliverBaby",
+                 "sim_CallOver", "infant_WhatsThat", "RabbitHole_Tree_Explore",
+                 "object_ReplaceBrokenObject", "Mailbox_DisplayBillsDialog"):
+        assert cp.name_blocked(name), name
+    for name in ("object_Repair_Sink", "fridge_Grab_Snack", "shower_TakeShower",
+                 "mailbox_PayBills", "fishing_ExamineWater"):
+        assert not cp.name_blocked(name), name

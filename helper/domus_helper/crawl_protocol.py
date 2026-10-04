@@ -2,7 +2,15 @@
 
 from domus_helper.vendor import e2_trial
 
-DENY_SUBSTRINGS = e2_trial.DENY_NAME_PARTS
+# The probe's hard floor plus helper-only exclusions reviewed on the first real plan
+# (2026-10-04): things that break objects, spend money or call NPCs, change lot rules,
+# need another life stage, or take her off the lot. The probe never needs to know these.
+HELPER_EXTRA_DENY = (
+    "ghost", "possess", "bane", "sabotage", "hire", "replacebroken", "mailman",
+    "displaybills", "door_", "utilities_", "deliverbaby", "callover", "telepathy",
+    "toddler", "infant", "rabbithole",
+)
+DENY_SUBSTRINGS = e2_trial.DENY_NAME_PARTS + HELPER_EXTRA_DENY
 
 RETRY_CODES = ("BODY_BUSY", "CLOCK_PAUSED")
 
