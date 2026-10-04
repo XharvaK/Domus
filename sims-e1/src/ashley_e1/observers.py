@@ -432,7 +432,37 @@ def _string_key(value):
     return None
 
 
-def _describe_buff(entry):
+def _moodlet_minutes_left(entry, sim_info, now_ticks):
+    """S5: game minutes until a timed moodlet ends. Bytecode (buffs/buff): a timed buff
+    has `_temporary_commodity_info` and keeps `_owning_commodity`; the `commodity`
+    property can create one (a store), so the instance is read from the Sim's own
+    commodity tracker. Minutes come from the D25-checked decay calls. None otherwise."""
+    try:
+        if entry._temporary_commodity_info is None:
+            return None
+        owning = entry._owning_commodity
+        if owning is None or sim_info is None:
+            return None
+        instance = sim_info.commodity_tracker._statistics.get(owning)
+    except Exception:
+        return None
+    if instance is None:
+        return None
+    try:
+        until = instance._calculate_minutes_until_value_is_reached_through_decay(
+            float(instance.convergence_value))
+        updated = instance._last_update
+    except Exception:
+        return None
+    if until is None or isinstance(until, bool) or not isinstance(until, (int, float)):
+        return None
+    age = 0.0
+    if type(updated) is int and type(now_ticks) is int and now_ticks >= updated:
+        age = (now_ticks - updated) / TICKS_PER_SIM_MINUTE
+    return round(max(float(until) - age, 0.0), 1)
+
+
+def _describe_buff(entry, sim_info=None, now_ticks=None):
     try:
         tuning = str(entry.guid64)
     except Exception:
@@ -473,11 +503,17 @@ def _describe_buff(entry):
         text_key = _string_key(blueprint.buff_name)
     except Exception:
         text_key = None
+    try:
+        reason_key = _string_key(entry.buff_reason)
+    except Exception:
+        reason_key = None
     return {"kind": "MOODLET", "tuning_id": tuning_id, "tuning_name": name,
             "game_text": None, "magnitude": magnitude, "consequences": None,
             "native_override": None, "text_key": text_key,
             "mood_type": _bounded_name(mood_name, "signal.mood_type"),
-            "visible": visible if type(visible) is bool else None}
+            "visible": visible if type(visible) is bool else None,
+            "reason_key": reason_key,
+            "minutes_left": _moodlet_minutes_left(entry, sim_info, now_ticks)}
 
 
 def _signal_order(signal):
@@ -490,7 +526,7 @@ def _signal_order(signal):
     return (0 if signal.get("visible") is True else 1, -abs(weight), signal["tuning_id"])
 
 
-def read_moodlets(sim_info):
+def read_moodlets(sim_info, now_ticks=None):
     try:
         buffs = sim_info.Buffs
     except Exception:
@@ -509,7 +545,7 @@ def read_moodlets(sim_info):
         if seen > schema.MAX_SIGNALS * 4:
             break
         try:
-            row = _describe_buff(entry)
+            row = _describe_buff(entry, sim_info, now_ticks)
         except Exception:
             continue
         if row is not None:
@@ -557,7 +593,7 @@ def read_mood(sim_info):
 def read_senses(sim_info, now_ticks, game):
     del game
     return {"motives": read_motives(sim_info, now_ticks),
-            "sim_signals": read_moodlets(sim_info),
+            "sim_signals": read_moodlets(sim_info, now_ticks),
             "mood": read_mood(sim_info)}
 
 
@@ -678,7 +714,86 @@ def _doing(sim):
     return fallback
 
 
-def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_position=None):
+def _type_name(value):
+    """value.__name__ as a plain attribute read (no reflection), or None."""
+    try:
+        name = value.__name__
+    except Exception:
+        return None
+    return name if isinstance(name, str) else None
+
+
+def relationship_between(body_id, other_id, now_ticks=None):
+    """S5: what the game holds between her and another Sim, from plain attributes.
+
+    Bytecode (relationships/*): RelationshipService keeps `_relationships` keyed by
+    (smaller id, larger id); a Relationship keeps `_bi_directional_relationship_data`
+    with `_track_tracker._statistics` (friendship, romance, ...) and `_bits` (labels,
+    with `display_name`, `visible`). get_relationship_score was not used: it goes
+    through _find_relationship (which can create one) and get_track_score (the value
+    getter). Track values are the D25 decay math on `_value`. known=False: no
+    relationship exists yet (they have not met)."""
+    try:
+        a, b = int(body_id), int(other_id)
+        key = (a, b) if a < b else (b, a)
+        relationship = services.relationship_service()._relationships.get(key)
+    except Exception:
+        return None
+    if relationship is None:
+        return {"known": False, "tracks": [], "labels": []}
+    try:
+        data = relationship._bi_directional_relationship_data
+    except Exception:
+        return None
+    tracks = []
+    try:
+        items = list(data._track_tracker._statistics.items())
+    except Exception:
+        items = []
+    for track_type, instance in items:
+        name = _bounded_name(_type_name(track_type), "relationship.track")
+        if name is None or instance is None:
+            continue
+        try:
+            value = instance._value
+            updated = instance._last_update
+        except Exception:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        current = float(value)
+        if type(updated) is int and type(now_ticks) is int and now_ticks >= updated:
+            computed = _current_value(instance, float(value), now_ticks - updated)
+            if computed is not None:
+                current = computed
+        tracks.append({"track": name, "value": round(current, 1)})
+    tracks.sort(key=lambda item: item["track"])
+    labels = []
+    try:
+        bits = list(data._bits.keys())
+    except Exception:
+        bits = []
+    for bit in bits:
+        try:
+            if bit.visible is not True:
+                continue
+        except Exception:
+            continue
+        name = _bounded_name(_type_name(bit), "relationship.label")
+        if name is None:
+            continue
+        try:
+            text_key = _string_key(bit.display_name)
+        except Exception:
+            text_key = None
+        labels.append({"label": name, "text_key": text_key})
+    labels.sort(key=lambda item: item["label"])
+    return {"known": True, "tracks": tracks[:schema.MAX_REL_TRACKS],
+            "labels": labels[:schema.MAX_REL_LABELS]}
+
+
+def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_position=None,
+                       now_ticks=None):
     try:
         raw_id = sim_info.id
     except Exception:
@@ -702,6 +817,13 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
     position = _position(sim)
     posture = _posture_snapshot(sim)
     doing, doing_target = _doing(sim)
+    is_body = lab_sim_id is not None and entry_id == str(lab_sim_id)
+    relationship = None
+    if not is_body and lab_sim_id is not None:
+        try:
+            relationship = relationship_between(lab_sim_id, entry_id, now_ticks)
+        except Exception:
+            relationship = None
     return {"id": entry_id,
             "active_household": household_id is not None and own_household == household_id,
             "level": level,
@@ -713,10 +835,12 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
             "posture": None if posture is None else posture.get("posture_name"),
             "doing": doing,
             "doing_target": doing_target,
-            "distance_m": _distance(position, body_position)}
+            "distance_m": _distance(position, body_position),
+            "relationship": relationship}
 
 
-def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None):
+def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None,
+                  now_ticks=None):
     """Every instanced Sim on the active lot, her body first, then nearest first.
 
     D37 (live: presence was empty in every row with 8 Sims on the lot):
@@ -758,7 +882,8 @@ def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=Non
         if sim_info is None:
             continue
         try:
-            row = _describe_presence(sim_info, sim, household_id, lab_sim_id, body_position)
+            row = _describe_presence(sim_info, sim, household_id, lab_sim_id, body_position,
+                                     now_ticks)
         except Exception:
             continue
         if row is None:
@@ -874,7 +999,8 @@ def poll_once(telemetry_session_id, armed_name,
     interactions, queue_truncated, running_truncated = snapshot.merge_interactions(
         queued, running, _describe_interaction
     )
-    senses = read_senses(sim_info, services.time_service().sim_now.absolute_ticks(), None)
+    now_ticks = services.time_service().sim_now.absolute_ticks()
+    senses = read_senses(sim_info, now_ticks, None)
     motives = senses["motives"]
     signals = senses["sim_signals"]
     mood = senses["mood"]
@@ -889,7 +1015,7 @@ def poll_once(telemetry_session_id, armed_name,
     if lab_id is not None:
         try:
             presence, presence_truncated = read_presence(
-                lab_id, body_position=zone["position"])
+                lab_id, body_position=zone["position"], now_ticks=now_ticks)
         except Exception:
             presence, presence_truncated = ([], False)
         if any(not row["is_body"] for row in presence):
@@ -925,4 +1051,96 @@ def poll_once(telemetry_session_id, armed_name,
         motives=motives, sim_signals=signals, mood=mood,
         presence=presence, social=social,
     )
+    try:
+        row["objects"] = read_object_events(zone.get("zone_id"), zone.get("position"),
+                                            int(time.time() * 1000))
+    except Exception:
+        row["objects"] = None
     return snapshot.apply_size_budget(row)
+
+
+# S5: object events. The previous sample's object ids (with class names) and the
+# states of the objects near her; a zone change, the first sample or a pause in
+# sampling longer than OBJECT_BASELINE_GAP_MS starts a new baseline (no events).
+NEAR_STATE_METERS = 4.0
+NEAR_STATE_MAX = 16
+OBJECT_BASELINE_GAP_MS = 5000
+_OBJECTS_PREV = {"zone": None, "wall_ms": None, "classes": None, "near": {}}
+
+
+def _object_class(obj):
+    return _bounded_name(_type_name(type(obj)), "objects.class")
+
+
+def _object_states(obj):
+    try:
+        items = list(obj.state_component._states.items())
+    except Exception:
+        return {}
+    found = {}
+    for state, value in items[:32]:
+        key = _type_name(state)
+        if key is not None:
+            found[key[:96]] = (_type_name(value) or "")[:96] or None
+    return found
+
+
+def read_object_events(zone_id, body_position, wall_ms):
+    """Objects created and destroyed on the lot since the previous sample, and state
+    changes of the objects within NEAR_STATE_METERS of her (nearest first). Plain
+    attribute reads (object manager `_objects`, `state_component._states`)."""
+    try:
+        items = list(services.object_manager()._objects.items())
+    except Exception:
+        return None
+    current = {}
+    for object_id, obj in items:
+        try:
+            if obj.is_sim is True:
+                continue
+        except Exception:
+            pass
+        plain = _plain_id(object_id)
+        if plain is not None:
+            current[plain] = obj
+    near = []
+    for plain, obj in current.items():
+        distance = _distance(_position(obj), body_position)
+        if distance is not None and distance <= NEAR_STATE_METERS:
+            near.append((distance, plain))
+    near.sort()
+    near_states = {plain: _object_states(current[plain]) for _, plain in near[:NEAR_STATE_MAX]}
+    classes = {plain: _object_class(obj) for plain, obj in current.items()}
+    previous = _OBJECTS_PREV
+    baseline = (previous["classes"] is None or previous["zone"] != zone_id or
+                previous["wall_ms"] is None or wall_ms - previous["wall_ms"] > OBJECT_BASELINE_GAP_MS)
+    events = {"baseline": baseline, "created": [], "destroyed": [], "changed": [],
+              "truncated": False}
+    if not baseline:
+        created = sorted(set(classes) - set(previous["classes"]))
+        destroyed = sorted(set(previous["classes"]) - set(classes))
+        for plain in created:
+            try:
+                definition = _plain_id(current[plain].definition.id)
+            except Exception:
+                definition = None
+            events["created"].append({"object_id": plain, "class": classes[plain],
+                                      "definition_id": definition})
+        for plain in destroyed:
+            events["destroyed"].append({"object_id": plain, "class": previous["classes"][plain]})
+        for _, plain in near[:NEAR_STATE_MAX]:
+            before = previous["near"].get(plain)
+            if before is None:
+                continue
+            after = near_states[plain]
+            for state in sorted(set(before) | set(after)):
+                if before.get(state) != after.get(state):
+                    events["changed"].append({"object_id": plain, "class": classes[plain],
+                                              "state": state, "from": before.get(state),
+                                              "to": after.get(state)})
+        for key in ("created", "destroyed", "changed"):
+            if len(events[key]) > schema.MAX_OBJECT_EVENTS:
+                events[key] = events[key][:schema.MAX_OBJECT_EVENTS]
+                events["truncated"] = True
+    _OBJECTS_PREV.update(zone=zone_id, wall_ms=wall_ms, classes=classes, near=near_states)
+    return events

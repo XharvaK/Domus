@@ -3,10 +3,10 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 6
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v6"
-PROBE_VERSION = "2.13.1"
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6)
+OBSERVATION_SCHEMA_VERSION = 7
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v7"
+PROBE_VERSION = "2.14.0"
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -128,7 +128,12 @@ COMMON_KEYS = {
     "interactions", "motives", "sim_signals", "presence", "social", "mood",
     "missingness", "unsupported",
     "availability", "counters", "writer", "note", "e2",
+    # S5 (schema 7): what appeared, vanished or changed on the lot; observation rows only.
+    "objects",
 }
+MAX_OBJECT_EVENTS = 8
+MAX_REL_TRACKS = 4
+MAX_REL_LABELS = 6
 
 
 class SchemaError(ValueError):
@@ -373,7 +378,9 @@ def _validate_string_tree(value, key="value"):
         elif key in ("affordance_text", "game_text", "calendar", "posture", "room",
                       "posture_name", "detail_text", "finishing_type", "type",
                       # DS3: names and texts that are not ids.
-                      "name", "doing", "mood_type", "tuning_name"):
+                      "name", "doing", "mood_type", "tuning_name",
+                      # S5: tuning names of tracks, labels, classes and states.
+                      "track", "label", "class", "state", "from", "to"):
             bounded_string(value, MAX_DISPLAY_TEXT_LENGTH, key, False)
         else:
             bounded_string(value, MAX_ID_LENGTH, key, False)
@@ -549,6 +556,7 @@ def _validate_motives(value):
 
 PRESENCE_V6 = {"id", "active_household", "level", "is_body", "household_id", "name",
                "position", "room", "posture", "doing", "doing_target", "distance_m"}
+PRESENCE_V7 = PRESENCE_V6 | {"relationship"}
 
 
 def _number_or_none(value, label):
@@ -570,13 +578,69 @@ def _validate_position(value, label):
         _require(type(value["level"]) is int, "%s.level must be int" % label)
 
 
+def _validate_relationship(value):
+    """S5: None for her own body; else what the game holds between her and this Sim."""
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == {"known", "tracks", "labels"},
+             "presence.relationship shape")
+    _require(type(value["known"]) is bool, "relationship.known")
+    _require(isinstance(value["tracks"], list) and len(value["tracks"]) <= MAX_REL_TRACKS,
+             "relationship.tracks")
+    for track in value["tracks"]:
+        _require(isinstance(track, dict) and set(track) == {"track", "value"}, "track shape")
+        bounded_string(track["track"], 128, "relationship.track", False)
+        _number_or_none(track["value"], "relationship.value")
+    _require(isinstance(value["labels"], list) and len(value["labels"]) <= MAX_REL_LABELS,
+             "relationship.labels")
+    for label in value["labels"]:
+        _require(isinstance(label, dict) and set(label) == {"label", "text_key"}, "label shape")
+        bounded_string(label["label"], 128, "relationship.label", False)
+        if label["text_key"] is not None:
+            _require(isinstance(label["text_key"], str), "label.text_key must be a string")
+            string_id(label["text_key"], "label.text_key")
+
+
+def _validate_objects(row):
+    """S5: object events since the previous sample (schema 7 presence_snapshot only)."""
+    if "objects" not in row:
+        return
+    _require(row["event_kind"] == "presence_snapshot" and row["schema_version"] >= 7,
+             "objects outside a schema 7 observation")
+    value = row["objects"]
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) ==
+             {"baseline", "created", "destroyed", "changed", "truncated"}, "objects shape")
+    _require(type(value["baseline"]) is bool and type(value["truncated"]) is bool,
+             "objects flags")
+    shapes = {"created": {"object_id", "class", "definition_id"},
+              "destroyed": {"object_id", "class"},
+              "changed": {"object_id", "class", "state", "from", "to"}}
+    for key, fields in shapes.items():
+        _require(isinstance(value[key], list) and len(value[key]) <= MAX_OBJECT_EVENTS,
+                 "objects.%s" % key)
+        for item in value[key]:
+            _require(isinstance(item, dict) and set(item) == fields, "objects.%s entry" % key)
+            _require(isinstance(item["object_id"], str), "objects object_id")
+            string_id(item["object_id"], "objects.object_id")
+            if item.get("definition_id") is not None:
+                string_id(item["definition_id"], "objects.definition_id")
+            for text in ("class", "state", "from", "to"):
+                if item.get(text) is not None:
+                    bounded_string(item[text], 128, "objects.%s" % text, False)
+
+
 def _validate_presence(value, version=5):
     _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
     for item in value:
         _require(isinstance(item, dict), "presence entry must be an object")
-        _require(set(item) == (PRESENCE_V6 if version >= 6 else
+        _require(set(item) == (PRESENCE_V7 if version >= 7 else
+                               PRESENCE_V6 if version >= 6 else
                                {"id", "active_household", "level"}),
                  "presence shape")
+        if version >= 7:
+            _validate_relationship(item.get("relationship"))
         if version >= 6:
             _require(type(item.get("is_body")) is bool, "presence.is_body must be bool")
             for key in ("household_id", "room", "doing_target"):
@@ -648,6 +712,9 @@ def _validate_signals(value, version):
     if version >= 6:
         # DS3: the moodlet's own blueprint (name, string key, mood, visibility).
         fields |= {"text_key", "mood_type", "visible"}
+    if version >= 7:
+        # S5: the game's reason for it and the game minutes it has left (timed ones).
+        fields |= {"reason_key", "minutes_left"}
     for item in value:
         _require(isinstance(item, dict), "signal must be an object")
         _require(set(item) == fields, "signal shape")
@@ -676,6 +743,11 @@ def _validate_signals(value, version):
                 bounded_string(item["mood_type"], 128, "signal.mood_type", False)
             if item.get("visible") is not None:
                 _require(type(item["visible"]) is bool, "signal.visible must be bool")
+        if version >= 7:
+            if item.get("reason_key") is not None:
+                _require(isinstance(item["reason_key"], str), "signal.reason_key must be a string")
+                string_id(item["reason_key"], "signal.reason_key")
+            _number_or_none(item.get("minutes_left"), "signal.minutes_left")
 
 
 def _validate_payload_contracts(row):
@@ -868,6 +940,7 @@ def validate_record(row):
             _require(forbidden not in row, "load_disabled contains %s" % forbidden)
     else:
         _validate_common(row)
+    _validate_objects(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
     _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds 16 KiB")

@@ -144,6 +144,12 @@ def near_line(row, body, resolve, catalog=None):
         fact["portion"] = portion
     if craft.get("crafter") or craft.get("crafter_id"):
         fact["made_by"] = craft.get("crafter") or craft.get("crafter_id")
+    if row.get("in_use"):
+        # S1 extras (2.14.0): who holds it, by Sim id.
+        fact["in_use_by"] = row.get("used_by") or ["unknown"]
+    freshness = (row.get("rates") or {}).get("commodity_freshness")
+    if freshness is not None:
+        fact["freshness_per_minute"] = freshness
     return fact
 
 

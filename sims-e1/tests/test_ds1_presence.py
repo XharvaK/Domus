@@ -100,11 +100,13 @@ class Manager(object):
 
 def presence_row(sim_id, active_household=False, level=None, is_body=False,
                  household_id=None, name=None, position=None, room=None,
-                 posture=None, doing=None, doing_target=None, distance_m=None):
+                 posture=None, doing=None, doing_target=None, distance_m=None,
+                 relationship=None):
     return {"id": sim_id, "active_household": active_household, "level": level,
             "is_body": is_body, "household_id": household_id, "name": name,
             "position": position, "room": room, "posture": posture, "doing": doing,
-            "doing_target": doing_target, "distance_m": distance_m}
+            "doing_target": doing_target, "distance_m": distance_m,
+            "relationship": relationship}
 
 
 class PresenceTests(unittest.TestCase):

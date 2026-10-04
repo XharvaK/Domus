@@ -100,7 +100,8 @@ class ObjectFactTests(unittest.TestCase):
             "stats": {"commodity_Spoilage": 63.46, "statistic_Servings": 7.0},
             "craft": {"recipe": "recipe_Food_EggsAndToast", "name_key": str(0xa70d623e),
                       "multi_name_key": str(0x1234), "crafter_id": "100",
-                      "crafter": "E1 Proband"}})
+                      "crafter": "E1 Proband"},
+            "tags": None, "in_use": False, "used_by": [], "rates": {}})
 
     def test_plain_object_and_sims(self):
         row = self.situation.object_fact(object_sinkPedC(9), 20)
