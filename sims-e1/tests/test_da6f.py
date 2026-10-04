@@ -238,3 +238,43 @@ class RisenNeedsTests(unittest.TestCase):
         experiment = types.SimpleNamespace(_rows_since=self.rows(
             (82, 60, 30), (85, 50, 31), [True, None, "x"]))
         self.assertEqual(self.control._risen(experiment, set()), [])
+
+
+
+class LiveReflexAftermathReplay(_Replay):
+    """bf262461-5: sink_washHands FINISHED row 933; bladder 12 at row 1069 brought the
+    game's reflex (toilet, flush, then AUTONOMY sink_washHands on our sink at 1089);
+    VERDICT OUTCOME_UNKNOWN foreign_roots=1."""
+
+    def test_native_reflex_after_finish_is_not_a_rival(self):
+        import types
+        self.ready()
+        self._clock()
+        self._motives(energy=70, hunger=60)
+        self.base.ticks = 1000
+        self.base.objects[CHAIR] = _Offer(CHAIR, [bed_sleep])
+        self.assertTrue(self.trial(guid64="13094")[0])
+        experiment = list(self.probe._E2.experiments.values())[-1]
+        pushed = experiment.interaction_ref
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=pushed.id, guid64=13094, affordance="x",
+            target=types.SimpleNamespace(id=int(CHAIR)),
+            context=types.SimpleNamespace(source=SCRIPT))]
+        for _ in range(5):
+            self._step()
+        self.base.sim.si_state = []
+        pushed.finishing_type = "FinishingType.NATURAL"
+        pushed.callbacks[0](pushed)
+        for _ in range(8):
+            self._step()
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=1687, guid64=14241, affordance="x",
+            target=types.SimpleNamespace(id=int(CHAIR)),
+            context=types.SimpleNamespace(source=AUTONOMY))]
+        steps = 0
+        while not experiment.closed and steps < 300:
+            self._step()
+            steps += 1
+        self.assertTrue(experiment.closed)
+        self.assertEqual(experiment.foreign_roots, [])
+        self.assertEqual(experiment.verdict, "PASS")

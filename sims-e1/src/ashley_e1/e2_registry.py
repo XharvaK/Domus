@@ -108,8 +108,13 @@ class Experiment:
         # aftermath (collect dish, wash dish, put away), not rivals of the meal.
         # Between crafting phases the family is briefly not live; family_open keeps
         # the A32 handoff grace so the next phase child is still ours.
-        aftermath = (self.card.get("card_class") == "need" and self.claims["STARTED"] and
-                     not family_open)
+        # D30 (live sink_washHands: after ours finished, the bladder reflex ran toilet,
+        # flush, then her own AUTONOMY sink_washHands on our sink; that counted as a
+        # rival and a clean PASS became OUTCOME_UNKNOWN): an interaction trial's
+        # aftermath begins when it has finished and its family is gone.
+        aftermath = (not family_open and (
+            (self.card.get("card_class") == "need" and self.claims["STARTED"]) or
+            (self.card.get("card_class") == "interaction" and self.claims["FINISHED"])))
         for entry in _entries(row):
             if aftermath:
                 iid = entry.get("interaction_id")
