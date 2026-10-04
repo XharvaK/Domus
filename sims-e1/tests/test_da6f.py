@@ -381,6 +381,7 @@ class ComponentOfferTests(Hosted):
         from ashley_e1 import food
         self.assertTrue(food.name_hit("generic_consume_food", 13433))
         self.assertFalse(food.name_hit("Collect_Clean_Dish", 13173))
+        self.assertFalse(food.name_hit("utilities_AddUtility_PowerConsumption_Large", 237636))
 
 
 class LiveReactionAftermathReplay(_Replay):

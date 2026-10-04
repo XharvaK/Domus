@@ -19,6 +19,9 @@ PRODUCTION_MODULES = (
     "e2_admission", "e2_lineage", "e2_registry", "e2_cards", "e2_actuator", "e2_control", "cmdbox",
     "e2_trial", "preflight", "food",
 )
+# DS3: build_buy also holds world mutators; only its read-only room lookup may be
+# imported, and only by name (never `import build_buy`).
+NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"}}
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
 }
@@ -76,7 +79,13 @@ def scan_text(source, filename):
             root = _root(module)
             if root in FORBIDDEN_IMPORT_ROOTS:
                 findings.append("%s:%d forbidden import %s" % (filename, node.lineno, module))
-            if root not in APPROVED_STDLIB_IMPORTS and root not in APPROVED_GAME_ROOTS:
+            narrow = NARROW_GAME_IMPORTS.get(module)
+            if narrow is not None:
+                names = {item.name for item in node.names}
+                if not names <= narrow or os.path.basename(filename).lower() in PURE_FILES:
+                    findings.append("%s:%d %s allows only %s" % (
+                        filename, node.lineno, module, ", ".join(sorted(narrow))))
+            elif root not in APPROVED_STDLIB_IMPORTS and root not in APPROVED_GAME_ROOTS:
                 findings.append("%s:%d unapproved import %s" % (filename, node.lineno, module))
             if (os.path.basename(filename).lower() in PURE_FILES and
                     root in APPROVED_GAME_ROOTS):
@@ -191,7 +200,10 @@ def verify_artifact_manifest(path, manifest):
 
 if __name__ == "__main__":
     import sys
-    errors = scan_tree(sys.argv[1]) if len(sys.argv) > 1 else []
+    # No argument used to scan nothing and exit 0; default to the shipped source.
+    source = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), os.pardir, "src")
+    errors = scan_tree(source)
     for error in errors:
         print(error)
     raise SystemExit(1 if errors else 0)

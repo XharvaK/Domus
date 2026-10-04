@@ -252,12 +252,30 @@ def main(argv=None):
         return 0
     if args.interval is None:
         parser.error("pass --once or --interval")
+    archived_at = None
     while True:
         try:
-            bridge.tick(int(time.time() * 1000))
+            now = time.time()
+            if archived_at is None or now - archived_at >= ARCHIVE_EVERY_S:
+                archived_at = now
+                _archive_quietly(now)
+            bridge.tick(int(now * 1000))
             time.sleep(args.interval)
         except KeyboardInterrupt:
             return 0
+
+
+# D38: the probe stops recording at 200 MiB of telemetry; finished sessions older
+# than a day move to the helper's data folder (verified gzip) at start and every 6 h.
+ARCHIVE_EVERY_S = 6 * 3600
+
+
+def _archive_quietly(now):
+    from . import telemetry_archive
+    try:
+        telemetry_archive.run(paths=Paths.from_env(), now=now, out=lambda line: None)
+    except Exception as error:
+        print("telemetry archive skipped: %s" % type(error).__name__)
 
 
 if __name__ == "__main__":

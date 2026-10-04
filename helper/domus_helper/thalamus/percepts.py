@@ -152,6 +152,7 @@ class Extractor:
                     "" if posture_name is None else str(posture_name),
                     lineage=self.lineage_id, facts=_facts(ticks, ())))
             percepts.extend(self._zone(previous, zone, ticks))
+            percepts.extend(self._room(previous, zone, ticks))
         if "presence" in row:
             percepts.extend(self._presence_percepts(row.get("presence") or [], ticks))
         if "social" in row:
@@ -165,6 +166,7 @@ class Extractor:
             "posture": posture_name,
             "zone_id": zone.get("zone_id"),
             "lot_id": zone.get("lot_id"),
+            "room": zone.get("room"),
             "running": running,
             "motives": motives,
         }
@@ -287,21 +289,36 @@ class Extractor:
             "" if lot_id is None else str(lot_id), urgency="wake", lineage=self.lineage_id,
             facts=_facts(ticks, ()))]
 
+    def _room(self, previous, zone, ticks):
+        """DS3: her body moved to another room (schema 6 fills zone.room)."""
+        room = zone.get("room")
+        before = previous.get("room")
+        if room is None or room == before:
+            return []
+        return [Percept("env", "room", str(room), str(room), lineage=self.lineage_id,
+                        facts=_facts(ticks, (("from_room", before),)))]
+
     def _presence_percepts(self, items, ticks):
-        current = set()
+        current = {}
         for item in items:
-            if isinstance(item, dict) and item.get("id") is not None:
-                current.add(str(item["id"]))
+            # DS3: schema 6 lists her own body too (is_body); it never "arrives".
+            if isinstance(item, dict) and item.get("id") is not None and not item.get("is_body"):
+                current[str(item["id"])] = item
         percepts = []
         if self._presence is None:
             self._presence = set()
-        for sim_id in sorted(current - self._presence):
+        for sim_id in sorted(set(current) - self._presence):
+            item = current[sim_id]
+            doing = item.get("doing")
             percepts.append(Percept(
-                "presence", sim_id, "", "arrived", lineage=self.lineage_id, facts=_facts(ticks, ())))
-        for sim_id in sorted(self._presence - current):
+                "presence", sim_id, "", "arrived", lineage=self.lineage_id, facts=_facts(ticks, (
+                    ("name", item.get("name")), ("room", item.get("room")),
+                    ("distance_m", item.get("distance_m")),
+                    ("doing", doing[:120] if isinstance(doing, str) else None)))))
+        for sim_id in sorted(self._presence - set(current)):
             percepts.append(Percept(
                 "presence", sim_id, "", "left", lineage=self.lineage_id, facts=_facts(ticks, ())))
-        self._presence = current
+        self._presence = set(current)
         return percepts
 
     def _social_percepts(self, items, sim_s, ticks):

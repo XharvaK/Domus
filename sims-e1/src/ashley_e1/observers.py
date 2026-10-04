@@ -5,6 +5,13 @@ import time
 
 from objects import ALL_HIDDEN_REASONS  # PRIOR_ART|RUNTIME_UNVERIFIED: approved hidden-flag constant.
 
+try:
+    # DS3: the game's own room lookup (objects_in_target_room_gen uses it the same way).
+    # The guard allows this one name from build_buy and nothing else.
+    from build_buy import get_room_id
+except Exception:
+    get_room_id = None
+
 from . import schema
 from . import snapshot
 
@@ -399,15 +406,45 @@ def _tuning_name(entry):
     return _bounded_name(raw, "signal.tuning_name")
 
 
+def _buff_blueprint(entry):
+    """DS3 (live: every moodlet read tuning_name "Buff" and weight 0): an active buff
+    is a Buff instance; its tuned data sits on its blueprint (Buff.buff_type returns
+    tuning_blueprint). Plain attribute reads only."""
+    try:
+        blueprint = entry.tuning_blueprint
+    except Exception:
+        blueprint = None
+    return entry if blueprint is None else blueprint
+
+
+def _string_key(value):
+    """The game string key of a tuned string factory (_string_id) or a built
+    LocalizedString (hash), as a decimal string. The helper resolves the text."""
+    if value is None:
+        return None
+    for read in (lambda: value._string_id, lambda: value.hash):
+        try:
+            key = read()
+        except Exception:
+            continue
+        if type(key) is int and key > 0:
+            return str(key)
+    return None
+
+
 def _describe_buff(entry):
     try:
         tuning = str(entry.guid64)
     except Exception:
         return None
+    blueprint = _buff_blueprint(entry)
     try:
-        weight = entry.mood_weight
+        weight = blueprint.mood_weight
     except Exception:
-        return None
+        try:
+            weight = entry.mood_weight
+        except Exception:
+            return None
     if isinstance(weight, bool):
         return None
     try:
@@ -418,9 +455,39 @@ def _describe_buff(entry):
         tuning_id = str(schema.string_id(tuning, "signal.tuning_id"))
     except Exception:
         return None
-    return {"kind": "MOODLET", "tuning_id": tuning_id, "tuning_name": _tuning_name(entry),
+    try:
+        name = blueprint.__name__ if blueprint is not entry else None
+    except Exception:
+        name = None
+    name = _bounded_name(name, "signal.tuning_name") or _tuning_name(entry)
+    try:
+        mood = blueprint.mood_type
+        mood_name = None if mood is None else mood.__name__
+    except Exception:
+        mood_name = None
+    try:
+        visible = blueprint.visible
+    except Exception:
+        visible = None
+    try:
+        text_key = _string_key(blueprint.buff_name)
+    except Exception:
+        text_key = None
+    return {"kind": "MOODLET", "tuning_id": tuning_id, "tuning_name": name,
             "game_text": None, "magnitude": magnitude, "consequences": None,
-            "native_override": None}
+            "native_override": None, "text_key": text_key,
+            "mood_type": _bounded_name(mood_name, "signal.mood_type"),
+            "visible": visible if type(visible) is bool else None}
+
+
+def _signal_order(signal):
+    """Visible moodlets first, heavier first, then by id: truncation drops hidden ones."""
+    weight = 0
+    try:
+        weight = int(signal["magnitude"][2:])
+    except Exception:
+        pass
+    return (0 if signal.get("visible") is True else 1, -abs(weight), signal["tuning_id"])
 
 
 def read_moodlets(sim_info):
@@ -435,8 +502,11 @@ def read_moodlets(sim_info):
     except TypeError:
         return []
     signals = []
+    seen = 0
     for entry in iterator:
-        if len(signals) >= schema.MAX_SIGNALS:
+        # Read a bounded number, then keep the visible and heavy ones (DS3).
+        seen += 1
+        if seen > schema.MAX_SIGNALS * 4:
             break
         try:
             row = _describe_buff(entry)
@@ -444,7 +514,8 @@ def read_moodlets(sim_info):
             continue
         if row is not None:
             signals.append(row)
-    return signals
+    signals.sort(key=_signal_order)
+    return signals[:schema.MAX_SIGNALS]
 
 
 def read_mood(sim_info):
@@ -501,7 +572,113 @@ def _active_household_id():
         return None
 
 
-def _describe_presence(sim_info, sim, household_id):
+def _number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _position(obj):
+    """DS3: {x, y, z, level} rounded to 0.01, or None. ClientObjectMixin.position is
+    transform.translation; level is a plain read."""
+    try:
+        translation = obj.position
+        coords = (_number(translation.x), _number(translation.y), _number(translation.z))
+    except Exception:
+        return None
+    if None in coords:
+        return None
+    try:
+        level = obj.level
+    except Exception:
+        level = None
+    if isinstance(level, bool) or not isinstance(level, int):
+        level = None
+    return {"x": round(float(coords[0]), 2), "y": round(float(coords[1]), 2),
+            "z": round(float(coords[2]), 2), "level": level}
+
+
+def _room(obj, position):
+    """DS3: the game's room id for this object, as a string id, or None."""
+    if get_room_id is None or position is None or position["level"] is None:
+        return None
+    try:
+        room = get_room_id(obj.zone_id, obj.position, position["level"])
+    except Exception:
+        return None
+    if isinstance(room, bool) or not isinstance(room, int):
+        return None
+    return str(room)
+
+
+def _distance(a, b):
+    if a is None or b is None:
+        return None
+    dx = a["x"] - b["x"]
+    dz = a["z"] - b["z"]
+    return round((dx * dx + dz * dz) ** 0.5, 1)
+
+
+def _plain_id(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return str(schema.string_id(value, "id"))
+    except Exception:
+        return None
+
+
+def zone_snapshot(sim):
+    """DS3 (live rows carried zone, lot, room and position all null): where her body is."""
+    try:
+        zone_id = services.current_zone_id()
+    except Exception:
+        zone_id = None
+    try:
+        lot_id = services.active_lot_id()
+    except Exception:
+        lot_id = None
+    position = _position(sim)
+    return {"zone_id": _plain_id(zone_id), "lot_id": _plain_id(lot_id),
+            "room": _room(sim, position), "position": position}
+
+
+def _sim_name(sim_info):
+    parts = []
+    for read in (lambda: sim_info.first_name, lambda: sim_info.last_name):
+        try:
+            part = read()
+        except Exception:
+            part = None
+        if isinstance(part, str) and part:
+            parts.append(part)
+    return _bounded_name(" ".join(parts), "presence.name") if parts else None
+
+
+def _doing(sim):
+    """What a present Sim is doing: its first running super interaction that is not
+    posture plumbing, as (affordance text, target id)."""
+    try:
+        running = list(sim.si_state or ())
+    except Exception:
+        return None, None
+    fallback = (None, None)
+    for entry in running[:8]:
+        row = _describe_interaction(entry)
+        text = row.get("affordance_text")
+        if not isinstance(text, str):
+            continue
+        text = text[:schema.MAX_DISPLAY_TEXT_LENGTH]
+        target = _plain_id(row.get("target_id"))
+        if "POSTURE_GRAPH" in str(row.get("source_raw")):
+            if fallback == (None, None):
+                fallback = (text, target)
+            continue
+        return text, target
+    return fallback
+
+
+def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_position=None):
     try:
         raw_id = sim_info.id
     except Exception:
@@ -522,12 +699,31 @@ def _describe_presence(sim_info, sim, household_id):
         entry_id = str(schema.string_id(raw_id, "presence.id"))
     except Exception:
         return None
+    position = _position(sim)
+    posture = _posture_snapshot(sim)
+    doing, doing_target = _doing(sim)
     return {"id": entry_id,
             "active_household": household_id is not None and own_household == household_id,
-            "level": level}
+            "level": level,
+            "is_body": lab_sim_id is not None and entry_id == str(lab_sim_id),
+            "household_id": _plain_id(own_household),
+            "name": _sim_name(sim_info),
+            "position": position,
+            "room": _room(sim, position),
+            "posture": None if posture is None else posture.get("posture_name"),
+            "doing": doing,
+            "doing_target": doing_target,
+            "distance_m": _distance(position, body_position)}
 
 
-def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS):
+def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None):
+    """Every instanced Sim on the active lot, her body first, then nearest first.
+
+    D37 (live: presence was empty in every row with 8 Sims on the lot):
+    instanced_sims_on_active_lot_gen yields Sim objects, not SimInfo. The old reader
+    called get_sim_instance on each Sim, which failed and was swallowed, so she never
+    saw anyone and social (gated on presence) never ran.
+    """
     try:
         manager = services.sim_info_manager()
     except Exception:
@@ -546,39 +742,35 @@ def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS):
         return [], False
     household_id = _active_household_id()
     presence = []
-    truncated = False
     while True:
         try:
-            candidate = next(iterator)
+            sim = next(iterator)
         except StopIteration:
             break
-        except Exception:
-            continue
-        if candidate is None:
-            continue
-        try:
-            sim = candidate.get_sim_instance(allow_hidden_flags=hidden_flags)
         except Exception:
             continue
         if sim is None:
             continue
         try:
-            on_lot = sim.is_on_active_lot()
+            sim_info = sim.sim_info
         except Exception:
             continue
-        if on_lot is not True:
+        if sim_info is None:
             continue
         try:
-            row = _describe_presence(candidate, sim, household_id)
+            row = _describe_presence(sim_info, sim, household_id, lab_sim_id, body_position)
         except Exception:
             continue
         if row is None:
             continue
-        if len(presence) >= schema.MAX_PRESENCE:
-            truncated = True
-            continue
         presence.append(row)
-    return presence, truncated
+        if len(presence) >= schema.MAX_PRESENCE * 4:
+            break
+    presence.sort(key=lambda row: (0 if row["is_body"] else 1,
+                                   row["distance_m"] if row["distance_m"] is not None else 1e9,
+                                   row["id"]))
+    truncated = len(presence) > schema.MAX_PRESENCE
+    return presence[:schema.MAX_PRESENCE], truncated
 
 
 def _target_matches(entry, lab_sim, lab_sim_id):
@@ -693,12 +885,14 @@ def poll_once(telemetry_session_id, armed_name,
         lab_id = None
     presence, presence_truncated = ([], False)
     social, social_truncated = ([], False)
+    zone = zone_snapshot(sim)
     if lab_id is not None:
         try:
-            presence, presence_truncated = read_presence(lab_id)
+            presence, presence_truncated = read_presence(
+                lab_id, body_position=zone["position"])
         except Exception:
             presence, presence_truncated = ([], False)
-        if presence and len(presence) <= schema.MAX_PRESENCE:
+        if any(not row["is_body"] for row in presence):
             try:
                 candidates = services.sim_info_manager().get_all()
             except Exception:
@@ -723,7 +917,7 @@ def poll_once(telemetry_session_id, armed_name,
         "presence_snapshot", telemetry_session_id=telemetry_session_id,
         wall_timestamp_ms=wall, monotonic_ns=mono,
         game=game, attestation=schema.attestation(armed_name),
-        save=save, body=body,
+        save=save, zone=zone, body=body,
         interactions={"observed": interactions, "queue_truncated": queue_truncated,
                       "running_truncated": running_truncated,
                       "observation_complete": complete},

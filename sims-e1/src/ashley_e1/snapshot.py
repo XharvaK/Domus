@@ -125,30 +125,25 @@ def _mark_truncated(row):
 
 
 def apply_size_budget(row):
-    """Trim a presence_snapshot in place-order until it fits 8 KiB.
+    """Trim a presence_snapshot until it fits the record cap.
 
-    Drop order: social, then presence beyond 4, then signals beyond 8.
-    When the record still exceeds the cap, game_text is cleared signal by
-    signal (moodlets keep their tuning ids). Sets the existing truncation
-    flags and returns the row.
+    DS3 drop order: signals beyond 8 (hidden and light ones sort last), then
+    presence beyond 4 (farthest sort last), then game_text, and social last:
+    someone addressing her is the most important fact in the row. Sets the
+    existing truncation flags and returns the row.
     """
     from . import schema
     if row.get("event_kind") != "presence_snapshot":
         return row
     if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
         return row
-    if row.get("social"):
-        row["social"] = []
+    if len(row.get("sim_signals", ())) > 8:
+        row["sim_signals"] = list(row["sim_signals"][:8])
         _mark_truncated(row)
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
     if len(row.get("presence", ())) > 4:
         row["presence"] = list(row["presence"][:4])
-        _mark_truncated(row)
-        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
-            return row
-    if len(row.get("sim_signals", ())) > 8:
-        row["sim_signals"] = list(row["sim_signals"][:8])
         _mark_truncated(row)
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
@@ -158,6 +153,9 @@ def apply_size_budget(row):
         if isinstance(signal, dict) and signal.get("game_text") is not None:
             signal["game_text"] = None
             _mark_truncated(row)
+    if _encoded_bytes(row) > schema.MAX_SERIALIZED_RECORD_BYTES and row.get("social"):
+        row["social"] = []
+        _mark_truncated(row)
     return row
 
 
