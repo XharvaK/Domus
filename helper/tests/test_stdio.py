@@ -23,5 +23,6 @@ def test_sdk_stdio_registration():
                         "detected_build", "fingerprints",
                         "atlas_dump", "atlas_progress", "atlas_import", "atlas_query", "cards",
                         "tuned_scan", "bridge_status", "thalamus_status",
-                        "calibrate", "calibration_report"}
+                        "calibrate", "calibration_report",
+                        "trials", "qualification", "crawl_plan"}
     anyio.run(exercise)

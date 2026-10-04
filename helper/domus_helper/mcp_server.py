@@ -256,6 +256,41 @@ def thalamus_status() -> dict:
     return Bridge(paths=Paths.from_env()).thalamus_status()
 
 
+def _crawl_build(client):
+    try:
+        return fingerprint_reader.detected_build(paths=client.paths)["detected_build"]
+    except (OSError, FileNotFoundError, ValueError, UnicodeError):
+        return atlas_store.latest_build(client.paths.atlas_db)
+
+
+@server.tool()
+def trials(guid64: str | None = None) -> list[dict]:
+    """Recorded probe trials for the detected build. Nothing is sent."""
+    client = tools()
+    build = _crawl_build(client)
+    return atlas_store.trials_for(client.paths.atlas_db, build, guid64)
+
+
+@server.tool()
+def qualification() -> list[dict]:
+    """Per-affordance trial qualification for the detected build."""
+    client = tools()
+    build = _crawl_build(client)
+    return atlas_store.qualification(client.paths.atlas_db, build)
+
+
+@server.tool()
+def crawl_plan(limit: int = 20) -> list[dict]:
+    """Candidates the crawl would send. Nothing is sent."""
+    from . import crawl
+    client = tools()
+    build = _crawl_build(client)
+    path = crawl.latest_tuned(client.paths.atlas_dir)
+    file_build, rows = crawl.load_tuned(path)
+    chosen = file_build or build
+    return crawl.plan(chosen, rows, client.paths.atlas_db, limit)
+
+
 @server.tool()
 def calibrate() -> dict:
     return asdict(tools().command("calibrate"))
