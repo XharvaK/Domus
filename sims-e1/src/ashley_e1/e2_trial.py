@@ -10,6 +10,10 @@ TRIAL_FORK_ONLY = "TRIAL_FORK_ONLY"
 TRIAL_EXCLUDED = "TRIAL_EXCLUDED"
 NEED_DISTRESS = "NEED_DISTRESS"
 TRIAL_STORM = "TRIAL_STORM"
+# Distress that cannot harm the body and that a lone lab Sim cannot relieve (DA6
+# first crawl, 2026-10-04: social sat in distress for the whole LAB session).
+# A motive without an id still counts, so an unreadable row stays conservative.
+NON_BODILY_MOTIVES = ("social", "fun")
 
 DENY_NAME_PARTS = (
     "debug", "cheat", "testing", "tutorial", "sell", "delete", "destroy",
@@ -58,7 +62,8 @@ def trial_check(view):
     if obj.get("excluded"):
         return TRIAL_EXCLUDED
     for motive in view.get("motives") or ():
-        if isinstance(motive, dict) and motive.get("band") == "distress":
+        if (isinstance(motive, dict) and motive.get("band") == "distress" and
+                motive.get("id") not in NON_BODILY_MOTIVES):
             return NEED_DISTRESS
     own = view.get("own_open_ids") or ()
     for entry in view.get("entries") or ():

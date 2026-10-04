@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 5
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v5"
-PROBE_VERSION = "2.9.0"
+PROBE_VERSION = "2.9.1"
 ACCEPTED_SCHEMA_VERSIONS = (4, 5)
 SIMS_BUILD = "1.128.90.1030"
 MAX_SERIALIZED_RECORD_BYTES = 8 * 1024
@@ -456,7 +456,7 @@ def _validate_e2(row):
         _require(payload is None, "%s carries e2 payload" % kind)
         return
     if kind == "experiment_event" and isinstance(payload, dict):
-        # Probe 2.9.0 adds these. Schema 5 rows written before that omit them.
+        # Probe 2.9.1 adds these. Schema 5 rows written before that omit them.
         for key in ("guid64", "card_class", "tuning_name", "ambiguous"):
             if key not in payload:
                 payload[key] = None

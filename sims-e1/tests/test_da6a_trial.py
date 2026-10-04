@@ -83,6 +83,10 @@ class TrialCheckTests(unittest.TestCase):
              A.AFFORDANCE_NOT_OFFERED),
             ({"object": {"exists": True, "offer_count": 1, "excluded": True}}, T.TRIAL_EXCLUDED),
             ({"motives": [{"band": "ok"}, {"band": "distress"}]}, T.NEED_DISTRESS),
+            ({"motives": [{"id": "hunger", "band": "distress"}]}, T.NEED_DISTRESS),
+            ({"motives": [{"id": "social", "band": "distress"},
+                          {"id": "fun", "band": "distress"},
+                          {"id": "energy", "band": "low"}]}, None),
             ({"entries": [{"interaction_id": "9", "source_raw": POSTURE,
                            "membership": "RUNNING"}], "own_open_ids": ("9",)}, A.BODY_BUSY),
             ({"entries": [{"interaction_id": "9", "source_raw": PIE,
@@ -270,5 +274,6 @@ class TrialCommandTests(unittest.TestCase):
         self.assertEqual(parse({"object_id": "12", "guid64": "34", "extra": "1"}), "BAD_ARGS")
         self.assertEqual(parse({"object_id": "12a", "guid64": "34"}), "BAD_ARGS")
         self.assertEqual(parse({"object_id": "1", "guid64": "1" * 21}), "BAD_ARGS")
+
 
 
