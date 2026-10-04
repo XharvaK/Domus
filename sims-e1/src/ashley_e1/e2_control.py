@@ -36,6 +36,65 @@ def _now():
     return time.perf_counter()
 
 
+def _hunger_span(experiment):
+    before = None
+    after = None
+    for row in experiment._rows_since:
+        item = None
+        for motive in row.get("motives") or []:
+            if isinstance(motive, dict) and motive.get("id") == "hunger":
+                item = motive
+                break
+        if item is None:
+            continue
+        value = item.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if before is None:
+            before = value
+        after = value
+    return _num(before), _num(after)
+
+
+def _num(value):
+    if value is None:
+        return "?"
+    return format(value, "g")
+
+
+def _food_hold(experiment):
+    """A31: leave a cook running while hunger is still rising."""
+    rows = list(experiment._rows_since)
+    if not rows:
+        return False
+    ids = set(experiment.children)
+    ids.add(experiment.interaction_id)
+    running = False
+    for entry in (rows[-1].get("interactions") or {}).get("observed") or []:
+        if (entry.get("interaction_id") in ids and
+                entry.get("membership") in e2_registry.RUNNING_MEMBERSHIPS):
+            running = True
+    values = []
+    for row in rows:
+        for motive in row.get("motives") or []:
+            if isinstance(motive, dict) and motive.get("id") == "hunger":
+                value = motive.get("value")
+                if not isinstance(value, bool) and isinstance(value, (int, float)):
+                    values.append(value)
+                break
+    rising = len(values) >= 2 and values[-1] > values[-2]
+    return running and rising
+
+
+def _queued_never_started(experiment):
+    """The push itself is still only queued. A running child does not count."""
+    for entry in (experiment._rows_since[-1].get("interactions") or {}).get("observed") or []:
+        if (entry.get("interaction_id") == experiment.interaction_id and
+                entry.get("membership") == "QUEUED"):
+            return True
+    return False
+
+
 def _tuning_name(affordance):
     target = affordance if isinstance(affordance, type) else type(affordance)
     try:
@@ -72,6 +131,7 @@ class E2Control:
         self.pause_request = None
         self.experiment_counter = 0
         self.storm = e2_trial.StormCounter()
+        self.presence = []
 
     def available(self):
         return (e2_actuator is not None and observers is not None and
@@ -140,6 +200,10 @@ class E2Control:
     # --------------------------------------------------------------- lineage
     def on_poll_row(self, row):
         """Feed every emitted presence row (game thread, after emit)."""
+        if row.get("event_kind") == "presence_snapshot":
+            self.presence.append(row)
+            if len(self.presence) > 120:
+                del self.presence[:-120]
         if self.lineage_class is None:
             self._try_classify(row)
         learned = self.learner.observe(row, self.open_ids)
@@ -375,12 +439,20 @@ class E2Control:
             self.storm.clear()
             interaction_id = str(interaction.id)
             tuning_name = _tuning_name(offers[0])
-            card = e2_cards.interaction_card(object_id, guid64)
+            route = e2_actuator.food_route(offers[0])
+            if route is not None:
+                card = e2_cards.need_card(object_id, guid64, motive="hunger", direction=1)
+                control_rows = self._food_control(pushed_ns)
+                window = e2_registry.FOOD_TRIAL_WINDOW_SECONDS
+            else:
+                card = e2_cards.interaction_card(object_id, guid64)
+                control_rows = None
+                window = e2_registry.TRIAL_WINDOW_SECONDS
             experiment = e2_registry.Experiment(
                 experiment_id, None, object_id, view["sim_id"], interaction_id, pushed_ns,
                 None, [entry.get("interaction_id") for entry in view["entries"]],
-                continuation=(), card=card,
-                window_seconds=e2_registry.TRIAL_WINDOW_SECONDS)
+                continuation=(), card=card, control_rows=control_rows,
+                window_seconds=window, food_route=route)
             experiment.tuning_name = tuning_name
             experiment.interaction_ref = interaction
             self.experiments[experiment_id] = experiment
@@ -390,7 +462,7 @@ class E2Control:
             self._watch_finish(experiment, interaction)
             self._experiment_event("PUSHED", experiment_id=experiment_id,
                                    object_id=object_id, interaction_id=interaction_id,
-                                   guid64=guid64, card_class="interaction",
+                                   guid64=guid64, card_class=card["card_class"],
                                    tuning_name=tuning_name, claims=dict(experiment.claims))
             self._say(connection, "TRIAL_PUSHED %s interaction %s" %
                       (experiment_id, interaction_id))
@@ -428,6 +500,16 @@ class E2Control:
         view["object"] = {"exists": obj is not None, "offer_count": len(offers),
                           "excluded": excluded, "sit_offer_count": view["object"]["sit_offer_count"]}
         return view, sim, obj, offers, context
+
+    def _food_control(self, pushed_ns):
+        """Presence rows from the last 60 s before this push."""
+        window = int(60 * 1e9)
+        found = []
+        for row in self.presence:
+            mono = row.get("monotonic_ns")
+            if type(mono) is int and 0 <= pushed_ns - mono <= window:
+                found.append(row)
+        return found
 
     def _watch_finish(self, experiment, interaction):
         def _finished(finished_interaction, _experiment=experiment):
@@ -478,6 +560,17 @@ class E2Control:
             sim = None
         if interaction is None and not children:
             return
+        if experiment.food_route and _food_hold(experiment):
+            if _queued_never_started(experiment) and interaction is not None:
+                try:
+                    e2_actuator.cancel_own(interaction)
+                except Exception:
+                    pass
+            self._experiment_event("TRIAL_CLEANUP", experiment_id=experiment.experiment_id,
+                                   object_id=experiment.object_id,
+                                   interaction_id=experiment.interaction_id,
+                                   detail="food_left_running")
+            return
         if experiment.claims["FINISHED"] or interaction is None:
             result = "ALREADY_FINISHED" if interaction is None or experiment.claims["FINISHED"] else "CANCELLED"
         else:
@@ -500,7 +593,11 @@ class E2Control:
 
     def _emit_verdict(self, experiment):
         self.open_ids.discard(experiment.interaction_id)
-        detail = "foreign_roots=%d incomplete_rows=%d continuation=%d mixers=%d family=%d" % (
+        detail = ""
+        if experiment.food_route:
+            before, after = _hunger_span(experiment)
+            detail = "route=%s hunger=%s->%s " % (experiment.food_route, before, after)
+        detail += "foreign_roots=%d incomplete_rows=%d continuation=%d mixers=%d family=%d" % (
             len(experiment.foreign_roots), experiment.incomplete_rows,
             len(experiment.continuation_entries), len(experiment.child_mixers),
             len(experiment.children))
@@ -515,10 +612,10 @@ class E2Control:
         detail = detail[:schema.MAX_DETAIL_LENGTH]
         extra = {}
         card = experiment.card
-        if card.get("card_class") == "interaction":
+        if card.get("card_class") in ("interaction", "need"):
             guid = card.get("affordance_guid64")
             extra["guid64"] = None if guid is None else str(guid)
-            extra["card_class"] = "interaction"
+            extra["card_class"] = card.get("card_class")
             try:
                 tuning_name = experiment.tuning_name
             except AttributeError:

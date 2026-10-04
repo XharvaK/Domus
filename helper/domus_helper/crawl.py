@@ -8,6 +8,9 @@ from pathlib import Path
 
 from . import atlas, telemetry
 from .crawl_protocol import PROTOCOL_SKIP, RETRY_CODES, name_blocked
+
+# Dialog-free food guids run only through `python -m domus_helper.food` (DA6D).
+FOOD_GUIDS = (13388, 13397)
 from .vendor.schema import PROBE_VERSION
 from .mcp_server import CommandFailed, DomusTools, SafetyError
 from .paths import Paths
@@ -122,7 +125,7 @@ def plan(build, tuned_rows, atlas_db, limit, *, readonly=False, skip=(),
                 continue
             if _flag(affordance, "is_social") != 0 or name_blocked(affordance["name"]):
                 continue
-            if _skipped(affordance["name"], skip):
+            if guid in FOOD_GUIDS or _skipped(affordance["name"], skip):
                 continue
             if any(part in affordance["name"] for part in PROTOCOL_SKIP):
                 continue

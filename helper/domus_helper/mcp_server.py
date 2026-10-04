@@ -8,6 +8,7 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from . import atlas as atlas_store
+
 from . import calibration
 from . import commands, telemetry as telemetry_reader
 from . import fingerprints as fingerprint_reader
@@ -202,6 +203,16 @@ def atlas_dump() -> dict:
 @server.tool()
 def tuned_scan() -> dict:
     return asdict(tools().command("tuned_scan"))
+
+
+@server.tool()
+def food_options() -> dict:
+    """Latest food-scan summary. Read only."""
+    from . import food as food_reader
+    folder = tools().paths.atlas_dir
+    path = food_reader.latest_food(folder)
+    rows = food_reader._rows(path)
+    return {"file": path.name, "rows": food_reader.summarize(rows)}
 
 
 @server.tool()

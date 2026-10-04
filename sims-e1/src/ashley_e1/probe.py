@@ -49,6 +49,7 @@ except ImportError:
     register = None
 
 from . import atlas
+from . import food
 from . import preflight
 from . import cmdbox
 from . import tuned
@@ -112,6 +113,9 @@ _TUNED_HANDLE = None
 _PREFLIGHT_ALARM_OWNER = _ProbeAlarmOwner()
 _PREFLIGHT = None
 _PREFLIGHT_HANDLE = None
+_FOOD_ALARM_OWNER = _ProbeAlarmOwner()
+_FOOD = None
+_FOOD_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
 _INBOX_STARTED_ZONE = None
@@ -129,7 +133,7 @@ _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
-                     "preflight")
+                     "preflight", "food_scan")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -424,6 +428,8 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_tuned_scan(connection)
     if name == 'preflight':
         return _dispatch_preflight(connection)
+    if name == 'food_scan':
+        return _dispatch_food_scan(connection)
     dispatchers = {'start': _dispatch_start, 'stop': _dispatch_stop,
                    'disarm': _dispatch_disarm, 'pause': _dispatch_e2_pause,
                    'release': _dispatch_e2_release, 'status': _dispatch_status}
@@ -641,6 +647,197 @@ def _dispatch_preflight(connection):
         callback=_preflight_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True
+
+
+def _flag_value(value):
+    if type(value) is bool or (type(value) is int and value in (0, 1)):
+        return value
+    return None
+
+
+def _food_affordance_row(affordance, object_id):
+    """One try for the whole read. A raising field becomes an error row."""
+    try:
+        guid = affordance.guid64
+        guid = int(guid) if type(guid) is int else None
+        name = affordance.__name__
+        if type(name) is not str:
+            name = ""
+        mro = []
+        for cls in e2_actuator._mro(affordance):
+            mro.append(str(cls.__name__))
+        favorite_none = affordance.favorite_recipe is None
+        auto = affordance.auto_pick
+        auto_name = None if auto is None else type(auto).__name__
+        pie = affordance.use_pie_menu
+        use_pie = bool(pie()) if callable(pie) else None
+        return {
+            "kind": "food_affordance",
+            "object_id": object_id,
+            "guid64": guid,
+            "name": name[:128],
+            "mro": mro,
+            "excluded": e2_actuator.excluded(affordance),
+            "food_route": e2_actuator.food_route(affordance),
+            "allow_user_directed": _flag_value(affordance.allow_user_directed),
+            "allow_autonomous": _flag_value(affordance.allow_autonomous),
+            "use_pie_menu": use_pie,
+            "favorite_recipe_is_none": favorite_none,
+            "auto_pick": auto_name,
+        }
+    except Exception as error:
+        return {"kind": "food_affordance", "object_id": object_id, "error": type(error).__name__}
+
+
+def _food_menu_rows(affordance, obj, context, object_id, guid):
+    try:
+        generated = affordance.picker_rows_gen(None, obj, context)
+    except Exception as error:
+        return [{
+            "kind": "food_menu", "object_id": object_id, "guid64": guid,
+            "error": type(error).__name__,
+        }]
+    rows = []
+    for item in generated:
+        if len(rows) >= food.MENU_CAP:
+            break
+        try:
+            tag = item.tag
+            if isinstance(tag, type):
+                recipe_name = tag.__name__
+            else:
+                recipe_name = type(tag).__name__
+            rows.append({
+                "kind": "food_menu",
+                "object_id": object_id,
+                "guid64": guid,
+                "recipe_guid64": item.recipe_id,
+                "recipe_name": recipe_name,
+                "is_enable": bool(item.is_enable),
+                "price": item.price,
+                "skill_level": item.skill_level,
+            })
+        except Exception as error:
+            rows.append({
+                "kind": "food_menu", "object_id": object_id, "guid64": guid,
+                "error": type(error).__name__,
+            })
+    return rows
+
+
+def _dispatch_food_scan(connection):
+    """A30: read food affordances and one crafting menu per object. No push."""
+    global _FOOD, _FOOD_HANDLE
+    if _STATE not in ("ARMED", "SAMPLING"):
+        connection.code = "FOOD_UNARMED"
+        return False
+    if _ARMED_NAME not in ("LAB_E1", "LAB_E1_FORK"):
+        connection.code = "FOOD_NOT_LAB"
+        return False
+    if _INBOX_HANDLE is None:
+        connection.code = "FOOD_NO_PUMP"
+        return False
+    if _FOOD is not None and _FOOD.state == "running":
+        connection.code = "FOOD_BUSY"
+        return False
+    snapshot, code = _lot_snapshot()
+    if code is not None:
+        connection.code = code
+        return False
+    try:
+        sim_info, sim = observers.select_lab_body(
+            _services_module.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+    except Exception:
+        connection.code = "FOOD_NO_SIM"
+        return False
+    del sim_info
+    context = e2_actuator.build_context(sim)
+    jobs = []
+    menus = {}
+    for obj in snapshot:
+        found = tuned._plain(obj, "id", True)
+        object_id = None if type(found) is not int else str(found)
+        if object_id is None:
+            try:
+                object_id = str(int(found))
+            except (TypeError, ValueError):
+                object_id = None
+        for affordance in tuned.affordances_of(obj):
+            try:
+                guid = affordance.guid64
+                name = affordance.__name__
+            except Exception:
+                jobs.append({"object_id": object_id, "guid64": None, "affordance": affordance,
+                             "obj": obj, "broken": True})
+                continue
+            if type(guid) is not int:
+                continue
+            if type(name) is not str:
+                name = ""
+            if not food.name_hit(name, guid):
+                continue
+            jobs.append({
+                "object_id": object_id, "guid64": guid, "name": name[:128],
+                "obj": obj, "affordance": affordance,
+            })
+            mro_names = []
+            for cls in e2_actuator._mro(affordance):
+                try:
+                    mro_names.append(cls.__name__)
+                except Exception:
+                    continue
+            if object_id not in menus and any(
+                    type(item) is str and item.startswith("StartCrafting") for item in mro_names):
+                menus[object_id] = {
+                    "menu": True, "object_id": object_id, "guid64": guid,
+                    "obj": obj, "affordance": affordance,
+                }
+    jobs.extend(menus.values())
+
+    def _run(job, _context=context):
+        if job.get("broken"):
+            raise RuntimeError("unreadable")
+        if job.get("menu"):
+            return _food_menu_rows(
+                job["affordance"], job["obj"], _context, job["object_id"], job["guid64"])
+        return _food_affordance_row(job["affordance"], job["object_id"])
+
+    folder = os.path.join(_TELEMETRY_ROOT, "atlas")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(
+        folder, "food_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
+    _FOOD = food.FoodScan(jobs, path, _run)
+    _FOOD_HANDLE = alarms.add_alarm_real_time(
+        owner=_FOOD_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        callback=_food_tick, repeating=True, use_sleep_time=False,
+        cross_zone=False)
+    return True
+
+
+def _food_tick(alarm_handle=None):
+    try:
+        if _FOOD is None or _FOOD.state != "running":
+            _cancel_food()
+            return
+        _FOOD.step()
+        if _FOOD.state != "running":
+            _cancel_food()
+    except Exception:
+        if _FOOD is not None:
+            _FOOD.state = "error"
+        _cancel_food()
+
+
+def _cancel_food():
+    global _FOOD_HANDLE
+    handle = _FOOD_HANDLE
+    _FOOD_HANDLE = None
+    if handle is None or alarms is None:
+        return
+    try:
+        alarms.cancel_alarm(handle)
+    except Exception:
+        return
 
 
 def _preflight_tick(alarm_handle=None):
