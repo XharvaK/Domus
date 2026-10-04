@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS affordances (
     require_current_posture INTEGER,
     posture_preferences TEXT,
     static_commodities_json TEXT,
+    autonomy_ads_json TEXT,
     ladder TEXT NOT NULL DEFAULT 'KNOWN'
         CHECK (ladder IN ('KNOWN','OFFERED','OBSERVED','EXERCISED','QUALIFIED')),
     PRIMARY KEY (build, guid64)
@@ -56,7 +57,7 @@ CREATE TABLE IF NOT EXISTS trials (
     created_ms INTEGER,
     probe_version TEXT
 );
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 """
 
 _CARDS_DDL = """
@@ -118,9 +119,14 @@ def _connect(db_path):
         _upgrade_trials_v4(connection)
         connection.execute("PRAGMA user_version = 4")
         connection.commit()
-    elif version != 4:
+    elif version not in (4, 5):
         connection.close()
         raise AtlasImportError("unsupported user_version")
+    if version in (1, 2, 3, 4):
+        # DA6G: the game's own need effects per interaction (Interaction._autonomy_ads).
+        connection.execute("ALTER TABLE affordances ADD COLUMN autonomy_ads_json TEXT")
+        connection.execute("PRAGMA user_version = 5")
+        connection.commit()
     return connection
 
 
@@ -183,8 +189,8 @@ def import_tuning(db_path, file_path):
                     INSERT INTO affordances (
                         build, guid64, name, is_super, is_social, target_type,
                         allow_autonomous, allow_user_directed, require_current_posture,
-                        posture_preferences, static_commodities_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        posture_preferences, static_commodities_json, autonomy_ads_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(build, guid64) DO UPDATE SET
                         name = excluded.name,
                         is_super = excluded.is_super,
@@ -194,7 +200,8 @@ def import_tuning(db_path, file_path):
                         allow_user_directed = excluded.allow_user_directed,
                         require_current_posture = excluded.require_current_posture,
                         posture_preferences = excluded.posture_preferences,
-                        static_commodities_json = excluded.static_commodities_json
+                        static_commodities_json = excluded.static_commodities_json,
+                        autonomy_ads_json = excluded.autonomy_ads_json
                     """,
                     (build, row.get("guid64"), row.get("name"),
                      _flag(row.get("is_super")), _flag(row.get("is_social")),
@@ -202,7 +209,8 @@ def import_tuning(db_path, file_path):
                      _flag(row.get("allow_user_directed")),
                      _flag(row.get("require_current_posture")),
                      row.get("posture_preferences"),
-                     json.dumps(row.get("static_commodities"))))
+                     json.dumps(row.get("static_commodities")),
+                     json.dumps(row.get("autonomy_ads"))))
             connection.execute(
                 """
                 INSERT INTO imports (
@@ -258,9 +266,12 @@ def query(db_path, *, build, name_contains=None, is_super=None, is_social=None,
         connection.close()
     decoded = []
     for row in rows:
-        item = {key: row[key] for key in row.keys() if key != "static_commodities_json"}
+        item = {key: row[key] for key in row.keys()
+                if key not in ("static_commodities_json", "autonomy_ads_json")}
         raw = row["static_commodities_json"]
         item["static_commodities"] = json.loads(raw) if raw is not None else None
+        raw = row["autonomy_ads_json"]
+        item["autonomy_ads"] = json.loads(raw) if raw is not None else None
         for column in _FLAGS:
             if item[column] is not None:
                 item[column] = bool(item[column])

@@ -192,7 +192,7 @@ def test_migration_keeps_rows(tmp_path):
     connection.close()
     atlas.record_trial(db, "1.1", "sess:1", 10, "1", "TIMEOUT", "TIMEOUT", None, None, "sess")
     connection = sqlite3.connect(db)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
     assert connection.execute("SELECT name FROM affordances").fetchone()[0] == "sit"
     assert connection.execute("SELECT build FROM imports").fetchone()[0] == "1.1"
     assert connection.execute("SELECT card_id FROM cards").fetchone()[0] == "c"

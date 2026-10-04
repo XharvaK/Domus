@@ -21,7 +21,7 @@ import ashley_e1.schema as schema
 WHITELIST = (
     "guid64", "name", "is_super", "is_social", "target_type",
     "allow_autonomous", "allow_user_directed", "require_current_posture",
-    "posture_preferences", "static_commodities",
+    "posture_preferences", "static_commodities", "autonomy_ads",
 )
 
 
@@ -226,3 +226,56 @@ class AtlasProbeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Stat(object):
+    def __init__(self, guid, name):
+        self.guid64 = guid
+        self.__name__ = name
+
+
+class StatisticChangeOp(object):
+    def __init__(self, amount, advertise=True):
+        self._amount = amount
+        self._advertise = advertise
+
+    def get_value(self, *args):
+        raise AssertionError("the atlas reads attributes, never methods")
+
+
+class AutonomyAdList(object):
+    def __init__(self, stat, ops):
+        self._stat_type = stat
+        self._op_list = ops
+
+
+class AutonomyAdsTests(unittest.TestCase):
+    """DA6G: the game's own map of what an interaction does to each need."""
+
+    def row(self, ads):
+        affordance = _Affordance(5, name="shower_TakeShower")
+        affordance._autonomy_ads = ads
+        path = os.path.join(AtlasModuleTests._dir(self), "ads.jsonl")
+        if os.path.exists(path):
+            os.remove(path)
+        dump = AtlasDump({"k": affordance}, path, budget_ms=1000.0, clock=_clock([0.0]))
+        dump.step()
+        return [item for item in _rows(path) if item["kind"] == "affordance"][0]
+
+    def test_reads_stat_and_amounts(self):
+        hygiene = _Stat(16654, "motive_Hygiene")
+        fun = _Stat(16655, "motive_Fun")
+        row = self.row({hygiene: AutonomyAdList(hygiene, [StatisticChangeOp(2.5)]),
+                        fun: AutonomyAdList(fun, [StatisticChangeOp("x", advertise=None)])})
+        self.assertEqual(row["autonomy_ads"], [
+            {"stat": 16655, "name": "motive_Fun",
+             "ops": [{"op": "StatisticChangeOp", "amount": None, "advertise": None}]},
+            {"stat": 16654, "name": "motive_Hygiene",
+             "ops": [{"op": "StatisticChangeOp", "amount": 2.5, "advertise": True}]}])
+
+    def test_missing_or_odd_ads(self):
+        self.assertIsNone(self.row(None)["autonomy_ads"])
+        self.assertIsNone(self.row(("not", "a", "dict"))["autonomy_ads"])
+        bare = AutonomyAdList(None, None)
+        self.assertEqual(self.row({1: bare})["autonomy_ads"],
+                         [{"stat": None, "name": None, "ops": []}])

@@ -144,3 +144,22 @@ def test_atlas_dump_is_readonly_command(paths, monkeypatch):
         mcp.atlas_dump()
     commands = [(row["command"], row["args"]) for row in seen]
     assert ("atlas_dump", {}) in commands
+
+
+def test_autonomy_ads_import_and_v4_upgrade(tmp_path):
+    """DA6G: the game's own need effects per interaction survive import and query."""
+    import sqlite3
+    db = tmp_path / "atlas.db"
+    old = sqlite3.connect(db)
+    old.executescript(atlas._DDL.replace("    autonomy_ads_json TEXT,\n", "").replace(
+        "PRAGMA user_version = 5;", "PRAGMA user_version = 4;"))
+    old.close()
+    ads = [{"stat": 16654, "name": "motive_Hygiene",
+            "ops": [{"op": "StatisticChangeOp", "amount": 2.5, "advertise": True}]}]
+    path = _write(tmp_path, "1.100.0", [_row(10, "shower", autonomy_ads=ads), _row(11)])
+    atlas.import_tuning(db, path)
+    rows = {row["guid64"]: row for row in atlas.query(db, build="1.100.0")}
+    assert rows[10]["autonomy_ads"] == ads
+    assert rows[11]["autonomy_ads"] is None
+    version = sqlite3.connect(db).execute("PRAGMA user_version").fetchone()[0]
+    assert version == 5
