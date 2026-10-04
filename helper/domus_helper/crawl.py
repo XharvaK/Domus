@@ -174,6 +174,8 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
     outcomes = []
     distress = 0
     number = 0
+    # A restarted crawl in the same game session must not reuse "<session>:0".
+    run_tag = "%x" % time.time_ns()
     while recorded < max_trials:
         try:
             status = client.checked_status().result
@@ -248,7 +250,7 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
             experiment_key = experiment_id
         else:
             outcome = kind if kind in ("PUSH_FAILED", "TRIAL_REJECT") else "TRIAL_REJECT"
-            experiment_key = "%s:%d" % (session, number)
+            experiment_key = "%s:%s:%d" % (session, run_tag, number)
             number += 1
             ambiguous = None
             tuning = item["name"]

@@ -388,3 +388,17 @@ def test_helper_extra_deny_covers_the_reviewed_families():
     for name in ("object_Repair_Sink", "fridge_Grab_Snack", "shower_TakeShower",
                  "mailbox_PayBills", "fishing_ExamineWater"):
         assert not cp.name_blocked(name), name
+
+
+def test_restart_in_same_session_does_not_reuse_reject_keys(tmp_path, capsys):
+    # Live: a second crawl process in the same game session hit
+    # "UNIQUE constraint failed: trials.experiment_id" on "<session>:0".
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "sit"), _affordance(2, "read")])
+    tuned = [_tuned(1, [1]), _tuned(2, [2])]
+    for _ in range(2):
+        tools = FakeTools(tmp_path)
+        tools.replies = ["TRIAL_REJECT NO_OBJECT"]
+        assert _drive(tools, db, tuned, Clock(), max_trials=1) == 2
+    assert "max-trials" in capsys.readouterr().out
+    assert len(atlas.trials_for(db, "1.1")) == 2
