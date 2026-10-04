@@ -8,6 +8,8 @@ NEED_MIN_NET_DELTA = 5.0
 # Motive values are lazy caches. DA5 calibration 2026-10-04: median age_ticks
 # 5417, median age when a value changes 2092, p90 19614. 30000 ticks is 20
 # sim-minutes and blocks only readings staler than that observed tail.
+# DA6F D25: since 2.11.2 the probe reports the game's current value (age_ticks 0)
+# whenever the rate getters read; this guard now covers only the cache fallback.
 NEED_FRESH_TICKS = 30000
 NEED_CONTROL_TICKS = 45000  # 30 sim-minutes of control rows before the push
 NEED_GRACE_TICKS = 15000  # 10 sim-minutes after our interaction leaves

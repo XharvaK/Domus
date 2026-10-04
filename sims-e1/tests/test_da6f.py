@@ -103,3 +103,75 @@ class LiveSleepReplay(_Replay):
                          experiment.foreign_roots, experiment.incomplete_rows))
         detail = self._verdict()["detail"]
         self.assertIn("relief=energy energy=24->100->100", detail)
+
+
+class _RatedCommodity(object):
+    """A commodity with the game's pure rate getters (bytecode continuous_statistic)."""
+
+    def __init__(self, guid, value, updated, change=0.0, decay=0.0, convergence=0.0,
+                 until=None, suppressed=False):
+        self.guid64 = guid
+        self._value = value
+        self._last_update = updated
+        self.min_value = 0
+        self.max_value = 100
+        self._change = change
+        self._decay = decay
+        self.convergence_value = convergence
+        self._until = until
+        self._tracker = type("T", (), {"should_suppress_calculations":
+                                        lambda _self: suppressed})()
+
+    def _get_change_rate_without_decay(self):
+        return self._change
+
+    def _calculate_minutes_until_value_is_reached_through_decay(self, target):
+        return self._until
+
+    def get_decay_rate(self):
+        return self._decay
+
+    def get_value(self):
+        raise AssertionError("get_value writes the cache")
+
+    def _update_value(self):
+        raise AssertionError("_update_value writes the cache")
+
+
+class CurrentMotiveTests(unittest.TestCase):
+    """D25: at speed 3 (sleep, work) rows are ~37000 ticks apart; the cache of a
+    need she was not refilling read 47554 ticks old and was stale."""
+
+    def setUp(self):
+        _load_pure()
+        from ashley_e1 import observers
+        self.observers = observers
+
+    def read(self, commodity, now):
+        row, fault = self.observers._read_cached_motive(commodity, now)
+        self.assertIsNone(fault)
+        return row["value"], row["age_ticks"]
+
+    def test_decay_over_a_speed_three_gap(self):
+        # hunger 40 at tick 0, -0.5 per sim minute, read 47554 ticks (31.7 min) later.
+        hunger = _RatedCommodity(16656, 40.0, 0, change=-0.5)
+        self.assertEqual(self.read(hunger, 47554), (24, 0))
+
+    def test_decay_stops_at_convergence(self):
+        fun = _RatedCommodity(16655, 60.0, 0, decay=-1.0, convergence=50.0, until=10.0)
+        self.assertEqual(self.read(fun, 45000), (50, 0))
+
+    def test_clamped_and_suppressed(self):
+        energy = _RatedCommodity(16657, 95.0, 0, change=2.0)
+        self.assertEqual(self.read(energy, 30000), (100, 0))
+        frozen = _RatedCommodity(16657, 30.0, 0, change=-5.0, suppressed=True)
+        self.assertEqual(self.read(frozen, 30000), (30, 0))
+
+    def test_unreadable_rates_keep_the_cache_and_its_age(self):
+        class Bare(object):
+            guid64 = 16656
+            _value = 40.0
+            _last_update = 0
+            min_value = 0
+            max_value = 100
+        self.assertEqual(self.read(Bare(), 47554), (40, 47554))
