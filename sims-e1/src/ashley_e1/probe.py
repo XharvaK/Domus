@@ -519,7 +519,7 @@ def _dispatch_atlas_dump(connection):
     path = os.path.join(folder, "tuning_%s.jsonl" % SIMS_BUILD)
     _ATLAS = atlas.AtlasDump(classes, path)
     _ATLAS_HANDLE = alarms.add_alarm_real_time(
-        owner=_ATLAS_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        owner=_ATLAS_ALARM_OWNER, time_span=interval_in_real_seconds(SCAN_TICK_S),
         callback=_atlas_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True
@@ -582,7 +582,7 @@ def _dispatch_tuned_scan(connection):
         folder, "tuned_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
     _TUNED = tuned.TunedScan(snapshot, path)
     _TUNED_HANDLE = alarms.add_alarm_real_time(
-        owner=_TUNED_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        owner=_TUNED_ALARM_OWNER, time_span=interval_in_real_seconds(SCAN_TICK_S),
         callback=_tuned_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True

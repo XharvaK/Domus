@@ -115,7 +115,11 @@ class Experiment:
         # user push stays a rival (A27: it may be a slow phase of ours or someone else's).
         need_aftermath = (not family_open and self.card.get("card_class") == "need" and
                           self.claims["STARTED"])
-        native_aftermath = (not family_open and self.claims["FINISHED"] and
+        # D33 (live toilet-use-sitting: the game queued its own toilet-flush one row
+        # after ours finished, inside the 5 s family grace, and it became a rival):
+        # the grace is for our script children; once ours has finished and no child of
+        # ours runs, the game's native follow-up is aftermath at once.
+        native_aftermath = (self.claims["FINISHED"] and not self._child_running(row) and
                             self.card.get("card_class") == "interaction")
         for entry in _entries(row):
             if need_aftermath or (native_aftermath and entry.get("source_raw") not in

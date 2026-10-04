@@ -278,3 +278,35 @@ class LiveReflexAftermathReplay(_Replay):
         self.assertTrue(experiment.closed)
         self.assertEqual(experiment.foreign_roots, [])
         self.assertEqual(experiment.verdict, "PASS")
+
+    def test_native_follow_up_inside_the_grace_is_not_a_rival(self):
+        """8f02c83a-1: toilet-use-sitting FINISHED row 880; the game's AUTONOMY
+        toilet-flush on our toilet at 881; VERDICT OUTCOME_UNKNOWN foreign_roots=1."""
+        import types
+        self.ready()
+        self._clock()
+        self._motives(energy=70, hunger=60)
+        self.base.ticks = 1000
+        self.base.objects[CHAIR] = _Offer(CHAIR, [bed_sleep])
+        self.assertTrue(self.trial(guid64="13094")[0])
+        experiment = list(self.probe._E2.experiments.values())[-1]
+        pushed = experiment.interaction_ref
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=pushed.id, guid64=13094, affordance="x",
+            target=types.SimpleNamespace(id=int(CHAIR)),
+            context=types.SimpleNamespace(source=SCRIPT))]
+        for _ in range(12):
+            self._step()
+        pushed.finishing_type = "FinishingType.NATURAL"
+        pushed.callbacks[0](pushed)
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=939, guid64=14426, affordance="x",
+            target=types.SimpleNamespace(id=int(CHAIR)),
+            context=types.SimpleNamespace(source=AUTONOMY))]
+        steps = 0
+        while not experiment.closed and steps < 300:
+            self._step()
+            steps += 1
+        self.assertTrue(experiment.closed)
+        self.assertEqual(experiment.foreign_roots, [])
+        self.assertEqual(experiment.verdict, "PASS")
