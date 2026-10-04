@@ -387,7 +387,8 @@ class E2Control:
             experiment = e2_registry.Experiment(
                 experiment_id, None, object_id, view["sim_id"], interaction_id, pushed_ns,
                 None, [entry.get("interaction_id") for entry in view["entries"]],
-                continuation=(), card=card)
+                continuation=(), card=card,
+                window_seconds=e2_registry.TRIAL_WINDOW_SECONDS)
             experiment.tuning_name = tuning_name
             self.experiments[experiment_id] = experiment
             self.open_ids.add(interaction_id)

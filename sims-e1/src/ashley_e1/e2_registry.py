@@ -9,6 +9,8 @@ from . import e2_admission
 from . import e2_cards
 
 WINDOW_SECONDS = 60.0
+# DA6 trials may route across the lot first (first live crawl: start at ~67-70 s).
+TRIAL_WINDOW_SECONDS = 180.0
 MAINTAIN_SECONDS = 10.0
 SIGNATURE_WINDOW_SECONDS = 30.0
 CONTINUATION_WINDOW_SECONDS = 30.0
@@ -31,7 +33,7 @@ def _posture(row):
 class Experiment:
     def __init__(self, experiment_id, token, object_id, sim_id, interaction_id,
                  pushed_mono_ns, signature, baseline_ids, continuation=(),
-                 card=None, control_rows=None):
+                 card=None, control_rows=None, window_seconds=WINDOW_SECONDS):
         self.experiment_id = experiment_id
         self.token = token
         self.object_id = object_id
@@ -46,6 +48,7 @@ class Experiment:
             e2_cards.validate_card(card)
         self.card = card
         self.control_rows = list(control_rows or ())
+        self.window_seconds = window_seconds
         self.ambiguous = []
         self._rows_since = []
         self.known_ids = set(i for i in baseline_ids if i is not None)
@@ -151,7 +154,7 @@ class Experiment:
                 mono - max(self.effect_since_ns, self.attributed_ns) >=
                 MAINTAIN_SECONDS * 1e9):
             self.claims["MAINTAINED_10S"] = True
-        if mono - self.pushed_mono_ns >= WINDOW_SECONDS * 1e9:
+        if mono - self.pushed_mono_ns >= self.window_seconds * 1e9:
             self.close()
         return [key for key in CLAIM_ORDER if self.claims[key] and not before[key]]
 

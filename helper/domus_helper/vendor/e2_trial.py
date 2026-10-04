@@ -14,6 +14,11 @@ TRIAL_STORM = "TRIAL_STORM"
 # first crawl, 2026-10-04: social sat in distress for the whole LAB session).
 # A motive without an id still counts, so an unreadable row stays conservative.
 NON_BODILY_MOTIVES = ("social", "fun")
+# Running entries that mean "standing or carrying, nothing chosen": the game keeps a
+# BODY_CANCEL_AOP sim-stand RUNNING on an idle Sim after she wakes (first live crawl).
+IDLE_RUNNING_SOURCES = ("InteractionSource.POSTURE_GRAPH",
+                        "InteractionSource.BODY_CANCEL_AOP",
+                        "InteractionSource.CARRY_CANCEL_AOP")
 
 DENY_NAME_PARTS = (
     "debug", "cheat", "testing", "tutorial", "sell", "delete", "destroy",
@@ -72,7 +77,7 @@ def trial_check(view):
         if entry.get("source_raw") in e2_admission.BUSY_SOURCES:
             return e2_admission.BODY_BUSY
         if (entry.get("membership") in RUNNING_MEMBERSHIPS and
-                entry.get("source_raw") != POSTURE_SOURCE):
+                entry.get("source_raw") not in IDLE_RUNNING_SOURCES):
             return e2_admission.BODY_BUSY
     if view.get("paused") is not False:
         return e2_admission.CLOCK_PAUSED
