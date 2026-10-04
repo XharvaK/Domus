@@ -59,6 +59,7 @@ class ScanProgressTests(unittest.TestCase):
 from test_da6e import AUTONOMY, BODY_CANCEL, SCRIPT, _Replay, bed_sleep  # noqa: E402
 from test_da6a_trial import _Offer, _running  # noqa: E402
 from test_e2 import CHAIR  # noqa: E402
+from test_da6c import Hosted  # noqa: E402
 
 
 class LiveSleepReplay(_Replay):
@@ -310,3 +311,15 @@ class LiveReflexAftermathReplay(_Replay):
         self.assertTrue(experiment.closed)
         self.assertEqual(experiment.foreign_roots, [])
         self.assertEqual(experiment.verdict, "PASS")
+
+
+class RejectCodeTests(Hosted):
+    """D34: 2c815d4c BODY_BUSY (a game reaction_SmellBad was running) replied
+    REJECTED with code null; the reason lived only in its TRIAL_REJECT line."""
+
+    def test_reject_line_names_the_code(self):
+        code = self.probe._reject_code
+        self.assertEqual(code(["TRIAL_REJECT BODY_BUSY"]), "BODY_BUSY")
+        self.assertEqual(code(["other", "TRIAL_REJECT OBJECT_EXCLUDED x"]), "OBJECT_EXCLUDED")
+        self.assertIsNone(code([]))
+        self.assertIsNone(code(["TRIAL_PUSHED a-1 interaction 50", None]))

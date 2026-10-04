@@ -257,6 +257,15 @@ class _InboxReply:
         self.code = None
 
 
+def _reject_code(lines):
+    """The code of the first TRIAL_REJECT line, or None."""
+    for line in lines:
+        if type(line) is str and line.startswith("TRIAL_REJECT "):
+            word = line[len("TRIAL_REJECT "):].split(" ")[0]
+            return word[:64] or None
+    return None
+
+
 def _arm_inbox_zone(z, source):
     global _INBOX_ZONE, _INBOX_ARM_SOURCE
     if hasattr(z, "register_callback"):
@@ -1029,6 +1038,10 @@ def _inbox_tick_body():
                     status = 'OK' if ok else 'REJECTED'
                     if not ok and connection.code:
                         code = connection.code
+                    elif not ok:
+                        # D34 (live: a BODY_BUSY trial refusal replied REJECTED with
+                        # code null; the reason lived only in its TRIAL_REJECT line).
+                        code = _reject_code(connection.lines)
                     result = (_inbox_status() if cmd['command'] == 'status' else
                               {'ok': ok, 'lines': connection.lines})
                 except Exception as error:
