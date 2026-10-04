@@ -70,6 +70,7 @@ class Experiment:
         # A27: a SCRIPT child the game pushes after our own interaction.
         self.children = []
         self.finished_ns = None
+        self.child_live_ns = None
         self.incomplete_rows = 0
         self.started_ns = None
         self.effect_since_ns = None
@@ -213,6 +214,17 @@ class Experiment:
             if (entry.get("interaction_id") == self.interaction_id and
                     entry.get("membership") in OURS_LIVE):
                 return True
+        # A crafting chain hands off phase to phase (cook, then serve, then eat)
+        # long after our own push ended: a live child keeps the family open too.
+        for entry in _entries(row):
+            if (entry.get("interaction_id") in self.children and
+                    entry.get("membership") in OURS_LIVE):
+                if type(mono) is int:
+                    self.child_live_ns = mono
+                return True
+        if (type(self.child_live_ns) is int and type(mono) is int and
+                0 <= mono - self.child_live_ns <= FAMILY_SECONDS * 1e9):
+            return True
         if self.finishing_type != "FinishingType.NATURAL":
             return False
         if type(self.finished_ns) is not int or type(mono) is not int:

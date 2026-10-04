@@ -321,3 +321,34 @@ class PreflightTests(Hosted):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FamilyHandoffTests(unittest.TestCase):
+    """A crafting chain hands off child to child after our own push ended."""
+
+    def setUp(self):
+        _, _, self.reg, _, _ = test_e2._load_pure()
+        from ashley_e1 import e2_cards
+        self.card = e2_cards.interaction_card(DISH, GUID)
+
+    def experiment(self):
+        return self.reg.Experiment("x-1", None, DISH, "s", "861", 0, None, [],
+                                   card=self.card, window_seconds=600.0)
+
+    def test_grandchild_after_handoff_is_family_and_late_script_is_foreign(self):
+        from test_e2 import _entry, _row
+        script = "InteractionSource.SCRIPT_WITH_USER_INTENT"
+        exp = self.experiment()
+        exp.observe(_row(1, [_entry("861", script, "QUEUED", DISH)]))
+        exp.finish("FinishingType.NATURAL", int(2e9))
+        exp.observe(_row(3, [_entry("862", script, "RUNNING", DISH)]))
+        for second in range(4, 30):
+            exp.observe(_row(second, [_entry("862", script, "RUNNING", DISH)]))
+        # 28 s after our own push ended, the cook phase hands off to the eat phase.
+        exp.observe(_row(30, [_entry("863", script, "RUNNING", DISH)]))
+        self.assertEqual(exp.children, ["862", "863"])
+        self.assertEqual(exp.foreign_roots, [])
+        # The family has been gone for more than 5 s: a new script SI is a rival.
+        exp.observe(_row(31, []))
+        exp.observe(_row(40, [_entry("900", script, "RUNNING", DISH)]))
+        self.assertEqual(exp.foreign_roots, ["900"])
