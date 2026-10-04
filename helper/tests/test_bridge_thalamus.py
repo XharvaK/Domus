@@ -417,5 +417,5 @@ def test_ds3_portrait_has_time_room_company_moodlets():
     assert portrait["zone"]["room"] == "3"
     assert [item["name"] for item in portrait["company"]] == ["Bella Goth"]
     assert [item["name"] for item in portrait["moodlets"]] == ["Buff_Hungry"]
-    assert portrait["addressed_by"] == [{"by": "200", "interaction": "<class 'social_Chat'>"}]
+    assert portrait["addressed_by"] == [{"by": "200", "interaction": "social_Chat"}]
     assert portrait["mood"] == "Mood_Uncomfortable"

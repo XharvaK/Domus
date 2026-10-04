@@ -9,6 +9,7 @@ _WINDOW_MS = 600_000
 # The game's Days enum (tunable_time.Days, bytecode 1.128): SUNDAY = 0 ... SATURDAY = 6,
 # the same index DateAndTime.day() prints as "day:N".
 _WEEKDAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+_CLASS_REPR = re.compile(r"<class '([^']+)'>$")
 _CALENDAR = re.compile(r"(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)? day:(\d+) week:(\d+)")
 
 
@@ -65,6 +66,18 @@ def _resolve(resolve, key):
     return text[:80] if isinstance(text, str) else None
 
 
+def _affordance_name(text):
+    """The tuning name from the probe's class repr: "<class 'sims4.tuning.instances.sim-stand'>"
+    reads "sim-stand". Anything else passes through, capped."""
+    if text is None:
+        return None
+    text = str(text)
+    match = _CLASS_REPR.match(text)
+    if match:
+        text = match.group(1).rsplit(".", 1)[-1]
+    return text[:80]
+
+
 def _portrait(row, resolve=None):
     """resolve: string key -> the game's own text (S0), or None when unknown."""
     row = row or {}
@@ -81,7 +94,7 @@ def _portrait(row, resolve=None):
         text = entry.get("affordance_text")
         if text is None:
             continue
-        running.append(str(text)[:80])
+        running.append(_affordance_name(text))
     zone = row.get("zone") or {}
     game = row.get("game") or {}
     # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
@@ -92,7 +105,7 @@ def _portrait(row, resolve=None):
         doing = item.get("doing")
         company.append({"id": str(item["id"]), "name": item.get("name"),
                         "room": item.get("room"), "distance_m": item.get("distance_m"),
-                        "doing": str(doing)[:80] if doing is not None else None})
+                        "doing": _affordance_name(doing)})
     moodlets = []
     for item in row.get("sim_signals") or []:
         if not isinstance(item, dict) or item.get("kind") != "MOODLET" or item.get("visible") is False:
@@ -105,7 +118,7 @@ def _portrait(row, resolve=None):
         if isinstance(item, dict):
             text = item.get("affordance_text")
             addressed.append({"by": item.get("actor_id"),
-                              "interaction": str(text)[:80] if text is not None else None})
+                              "interaction": _affordance_name(text)})
     mood = row.get("mood") or {}
     portrait = {
         "needs": needs,
