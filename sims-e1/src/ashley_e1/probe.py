@@ -51,6 +51,7 @@ except ImportError:
 from . import atlas
 from . import food
 from . import preflight
+from . import situation
 from . import cmdbox
 from . import tuned
 from . import e2_actuator
@@ -117,6 +118,9 @@ _PREFLIGHT_HANDLE = None
 _FOOD_ALARM_OWNER = _ProbeAlarmOwner()
 _FOOD = None
 _FOOD_HANDLE = None
+_SITUATION_ALARM_OWNER = _ProbeAlarmOwner()
+_SITUATION = None
+_SITUATION_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
 _INBOX_STARTED_ZONE = None
@@ -403,7 +407,8 @@ def _inbox_status():
                 inbox_autostart=_INBOX_AUTOSTART, inbox_errors=_INBOX_ERRORS,
                 motive_diag=observers.motive_diag(),
                 atlas=_atlas_progress(), tuned=_tuned_progress(),
-                preflight=_scan_progress(_PREFLIGHT), food=_scan_progress(_FOOD))
+                preflight=_scan_progress(_PREFLIGHT), food=_scan_progress(_FOOD),
+                situation=_scan_progress(_SITUATION))
 
 
 _IDLE_SCAN = {"state": "idle", "done": 0, "total": 0, "chunks": 0, "max_chunk_ms": 0,
@@ -455,6 +460,8 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_preflight(connection)
     if name == 'food_scan':
         return _dispatch_food_scan(connection)
+    if name == 'situation_scan':
+        return _dispatch_situation_scan(connection)
     dispatchers = {'start': _dispatch_start, 'stop': _dispatch_stop,
                    'disarm': _dispatch_disarm, 'pause': _dispatch_e2_pause,
                    'release': _dispatch_e2_release, 'status': _dispatch_status}
@@ -915,6 +922,76 @@ def _dispatch_food_scan(connection):
         callback=_food_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True
+
+
+def _dispatch_situation_scan(connection):
+    """S1: what is on the lot, as the game holds it. Plain reads; no tests, no push."""
+    global _SITUATION, _SITUATION_HANDLE
+    if _STATE not in ("ARMED", "SAMPLING"):
+        connection.code = "SITUATION_UNARMED"
+        return False
+    if _ARMED_NAME not in ("LAB_E1", "LAB_E1_FORK"):
+        connection.code = "SITUATION_NOT_LAB"
+        return False
+    if _INBOX_HANDLE is None:
+        connection.code = "SITUATION_NO_PUMP"
+        return False
+    if _SITUATION is not None and _SITUATION.state == "running":
+        connection.code = "SITUATION_BUSY"
+        return False
+    snapshot, code = _lot_snapshot()
+    if code is not None:
+        connection.code = code
+        return False
+    try:
+        ticks = _services_module.time_service().sim_now.absolute_ticks()
+    except Exception:
+        ticks = None
+    header = {}
+    try:
+        sim_info, sim = observers.select_lab_body(
+            _services_module.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+        header["body_id"] = str(sim_info.id)
+        header["body"] = observers.zone_snapshot(sim)
+    except Exception:
+        header["body"] = None
+    folder = os.path.join(_TELEMETRY_ROOT, "atlas")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(
+        folder, "situation_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
+    _SITUATION = situation.SituationScan(snapshot, path, ticks if type(ticks) is int else None,
+                                         header=header)
+    _SITUATION_HANDLE = alarms.add_alarm_real_time(
+        owner=_SITUATION_ALARM_OWNER, time_span=interval_in_real_seconds(SCAN_TICK_S),
+        callback=_situation_tick, repeating=True, use_sleep_time=False,
+        cross_zone=False)
+    return True
+
+
+def _situation_tick(alarm_handle=None):
+    try:
+        if _SITUATION is None or _SITUATION.state != "running":
+            _cancel_situation()
+            return
+        _SITUATION.step()
+        if _SITUATION.state != "running":
+            _cancel_situation()
+    except Exception:
+        if _SITUATION is not None:
+            _SITUATION.state = "error"
+        _cancel_situation()
+
+
+def _cancel_situation():
+    global _SITUATION_HANDLE
+    handle = _SITUATION_HANDLE
+    _SITUATION_HANDLE = None
+    if handle is None or alarms is None:
+        return
+    try:
+        alarms.cancel_alarm(handle)
+    except Exception:
+        return
 
 
 def _food_tick(alarm_handle=None):
