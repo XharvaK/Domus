@@ -235,11 +235,14 @@ class Experiment:
     def _settled(self, mono):
         """D6: a need trial ends with its effect, not with the window. D26 (live
         sleep: she woke at row 1381, the verdict waited for the 180 s window at 1519):
-        a maintained interaction ends 30 s after its finished family was last live."""
+        an interaction ends 30 s after its finished family was last live. D27 (live
+        shower_Clean finished NATURAL 5 s after attribution and waited out the window):
+        a finish settles it whether or not it reached MAINTAINED_10S; no claim can be
+        earned once its family is gone."""
         if type(mono) is not int:
             return False
         if self.card.get("card_class") == "interaction":
-            if not (self.claims["MAINTAINED_10S"] and self.claims["FINISHED"]):
+            if not self.claims["FINISHED"]:
                 return False
             last = self.family_live_ns
             if type(last) is not int or (type(self.finished_ns) is int and
