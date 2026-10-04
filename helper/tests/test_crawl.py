@@ -139,6 +139,8 @@ def test_plan_filters_orders_and_one_object(tmp_path):
     planned = crawl.plan("1.1", tuned, db, limit=20)
     assert [(item["guid64"], item["object_id"]) for item in planned] == [
         (1, "3"), (7, "4")]
+    skipped = crawl.plan("1.1", tuned, db, limit=20, skip=("SIT",))
+    assert [item["guid64"] for item in skipped] == [7]
 
 
 def test_qualification_states(tmp_path):

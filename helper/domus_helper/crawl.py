@@ -56,7 +56,12 @@ def latest_tuned(atlas_dir):
     return max(files, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
-def plan(build, tuned_rows, atlas_db, limit, *, readonly=False):
+def _skipped(name, skip):
+    text = str(name).lower()
+    return any(part.lower() in text for part in skip)
+
+
+def plan(build, tuned_rows, atlas_db, limit, *, readonly=False, skip=()):
     if type(limit) is not int or limit < 1:
         raise ValueError("limit")
     connection = atlas._open(atlas_db, readonly=readonly)
@@ -95,6 +100,8 @@ def plan(build, tuned_rows, atlas_db, limit, *, readonly=False):
             if _flag(affordance, "is_super") != 1 or _flag(affordance, "allow_user_directed") != 1:
                 continue
             if _flag(affordance, "is_social") != 0 or name_blocked(affordance["name"]):
+                continue
+            if _skipped(affordance["name"], skip):
                 continue
             state = states.get(guid, "UNTESTED")
             if state not in ("UNTESTED", "IN_PROGRESS"):
@@ -147,12 +154,12 @@ def _verdict_row(rows, experiment_id):
 def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
           dry_run=False, verdict_timeout_s=600, limit=10**9, readonly=False,
           sleep=time.sleep, monotonic=time.monotonic, telemetry_rows=None,
-          session="none"):
+          session="none", skip=()):
     if not 1 <= per_hour <= 60:
         raise ValueError("per-hour")
     if max_trials < 1 or verdict_timeout_s <= 0:
         raise ValueError("bounds")
-    candidates = plan(build, tuned_rows, atlas_db, limit, readonly=readonly or dry_run)
+    candidates = plan(build, tuned_rows, atlas_db, limit, readonly=readonly or dry_run, skip=skip)
     if dry_run:
         for item in candidates:
             print("%s %s %s" % (item["guid64"], item["name"], item["object_id"]))
@@ -190,7 +197,7 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
         elif (status.get("lineage_class"), status.get("designated_sim_id")) != origin:
             changed = "lineage_class" if status.get("lineage_class") != origin[0] else "designated_sim_id"
             raise CrawlStop("%s changed" % changed)
-        candidates = plan(build, tuned_rows, atlas_db, limit, readonly=False)
+        candidates = plan(build, tuned_rows, atlas_db, limit, readonly=False, skip=skip)
         if not candidates:
             return 0
         item = candidates[0]
@@ -295,6 +302,9 @@ def main(argv=None):
     parser.add_argument("--verdict-timeout-s", type=float, default=600)
     parser.add_argument("--tuned-file", type=Path)
     parser.add_argument("--limit", type=int, default=10**9)
+    # Session-only exclusion by name part (case-insensitive), e.g. Upgrade: upgrades
+    # need parts she does not carry, so each push fails and five latch TRIAL_STORM.
+    parser.add_argument("--skip", action="append", default=[])
     args = parser.parse_args(argv)
     paths = Paths.from_env()
     try:
@@ -315,7 +325,7 @@ def main(argv=None):
             client=DomusTools(paths=paths), build=build, tuned_rows=rows,
             atlas_db=paths.atlas_db, per_hour=args.per_hour, max_trials=args.max_trials,
             dry_run=args.dry_run, verdict_timeout_s=args.verdict_timeout_s,
-            limit=args.limit, session=session)
+            limit=args.limit, session=session, skip=tuple(args.skip))
     except CrawlStop as error:
         print(str(error))
         return 2
