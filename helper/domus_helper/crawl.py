@@ -1,12 +1,14 @@
 """Unattended one-at-a-time probe trials against the lab save."""
 import argparse
 import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
 
 from . import atlas, telemetry
-from .crawl_protocol import RETRY_CODES, name_blocked
+from .crawl_protocol import PROTOCOL_SKIP, RETRY_CODES, name_blocked
+from .vendor.schema import PROBE_VERSION
 from .mcp_server import CommandFailed, DomusTools, SafetyError
 from .paths import Paths
 
@@ -61,7 +63,8 @@ def _skipped(name, skip):
     return any(part.lower() in text for part in skip)
 
 
-def plan(build, tuned_rows, atlas_db, limit, *, readonly=False, skip=()):
+def plan(build, tuned_rows, atlas_db, limit, *, readonly=False, skip=(),
+         preflight_rows=None):
     if type(limit) is not int or limit < 1:
         raise ValueError("limit")
     connection = atlas._open(atlas_db, readonly=readonly)
@@ -74,14 +77,32 @@ def plan(build, tuned_rows, atlas_db, limit, *, readonly=False, skip=()):
                 "FROM affordances WHERE build = ?", (build,)):
             affordances[int(row["guid64"])] = row
         counts = {}
+        blocked = set()
         if atlas._has(connection, "trials"):
-            for row in connection.execute(
-                    "SELECT guid64, outcome, code FROM trials WHERE build = ?", (build,)):
+            try:
+                trial_rows = connection.execute(
+                    "SELECT guid64, outcome, object_id FROM trials WHERE build = ?",
+                    (build,)).fetchall()
+            except sqlite3.OperationalError:
+                trial_rows = []
+            for row in trial_rows:
                 counts.setdefault(int(row["guid64"]), []).append(row)
+                if row["outcome"] in ("STALE_TARGET", "PUSH_REFUSED"):
+                    blocked.add((int(row["guid64"]), str(row["object_id"])))
     finally:
         connection.close()
     states = {item["guid64"]: item["state"] for item in atlas.qualification(
         atlas_db, build, readonly=readonly)}
+    allowed = None
+    if preflight_rows is not None:
+        allowed = set()
+        for item in preflight_rows:
+            if item.get("kind") != "preflight" or item.get("ok") is not True:
+                continue
+            try:
+                allowed.add((str(item.get("object_id")), int(item.get("guid64"))))
+            except (TypeError, ValueError):
+                continue
     chosen = {}
     for row in tuned_rows:
         if row.get("kind") != "tuned_on_class":
@@ -102,6 +123,12 @@ def plan(build, tuned_rows, atlas_db, limit, *, readonly=False, skip=()):
             if _flag(affordance, "is_social") != 0 or name_blocked(affordance["name"]):
                 continue
             if _skipped(affordance["name"], skip):
+                continue
+            if any(part in affordance["name"] for part in PROTOCOL_SKIP):
+                continue
+            if (guid, str(object_id)) in blocked:
+                continue
+            if allowed is not None and (str(object_id), guid) not in allowed:
                 continue
             state = states.get(guid, "UNTESTED")
             if state not in ("UNTESTED", "IN_PROGRESS"):
@@ -124,12 +151,18 @@ def _classify(lines):
             continue
         if line == "PUSH_FAILED" or line.startswith("PUSH_FAILED "):
             return "PUSH_FAILED", None, None
+        if line.startswith("PUSH_REFUSED"):
+            reason = line[len("PUSH_REFUSED"):].strip()
+            return "PUSH_REFUSED", None, reason
         if line.startswith("TRIAL_PUSHED "):
             parts = line.split()
             if len(parts) >= 2:
                 return "TRIAL_PUSHED", parts[1], None
         if line.startswith("TRIAL_REJECT "):
-            return "TRIAL_REJECT", None, line[len("TRIAL_REJECT "):]
+            code = line[len("TRIAL_REJECT "):]
+            if code == "NO_OBJECT":
+                return "STALE_TARGET", None, "NO_OBJECT"
+            return "TRIAL_REJECT", None, code
         if line == "E2_UNAVAILABLE":
             return "TRIAL_REJECT", None, "E2_UNAVAILABLE"
     return "TRIAL_REJECT", None, "BAD_REPLY"
@@ -151,21 +184,172 @@ def _verdict_row(rows, experiment_id):
     return None
 
 
+def matching_preflight(atlas_dir, tuned_path):
+    """Rows from the newest preflight file that is newer than the tuned scan."""
+    folder = Path(atlas_dir)
+    files = [path for path in folder.glob("preflight_*.jsonl")
+             if path.is_file() and not path.name.endswith(".partial")]
+    if not files:
+        return None
+    newest = max(files, key=lambda path: (path.stat().st_mtime_ns, path.name))
+    tuned = Path(tuned_path)
+    if tuned.exists() and newest.stat().st_mtime_ns < tuned.stat().st_mtime_ns:
+        return None
+    _build, rows = load_tuned(newest)
+    return rows
+
+
+def environment_line(rows):
+    """One line for objects whose every tested affordance failed for the same reason."""
+    grouped = {}
+    for row in rows or ():
+        if row.get("kind") != "preflight":
+            continue
+        if row.get("reason") in ("picker", "social", "deny_name"):
+            continue
+        grouped.setdefault(str(row.get("object_id")), []).append(row)
+    parts = []
+    for object_id in sorted(grouped, key=_object_key):
+        items = grouped[object_id]
+        if not items or any(item.get("ok") is True for item in items):
+            continue
+        reasons = {item.get("reason") for item in items}
+        if len(reasons) == 1:
+            parts.append("%s=%s" % (object_id, next(iter(reasons))))
+    if not parts:
+        return None
+    return "environment " + "; ".join(parts)
+
+
+def _from_verdict(found, fallback_name):
+    e2 = found.get("e2") or {}
+    code = e2.get("code") or "OUTCOME_UNKNOWN"
+    detail = e2.get("detail") or ""
+    if code == "INTERRUPTED":
+        outcome = "INTERRUPTED"
+    elif code == "OUTCOME_UNKNOWN" and "never_started=1" in detail:
+        outcome = "NEVER_STARTED"
+    elif code in ("PASS", "OUTCOME_UNKNOWN"):
+        outcome = code
+    else:
+        outcome = "OUTCOME_UNKNOWN"
+    ambiguous = json.dumps(e2.get("ambiguous")) if e2.get("ambiguous") is not None else None
+    tuning = e2.get("tuning_name") or fallback_name
+    return outcome, code, ambiguous, tuning
+
+
+def _phase_sequence(rows, experiment_id, phase):
+    for row in rows:
+        e2 = row.get("e2") or {}
+        if e2.get("phase") == phase and e2.get("experiment_id") == experiment_id:
+            return row.get("written_sequence")
+    return None
+
+
+def _needs_near(rows, sequence):
+    if type(sequence) is not int:
+        return []
+    best = None
+    best_dist = None
+    for row in rows:
+        if row.get("event_kind") != "presence_snapshot":
+            continue
+        seq = row.get("written_sequence")
+        if type(seq) is not int:
+            continue
+        dist = abs(seq - sequence)
+        if best is None or dist < best_dist:
+            best = row
+            best_dist = dist
+    found = []
+    for item in (best or {}).get("motives") or []:
+        if isinstance(item, dict):
+            found.append({"id": item.get("id"), "value": item.get("value")})
+    return found
+
+
+def _rescan(client, tuned_rows, preflight_rows, use_preflight):
+    try:
+        client.command("tuned_scan", {})
+        client.command("preflight", {})
+    except Exception:
+        return tuned_rows, preflight_rows
+    try:
+        folder = client.paths.atlas_dir
+        tuned_path = latest_tuned(folder)
+        _build, tuned_rows = load_tuned(tuned_path)
+        if use_preflight:
+            fresh = matching_preflight(folder, tuned_path)
+            if fresh is not None:
+                preflight_rows = fresh
+    except (OSError, ValueError, FileNotFoundError, json.JSONDecodeError):
+        return tuned_rows, preflight_rows
+    return tuned_rows, preflight_rows
+
+
+def reconcile(log_path, telemetry_rows, atlas_db, build, session):
+    """Record a verdict that landed after the crawl that pushed it had stopped."""
+    if not log_path.exists():
+        return
+    pending = []
+    done = set()
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if (row.get("kind") == "send" and row.get("reply") == "TRIAL_PUSHED"
+                and row.get("experiment_id")):
+            pending.append(row)
+        elif row.get("kind") == "outcome":
+            experiment_id = row.get("experiment_id")
+            if experiment_id:
+                done.add(experiment_id)
+            elif pending:
+                done.add(pending.pop(0)["experiment_id"])
+    source = list(telemetry_rows or ())
+    for row in pending:
+        experiment_id = row["experiment_id"]
+        if experiment_id in done:
+            continue
+        found = _verdict_row(source, experiment_id)
+        if found is None:
+            outcome, code, ambiguous, tuning = "TIMEOUT", "TIMEOUT", None, row.get("name")
+        else:
+            outcome, code, ambiguous, tuning = _from_verdict(found, row.get("name"))
+        atlas.record_trial(
+            atlas_db, build, experiment_id, row.get("guid64"), row.get("object_id"),
+            outcome, code, ambiguous, tuning, session, probe_version=PROBE_VERSION)
+        _append(log_path, {
+            "kind": "outcome", "guid64": row.get("guid64"), "object_id": row.get("object_id"),
+            "outcome": outcome, "code": code, "experiment_id": experiment_id,
+            "reconciled": True,
+        })
+        done.add(experiment_id)
+
+
 def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
           dry_run=False, verdict_timeout_s=600, limit=10**9, readonly=False,
           sleep=time.sleep, monotonic=time.monotonic, telemetry_rows=None,
-          session="none", skip=()):
+          session="none", skip=(), preflight_rows=None, use_preflight=True):
     if not 1 <= per_hour <= 60:
         raise ValueError("per-hour")
     if max_trials < 1 or verdict_timeout_s <= 0:
         raise ValueError("bounds")
-    candidates = plan(build, tuned_rows, atlas_db, limit, readonly=readonly or dry_run, skip=skip)
+    active = preflight_rows if use_preflight else None
+    tuned_rows = list(tuned_rows)
+    candidates = plan(build, tuned_rows, atlas_db, limit, readonly=readonly or dry_run,
+                      skip=skip, preflight_rows=active)
     if dry_run:
         for item in candidates:
             print("%s %s %s" % (item["guid64"], item["name"], item["object_id"]))
         print("candidates %d" % len(candidates))
         return 0
     log_path = client.paths.data_dir / "runs" / ("crawl_%s.jsonl" % session)
+    report = environment_line(active)
+    if report:
+        print(report)
+    source = telemetry_rows() if telemetry_rows else []
+    reconcile(log_path, source, atlas_db, build, session)
     interval = 3600.0 / per_hour
     origin = None
     logged_reasons = set()
@@ -174,6 +358,7 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
     outcomes = []
     distress = 0
     number = 0
+    stale_run = 0
     # A restarted crawl in the same game session must not reuse "<session>:0".
     run_tag = "%x" % time.time_ns()
     while recorded < max_trials:
@@ -199,7 +384,8 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
         elif (status.get("lineage_class"), status.get("designated_sim_id")) != origin:
             changed = "lineage_class" if status.get("lineage_class") != origin[0] else "designated_sim_id"
             raise CrawlStop("%s changed" % changed)
-        candidates = plan(build, tuned_rows, atlas_db, limit, readonly=False, skip=skip)
+        candidates = plan(build, tuned_rows, atlas_db, limit, readonly=False, skip=skip,
+                          preflight_rows=active)
         if not candidates:
             return 0
         item = candidates[0]
@@ -216,8 +402,9 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
             # A probe refusal comes back as inbox status REJECTED; its lines still
             # carry TRIAL_REJECT <CODE> / PUSH_FAILED, so classify them the same way.
             reply = error.reply
-        last_send = monotonic()
         kind, experiment_id, code = _classify((reply.result or {}).get("lines"))
+        if kind == "TRIAL_PUSHED":
+            last_send = monotonic()
         _append(log_path, {
             "kind": "send", "guid64": item["guid64"], "name": item["name"],
             "object_id": item["object_id"], "reply": kind, "code": code,
@@ -237,30 +424,37 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
                 if found:
                     break
                 sleep(0.25)
+            source = telemetry_rows() if telemetry_rows else _live_rows(client.paths)
             if found is None:
                 outcome, code = "TIMEOUT", "TIMEOUT"
                 ambiguous = None
                 tuning = item["name"]
+                needs_before, needs_after = [], []
             else:
-                e2 = found.get("e2") or {}
-                code = e2.get("code") or "OUTCOME_UNKNOWN"
-                outcome = code if code in ("PASS", "OUTCOME_UNKNOWN") else "OUTCOME_UNKNOWN"
-                ambiguous = json.dumps(e2.get("ambiguous")) if e2.get("ambiguous") is not None else None
-                tuning = e2.get("tuning_name") or item["name"]
+                outcome, code, ambiguous, tuning = _from_verdict(found, item["name"])
+                needs_before = _needs_near(source, _phase_sequence(source, experiment_id, "PUSHED"))
+                needs_after = _needs_near(source, _phase_sequence(source, experiment_id, "VERDICT"))
             experiment_key = experiment_id
         else:
-            outcome = kind if kind in ("PUSH_FAILED", "TRIAL_REJECT") else "TRIAL_REJECT"
+            if kind in ("PUSH_FAILED", "TRIAL_REJECT", "STALE_TARGET", "PUSH_REFUSED"):
+                outcome = kind
+            else:
+                outcome = "TRIAL_REJECT"
             experiment_key = "%s:%s:%d" % (session, run_tag, number)
             number += 1
             ambiguous = None
             tuning = item["name"]
+            needs_before, needs_after = [], []
+            source = []
         recorded += 1
         atlas.record_trial(
             atlas_db, build, experiment_key, item["guid64"], item["object_id"],
-            outcome, code, ambiguous, tuning, session)
+            outcome, code, ambiguous, tuning, session, probe_version=PROBE_VERSION)
         _append(log_path, {
             "kind": "outcome", "n": recorded, "guid64": item["guid64"],
             "object_id": item["object_id"], "outcome": outcome, "code": code,
+            "experiment_id": experiment_id, "needs_before": needs_before,
+            "needs_after": needs_after,
         })
         print("trial %d %s %s %s -> %s (%s)" % (
             recorded, item["guid64"], item["name"], item["object_id"], outcome, code))
@@ -275,8 +469,14 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
             raise CrawlStop("5 consecutive PUSH_FAILED")
         if len(outcomes) >= 10 and outcomes[-10:].count("PUSH_FAILED") >= 8:
             raise CrawlStop("8 of the last 10 were PUSH_FAILED")
+        if outcome == "STALE_TARGET":
+            stale_run += 1
+            if stale_run == 3:
+                tuned_rows, active = _rescan(client, tuned_rows, active, use_preflight)
         if recorded >= max_trials:
             raise CrawlStop("max-trials %d" % max_trials)
+        if kind != "TRIAL_PUSHED":
+            sleep(2)
     return 0
 
 
@@ -307,16 +507,21 @@ def main(argv=None):
     # Session-only exclusion by name part (case-insensitive), e.g. Upgrade: upgrades
     # need parts she does not carry, so each push fails and five latch TRIAL_STORM.
     parser.add_argument("--skip", action="append", default=[])
+    parser.add_argument("--no-preflight", action="store_true")
     args = parser.parse_args(argv)
     paths = Paths.from_env()
     try:
         if args.tuned_file:
-            build, rows = load_tuned(args.tuned_file)
+            tuned_path = args.tuned_file
+            build, rows = load_tuned(tuned_path)
         else:
-            path = latest_tuned(paths.atlas_dir)
-            build, rows = load_tuned(path)
+            tuned_path = latest_tuned(paths.atlas_dir)
+            build, rows = load_tuned(tuned_path)
         if not build:
             raise ValueError("tuned scan has no sims_build")
+        preflight_rows = None
+        if not args.no_preflight:
+            preflight_rows = matching_preflight(tuned_path.parent, tuned_path)
         session = "none"
         if not args.dry_run:
             try:
@@ -327,7 +532,8 @@ def main(argv=None):
             client=DomusTools(paths=paths), build=build, tuned_rows=rows,
             atlas_db=paths.atlas_db, per_hour=args.per_hour, max_trials=args.max_trials,
             dry_run=args.dry_run, verdict_timeout_s=args.verdict_timeout_s,
-            limit=args.limit, session=session, skip=tuple(args.skip))
+            limit=args.limit, session=session, skip=tuple(args.skip),
+            preflight_rows=preflight_rows, use_preflight=not args.no_preflight)
     except CrawlStop as error:
         print(str(error))
         return 2

@@ -82,6 +82,8 @@ class FakeTools:
 
     def command(self, name, args=None):
         self.sent.append((name, args))
+        if name in ("tuned_scan", "preflight"):
+            return Reply("c", "OK", None, {"ok": True, "lines": []}, "agent:test")
         if self._raise and self._raise[0] == "command":
             raise self._raise[1]
         line = self.replies.pop(0)
@@ -150,7 +152,8 @@ def test_qualification_states(tmp_path):
         atlas.record_trial(db, "1.1", "p%d" % index, 1, "1", "PASS", "PASS", None, "sit", "s")
     for index in range(3):
         atlas.record_trial(db, "1.1", "u%d" % index, 2, "1", "OUTCOME_UNKNOWN",
-                           "OUTCOME_UNKNOWN", "[\"foreign\"]", "watch", "s")
+                           "OUTCOME_UNKNOWN", "[\"foreign\"]", "watch", "s",
+                           probe_version="2.10.0")
     atlas.record_trial(db, "1.1", "r1", 3, "1", "TRIAL_REJECT", "TRIAL_EXCLUDED", None, "read", "s")
     states = {row["guid64"]: row for row in atlas.qualification(db, "1.1")}
     assert states[1]["state"] == "QUALIFIED" and states[1]["pass_n"] == 3
@@ -189,7 +192,7 @@ def test_migration_keeps_rows(tmp_path):
     connection.close()
     atlas.record_trial(db, "1.1", "sess:1", 10, "1", "TIMEOUT", "TIMEOUT", None, None, "sess")
     connection = sqlite3.connect(db)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
     assert connection.execute("SELECT name FROM affordances").fetchone()[0] == "sit"
     assert connection.execute("SELECT build FROM imports").fetchone()[0] == "1.1"
     assert connection.execute("SELECT card_id FROM cards").fetchone()[0] == "c"
@@ -402,3 +405,149 @@ def test_restart_in_same_session_does_not_reuse_reject_keys(tmp_path, capsys):
         assert _drive(tools, db, tuned, Clock(), max_trials=1) == 2
     assert "max-trials" in capsys.readouterr().out
     assert len(atlas.trials_for(db, "1.1")) == 2
+
+
+def test_f7_stale_target_is_not_counted_and_replanned(tmp_path):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "cleanup_Dishes")])
+    atlas.record_trial(db, "1.1", "stale", 1, "3", "STALE_TARGET", "NO_OBJECT",
+                       None, "cleanup_Dishes", "s", probe_version="2.10.0")
+    planned = crawl.plan("1.1", [_tuned(3, [1]), _tuned(20, [1])], db, limit=5)
+    assert [(item["guid64"], item["object_id"]) for item in planned] == [(1, "20")]
+    states = {row["guid64"]: row for row in atlas.qualification(db, "1.1")}
+    assert states[1]["state"] == "UNTESTED"
+    tools = FakeTools(tmp_path)
+    tools.replies = ["TRIAL_REJECT NO_OBJECT", "TRIAL_REJECT NO_OBJECT",
+                     "TRIAL_REJECT NO_OBJECT"]
+    _import_rows = [_affordance(index, "dish%d" % index) for index in (11, 12, 13)]
+    _import(db, "1.1", _import_rows)
+    assert _drive(tools, db, [_tuned(index, [index]) for index in (11, 12, 13)],
+                  Clock(), max_trials=3) == 2
+    assert [name for name, _args in tools.sent].count("tuned_scan") == 1
+    assert [name for name, _args in tools.sent].count("preflight") == 1
+
+
+def test_f9_never_started_fails_only_after_three_on_two_objects(tmp_path):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "bed_sleep")])
+    for index in range(2):
+        atlas.record_trial(db, "1.1", "n%d" % index, 1, "9", "NEVER_STARTED",
+                           "OUTCOME_UNKNOWN", None, "bed_sleep", "s", probe_version="2.10.0")
+    assert atlas.qualification(db, "1.1")[0]["state"] == "IN_PROGRESS"
+    atlas.record_trial(db, "1.1", "n2", 1, "8", "NEVER_STARTED", "OUTCOME_UNKNOWN",
+                       None, "bed_sleep", "s", probe_version="2.10.0")
+    assert atlas.qualification(db, "1.1")[0]["state"] == "FAILED"
+
+
+def test_f10_old_unknown_rows_do_not_poison_qualification(tmp_path):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "tv_WatchKids")])
+    for index in range(6):
+        atlas.record_trial(db, "1.1", "old%d" % index, 1, "1", "OUTCOME_UNKNOWN",
+                           "OUTCOME_UNKNOWN", None, "tv_WatchKids", "s", probe_version="2.9.3")
+    assert atlas.qualification(db, "1.1")[0]["state"] == "UNTESTED"
+    assert atlas.qualification(db, "1.1")[0]["unknown_n"] == 0
+    kept = atlas.trials_for(db, "1.1")
+    assert len(kept) == 6 and kept[0]["probe_version"] == "2.9.3"
+
+
+def test_f11_reconcile_records_a_verdict_left_by_a_stopped_crawl(tmp_path):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "sit")])
+    tools = FakeTools(tmp_path)
+    log = tools.paths.data_dir / "runs" / "crawl_sess.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text(json.dumps({
+        "kind": "send", "reply": "TRIAL_PUSHED", "experiment_id": "exp9",
+        "guid64": 1, "object_id": "4", "name": "sit",
+    }) + "\n", encoding="utf-8")
+    tools.rows = [_verdict("exp9")]
+    tools.replies = ["TRIAL_PUSHED exp1 interaction 1"]
+    tools.rows.append(_verdict("exp1"))
+    assert _drive(tools, db, [_tuned(4, [1])], Clock(), max_trials=1) == 2
+    recorded = {row["experiment_id"]: row["outcome"] for row in atlas.trials_for(db, "1.1")}
+    assert recorded["exp9"] == "PASS"
+
+
+def test_f12_spacing_follows_a_push_not_a_refusal(tmp_path):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "upgrade"), _affordance(2, "sit")])
+    tools = FakeTools(tmp_path)
+    tools.replies = ["PUSH_REFUSED skill level not in desired range",
+                     "TRIAL_PUSHED exp interaction 1"]
+    tools.rows = [_verdict("exp", guid=2, name="sit")]
+    clock = Clock()
+    stamps = []
+    original = tools.command
+
+    def command(name, args=None):
+        stamps.append(clock.monotonic())
+        return original(name, args)
+
+    tools.command = command
+    _drive(tools, db, [_tuned(1, [1]), _tuned(2, [2])], clock, max_trials=2)
+    assert stamps[1] - stamps[0] == 2
+    assert 60 not in clock.slept[:1]
+
+
+def test_f13_preflight_and_default_name_skips(tmp_path):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [
+        _affordance(1, "bed_Nap"),
+        _affordance(2, "bed_Nap_Resume"),
+        _affordance(3, "upgrade_CompletedDisplay"),
+        _affordance(4, "sit"),
+    ])
+    atlas.record_trial(db, "1.1", "one", 4, "1", "PASS", "PASS", None, "sit", "s",
+                       probe_version="2.10.0")
+    tuned = [_tuned(5, [1, 2, 3, 4])]
+    preflight = [
+        {"kind": "preflight", "object_id": "5", "guid64": 1, "name": "bed_Nap", "ok": True, "reason": None},
+        {"kind": "preflight", "object_id": "5", "guid64": 4, "name": "sit", "ok": False, "reason": "no"},
+    ]
+    planned = crawl.plan("1.1", tuned, db, limit=10, preflight_rows=preflight)
+    assert [item["guid64"] for item in planned] == [1]
+    unfiltered = crawl.plan("1.1", tuned, db, limit=10)
+    assert [item["guid64"] for item in unfiltered] == [1, 4]
+
+
+def test_f14_outcome_log_records_needs(tmp_path):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "bed_Nap")])
+    tools = FakeTools(tmp_path)
+    tools.replies = ["TRIAL_PUSHED exp interaction 1"]
+    tools.rows = [
+        {"event_kind": "experiment_event", "written_sequence": 5,
+         "e2": {"phase": "PUSHED", "experiment_id": "exp"}},
+        {"event_kind": "presence_snapshot", "written_sequence": 4,
+         "motives": [{"id": "energy", "value": 98, "band": "ok", "age_ticks": 1}]},
+        {"event_kind": "presence_snapshot", "written_sequence": 12,
+         "motives": [{"id": "energy", "value": 40, "band": "ok", "age_ticks": 1}]},
+        {"event_kind": "experiment_event", "written_sequence": 11,
+         "e2": {"phase": "VERDICT", "code": "PASS", "experiment_id": "exp",
+                "guid64": "1", "tuning_name": "bed_Nap", "ambiguous": []}},
+    ]
+    assert _drive(tools, db, [_tuned(4, [1])], Clock(), max_trials=1) == 2
+    log = (tools.paths.data_dir / "runs" / "crawl_sess.jsonl").read_text(encoding="utf-8")
+    outcome = [json.loads(line) for line in log.splitlines() if '"kind": "outcome"' in line][-1]
+    assert outcome["needs_before"] == [{"id": "energy", "value": 98}]
+    assert outcome["needs_after"] == [{"id": "energy", "value": 40}]
+
+
+def test_f8_environment_report_is_one_line(tmp_path, capsys):
+    db = tmp_path / "atlas.db"
+    _import(db, "1.1", [_affordance(1, "cook"), _affordance(2, "sit")])
+    tools = FakeTools(tmp_path)
+    tools.replies = ["TRIAL_PUSHED exp interaction 1"]
+    tools.rows = [_verdict("exp", guid=2, name="sit")]
+    preflight = [
+        {"kind": "preflight", "object_id": "7", "guid64": 1, "ok": False,
+         "reason": "Object failed state check"},
+        {"kind": "preflight", "object_id": "7", "guid64": 9, "ok": False,
+         "reason": "Object failed state check"},
+        {"kind": "preflight", "object_id": "8", "guid64": 2, "ok": True, "reason": None},
+    ]
+    _drive(tools, db, [_tuned(8, [2])], Clock(), max_trials=1, preflight_rows=preflight)
+    line = [item for item in capsys.readouterr().out.splitlines() if item.startswith("environment ")]
+    assert len(line) == 1
+    assert "7" in line[0] and "Object failed state check" in line[0]

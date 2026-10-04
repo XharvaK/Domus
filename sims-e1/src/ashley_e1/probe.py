@@ -49,8 +49,10 @@ except ImportError:
     register = None
 
 from . import atlas
+from . import preflight
 from . import cmdbox
 from . import tuned
+from . import e2_actuator
 from . import e2_control
 from . import observers
 from . import schema
@@ -107,6 +109,9 @@ _ATLAS_HANDLE = None
 _TUNED_ALARM_OWNER = _ProbeAlarmOwner()
 _TUNED = None
 _TUNED_HANDLE = None
+_PREFLIGHT_ALARM_OWNER = _ProbeAlarmOwner()
+_PREFLIGHT = None
+_PREFLIGHT_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
 _INBOX_STARTED_ZONE = None
@@ -123,7 +128,8 @@ _STATE = "UNARMED"
 _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
-_OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial")
+_OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
+                     "preflight")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -416,6 +422,8 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_atlas_dump(connection)
     if name == 'tuned_scan':
         return _dispatch_tuned_scan(connection)
+    if name == 'preflight':
+        return _dispatch_preflight(connection)
     dispatchers = {'start': _dispatch_start, 'stop': _dispatch_stop,
                    'disarm': _dispatch_disarm, 'pause': _dispatch_e2_pause,
                    'release': _dispatch_e2_release, 'status': _dispatch_status}
@@ -556,6 +564,109 @@ def _dispatch_tuned_scan(connection):
         callback=_tuned_tick, repeating=True, use_sleep_time=False,
         cross_zone=False)
     return True
+
+
+def _dispatch_preflight(connection):
+    """A28: ask the game which tuned offers it would refuse. No push."""
+    global _PREFLIGHT, _PREFLIGHT_HANDLE
+    if _STATE not in ("ARMED", "SAMPLING"):
+        connection.code = "PREFLIGHT_UNARMED"
+        return False
+    if _ARMED_NAME not in ("LAB_E1", "LAB_E1_FORK"):
+        connection.code = "PREFLIGHT_NOT_LAB"
+        return False
+    if _INBOX_HANDLE is None:
+        connection.code = "PREFLIGHT_NO_PUMP"
+        return False
+    if _PREFLIGHT is not None and _PREFLIGHT.state == "running":
+        connection.code = "PREFLIGHT_BUSY"
+        return False
+    snapshot, code = _lot_snapshot()
+    if code is not None:
+        connection.code = code
+        return False
+    try:
+        sim_info, sim = observers.select_lab_body(
+            _services_module.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+    except Exception:
+        connection.code = "PREFLIGHT_NO_SIM"
+        return False
+    del sim_info
+    context = e2_actuator.build_context(sim)
+    jobs = []
+    for obj in snapshot:
+        found = tuned._plain(obj, "id", True)
+        object_id = None if type(found) is not int else str(found)
+        if object_id is None:
+            try:
+                object_id = str(int(found))
+            except (TypeError, ValueError):
+                object_id = None
+        for affordance in tuned.affordances_of(obj):
+            guid = tuned._class_plain(affordance, "guid64")
+            if type(guid) is not int:
+                continue
+            try:
+                name = affordance.__name__
+            except Exception:
+                name = ""
+            if type(name) is not str:
+                name = ""
+            jobs.append({
+                "object_id": object_id, "guid64": guid, "name": name[:128],
+                "obj": obj, "affordance": affordance,
+                "excluded": e2_actuator.excluded(affordance),
+            })
+
+    def _run(job, _sim=sim, _context=context):
+        excluded = job["excluded"]
+        if excluded is not None:
+            ok, reason = False, excluded
+        else:
+            ok, reason = e2_actuator.preflight_test(
+                _sim, job["obj"], job["affordance"], _context)
+        return {
+            "kind": "preflight", "object_id": job["object_id"],
+            "guid64": job["guid64"], "name": job["name"],
+            "ok": bool(ok), "reason": reason,
+        }
+
+    folder = os.path.join(_TELEMETRY_ROOT, "atlas")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(
+        folder, "preflight_%s_%d.jsonl" % (SIMS_BUILD, int(time.time() * 1000)))
+    _PREFLIGHT = preflight.PreflightScan(jobs, path, _run)
+    _PREFLIGHT_HANDLE = alarms.add_alarm_real_time(
+        owner=_PREFLIGHT_ALARM_OWNER, time_span=interval_in_real_seconds(1),
+        callback=_preflight_tick, repeating=True, use_sleep_time=False,
+        cross_zone=False)
+    return True
+
+
+def _preflight_tick(alarm_handle=None):
+    try:
+        if _PREFLIGHT is None or _PREFLIGHT.state != "running":
+            _cancel_preflight()
+            return
+        _PREFLIGHT.step()
+        if _PREFLIGHT.state != "running":
+            _cancel_preflight()
+    except Exception:
+        if _PREFLIGHT is not None:
+            _PREFLIGHT.state = "error"
+        _cancel_preflight()
+
+
+def _cancel_preflight():
+    global _PREFLIGHT_HANDLE
+    handle = _PREFLIGHT_HANDLE
+    _PREFLIGHT_HANDLE = None
+    if handle is None or alarms is None:
+        return
+    try:
+        alarms.cancel_alarm(handle)
+    except Exception:
+        return
 
 
 def _tuned_tick(alarm_handle=None):

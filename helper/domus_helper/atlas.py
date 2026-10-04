@@ -48,14 +48,15 @@ CREATE TABLE IF NOT EXISTS trials (
     experiment_id TEXT PRIMARY KEY,
     guid64 INTEGER,
     object_id TEXT,
-    outcome TEXT CHECK (outcome IN ('PASS','OUTCOME_UNKNOWN','TRIAL_REJECT','PUSH_FAILED','TIMEOUT')),
+    outcome TEXT CHECK (outcome IN ('PASS','OUTCOME_UNKNOWN','TRIAL_REJECT','PUSH_FAILED','TIMEOUT','INTERRUPTED','STALE_TARGET','NEVER_STARTED','PUSH_REFUSED')),
     code TEXT,
     ambiguous_json TEXT,
     tuning_name TEXT,
     session TEXT,
-    created_ms INTEGER
+    created_ms INTEGER,
+    probe_version TEXT
 );
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 """
 
 _CARDS_DDL = """
@@ -78,12 +79,13 @@ CREATE TABLE IF NOT EXISTS trials (
     experiment_id TEXT PRIMARY KEY,
     guid64 INTEGER,
     object_id TEXT,
-    outcome TEXT CHECK (outcome IN ('PASS','OUTCOME_UNKNOWN','TRIAL_REJECT','PUSH_FAILED','TIMEOUT')),
+    outcome TEXT CHECK (outcome IN ('PASS','OUTCOME_UNKNOWN','TRIAL_REJECT','PUSH_FAILED','TIMEOUT','INTERRUPTED','STALE_TARGET','NEVER_STARTED','PUSH_REFUSED')),
     code TEXT,
     ambiguous_json TEXT,
     tuning_name TEXT,
     session TEXT,
-    created_ms INTEGER
+    created_ms INTEGER,
+    probe_version TEXT
 );
 """
 
@@ -106,16 +108,42 @@ def _connect(db_path):
     elif version == 1:
         connection.executescript(_CARDS_DDL)
         connection.executescript(_TRIALS_DDL)
-        connection.execute("PRAGMA user_version = 3")
+        connection.execute("PRAGMA user_version = 4")
         connection.commit()
     elif version == 2:
         connection.executescript(_TRIALS_DDL)
-        connection.execute("PRAGMA user_version = 3")
+        connection.execute("PRAGMA user_version = 4")
         connection.commit()
-    elif version != 3:
+    elif version == 3:
+        _upgrade_trials_v4(connection)
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+    elif version != 4:
         connection.close()
         raise AtlasImportError("unsupported user_version")
     return connection
+
+
+def _upgrade_trials_v4(connection):
+    """Recreate trials so the outcome CHECK and probe_version column can grow."""
+    if not _has(connection, "trials"):
+        connection.executescript(_TRIALS_DDL)
+        return
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(trials)")]
+    if "probe_version" in columns:
+        return
+    connection.execute("ALTER TABLE trials RENAME TO trials_old")
+    connection.executescript(_TRIALS_DDL)
+    connection.execute(
+        """
+        INSERT INTO trials (
+            build, experiment_id, guid64, object_id, outcome, code,
+            ambiguous_json, tuning_name, session, created_ms, probe_version)
+        SELECT build, experiment_id, guid64, object_id, outcome, code,
+            ambiguous_json, tuning_name, session, created_ms, NULL
+        FROM trials_old
+        """)
+    connection.execute("DROP TABLE trials_old")
 
 
 def _flag(value):
@@ -310,9 +338,14 @@ def _open(db_path, *, readonly):
     return connection
 
 
+_OUTCOMES = ("PASS", "OUTCOME_UNKNOWN", "TRIAL_REJECT", "PUSH_FAILED", "TIMEOUT",
+             "INTERRUPTED", "STALE_TARGET", "NEVER_STARTED", "PUSH_REFUSED")
+
+
 def record_trial(db_path, build, experiment_id, guid64, object_id, outcome, code,
-                 ambiguous_json, tuning_name, session, created_ms=None):
-    if outcome not in ("PASS", "OUTCOME_UNKNOWN", "TRIAL_REJECT", "PUSH_FAILED", "TIMEOUT"):
+                 ambiguous_json, tuning_name, session, created_ms=None,
+                 probe_version=None):
+    if outcome not in _OUTCOMES:
         raise AtlasImportError("outcome")
     if not isinstance(experiment_id, str) or not experiment_id:
         raise AtlasImportError("experiment_id")
@@ -323,12 +356,13 @@ def record_trial(db_path, build, experiment_id, guid64, object_id, outcome, code
                 """
                 INSERT INTO trials (
                     build, experiment_id, guid64, object_id, outcome, code,
-                    ambiguous_json, tuning_name, session, created_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ambiguous_json, tuning_name, session, created_ms, probe_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (build, experiment_id, guid64, object_id, outcome, code,
                  ambiguous_json, tuning_name, session,
-                 int(time.time() * 1000) if created_ms is None else created_ms))
+                 int(time.time() * 1000) if created_ms is None else created_ms,
+                 probe_version))
     finally:
         connection.close()
 
@@ -351,6 +385,20 @@ def trials_for(db_path, build, guid64=None, *, readonly=False):
     return [{key: row[key] for key in row.keys()} for row in rows]
 
 
+def _probe_before_210(version):
+    """True when a row was written before probe 2.10.0, including a missing version."""
+    if not isinstance(version, str) or not version:
+        return True
+    parts = []
+    for piece in version.split("."):
+        if not piece.isdigit():
+            return True
+        parts.append(int(piece))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3]) < (2, 10, 0)
+
+
 def _has(connection, table):
     row = connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -368,7 +416,7 @@ def qualification(db_path, build, *, readonly=False):
         trials = []
         if _has(connection, "trials"):
             trials = connection.execute(
-                "SELECT guid64, outcome, code FROM trials WHERE build = ?",
+                "SELECT guid64, outcome, code, object_id, probe_version FROM trials WHERE build = ?",
                 (build,)).fetchall()
     finally:
         connection.close()
@@ -379,16 +427,34 @@ def qualification(db_path, build, *, readonly=False):
         buckets.setdefault(int(row["guid64"]), []).append(row)
     found = []
     for guid, rows in buckets.items():
-        pass_n = sum(row["outcome"] == "PASS" for row in rows)
-        unknown_n = sum(row["outcome"] == "OUTCOME_UNKNOWN" for row in rows)
-        reject_n = sum(row["outcome"] == "TRIAL_REJECT" for row in rows)
-        push_failed_n = sum(row["outcome"] == "PUSH_FAILED" for row in rows)
-        excluded = any(row["code"] == "TRIAL_EXCLUDED" for row in rows)
-        if unknown_n >= 3 or push_failed_n >= 2 or excluded:
+        counted = []
+        never = []
+        tried = False
+        for row in rows:
+            outcome = row["outcome"]
+            if outcome == "OUTCOME_UNKNOWN" and _probe_before_210(row["probe_version"]):
+                continue
+            if outcome in ("STALE_TARGET", "PUSH_REFUSED"):
+                continue
+            if outcome == "INTERRUPTED":
+                tried = True
+                continue
+            if outcome == "NEVER_STARTED":
+                never.append(row)
+                continue
+            counted.append(row)
+        pass_n = sum(row["outcome"] == "PASS" for row in counted)
+        unknown_n = sum(row["outcome"] == "OUTCOME_UNKNOWN" for row in counted)
+        reject_n = sum(row["outcome"] == "TRIAL_REJECT" for row in counted)
+        push_failed_n = sum(row["outcome"] == "PUSH_FAILED" for row in counted)
+        excluded = any(row["code"] == "TRIAL_EXCLUDED" for row in counted)
+        never_objects = {str(row["object_id"]) for row in never}
+        never_failed = len(never) >= 3 and len(never_objects) >= 2
+        if unknown_n >= 3 or push_failed_n >= 2 or excluded or never_failed:
             state = "FAILED"
         elif pass_n >= 3 and unknown_n == 0:
             state = "QUALIFIED"
-        elif not rows:
+        elif not counted and not never and not tried:
             state = "UNTESTED"
         else:
             state = "IN_PROGRESS"

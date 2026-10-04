@@ -288,7 +288,9 @@ def crawl_plan(limit: int = 20) -> list[dict]:
     path = crawl.latest_tuned(client.paths.atlas_dir)
     file_build, rows = crawl.load_tuned(path)
     chosen = file_build or build
-    return crawl.plan(chosen, rows, client.paths.atlas_db, limit)
+    preflight_rows = crawl.matching_preflight(path.parent, path)
+    return crawl.plan(chosen, rows, client.paths.atlas_db, limit,
+                      preflight_rows=preflight_rows)
 
 
 @server.tool()

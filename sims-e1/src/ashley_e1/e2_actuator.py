@@ -82,27 +82,48 @@ def excluded(affordance):
 
 
 def push_affordance(sim, obj, affordance, context):
-    """Act: push exactly one affordance. Returns (interaction_or_None, detail)."""
+    """Act: push exactly one affordance.
+
+    Returns (interaction_or_None, detail, kind). kind is "refused" when the
+    game's test_result failed (A28); that is not a broken push. A passed test
+    with no interaction, or a result that has no test_result, stays a failure.
+    """
     result = sim.push_super_affordance(affordance, obj, context)
+    refusal = _refusal(result)
+    if refusal is not None:
+        return None, refusal, "refused"
     try:
         execute_result = result.execute_result
     except AttributeError:
         execute_result = None
     if not result or execute_result is None:
         # EnqueueResult.interaction would raise here (TARGET_BYTECODE); never touch it.
-        return None, _bounded(repr(result))
+        return None, _bounded(repr(result)), "failed"
     try:
         interaction = execute_result.interaction
     except AttributeError:
         interaction = None
     if interaction is None:
-        return None, _bounded(repr(execute_result))
-    return interaction, None
+        return None, _bounded(repr(execute_result)), "failed"
+    return interaction, None, None
 
 
 def push_sit(sim, obj, affordance, context):
     """Act: push exactly one admitted sit. Returns (interaction_or_None, detail)."""
-    return push_affordance(sim, obj, affordance, context)
+    interaction, detail, _kind = push_affordance(sim, obj, affordance, context)
+    return interaction, detail
+
+
+def preflight_test(sim, obj, affordance, context):
+    """Read: would push_super_affordance's test refuse this pair (A28).
+
+    Same arguments as the push. The game method calls AffordanceObjectPair.test
+    and does not execute. Returns (ok, reason).
+    """
+    result = sim.test_super_affordance(affordance, obj, context)
+    if not result:
+        return False, _bounded(str(result))
+    return True, None
 
 
 def cancel_own(interaction):
@@ -111,6 +132,49 @@ def cancel_own(interaction):
     Callers pass only the interaction returned by our own push; never any other.
     """
     interaction.cancel(FinishingType.USER_CANCEL, cancel_reason_msg=TRIAL_END_REASON)
+
+
+def cancel_ids(sim, interaction_ids):
+    """Act: end child interactions of our trial that are still on the Sim (A27).
+
+    Callers pass only ids this probe classified as children of its own push.
+    """
+    if sim is None or not interaction_ids:
+        return 0
+    wanted = set(str(item) for item in interaction_ids)
+    pools = []
+    try:
+        pools.extend(sim.queue or ())
+    except Exception:
+        pass
+    try:
+        pools.extend(sim.si_state or ())
+    except Exception:
+        pass
+    seen = set()
+    count = 0
+    for entry in pools:
+        try:
+            iid = str(entry.id)
+        except Exception:
+            continue
+        if iid not in wanted or iid in seen:
+            continue
+        seen.add(iid)
+        entry.cancel(FinishingType.USER_CANCEL, cancel_reason_msg=TRIAL_END_REASON)
+        count += 1
+    return count
+
+
+def _refusal(result):
+    """Bounded test_result text when the game refused the push, else None."""
+    try:
+        test_result = result.test_result
+    except AttributeError:
+        return None
+    if test_result:
+        return None
+    return _bounded(str(test_result))
 
 
 def watch_finish(interaction, callback):

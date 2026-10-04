@@ -20,6 +20,10 @@ CLAIM_ORDER = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
 
 PASS = "PASS"
 OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+INTERRUPTED = "INTERRUPTED"
+FAMILY_SOURCES = ("InteractionSource.SCRIPT_WITH_USER_INTENT", "InteractionSource.SCRIPT")
+FAMILY_SECONDS = 5.0
+OURS_LIVE = ("RUNNING", "QUEUED", "QUEUED_AND_RUNNING")
 
 
 def _entries(row):
@@ -59,6 +63,9 @@ class Experiment:
         # A25: QUEUED AUTONOMY mixers on the trial object while our own action
         # runs (TV watch-passive every ~10 s) belong to our action, not a rival.
         self.child_mixers = []
+        # A27: a SCRIPT child the game pushes after our own interaction.
+        self.children = []
+        self.finished_ns = None
         self.incomplete_rows = 0
         self.started_ns = None
         self.effect_since_ns = None
@@ -84,10 +91,13 @@ class Experiment:
         ours_running = self.card["card_class"] == "interaction" and any(
             entry.get("interaction_id") == self.interaction_id and
             entry.get("membership") in RUNNING_MEMBERSHIPS for entry in _entries(row))
+        family_open = self._family_open(row, mono)
         for entry in _entries(row):
             iid = entry.get("interaction_id")
             if iid is not None and iid == self.interaction_id:
                 ours = entry
+                continue
+            if iid is not None and iid in self.children:
                 continue
             source = entry.get("source_raw")
             membership = entry.get("membership")
@@ -126,6 +136,11 @@ class Experiment:
                     self.foreign_roots.append(iid)
                 self.known_ids.add(iid)
                 continue
+            if (family_open and source in FAMILY_SOURCES and iid is not None and
+                    iid not in self.known_ids and iid not in self.foreign_roots):
+                self.children.append(iid)
+                self.known_ids.add(iid)
+                continue
             if iid is None or iid in self.known_ids:
                 continue
             self.known_ids.add(iid)
@@ -136,10 +151,14 @@ class Experiment:
             if ours.get("membership") in RUNNING_MEMBERSHIPS and self.started_ns is None:
                 self.started_ns = mono
                 self.claims["STARTED"] = True
+        if self._child_running(row) and self.started_ns is None:
+            self.started_ns = mono
+            self.claims["STARTED"] = True
         if self.card["card_class"] != "posture":
             self._rows_since.append(row)
         effect_held, reason = e2_cards.evaluate_effect(self.card, {
             "interaction_id": self.interaction_id,
+            "children": self.children,
             "foreign_roots": self.foreign_roots,
             "control_rows": self.control_rows,
             "pushed_mono_ns": self.pushed_mono_ns,
@@ -175,17 +194,48 @@ class Experiment:
             self.close()
         return [key for key in CLAIM_ORDER if self.claims[key] and not before[key]]
 
-    def finish(self, finishing_type):
+    def finish(self, finishing_type, mono_ns=None):
         if self.finishing_type is None:
             self.finishing_type = finishing_type
+            self.finished_ns = mono_ns
         self.claims["FINISHED"] = True
+
+    def _family_open(self, row, mono):
+        """A27: our push is live, or it finished naturally within the last 5 s."""
+        if self.card.get("card_class") != "interaction":
+            return False
+        for entry in _entries(row):
+            if (entry.get("interaction_id") == self.interaction_id and
+                    entry.get("membership") in OURS_LIVE):
+                return True
+        if self.finishing_type != "FinishingType.NATURAL":
+            return False
+        if type(self.finished_ns) is not int or type(mono) is not int:
+            return False
+        return 0 <= mono - self.finished_ns <= FAMILY_SECONDS * 1e9
+
+    def _child_running(self, row):
+        for entry in _entries(row):
+            if (entry.get("interaction_id") in self.children and
+                    entry.get("membership") in RUNNING_MEMBERSHIPS):
+                return True
+        return False
 
     def close(self):
         if self.closed:
             return self.verdict
         self.closed = True
-        if (self.claims["ATTRIBUTED"] and self.claims["MAINTAINED_10S"] and
-                not self.ambiguous):
+        interaction = self.card.get("card_class") == "interaction"
+        natural = self.finishing_type == "FinishingType.NATURAL"
+        user_cancel = self.finishing_type == "FinishingType.USER_CANCEL"
+        interrupted = (interaction and self.finishing_type is not None and
+                       not natural and not user_cancel)
+        held = (self.claims["ATTRIBUTED"] and
+                (self.claims["MAINTAINED_10S"] or (interaction and natural)) and
+                not self.foreign_roots and not self.ambiguous)
+        if interrupted and not self.claims["ATTRIBUTED"]:
+            self.verdict = INTERRUPTED
+        elif held:
             self.verdict = PASS
         else:
             self.verdict = OUTCOME_UNKNOWN

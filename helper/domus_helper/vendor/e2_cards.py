@@ -193,7 +193,9 @@ def _posture_effect(card, row):
 
 def _interaction_effect(card, state, row):
     del card
-    running = _running(_ours(row, state.get("interaction_id")))
+    ids = [state.get("interaction_id")]
+    ids.extend(state.get("children") or ())
+    running = any(_running(_ours(row, iid)) for iid in ids)
     foreign = state.get("foreign_roots") or []
     return bool(running and not foreign), None
 
