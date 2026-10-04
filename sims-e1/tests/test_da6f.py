@@ -54,3 +54,52 @@ class ScanProgressTests(unittest.TestCase):
             done = scan.progress()
             self.assertEqual((done["state"], done["done"], done["chunks"]), ("done", 3, 2))
             self.assertFalse(done["file"].endswith(".partial"))
+
+
+from test_da6e import AUTONOMY, BODY_CANCEL, SCRIPT, _Replay, bed_sleep  # noqa: E402
+from test_da6a_trial import _Offer, _running  # noqa: E402
+from test_e2 import CHAIR  # noqa: E402
+
+
+class LiveSleepReplay(_Replay):
+    """412d52ea-2: bed_sleep pushed at energy 24 (relief=energy), energy 26 -> 100 at
+    speed 3, she woke at row 1381 (FINISHED NATURAL); the interaction card waited for
+    the 180 s window (VERDICT at 1519) and the PASS detail had no energy reading."""
+
+    def test_sleep_closes_after_waking_and_reports_energy(self):
+        import types
+        self.ready()
+        self._clock()
+        self._motives(energy=24, hunger=60)
+        self.base.ticks = 1000
+        self.base.objects[CHAIR] = _Offer(CHAIR, [bed_sleep])
+        self.assertTrue(self.trial(guid64="13094")[0])
+        experiment = list(self.probe._E2.experiments.values())[-1]
+        pushed = experiment.interaction_ref
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=pushed.id, guid64=13094, affordance="x",
+            target=types.SimpleNamespace(id=int(CHAIR)),
+            context=types.SimpleNamespace(source=SCRIPT))]
+        for _ in range(16):  # live 1331-1346: walking to the bed at energy 24
+            self._step()
+        for value in range(26, 101, 4):
+            self._motives(energy=value, hunger=50)
+            self._step(ticks=37000)
+        self._motives(energy=100, hunger=48)
+        for _ in range(5):
+            self._step(ticks=37000)
+        # Live 1382-1385: sim-stand BODY_CANCEL_AOP running, idle_Hunger AUTONOMY queued.
+        self.base.sim.si_state = [_running(3861, BODY_CANCEL, target=999)]
+        self.base.sim.queue = [_running(3863, AUTONOMY, target=999)]
+        pushed.finishing_type = "FinishingType.NATURAL"
+        pushed.callbacks[0](pushed)
+        steps = 0
+        while not experiment.closed and steps < 200:
+            self._step()
+            steps += 1
+        self.assertTrue(experiment.closed)
+        self.assertLess(steps, 45, "D26: closes after she wakes, not at the window")
+        self.assertEqual(experiment.verdict, "PASS", (experiment.ambiguous, experiment.claims,
+                         experiment.foreign_roots, experiment.incomplete_rows))
+        detail = self._verdict()["detail"]
+        self.assertIn("relief=energy energy=24->100->100", detail)

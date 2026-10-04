@@ -37,6 +37,10 @@ def _now():
 
 
 def _hunger_span(experiment):
+    return _motive_span(experiment, "hunger")
+
+
+def _motive_span(experiment, motive_id):
     """D7: start, peak and end. The end of a long window hides a meal (31->80->40)."""
     before = None
     after = None
@@ -44,7 +48,7 @@ def _hunger_span(experiment):
     for row in experiment._rows_since:
         item = None
         for motive in row.get("motives") or []:
-            if isinstance(motive, dict) and motive.get("id") == "hunger":
+            if isinstance(motive, dict) and motive.get("id") == motive_id:
                 item = motive
                 break
         if item is None:
@@ -600,6 +604,13 @@ class E2Control:
             before, peak, after = _hunger_span(experiment)
             detail = "route=%s hunger=%s->%s->%s " % (
                 experiment.food_route, before, peak, after)
+        for motive_id in experiment.relief:
+            # D26 (live sleep PASS said nothing about energy): a relief trial reports
+            # what the cure did to the need it relieves.
+            if motive_id == "hunger" and experiment.food_route:
+                continue
+            before, peak, after = _motive_span(experiment, motive_id)
+            detail += "relief=%s %s=%s->%s->%s " % (motive_id, motive_id, before, peak, after)
         detail += "foreign_roots=%d incomplete_rows=%d continuation=%d mixers=%d family=%d" % (
             len(experiment.foreign_roots), experiment.incomplete_rows,
             len(experiment.continuation_entries), len(experiment.child_mixers),
