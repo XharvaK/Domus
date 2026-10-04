@@ -46,12 +46,23 @@ class AutonomousObjectPickerInteraction(ObjectPickerInteraction):
     pass
 
 
+class StartCraftingSuperInteraction(Picker):
+    pass
+
+
 class fridge_GrabSnackAutonomously(StartCraftingAutonomouslySuperInteraction):
+    """Live 2.11.1 scan: no favorite_recipe, use_pie_menu or picker_rows_gen (D20)."""
     guid64 = 13397
     allow_user_directed = 0
     allow_autonomous = 1
+
+
+class fridge_Cook(StartCraftingSuperInteraction):
+    """The user-directed cook: the class that offers the recipe menu."""
+    guid64 = 13387
+    allow_user_directed = 1
+    allow_autonomous = 0
     favorite_recipe = None
-    auto_pick = None
 
     @classmethod
     def use_pie_menu(cls):
@@ -61,7 +72,7 @@ class fridge_GrabSnackAutonomously(StartCraftingAutonomouslySuperInteraction):
     def picker_rows_gen(cls, inst, target, context):
         # D2: the live scan passed (None, obj, ctx) and shifted every argument.
         assert inst is None and isinstance(target, _Fridge), (inst, target)
-        yield _RecipeRow(recipe_CookPasta, 5, True, 10, 1)
+        yield _RecipeRow(_Blueprint("recipe_CookPasta"), 5, True, 10, 1)
         yield _BoomRow()
 
 
@@ -94,6 +105,25 @@ class fridge_HaveMeal(ObjectPickerInteraction):
 
 class recipe_CookPasta(object):
     pass
+
+
+class TuningBlueprint(object):
+    """sims4/tuning/instances (bytecode): __slots__ tuning_name, resource_key,
+    guid64; __name__ is a property. Live menu tags are these instances (D19)."""
+    __slots__ = ("tuning_name", "resource_key", "guid64")
+
+    def __init__(self, name):
+        self.tuning_name = name
+        self.resource_key = None
+        self.guid64 = 5
+
+    @property
+    def __name__(self):
+        return self.tuning_name
+
+
+def _Blueprint(name):
+    return TuningBlueprint(name)
 
 
 class _RecipeRow(object):
@@ -150,9 +180,10 @@ class FoodRouteTests(unittest.TestCase):
 
 
 class _Fridge(object):
+    # Autonomous crafting first, as on the live stove: it must not be taken as the menu.
     _super_affordances = (
         fridge_GrabSnackAutonomously, fridge_HaveMeal, _Unreadable, sell_items_picker,
-        fridge_CookAutonomously)
+        fridge_CookAutonomously, fridge_Cook)
 
     def __init__(self, object_id):
         self.id = int(object_id)
@@ -190,7 +221,9 @@ class FoodScanTests(Hosted):
         self.assertIn("RuntimeError: scan", errors[0])
         self.assertTrue(any(row.get("error") for row in body))
         menu = [row for row in rows if row["kind"] == "food_menu"]
+        self.assertEqual(menu[0]["guid64"], 13387)
         self.assertEqual(menu[0]["recipe_name"], "recipe_CookPasta")
+        self.assertFalse(any("picker_rows_gen" in str(row.get("error")) for row in menu))
         self.assertNotEqual(menu[0].get("recipe_name"), "localized")
         self.assertTrue(menu[0]["is_enable"])
         self.assertEqual(menu[0]["price"], 10)

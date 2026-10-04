@@ -710,6 +710,30 @@ def _food_affordance_row(affordance, object_id):
                 "error": food.error_text(error)}
 
 
+def _recipe_name(tag):
+    """D19 (live: every recipe read 'TuningBlueprint'): a menu tag is a lazy
+    TuningBlueprint instance (bytecode sims4/tuning/instances: __name__ is a property,
+    tuning_name a slot). Its own name first, the class name last."""
+    for read in (lambda: tag.__name__, lambda: tag.tuning_name):
+        try:
+            value = read()
+        except AttributeError:
+            continue
+        if type(value) is str and value:
+            return value
+    return type(tag).__name__
+
+
+def _has_menu(affordance):
+    """D20 (live: the stove's first crafting class was autonomous and has no
+    picker_rows_gen): only a class that offers a picker can show a menu."""
+    try:
+        affordance.picker_rows_gen
+    except AttributeError:
+        return False
+    return True
+
+
 def _food_menu_rows(affordance, obj, context, object_id, guid):
     # D2: picker_rows_gen is a flexmethod; __get__ binds (cls, None) already
     # (bytecode sims4/utils: partial(func, owner, instance)). Pass target, context.
@@ -734,10 +758,7 @@ def _food_menu_rows(affordance, obj, context, object_id, guid):
             break
         try:
             tag = item.tag
-            if isinstance(tag, type):
-                recipe_name = tag.__name__
-            else:
-                recipe_name = type(tag).__name__
+            recipe_name = _recipe_name(tag)
             rows.append({
                 "kind": "food_menu",
                 "object_id": object_id,
@@ -818,7 +839,8 @@ def _dispatch_food_scan(connection):
                 except Exception:
                     continue
             if object_id not in menus and any(
-                    type(item) is str and item.startswith("StartCrafting") for item in mro_names):
+                    type(item) is str and item.startswith("StartCrafting")
+                    for item in mro_names) and _has_menu(affordance):
                 menus[object_id] = {
                     "menu": True, "object_id": object_id, "guid64": guid,
                     "obj": obj, "affordance": affordance,

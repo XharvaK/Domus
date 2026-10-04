@@ -10,15 +10,58 @@ from . import schema
 from .writer import append_atlas_line
 
 NAME_PARTS = ("cook", "snack", "leftover", "eat", "grab", "serving", "meal", "drink")
+# D21 (live 2026-10-04): a substring "eat" matched cheat, death and create (401 of
+# 701 scanned rows). A part must begin a word of the tuning name.
 FOOD_GUIDS = (13388, 13397)
 MENU_CAP = 200
+
+
+def _words(name):
+    """Split on case changes, digits and separators: GrabSnack_8Servings ->
+    grab, snack, 8, servings; BBQMeal -> bbq, meal."""
+    words = []
+    current = ""
+    for index, char in enumerate(name):
+        if not char.isalnum():
+            kind = None
+        elif char.isdigit():
+            kind = "digit"
+        elif char.isupper():
+            kind = "upper"
+        else:
+            kind = "lower"
+        last = current[-1:] if current else ""
+        if kind is None:
+            split = True
+        elif not current:
+            split = False
+        elif kind == "digit":
+            split = not last.isdigit()
+        elif last.isdigit():
+            split = True
+        elif kind == "upper":
+            split = last.islower()
+        else:
+            # An upper run followed by lower: the run's last letter starts the word.
+            split = False
+            if len(current) > 1 and last.isupper() and current[-2].isupper():
+                words.append(current[:-1])
+                current = last
+        if split and current:
+            words.append(current)
+            current = ""
+        if kind is not None:
+            current += char
+    if current:
+        words.append(current)
+    return [word.lower() for word in words]
 
 
 def name_hit(name, guid):
     if guid in FOOD_GUIDS:
         return True
-    text = name.lower() if type(name) is str else ""
-    return any(part in text for part in NAME_PARTS)
+    words = _words(name) if type(name) is str else []
+    return any(word.startswith(part) for word in words for part in NAME_PARTS)
 
 
 class FoodScan(object):
