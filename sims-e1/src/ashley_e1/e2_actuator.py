@@ -3,13 +3,15 @@
 Game thread only. Closed call allowlist enforced by tools/check_guards.py:
 push_super_affordance, push_speed, remove_request,
 register_on_finishing_callback, add_manual_save_complete_callback,
-remove_manual_save_complete_callback. Everything else here is a read.
+remove_manual_save_complete_callback, cancel (our own trial interaction only,
+A25). Everything else here is a read.
 """
 
 import services  # TARGET_BYTECODE 1.128: object_manager, game_clock_service, get_persistence_service.
 
 from clock import ClockSpeedMode, GameSpeedChangeSource  # TARGET_BYTECODE 1.128.
 from interactions.context import InteractionContext, QueueInsertStrategy  # TARGET_BYTECODE 1.128.
+from interactions.interaction_finisher import FinishingType  # TARGET_BYTECODE 1.128.
 from interactions.priority import Priority  # TARGET_BYTECODE 1.128.
 
 from . import e2_trial
@@ -17,6 +19,7 @@ from . import e2_trial
 SIT_AFFORDANCE_GUID = 31564
 PAUSE_REASON = "ashley_e2_pause"
 RELEASE_REASON = "ashley_e2_release"
+TRIAL_END_REASON = "ashley_e2_trial_end"
 
 
 def build_context(sim):
@@ -100,6 +103,14 @@ def push_affordance(sim, obj, affordance, context):
 def push_sit(sim, obj, affordance, context):
     """Act: push exactly one admitted sit. Returns (interaction_or_None, detail)."""
     return push_affordance(sim, obj, affordance, context)
+
+
+def cancel_own(interaction):
+    """Act: end the trial interaction this probe pushed, after its verdict (A25).
+
+    Callers pass only the interaction returned by our own push; never any other.
+    """
+    interaction.cancel(FinishingType.USER_CANCEL, cancel_reason_msg=TRIAL_END_REASON)
 
 
 def watch_finish(interaction, callback):

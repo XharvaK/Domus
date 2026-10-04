@@ -34,7 +34,7 @@ FORBIDDEN_CALL_NAMES = {
 ACTUATOR_ONLY_CALLS = {
     "push_super_affordance", "push_speed", "remove_request",
     "register_on_finishing_callback", "add_manual_save_complete_callback",
-    "remove_manual_save_complete_callback",
+    "remove_manual_save_complete_callback", "cancel",
 }
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.

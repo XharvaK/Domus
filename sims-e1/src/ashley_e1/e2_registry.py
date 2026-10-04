@@ -56,6 +56,9 @@ class Experiment:
         self.claims["REQUEST_ACCEPTED"] = True
         self.foreign_roots = []
         self.continuation_entries = []
+        # A25: QUEUED AUTONOMY mixers on the trial object while our own action
+        # runs (TV watch-passive every ~10 s) belong to our action, not a rival.
+        self.child_mixers = []
         self.incomplete_rows = 0
         self.started_ns = None
         self.effect_since_ns = None
@@ -78,6 +81,9 @@ class Experiment:
                   self.signature is not None and
                   posture.get("posture_name") == self.signature)
         ours = None
+        ours_running = self.card["card_class"] == "interaction" and any(
+            entry.get("interaction_id") == self.interaction_id and
+            entry.get("membership") in RUNNING_MEMBERSHIPS for entry in _entries(row))
         for entry in _entries(row):
             iid = entry.get("interaction_id")
             if iid is not None and iid == self.interaction_id:
@@ -94,6 +100,17 @@ class Experiment:
             autonomy_on_object = (
                 source == "InteractionSource.AUTONOMY" and
                 entry.get("target_id") == self.object_id)
+            if autonomy_on_object and iid is not None and iid in self.child_mixers:
+                if membership in RUNNING_MEMBERSHIPS:
+                    self.child_mixers.remove(iid)
+                    self.foreign_roots.append(iid)
+                continue
+            if (autonomy_on_object and iid is not None and ours_running and
+                    iid not in self.known_ids and iid not in self.foreign_roots and
+                    membership == "QUEUED"):
+                self.child_mixers.append(iid)
+                self.known_ids.add(iid)
+                continue
             if autonomy_on_object and iid is not None:
                 is_continuation = (
                     iid not in self.known_ids and

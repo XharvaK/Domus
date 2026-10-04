@@ -390,6 +390,7 @@ class E2Control:
                 continuation=(), card=card,
                 window_seconds=e2_registry.TRIAL_WINDOW_SECONDS)
             experiment.tuning_name = tuning_name
+            experiment.interaction_ref = interaction
             self.experiments[experiment_id] = experiment
             self.open_ids.add(interaction_id)
 
@@ -453,12 +454,38 @@ class E2Control:
     def _close_experiment(self, experiment):
         experiment.close()
         self._emit_verdict(experiment)
+        self._end_trial_action(experiment)
+
+    def _end_trial_action(self, experiment):
+        """A25: a trial's own action does not outlive its verdict.
+
+        A TV watch keeps running with autonomy off, so the next trial would be
+        BODY_BUSY forever. Only the interaction this probe pushed is cancelled.
+        """
+        try:
+            interaction = experiment.interaction_ref
+        except AttributeError:
+            return
+        experiment.interaction_ref = None
+        if interaction is None:
+            return
+        if experiment.claims["FINISHED"]:
+            result = "ALREADY_FINISHED"
+        else:
+            try:
+                e2_actuator.cancel_own(interaction)
+                result = "CANCELLED"
+            except Exception as error:
+                result = ("CANCEL_FAILED:%s" % type(error).__name__)[:schema.MAX_DETAIL_LENGTH]
+        self._experiment_event("TRIAL_CLEANUP", experiment_id=experiment.experiment_id,
+                               object_id=experiment.object_id,
+                               interaction_id=experiment.interaction_id, detail=result)
 
     def _emit_verdict(self, experiment):
         self.open_ids.discard(experiment.interaction_id)
-        detail = "foreign_roots=%d incomplete_rows=%d continuation=%d" % (
+        detail = "foreign_roots=%d incomplete_rows=%d continuation=%d mixers=%d" % (
             len(experiment.foreign_roots), experiment.incomplete_rows,
-            len(experiment.continuation_entries))
+            len(experiment.continuation_entries), len(experiment.child_mixers))
         detail = detail[:schema.MAX_DETAIL_LENGTH]
         extra = {}
         card = experiment.card

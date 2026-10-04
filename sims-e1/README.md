@@ -2,17 +2,18 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.9.2 (DA6A trial command)
+## Current build: 2.9.3 (DA6A trial command)
 
-The source is version `2.9.2` (`src/ashley_e1/__init__.py`,
+The source is version `2.9.3` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 5, schema 4 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.9.2 has not yet passed its E2 first-load gate or trials; those run on the
+2.9.3 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
-with an interaction card. Sit and sit_trial are unchanged.
+with an interaction card. Sit and sit_trial are unchanged. After the verdict the probe
+cancels only the interaction it pushed for that trial, so the next trial finds an idle body (A25).
 
 Owner commands (also available through the local command inbox when the zone reaches RUNNING):
 
@@ -42,8 +43,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.9.2
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.9.2
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.9.3
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.9.3
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

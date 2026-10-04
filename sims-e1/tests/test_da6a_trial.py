@@ -195,13 +195,51 @@ class TrialCommandTests(unittest.TestCase):
         mono["n"] += int(10e9)
         self.base.tick()
         self.assertTrue(self.probe._cmd_stop())
-        verdict = self.e2()[-1]
+        self.assertEqual(self.e2()[-1]["phase"], "TRIAL_CLEANUP")
+        verdict = self.e2()[-2]
         self.assertEqual(verdict["phase"], "VERDICT")
         self.assertEqual(verdict["code"], "PASS")
         self.assertEqual(verdict["guid64"], GUID)
         self.assertEqual(verdict["tuning_name"], "WatchTV")
         self.assertEqual(verdict["card_class"], "interaction")
         self.assertEqual(verdict["ambiguous"], [])
+
+    def test_tv_mixers_of_our_running_action_still_pass_and_it_is_cancelled(self):
+        # Live 2.9.2 trial 1: tv_WatchKids ran, but watch-passive AUTONOMY mixers
+        # queued on the TV every ~10 s were counted as 20 foreign roots (A25).
+        self.ready()
+        mono = {"n": 1_000_000_000}
+        self.probe.observers._monotonic_ns = lambda: mono["n"]
+        self.assertTrue(self.trial()[0])
+        pushed = list(self.probe._E2.experiments.values())[-1].interaction_ref
+        self.base.sim.si_state = [_running(777, "InteractionSource.SCRIPT_WITH_USER_INTENT")]
+        for iid in (801, 802, 803):
+            self.base.sim.queue = [_running(iid, "InteractionSource.AUTONOMY")]
+            self.base.tick()
+            mono["n"] += int(5e9)
+        self.assertTrue(self.probe._cmd_stop())
+        events = self.e2()
+        verdict = [e for e in events if e["phase"] == "VERDICT"][-1]
+        self.assertEqual(verdict["code"], "PASS")
+        self.assertIn("foreign_roots=0", verdict["detail"])
+        self.assertIn("mixers=3", verdict["detail"])
+        cleanup = events[-1]
+        self.assertEqual(cleanup["phase"], "TRIAL_CLEANUP")
+        self.assertEqual(cleanup["detail"], "CANCELLED")
+        self.assertEqual(pushed.cancels, [("FinishingType.USER_CANCEL", "ashley_e2_trial_end")])
+
+    def test_autonomy_on_object_before_ours_runs_is_still_foreign(self):
+        self.ready()
+        self.assertTrue(self.trial()[0])
+        self.base.sim.queue = [_running(801, "InteractionSource.AUTONOMY")]
+        self.base.tick()
+        self.base.sim.queue = []
+        self.base.sim.si_state = [_running(777, "InteractionSource.SCRIPT_WITH_USER_INTENT")]
+        self.base.tick()
+        self.assertTrue(self.probe._cmd_stop())
+        verdict = [e for e in self.e2() if e["phase"] == "VERDICT"][-1]
+        self.assertEqual(verdict["code"], "OUTCOME_UNKNOWN")
+        self.assertIn("foreign_roots=1", verdict["detail"])
 
     def test_foreign_root_is_outcome_unknown(self):
         self.ready()
@@ -212,7 +250,7 @@ class TrialCommandTests(unittest.TestCase):
         ]
         self.base.tick()
         self.assertTrue(self.probe._cmd_stop())
-        verdict = self.e2()[-1]
+        verdict = [e for e in self.e2() if e["phase"] == "VERDICT"][-1]
         self.assertEqual(verdict["code"], "OUTCOME_UNKNOWN")
         self.assertEqual(verdict["guid64"], GUID)
 

@@ -163,6 +163,9 @@ def install_stubs():
     priority = types.ModuleType("interactions.priority")
     priority.Priority = types.SimpleNamespace(High="High")
     sys.modules["interactions.priority"] = priority
+    finisher = types.ModuleType("interactions.interaction_finisher")
+    finisher.FinishingType = types.SimpleNamespace(USER_CANCEL="FinishingType.USER_CANCEL")
+    sys.modules["interactions.interaction_finisher"] = finisher
     return calls
 
 
