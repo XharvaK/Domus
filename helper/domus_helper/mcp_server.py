@@ -26,7 +26,9 @@ class SafetyError(RuntimeError):
 class CommandFailed(RuntimeError):
     def __init__(self, reply):
         self.reply = reply
-        super().__init__(f"{reply.status}: {reply.code}")
+        lines = (reply.result or {}).get("lines") if isinstance(reply.result, dict) else None
+        detail = f" ({lines[0]})" if lines else ""
+        super().__init__(f"{reply.status}: {reply.code}{detail}")
 
 
 def game_running():

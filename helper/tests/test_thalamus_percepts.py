@@ -275,9 +275,10 @@ def test_interaction_origin_marks_the_bodys_own_actions():
         _entry(13993, iid="d", text="sim_BladderDistress"),
         _entry(13949, iid="s", source="InteractionSource.SCRIPT_WITH_USER_INTENT"),
         _entry(1, iid="p", source="InteractionSource.PIE_MENU"),
-        _entry(2, iid="g", source="InteractionSource.POSTURE_GRAPH")]))
+        _entry(2, iid="g", source="InteractionSource.POSTURE_GRAPH"),
+        _entry(3, iid="r", source="InteractionSource.SCRIPT")]))
     origins = {p.object: dict(p.facts)["origin"] for p in started if p.kind == "interaction"}
     assert origins == {"13993": "native_autonomy", "13949": "script", "1": "pie_menu",
-                       "2": "game"}
+                       "2": "game", "3": "native_reaction"}
     ended = ext.step(_row(2, ticks=5, observed=[]))
     assert {p.object: dict(p.facts)["origin"] for p in ended if p.kind == "interaction"} == origins

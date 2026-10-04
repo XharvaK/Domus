@@ -257,6 +257,15 @@ class _InboxReply:
         self.code = None
 
 
+def _reject_code(lines):
+    """The code of the first TRIAL_REJECT line, or None."""
+    for line in lines:
+        if type(line) is str and line.startswith("TRIAL_REJECT "):
+            word = line[len("TRIAL_REJECT "):].split(" ")[0]
+            return word[:64] or None
+    return None
+
+
 def _arm_inbox_zone(z, source):
     global _INBOX_ZONE, _INBOX_ARM_SOURCE
     if hasattr(z, "register_callback"):
@@ -544,6 +553,26 @@ def _cancel_tuned():
         return
 
 
+def _lot_affordances(obj, context):
+    """D35 (live: a served grilled cheese offered no eat; generic_consume_food comes
+    from its consumable component, not class tuning): the class-tuned list, then
+    what the object offers through its components, once per guid."""
+    listed = list(tuned.affordances_of(obj))
+    seen = set()
+    for affordance in listed:
+        seen.add(tuned._class_plain(affordance, "guid64"))
+    try:
+        extra = e2_actuator.offered(obj, context)
+    except Exception:
+        extra = []
+    for affordance in extra:
+        guid = tuned._class_plain(affordance, "guid64")
+        if type(guid) is int and guid not in seen:
+            seen.add(guid)
+            listed.append(affordance)
+    return listed
+
+
 def _lot_snapshot():
     if _services_module is None:
         return None, "TUNED_NO_LOT"
@@ -624,7 +653,7 @@ def _dispatch_preflight(connection):
                 object_id = str(int(found))
             except (TypeError, ValueError):
                 object_id = None
-        for affordance in tuned.affordances_of(obj):
+        for affordance in _lot_affordances(obj, context):
             guid = tuned._class_plain(affordance, "guid64")
             if type(guid) is not int:
                 continue
@@ -835,7 +864,7 @@ def _dispatch_food_scan(connection):
                 object_id = str(int(found))
             except (TypeError, ValueError):
                 object_id = None
-        for affordance in tuned.affordances_of(obj):
+        for affordance in _lot_affordances(obj, context):
             try:
                 guid = affordance.guid64
                 name = affordance.__name__
@@ -1029,6 +1058,10 @@ def _inbox_tick_body():
                     status = 'OK' if ok else 'REJECTED'
                     if not ok and connection.code:
                         code = connection.code
+                    elif not ok:
+                        # D34 (live: a BODY_BUSY trial refusal replied REJECTED with
+                        # code null; the reason lived only in its TRIAL_REJECT line).
+                        code = _reject_code(connection.lines)
                     result = (_inbox_status() if cmd['command'] == 'status' else
                               {'ok': ok, 'lines': connection.lines})
                 except Exception as error:

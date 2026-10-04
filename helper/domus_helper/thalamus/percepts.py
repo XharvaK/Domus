@@ -12,7 +12,10 @@ _TEXT_CAP = 120
 # (design 12.3, NATIVE_AUTONOMY), reported as a fact, never as an override or error.
 _ORIGINS = {
     "InteractionSource.AUTONOMY": "native_autonomy",
-    "InteractionSource.SCRIPT": "script",
+    # D36: plain SCRIPT and REACTION are the game reacting (a bad smell); only a
+    # push with user intent is hers.
+    "InteractionSource.SCRIPT": "native_reaction",
+    "InteractionSource.REACTION": "native_reaction",
     "InteractionSource.SCRIPT_WITH_USER_INTENT": "script",
     "InteractionSource.PIE_MENU": "pie_menu",
 }

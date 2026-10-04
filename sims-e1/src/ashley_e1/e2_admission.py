@@ -18,6 +18,13 @@ BUSY_SOURCES = (
     "InteractionSource.SCRIPT_WITH_USER_INTENT",
     "InteractionSource.REACTION",
 )
+# D36 (live: after an eat trial finished, the game's own reaction_SmellBad, source
+# SCRIPT, at a spoiled tray by the sink became a rival): a push carries user intent.
+# Plain SCRIPT and REACTION are the game reacting; they still make the body busy.
+INTENT_SOURCES = (
+    "InteractionSource.PIE_MENU",
+    "InteractionSource.SCRIPT_WITH_USER_INTENT",
+)
 
 # Rejection codes (closed set; printed to the Owner and written to telemetry).
 NOT_SAMPLING = "NOT_SAMPLING"

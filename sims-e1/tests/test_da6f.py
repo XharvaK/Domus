@@ -59,6 +59,7 @@ class ScanProgressTests(unittest.TestCase):
 from test_da6e import AUTONOMY, BODY_CANCEL, SCRIPT, _Replay, bed_sleep  # noqa: E402
 from test_da6a_trial import _Offer, _running  # noqa: E402
 from test_e2 import CHAIR  # noqa: E402
+from test_da6c import Hosted  # noqa: E402
 
 
 class LiveSleepReplay(_Replay):
@@ -310,3 +311,121 @@ class LiveReflexAftermathReplay(_Replay):
         self.assertTrue(experiment.closed)
         self.assertEqual(experiment.foreign_roots, [])
         self.assertEqual(experiment.verdict, "PASS")
+
+
+class RejectCodeTests(Hosted):
+    """D34: 2c815d4c BODY_BUSY (a game reaction_SmellBad was running) replied
+    REJECTED with code null; the reason lived only in its TRIAL_REJECT line."""
+
+    def test_reject_line_names_the_code(self):
+        code = self.probe._reject_code
+        self.assertEqual(code(["TRIAL_REJECT BODY_BUSY"]), "BODY_BUSY")
+        self.assertEqual(code(["other", "TRIAL_REJECT OBJECT_EXCLUDED x"]), "OBJECT_EXCLUDED")
+        self.assertIsNone(code([]))
+        self.assertIsNone(code(["TRIAL_PUSHED a-1 interaction 50", None]))
+
+
+class Collect_Clean_Dish(object):
+    guid64 = 13173
+
+
+class generic_consume_food(object):
+    guid64 = 13433
+
+
+class _Plate(object):
+    _super_affordances = (Collect_Clean_Dish,)
+
+    def __init__(self, object_id):
+        self.id = int(object_id)
+        self.offered_calls = 0
+
+    def super_affordances(self, context=None):
+        self.offered_calls += 1
+        yield Collect_Clean_Dish
+        yield generic_consume_food
+
+
+class ComponentOfferTests(Hosted):
+    """D35: 2c815d4c-2 cooked a grilled cheese; the plate's eat (generic_consume_food,
+    from its consumable component) was in neither preflight nor the food scan."""
+
+    def _rows(self, command, scan_attr, tick):
+        from test_da6c import PreflightTests
+        PreflightTests._manager(self, {self.plate.id: self.plate})
+        connection = self.probe._InboxReply("helper")
+        self.assertTrue(self.probe._inbox_dispatch({"command": command, "args": {}},
+                                                   connection), connection.code)
+        scan = getattr(self.probe, scan_attr)
+        while scan.state == "running":
+            tick()
+        import json
+        with open(scan.out_path, encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+
+    def setUp(self):
+        super(ComponentOfferTests, self).setUp()
+        self.ready()
+        self.assertTrue(self.probe._start_inbox_pump("import"))
+        self.base.sim.test_super_affordance = lambda affordance, obj, context: True
+        self.plate = _Plate("845576415849939098")
+
+    def test_preflight_lists_the_plate_eat_once(self):
+        rows = self._rows("preflight", "_PREFLIGHT", self.probe._preflight_tick)
+        names = [row["name"] for row in rows if row["kind"] == "preflight"]
+        self.assertEqual(sorted(names), ["Collect_Clean_Dish", "generic_consume_food"])
+        self.assertEqual(self.plate.offered_calls, 1)
+
+    def test_food_scan_names_the_plate_eat(self):
+        _load_pure()
+        from ashley_e1 import food
+        self.assertTrue(food.name_hit("generic_consume_food", 13433))
+        self.assertFalse(food.name_hit("Collect_Clean_Dish", 13173))
+
+
+class LiveReactionAftermathReplay(_Replay):
+    """2c815d4c-3: generic_consume_food FINISHED row 958; dish to the sink, then the
+    game's reaction_SmellBad (source SCRIPT) at a spoiled tray at 970; VERDICT
+    OUTCOME_UNKNOWN foreign_roots=1 rose=hunger 35->100->98."""
+
+    def _finished_then(self, source):
+        import types
+        self.ready()
+        self._clock()
+        self._motives(energy=70, hunger=60)
+        self.base.ticks = 1000
+        self.base.objects[CHAIR] = _Offer(CHAIR, [bed_sleep])
+        self.assertTrue(self.trial(guid64="13094")[0])
+        experiment = list(self.probe._E2.experiments.values())[-1]
+        pushed = experiment.interaction_ref
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=pushed.id, guid64=13094, affordance="x",
+            target=types.SimpleNamespace(id=int(CHAIR)),
+            context=types.SimpleNamespace(source=SCRIPT))]
+        for _ in range(12):
+            self._step()
+        self.base.sim.si_state = []
+        pushed.finishing_type = "FinishingType.NATURAL"
+        pushed.callbacks[0](pushed)
+        for _ in range(8):
+            self._step()
+        self.base.sim.si_state = [types.SimpleNamespace(
+            id=911, guid64=24661, affordance="x",
+            target=types.SimpleNamespace(id=744245394127586618),
+            context=types.SimpleNamespace(source=source))]
+        steps = 0
+        while not experiment.closed and steps < 300:
+            self._step()
+            steps += 1
+        self.assertTrue(experiment.closed)
+        return experiment
+
+    def test_game_reaction_after_finish_is_not_a_rival(self):
+        experiment = self._finished_then("InteractionSource.SCRIPT")
+        self.assertEqual(experiment.foreign_roots, [])
+        self.assertEqual(experiment.verdict, "PASS")
+
+    def test_a_late_push_with_intent_is_still_a_rival(self):
+        experiment = self._finished_then(SCRIPT)
+        self.assertEqual(len(experiment.foreign_roots), 1)
+        self.assertEqual(experiment.verdict, "OUTCOME_UNKNOWN")

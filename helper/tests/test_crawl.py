@@ -552,3 +552,12 @@ def test_f8_environment_report_is_one_line(tmp_path, capsys):
     line = [item for item in capsys.readouterr().out.splitlines() if item.startswith("environment ")]
     assert len(line) == 1
     assert "7" in line[0] and "Object failed state check" in line[0]
+
+
+def test_command_failed_names_the_first_line():
+    """D34: a hand-pushed trial refusal read 'REJECTED: None'."""
+    reply = Reply("c", "REJECTED", None, {"ok": False, "lines": ["TRIAL_REJECT BODY_BUSY"]},
+                  "agent:mcp")
+    assert str(mcp_server.CommandFailed(reply)) == "REJECTED: None (TRIAL_REJECT BODY_BUSY)"
+    bare = Reply("c", "ERROR", "X", None, "agent:mcp")
+    assert str(mcp_server.CommandFailed(bare)) == "ERROR: X"

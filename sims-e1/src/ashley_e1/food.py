@@ -9,7 +9,9 @@ import time
 from . import schema
 from .writer import append_atlas_line
 
-NAME_PARTS = ("cook", "snack", "leftover", "eat", "grab", "serving", "meal", "drink")
+NAME_PARTS = ("cook", "snack", "leftover", "eat", "grab", "serving", "meal", "drink",
+              "consum")
+# D35 (live 2026-10-04): a served plate is eaten through generic_consume_food.
 # D21 (live 2026-10-04): a substring "eat" matched cheat, death and create (401 of
 # 701 scanned rows). A part must begin a word of the tuning name.
 FOOD_GUIDS = (13388, 13397)
