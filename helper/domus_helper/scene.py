@@ -2,6 +2,11 @@
 
 Facts only, in the game's own terms. Deterministic order (layer, distance, id);
 nothing ranked by what she might want; every omission is counted, never silent.
+
+Near has two tiers so a lamp at 0.3 m cannot crowd out a meal at 2 m: every near
+object first gets a short line (name, distance, condition, servings, maker); then
+objects with a game condition, and after them the rest, each by distance, get
+their full states and offers while the budget lasts.
 Design: _Internal/papers/DOMUS_LIVED_WORLD_DESIGN_v0.2.md §3.
 
     python -m domus_helper.scene            # ask the probe for a scan, print the layers
@@ -13,10 +18,13 @@ import re
 import time
 
 NEAR_METERS = 4.0
-BUDGET = {"near": 4096, "far": 1280, "available": 768}
-# Game state values worth a far-layer line. These are the game's own value names.
+BUDGET = {"near": 8192, "far": 1280, "available": 768}
+# Game state values worth a far-layer line. These are the game's own value names,
+# matched on the value's last word ("Freshness_Spoiled"), never inside a negation
+# ("FireState_..._Not_Burning", "Brokenness_Unbroken").
 NOTABLE = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed",
            "Flooded", "Smelly")
+_NEGATIONS = ("Not", "No", "Non")
 _FAMILY = re.compile(r"object_([A-Za-z]+)")
 
 
@@ -59,54 +67,94 @@ def _servings(stats):
     return None
 
 
+def _text(resolve, key):
+    if resolve is None or not key:
+        return None
+    try:
+        return resolve(key) or None
+    except Exception:
+        return None
+
+
 def _name(row, resolve):
+    """The recipe's display name. multi_serving_name is the portion label
+    ("Party Size (8)"), never the dish's name."""
     craft = row.get("craft") or {}
-    servings = _servings(row.get("stats"))
-    keys = ([craft.get("multi_name_key")] if servings and servings > 1 else []) + [craft.get("name_key")]
-    if resolve is not None:
-        for key in keys:
-            if key:
-                try:
-                    text = resolve(key)
-                except Exception:
-                    text = None
-                if text:
-                    return text, "GAME_TEXT"
+    text = _text(resolve, craft.get("name_key"))
+    if text:
+        return text, "GAME_TEXT"
     if craft.get("recipe"):
         return craft["recipe"], "TUNING_NAME"
     return row.get("class") or "unknown", "TUNING_NAME"
 
 
+def _is_notable(value):
+    words = (value or "").split("_")
+    last = words[-1]
+    if len(words) > 1 and words[-2] in _NEGATIONS:
+        return False
+    if any(last.startswith(neg) and last[len(neg):][:1].isupper() for neg in _NEGATIONS):
+        return False
+    return any(last.endswith(word) for word in NOTABLE)
+
+
 def notable(states):
-    return sorted(value for value in (states or {}).values()
-                  if value and any(word in value for word in NOTABLE))
+    return sorted(value for value in (states or {}).values() if _is_notable(value))
 
 
-def near_fact(row, body, resolve, offers):
+def condition(states):
+    """Freshness as the game holds it, plus anything notable."""
+    states = states or {}
+    found = set(notable(states))
+    if states.get("Freshness"):
+        found.add(states["Freshness"])
+    return sorted(found)
+
+
+def near_line(row, body, resolve):
+    """The short line every near object gets."""
     name, source = _name(row, resolve)
     craft = row.get("craft") or {}
     fact = {"id": row["object_id"], "name": name, "name_source": source,
-            "class": row.get("class"), "room": row.get("room"),
-            "distance_m": _distance(row.get("position"), (body or {}).get("position")),
-            "states": row.get("states") or {}}
+            "room": row.get("room"),
+            "distance_m": _distance(row.get("position"), (body or {}).get("position"))}
+    marks = condition(row.get("states"))
+    if marks:
+        fact["condition"] = marks
     servings = _servings(row.get("stats"))
     if servings is not None:
         fact["servings_left"] = servings
+    portion = _text(resolve, craft.get("multi_name_key"))
+    if portion:
+        fact["portion"] = portion
     if craft.get("crafter") or craft.get("crafter_id"):
         fact["made_by"] = craft.get("crafter") or craft.get("crafter_id")
+    return fact
+
+
+def near_fact(row, body, resolve, offers):
+    fact = near_line(row, body, resolve)
+    fact["class"] = row.get("class")
+    fact["states"] = row.get("states") or {}
     if offers is not None:
         fact["offers"] = offers
     return fact
+
+
+def _has_condition(row):
+    return bool(notable(row.get("states")) or _servings(row.get("stats")) is not None
+                or row.get("craft"))
 
 
 def offers_for(object_id, preflight_rows):
     """The game's own options for one object: allowed by name, refused with reason."""
     if preflight_rows is None:
         return None
-    allowed, refused = [], []
+    allowed, refused, seen = [], [], False
     for row in preflight_rows:
         if row.get("kind") != "preflight" or str(row.get("object_id")) != object_id:
             continue
+        seen = True
         reason = row.get("reason") or ""
         if reason in ("deny_name", "picker") or str(reason).startswith("Interaction is not valid"):
             continue
@@ -114,6 +162,8 @@ def offers_for(object_id, preflight_rows):
             allowed.append(row.get("name"))
         else:
             refused.append({"name": row.get("name"), "game_reason": str(reason)[:100]})
+    if not seen:
+        return None  # not checked (e.g. the object is newer than the preflight), not "no options"
     return {"allowed": sorted(set(allowed)), "refused": refused[:6]}
 
 
@@ -130,13 +180,27 @@ def layers(header, objects, *, resolve=None, preflight_rows=None):
     near.sort(key=lambda item: (item[0], item[1]))
     far.sort(key=lambda item: (item[0], item[1]))
     scene = {"body": {"room": body_room, "position": body.get("position")},
-             "near": [], "near_omitted": 0, "far": [], "far_omitted": 0, "available": {}}
+             "near": [], "near_omitted": 0, "near_detail_omitted": 0,
+             "far": [], "far_omitted": 0, "available": {}}
+    kept = []
     for _, object_id, row in near:
-        fact = near_fact(row, body, resolve, offers_for(object_id, preflight_rows))
-        if _bytes(scene["near"] + [fact]) > BUDGET["near"]:
+        line = near_line(row, body, resolve)
+        if _bytes(scene["near"] + [line]) > BUDGET["near"]:
             scene["near_omitted"] += 1
             continue
-        scene["near"].append(fact)
+        scene["near"].append(line)
+        kept.append(row)
+    order = ([i for i, row in enumerate(kept) if _has_condition(row)]
+             + [i for i, row in enumerate(kept) if not _has_condition(row)])
+    for index in order:
+        row = kept[index]
+        fact = near_fact(row, body, resolve, offers_for(row["object_id"], preflight_rows))
+        trial = list(scene["near"])
+        trial[index] = fact
+        if _bytes(trial) > BUDGET["near"]:
+            scene["near_detail_omitted"] += 1
+            continue
+        scene["near"] = trial
     for distance, object_id, row in far:
         marks = notable(row.get("states"))
         servings = _servings(row.get("stats"))
