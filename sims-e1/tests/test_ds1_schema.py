@@ -58,7 +58,8 @@ def full_presence(index=0):
                                        "romantic_preference": True,
                                        "net_worth": 2 ** 40},
                              "sentiments": [{"sentiment": "s" * 128,
-                                             "text_key": "4294967295"}] * 3}}
+                                             "text_key": "4294967295"}] * 3},
+            "situations": [{"situation": "v" * 128, "role": "r" * 128}] * 3}
 
 
 def full_self():
@@ -70,8 +71,8 @@ def full_self():
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 8)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v8")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 9)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v9")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -79,7 +80,7 @@ class SchemaV4Tests(unittest.TestCase):
 
     def test_presence_snapshot_carries_senses(self):
         row = presence_row(
-            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True}],
+            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True, "situations": None}],
             social=[],
             mood={"type": "123", "intensity": 5, "name": None},
             motives=[{"id": "hunger", "value": 50, "band": "ok",
@@ -197,10 +198,22 @@ class SchemaV4Tests(unittest.TestCase):
                           "observation_complete": False},
         )
         row["self"] = full_self()
+        row["place"] = {"owner_household_id": "9" * 64, "her_home": False, "venue": "v" * 128}
+        key = "4294967295"
+        row["dialogs"] = {
+            "open": [{"dialog_id": "%064d" % i, "kind": "k" * 128, "owner_id": "8" * 64,
+                      "title_key": key, "text_key": key,
+                      "responses": [{"response": "r" * 16, "text_key": key}] * 6,
+                      "auto_respond": True} for i in range(4)],
+            "closed": [{"dialog_id": "%064d" % i, "kind": "k" * 128, "title_key": key,
+                        "text_key": key, "response": "r" * 16} for i in range(4)],
+            "truncated": True}
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)
         self.assertLessEqual(len(payload), 16 * 1024)
+        self.assertEqual(len(row["dialogs"]["open"]), 2)  # the newest two stay
+        self.assertTrue(row["dialogs"]["truncated"])
         self.assertEqual(len(row["social"]), 4)
         self.assertLessEqual(len(row["sim_signals"]), 16)
         self.assertFalse(row["observation_complete"])

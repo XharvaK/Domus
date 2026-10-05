@@ -108,6 +108,10 @@ def _portrait(row, resolve=None):
                  "doing": _affordance_name(doing)}
         if item.get("on_lot") is not None:
             entry["on_lot"] = item["on_lot"]
+        if item.get("situations"):
+            # 2.15.2: the game situations they are in (a visit, a party) and their role.
+            entry["situations"] = [dict(situation) for situation in item["situations"]
+                                   if isinstance(situation, dict)]
         relationship = item.get("relationship")
         if isinstance(relationship, dict):
             # S5: what the game holds between them; labels in the game's words.
@@ -175,6 +179,35 @@ def _portrait(row, resolve=None):
     if "presence_nearby" in (row.get("missingness") or {}):
         # D45: more Sims off the lot than the list holds; the lot itself is whole.
         portrait["more_nearby"] = True
+    place = row.get("place")
+    if isinstance(place, dict):
+        # 2.15.2: whose home this is (live 2026-10-05: a guest cooking on a host's stove
+        # drew reaction_Inappropriate), and who here belongs to it.
+        owner = place.get("owner_household_id")
+        portrait["place"] = {
+            "her_home": place.get("her_home"), "venue": place.get("venue"),
+            "household_here": None if owner is None else sorted(
+                str(item.get("name")) for item in row.get("presence") or []
+                if isinstance(item, dict) and not item.get("is_body")
+                and item.get("household_id") == owner)}
+    for item in row.get("presence") or []:
+        if isinstance(item, dict) and item.get("is_body") and item.get("situations"):
+            portrait["situations"] = [dict(situation) for situation in item["situations"]
+                                      if isinstance(situation, dict)]
+    dialogs = row.get("dialogs")
+    if isinstance(dialogs, dict) and dialogs.get("open"):
+        # 2.15.2: the game's pop-ups, in its words, with the choices it offers. Hers to
+        # answer (the User's ruling 2026-10-05); the probe does not answer them.
+        portrait["asked"] = [
+            {"dialog_id": item.get("dialog_id"),
+             "title": _resolve(resolve, item.get("title_key")),
+             "text": _resolve(resolve, item.get("text_key")),
+             "choices": [{"choice": choice.get("response"),
+                          "text": _resolve(resolve, choice.get("text_key"))}
+                         for choice in item.get("responses") or []
+                         if isinstance(choice, dict)],
+             "answers_itself": item.get("auto_respond") is True}
+            for item in dialogs["open"] if isinstance(item, dict)]
     own = row.get("self")
     if isinstance(own, dict):
         # 2.15.0: what she is like and has, in the game's words.

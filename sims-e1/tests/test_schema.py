@@ -21,8 +21,8 @@ class SchemaContractTests(unittest.TestCase):
         return {key: value for key in schema.REQUIRED_IMPORT_KEYS}
 
     def test_closed_vocabularies_are_exact(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 8)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v8")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 9)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v9")
         self.assertEqual(
             set(schema.EVENT_KINDS),
             {

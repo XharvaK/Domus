@@ -7,18 +7,22 @@ byte, and only then removes the original. It never touches the newest session, a
 session written to within --min-age-hours, the lineage ledger, the command folders,
 bootstrap files or the atlas folder.
 
-With --keep-days (the User's rule, 2026-10-05: 7), an archived session older than
-that is deleted, but only when its outcome records exist (`outcomes/<id>.jsonl`): the
-records are what her diary and lessons read; the raw rows go.
+With --weekly-after-days (the User's rule, 2026-10-05: 7), archived sessions older
+than that are packed into one zip per ISO week of their last write
+(`telemetry-archive/weekly/<year>-W<week>.zip`, the gzip files stored as they are) and
+kept: nothing is deleted, so every session can be read again when the outcome records
+are rebuilt. Each member is verified byte for byte before its loose copy is removed.
 
-    python -m domus_helper.telemetry_archive [--min-age-hours 24] [--keep-days 7] [--dry-run]
+    python -m domus_helper.telemetry_archive [--min-age-hours 24] [--weekly-after-days 7] [--dry-run]
 """
 import argparse
+import datetime
 import gzip
 import hashlib
 import os
 import shutil
 import time
+import zipfile
 
 from .paths import Paths
 from .telemetry import SESSION_NAME, latest_session, segments
@@ -76,36 +80,52 @@ def archive_segment(path, target):
     return stat.st_size
 
 
-def prune(*, paths, now, keep_days, dry_run=False, out=print):
-    """Delete archived sessions older than keep_days whose outcome records exist."""
+def week_of(timestamp):
+    year, week, _ = datetime.date.fromtimestamp(timestamp).isocalendar()
+    return "%d-W%02d" % (year, week)
+
+
+def weekly(*, paths, now, after_days, dry_run=False, out=print):
+    """Pack archived sessions older than after_days into weekly zips; delete nothing."""
     archive_root = paths.data_dir / "telemetry-archive"
-    removed = freed = 0
+    packed = 0
     if not archive_root.is_dir():
-        return removed, freed
+        return packed
     for folder in sorted(archive_root.iterdir()):
         if not folder.is_dir() or not folder.name.startswith("ashley_e1_"):
             continue
-        parts = [path for path in folder.glob("*.gz") if path.is_file()]
+        parts = sorted(path for path in folder.glob("*.gz") if path.is_file())
         if not parts:
             continue
-        if now - max(path.stat().st_mtime for path in parts) < keep_days * 86400:
+        newest = max(path.stat().st_mtime for path in parts)
+        if now - newest < after_days * 86400:
             continue
-        session = folder.name[len("ashley_e1_"):]
-        if not (paths.data_dir / "outcomes" / ("%s.jsonl" % session)).is_file():
-            out("keep %s: no outcome records yet" % folder.name)
+        bundle = archive_root / "weekly" / ("%s.zip" % week_of(newest))
+        if dry_run:
+            out("would pack %s into %s" % (folder.name, bundle.name))
+            packed += len(parts)
             continue
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(bundle, "a", compression=zipfile.ZIP_STORED) as archive:
+            present = set(archive.namelist())
+            for path in parts:
+                member = "%s/%s" % (folder.name, path.name)
+                if member not in present:
+                    archive.write(path, member)
+        with zipfile.ZipFile(bundle) as archive:
+            for path in parts:
+                with path.open("rb") as source, \
+                        archive.open("%s/%s" % (folder.name, path.name)) as copy:
+                    if _digest(source) != _digest(copy):
+                        raise RuntimeError("weekly verification failed for %s" % path.name)
         for path in parts:
-            freed += path.stat().st_size
-            removed += 1
-            if dry_run:
-                out("would delete %s" % path.name)
-            else:
-                path.unlink()
-        if not dry_run and not any(folder.iterdir()):
+            path.unlink()
+            packed += 1
+        if not any(folder.iterdir()):
             folder.rmdir()
-    out("%s %d archived files, %.1f MB" % ("plan: delete" if dry_run else "deleted",
-                                           removed, freed / 1e6))
-    return removed, freed
+    out("%s %d archived files into weekly zips" % ("plan: pack" if dry_run else "packed",
+                                                   packed))
+    return packed
 
 
 def run(*, paths, now, min_age_hours=24.0, dry_run=False, out=print):
@@ -128,13 +148,13 @@ def run(*, paths, now, min_age_hours=24.0, dry_run=False, out=print):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--min-age-hours", type=float, default=24.0)
-    parser.add_argument("--keep-days", type=float, default=None)
+    parser.add_argument("--weekly-after-days", type=float, default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     paths, now = Paths.from_env(), time.time()
     run(paths=paths, now=now, min_age_hours=args.min_age_hours, dry_run=args.dry_run)
-    if args.keep_days is not None:
-        prune(paths=paths, now=now, keep_days=args.keep_days, dry_run=args.dry_run)
+    if args.weekly_after_days is not None:
+        weekly(paths=paths, now=now, after_days=args.weekly_after_days, dry_run=args.dry_run)
     return 0
 
 

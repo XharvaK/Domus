@@ -176,6 +176,15 @@ def apply_size_budget(row):
                                         careers=None if knows.get("careers") is None else [])
             item["relationship"] = trimmed
             _mark_truncated(row)
+    # 2.15.2: the situations of other Sims, farthest first, down to the first one each
+    # (her own stay whole).
+    for item in reversed(row.get("presence", ())):
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+        if isinstance(item, dict) and not item.get("is_body") and \
+                len(item.get("situations") or ()) > 1:
+            item["situations"] = item["situations"][:1]
+            _mark_truncated(row)
     # 2.15.0: her own traits and skills, the first four of each (personality and
     # highest skills sort first).
     own = row.get("self")
@@ -189,6 +198,19 @@ def apply_size_budget(row):
         if isinstance(signal, dict) and signal.get("game_text") is not None:
             signal["game_text"] = None
             _mark_truncated(row)
+    # 2.15.2: other Sims' situations go before someone addressing her does.
+    for item in reversed(row.get("presence", ())):
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+        if isinstance(item, dict) and not item.get("is_body") and item.get("situations"):
+            item["situations"] = []
+            _mark_truncated(row)
+    # 2.15.2: then the pop-ups, down to the newest two open and two closed (flagged).
+    dialogs = row.get("dialogs")
+    if isinstance(dialogs, dict) and _encoded_bytes(row) > schema.MAX_SERIALIZED_RECORD_BYTES \
+            and (len(dialogs.get("open") or ()) > 2 or len(dialogs.get("closed") or ()) > 2):
+        row["dialogs"] = dict(dialogs, open=list(dialogs.get("open") or ())[-2:],
+                              closed=list(dialogs.get("closed") or ())[-2:], truncated=True)
     if _encoded_bytes(row) > schema.MAX_SERIALIZED_RECORD_BYTES and row.get("social"):
         row["social"] = []
         _mark_truncated(row)

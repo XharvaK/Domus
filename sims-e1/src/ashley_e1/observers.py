@@ -935,7 +935,7 @@ def relationship_between(body_id, other_id, now_ticks=None, other_info=None):
 
 
 def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_position=None,
-                       now_ticks=None):
+                       now_ticks=None, situations=None):
     try:
         raw_id = sim_info.id
     except Exception:
@@ -984,7 +984,193 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
             "doing": doing,
             "doing_target": doing_target,
             "distance_m": _distance(position, body_position),
-            "relationship": relationship}
+            "relationship": relationship,
+            "situations": None if situations is None else situations.get(entry_id, [])}
+
+
+def read_situations():
+    """2.15.2: Sim id -> the game situations that Sim is in (a visit, a party, a
+    greeting) and its role there, from the zone situation manager. Plain reads:
+    each situation's `_situation_sims` (Sim -> SituationSim) and the SituationSim's
+    `current_role_state_type` (bytecode situations/base_situation; the game's own
+    get_situations_sim_is_in only iterates and compares). None when unreadable."""
+    try:
+        situations = list(services.get_zone_situation_manager().values())
+    except Exception:
+        return None
+    found = {}
+    for situation in situations:
+        name = _bounded_name(_tuning_name(situation), "situation")
+        if name is None:
+            continue
+        try:
+            members = list(situation._situation_sims.items())
+        except Exception:
+            continue
+        for sim, member in members:
+            try:
+                sim_id = str(sim.id)
+            except Exception:
+                continue
+            try:
+                role = _bounded_name(_type_name(member.current_role_state_type), "role")
+            except Exception:
+                role = None
+            entries = found.setdefault(sim_id, [])
+            if len(entries) < schema.MAX_SITUATIONS:
+                entries.append({"situation": name, "role": role})
+    return found
+
+
+def read_place(sim_info):
+    """2.15.2: whose lot she is on (the zone lot's `zone_owner_household_id`, as the
+    game's own owning_household_id_of_active_lot reads it), whether that is her home,
+    and the venue (the zone venue service's `_active_venue`, its class name).
+    Live 2026-10-05: cooking on a host's stove drew reaction_Inappropriate; she had no
+    way to know she was a visitor in someone else's home."""
+    try:
+        zone = services.current_zone()
+    except Exception:
+        return None
+    if zone is None:
+        return None
+    try:
+        owner = zone.lot.zone_owner_household_id
+    except Exception:
+        owner = None
+    owner = owner if type(owner) is int and owner > 0 else None
+    try:
+        own = sim_info.household_id
+    except Exception:
+        own = None
+    her_home = None if type(own) is not int else (owner is not None and owner == own)
+    try:
+        venue = _bounded_name(_tuning_name(zone.venue_service._active_venue), "venue")
+    except Exception:
+        venue = None
+    return {"owner_household_id": None if owner is None else str(owner),
+            "her_home": her_home, "venue": venue}
+
+
+# 2.15.2: the game's dialog answers (ButtonType, bytecode ui/ui_dialog).
+DIALOG_RESPONSES = {-1: "closed", 10000: "no_response", 10001: "ok", 10002: "cancel",
+                    10003: "ok_alt", 10004: "custom_1", 10005: "custom_2", 10006: "custom_3"}
+_DIALOGS_OPEN = {}
+
+
+def _response_name(value):
+    """A known answer by name, another by its id; None past 16 characters (the schema
+    bound), so one odd id never costs the whole row."""
+    try:
+        number = int(value)
+    except Exception:
+        return None
+    name = DIALOG_RESPONSES.get(number, str(number))
+    return name if len(name) <= 16 else None
+
+
+def _dialog_responses(dialog):
+    """The choices the game offers: ok/cancel texts on an ok-cancel dialog, else the
+    tuned and added UiDialogResponse entries. The `responses` property is not used
+    (it builds new response objects)."""
+    found = []
+    try:
+        ok = dialog.text_ok
+    except Exception:
+        ok = None
+    if ok is not None:
+        found.append({"response": "ok", "text_key": _string_key(ok)})
+        try:
+            cancel = dialog.text_cancel
+        except Exception:
+            cancel = None
+        if cancel is not None:
+            found.append({"response": "cancel", "text_key": _string_key(cancel)})
+        return found
+    items = []
+    for read in (lambda: dialog.ui_responses, lambda: dialog._additional_responses):
+        try:
+            items.extend(read() or ())
+        except Exception:
+            continue
+    for item in items[:schema.MAX_DIALOG_RESPONSES]:
+        try:
+            name = _response_name(item.dialog_response_id)
+        except Exception:
+            name = None
+        if name is None:
+            continue
+        try:
+            text_key = _string_key(item.text)
+        except Exception:
+            text_key = None
+        found.append({"response": name, "text_key": text_key})
+    return found
+
+
+def _describe_dialog(dialog_id, dialog, auto):
+    try:
+        key = str(schema.string_id(int(dialog_id), "dialog_id"))
+    except Exception:
+        return None
+    kind = _bounded_name(_tuning_name(dialog), "dialog.kind")
+    if kind is None:
+        return None
+    try:
+        owner = dialog._owner()  # a weakref to the owner's SimInfo
+        owner_id = None if owner is None else str(owner.id)
+    except Exception:
+        owner_id = None
+    entry = {"dialog_id": key, "kind": kind, "owner_id": owner_id,
+             "title_key": None, "text_key": None, "auto_respond": bool(auto)}
+    for field, read in (("title_key", lambda: dialog.title),
+                        ("text_key", lambda: dialog.text)):
+        try:
+            entry[field] = _string_key(read())
+        except Exception:
+            entry[field] = None
+    entry["responses"] = _dialog_responses(dialog)
+    return entry
+
+
+def read_dialogs():
+    """2.15.2: the game's pop-ups (live 2026-10-05: a question about a new like was
+    answered for her and never sensed). Open ones come from the dialog
+    service's `_active_dialogs` (dialog id -> dialog; bytecode ui/ui_dialog_service),
+    newest last; a dialog gone since the last sample is reported closed with the
+    answer the game stored on it (`response`). A dialog waiting on the game's own
+    auto-response is marked. Read only: no dialog is answered or cancelled here."""
+    global _DIALOGS_OPEN
+    try:
+        service = services.ui_dialog_service()
+        active = list(service._active_dialogs.items())
+    except Exception:
+        return None
+    try:
+        auto = set(service._auto_respond_alarm_handles)
+    except Exception:
+        auto = set()
+    current = {}
+    for dialog_id, dialog in active:
+        entry = _describe_dialog(dialog_id, dialog, dialog_id in auto)
+        if entry is not None:
+            current[entry["dialog_id"]] = (dialog, entry)
+    closed = []
+    for key, (dialog, entry) in _DIALOGS_OPEN.items():
+        if key in current:
+            continue
+        try:
+            response = _response_name(dialog.response)
+        except Exception:
+            response = None
+        closed.append({"dialog_id": key, "kind": entry["kind"],
+                       "title_key": entry["title_key"], "text_key": entry["text_key"],
+                       "response": response})
+    _DIALOGS_OPEN = current
+    opened = [entry for _, entry in current.values()]
+    truncated = (len(opened) > schema.MAX_DIALOGS or len(closed) > schema.MAX_DIALOGS)
+    return {"open": opened[-schema.MAX_DIALOGS:], "closed": closed[-schema.MAX_DIALOGS:],
+            "truncated": truncated}
 
 
 def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None,
@@ -1008,6 +1194,7 @@ def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=Non
     except Exception:
         return [], False, None
     household_id = _active_household_id()
+    situations = read_situations()
     presence = []
     skipped = 0
     for sim_info in infos:
@@ -1020,7 +1207,7 @@ def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=Non
             continue
         try:
             row = _describe_presence(sim_info, sim, household_id, lab_sim_id, body_position,
-                                     now_ticks)
+                                     now_ticks, situations)
         except Exception:
             row = None
         if row is None:
@@ -1214,6 +1401,14 @@ def poll_once(telemetry_session_id, armed_name,
         row["self"] = read_self(sim_info)
     except Exception:
         row["self"] = None
+    try:
+        row["place"] = read_place(sim_info)
+    except Exception:
+        row["place"] = None
+    try:
+        row["dialogs"] = read_dialogs()
+    except Exception:
+        row["dialogs"] = None
     try:
         row["objects"] = read_object_events(zone.get("zone_id"), zone.get("position"),
                                             int(time.time() * 1000))

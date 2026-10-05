@@ -3,10 +3,10 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 8
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v8"
-PROBE_VERSION = "2.15.1"
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8)
+OBSERVATION_SCHEMA_VERSION = 9
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v9"
+PROBE_VERSION = "2.15.2"
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -132,6 +132,8 @@ COMMON_KEYS = {
     "objects",
     # 2.15.0 (schema 8): her traits, skills and household money; observation rows only.
     "self",
+    # 2.15.2 (schema 9): whose lot and what venue; the game's pop-ups; observation rows.
+    "place", "dialogs",
 }
 MAX_OBJECT_EVENTS = 8
 MAX_REL_TRACKS = 4
@@ -140,6 +142,9 @@ MAX_KNOWN_TRAITS = 6
 MAX_SENTIMENTS = 3
 MAX_SELF_TRAITS = 12
 MAX_SELF_SKILLS = 12
+MAX_SITUATIONS = 3
+MAX_DIALOGS = 4
+MAX_DIALOG_RESPONSES = 6
 
 
 class SchemaError(ValueError):
@@ -388,7 +393,9 @@ def _validate_string_tree(value, key="value"):
                       # S5: tuning names of tracks, labels, classes and states.
                       "track", "label", "class", "state", "from", "to",
                       # 2.15.0: tuning names of traits, skills, sentiments, careers.
-                      "trait", "skill", "sentiment", "careers"):
+                      "trait", "skill", "sentiment", "careers",
+                      # 2.15.2: situations, roles, venues, dialog classes and answers.
+                      "situation", "role", "venue", "kind", "response"):
             bounded_string(value, MAX_DISPLAY_TEXT_LENGTH, key, False)
         else:
             bounded_string(value, MAX_ID_LENGTH, key, False)
@@ -566,6 +573,7 @@ PRESENCE_V6 = {"id", "active_household", "level", "is_body", "household_id", "na
                "position", "room", "posture", "doing", "doing_target", "distance_m"}
 PRESENCE_V7 = PRESENCE_V6 | {"relationship"}
 PRESENCE_V8 = PRESENCE_V7 | {"on_lot"}
+PRESENCE_V9 = PRESENCE_V8 | {"situations"}
 
 
 def _number_or_none(value, label):
@@ -643,6 +651,95 @@ def _validate_self(row):
         _require(type(value["funds"]) is int, "self.funds")
 
 
+def _validate_situations(value):
+    """2.15.2: the game situations a Sim is in (a visit, a party) and its role there;
+    None when unreadable."""
+    if value is None:
+        return
+    _require(isinstance(value, list) and len(value) <= MAX_SITUATIONS, "presence.situations")
+    for item in value:
+        _require(isinstance(item, dict) and set(item) == {"situation", "role"},
+                 "situation entry")
+        bounded_string(item["situation"], 128, "situation", False)
+        if item["role"] is not None:
+            bounded_string(item["role"], 128, "situation.role", False)
+
+
+def _observation_only(row, key, version):
+    _require(row["event_kind"] == "presence_snapshot" and row["schema_version"] >= version,
+             "%s outside a schema %d observation" % (key, version))
+
+
+def _validate_place(row):
+    """2.15.2: whose lot she is on and what kind of place it is."""
+    if "place" not in row:
+        return
+    _observation_only(row, "place", 9)
+    value = row["place"]
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == {"owner_household_id", "her_home",
+                                                        "venue"}, "place shape")
+    if value["owner_household_id"] is not None:
+        _require(isinstance(value["owner_household_id"], str), "place.owner_household_id")
+        string_id(value["owner_household_id"], "place.owner_household_id")
+    _require(value["her_home"] is None or type(value["her_home"]) is bool, "place.her_home")
+    if value["venue"] is not None:
+        bounded_string(value["venue"], 128, "place.venue", False)
+
+
+def _validate_dialog_text(item, label):
+    for key in ("title_key", "text_key"):
+        if item[key] is not None:
+            _require(isinstance(item[key], str), "%s.%s" % (label, key))
+            string_id(item[key], "%s.%s" % (label, key))
+    bounded_string(item["kind"], 128, "%s.kind" % label, False)
+    _require(isinstance(item["dialog_id"], str), "%s.dialog_id" % label)
+    string_id(item["dialog_id"], "%s.dialog_id" % label)
+
+
+def _validate_dialogs(row):
+    """2.15.2: the game's pop-ups. `open` lists those showing now (with the choices the
+    game offers), `closed` those gone since the last sample, with the answer read from
+    the dialog (`response`, None when it was dismissed without one)."""
+    if "dialogs" not in row:
+        return
+    _observation_only(row, "dialogs", 9)
+    value = row["dialogs"]
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == {"open", "closed", "truncated"},
+             "dialogs shape")
+    _require(type(value["truncated"]) is bool, "dialogs.truncated")
+    _require(isinstance(value["open"], list) and len(value["open"]) <= MAX_DIALOGS,
+             "dialogs.open")
+    for item in value["open"]:
+        _require(isinstance(item, dict) and set(item) == {
+            "dialog_id", "kind", "owner_id", "title_key", "text_key", "responses",
+            "auto_respond"}, "dialogs.open entry")
+        _validate_dialog_text(item, "dialogs.open")
+        if item["owner_id"] is not None:
+            _require(isinstance(item["owner_id"], str), "dialogs.owner_id")
+            string_id(item["owner_id"], "dialogs.owner_id")
+        _require(type(item["auto_respond"]) is bool, "dialogs.auto_respond")
+        _require(isinstance(item["responses"], list) and
+                 len(item["responses"]) <= MAX_DIALOG_RESPONSES, "dialogs.responses")
+        for response in item["responses"]:
+            _require(isinstance(response, dict) and set(response) == {"response", "text_key"},
+                     "dialogs.response entry")
+            bounded_string(response["response"], 16, "dialogs.response", False)
+            if response["text_key"] is not None:
+                string_id(response["text_key"], "dialogs.response.text_key")
+    _require(isinstance(value["closed"], list) and len(value["closed"]) <= MAX_DIALOGS,
+             "dialogs.closed")
+    for item in value["closed"]:
+        _require(isinstance(item, dict) and set(item) == {
+            "dialog_id", "kind", "title_key", "text_key", "response"}, "dialogs.closed entry")
+        _validate_dialog_text(item, "dialogs.closed")
+        if item["response"] is not None:
+            bounded_string(item["response"], 16, "dialogs.closed.response", False)
+
+
 def _validate_relationship(value, version=7):
     """S5: None for her own body; else what the game holds between her and this Sim.
     Schema 8 adds what she knows about them and her sentiments toward them."""
@@ -710,13 +807,16 @@ def _validate_presence(value, version=5):
     _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
     for item in value:
         _require(isinstance(item, dict), "presence entry must be an object")
-        _require(set(item) == (PRESENCE_V8 if version >= 8 else
+        _require(set(item) == (PRESENCE_V9 if version >= 9 else
+                               PRESENCE_V8 if version >= 8 else
                                PRESENCE_V7 if version >= 7 else
                                PRESENCE_V6 if version >= 6 else
                                {"id", "active_household", "level"}),
                  "presence shape")
         if version >= 8 and item.get("on_lot") is not None:
             _require(type(item["on_lot"]) is bool, "presence.on_lot must be bool")
+        if version >= 9:
+            _validate_situations(item["situations"])
         if version >= 7:
             _validate_relationship(item.get("relationship"), version)
         if version >= 6:
@@ -1020,6 +1120,8 @@ def validate_record(row):
         _validate_common(row)
     _validate_objects(row)
     _validate_self(row)
+    _validate_place(row)
+    _validate_dialogs(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
     _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds 16 KiB")
@@ -1046,8 +1148,10 @@ def validate_record(row):
         _validate_id_fields(row.get("save"), ("save_slot_guid", "slot_id"), "save")
     if kind == "session_checkpoint":
         _require(row.get("telemetry_session_id") is not None, "checkpoint session id")
-        _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM", "SAMPLER_RESTARTED",
-                                                   "ZONE_RESUMED"),
+        _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM",
+                                                   "SAMPLER_RESTARTED", "ZONE_RESUMED",
+                                                   "AUTOSTARTED", "WAITING_FOR_BODY",
+                                                   "TELEMETRY_DIR_75"),
                  "checkpoint_reason")
     if kind == "session_close":
         _require(row.get("telemetry_session_id") is not None, "close session id")
