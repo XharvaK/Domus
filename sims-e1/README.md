@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.15.2 (sampling across launches, place, situations, pop-ups)
+## Current build: 2.15.3 (Ashley's home save)
 
-The source is version `2.15.2` (`src/ashley_e1/__init__.py`,
+The source is version `2.15.3` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 9, schema 4 to 8 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.15.2 has not yet passed its E2 first-load gate or trials; those run on the
+2.15.3 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -38,6 +38,10 @@ The crawl asks for a fresh preflight when it starts. After a relief trial it wai
 ## Live hardening (DA6F)
 
 The second session (2.11.1) added these. A motive's `value` is the game's current value: the probe applies the game's own rate formula to the cached value without writing it, so a reading is current at any game speed (`age_ticks` 0). Only if a rate cannot be read does it report the cache and its age. Sleep and work switch the game to speed 3, where rows are about 37000 ticks apart. A maintained interaction trial ends 30 s after it finishes, not at its 180 s window, and a relief trial's verdict carries the need's start, peak, and end (`relief=energy energy=24->100->100`). The crawl does not push a trial into a body distress it can already see, and its stop names the need. Preflight and the food scan tick four times a second at the same 5 ms budget and show progress on `status`. The food scan matches name words, not substrings ("eat" no longer matches cheat or death), reads menus only from classes that have one, and names recipes. `remove.ps1` without `-Version` removes every installed probe package.
+
+## Ashley's home save (2.15.3)
+
+`ashley_e1.arm HOME` arms the probe in Ashley's own save: her household on her lot. It is sensed like the lab saves and its rows validate the same way (schema 9 is unchanged). The lab-only tools check for `LAB_E1` or `LAB_E1_FORK` and refuse there: preflight, the food and situation scans, E2 trials and the helper's actuation. After the User's first `start` in her save, `autosample.json` remembers that save instead of the lab fork, so her save starts sampling by itself on later launches and the lab fork no longer does.
 
 ## Launches, place, situations and pop-ups (2.15.2, schema 9)
 
@@ -125,8 +129,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.15.2
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.15.2
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.15.3
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.15.3
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under
