@@ -26,6 +26,18 @@ class Greet(object):
     allow_user_directed = True
 
 
+class PowerConsumption(object):
+    guid64 = 4343
+    allow_user_directed = True
+    cheat = True
+
+
+class DebugOnly(object):
+    guid64 = 4344
+    allow_user_directed = True
+    debug = True
+
+
 class _Offer:
     def __init__(self, object_id, affordances):
         self.id = int(object_id)
@@ -207,15 +219,40 @@ class MenuBuildTests(unittest.TestCase):
                 "distance_m": distance, "same_room": same_room, "guid64": guid,
                 "name": "bookshelf_Read_%s" % guid, "text_key": "123"}
 
-    def test_near_keeps_her_room_or_close_things_nearest_first(self):
-        items = [{"object_id": "1", "distance_m": 12.0, "same_room": True},
-                 {"object_id": "2", "distance_m": 3.0, "same_room": False},
-                 {"object_id": "3", "distance_m": 9.0, "same_room": False},
-                 {"object_id": "4", "distance_m": None, "same_room": False}]
-        self.assertEqual([item["object_id"] for item in self.menu.near(items)], ["2", "1", "3"])
-        self.assertEqual([item["object_id"] for item in self.menu.near(items, limit=2)], ["2", "1"])
-        far = [{"object_id": str(i), "distance_m": 20.0 + i, "same_room": False} for i in range(30)]
-        self.assertEqual(len(self.menu.near(far)), self.menu.CANDIDATE_OBJECTS)
+    def test_her_room_then_her_lot_then_off_the_lot(self):
+        # 2.16.2 (live 2026-10-05): on the sidewalk the street came first and she was blind.
+        items = [{"object_id": "street", "distance_m": 1.0, "same_room": False, "on_lot": False},
+                 {"object_id": "bed", "distance_m": 14.0, "same_room": False, "on_lot": True},
+                 {"object_id": "desk", "distance_m": 12.0, "same_room": True, "on_lot": True},
+                 {"object_id": "fridge", "distance_m": 9.0, "same_room": False, "on_lot": True},
+                 {"object_id": "lost", "distance_m": None, "same_room": False, "on_lot": None},
+                 {"object_id": "stored", "distance_m": None, "same_room": False, "on_lot": True}]
+        self.assertEqual([item["object_id"] for item in self.menu.ordered(items)],
+                         ["desk", "fridge", "bed", "stored", "street"])
+
+    def test_objects_offering_nothing_never_use_a_slot(self):
+        items = [{"object_id": str(i), "definition_id": str(i), "room": "r%d" % (i % 20), "on_lot": True,
+                  "same_room": False, "distance_m": float(i)} for i in range(100)]
+        offers = lambda item: ["act"] if int(item["object_id"]) % 3 == 0 else []
+        picked = self.menu.pick(items, offers, limit=5)
+        self.assertEqual([item["object_id"] for item, _acts in picked], ["0", "3", "6", "9", "12"])
+        self.assertEqual(len(self.menu.pick(items, offers, limit=50, scan=9)), 3)
+
+    def test_one_of_each_kind_and_no_room_fills_the_menu(self):
+        here = [{"object_id": "h%d" % i, "definition_id": "d%d" % i, "same_room": True, "on_lot": True,
+                 "room": "4", "distance_m": float(i)} for i in range(10)]
+        chairs = [{"object_id": "c%d" % i, "definition_id": "chair", "same_room": False, "on_lot": True,
+                   "room": "5", "distance_m": 10.0 + i} for i in range(4)]
+        kitchen = [{"object_id": "k%d" % i, "definition_id": "k%d" % i, "same_room": False, "on_lot": True,
+                    "room": "6", "distance_m": 20.0 + i} for i in range(5)]
+        unknown = [{"object_id": "u%d" % i, "definition_id": "u%d" % i, "same_room": False, "on_lot": True,
+                    "room": None, "distance_m": 30.0 + i} for i in range(4)]
+        street = [{"object_id": "s%d" % i, "definition_id": "s%d" % i, "same_room": False, "on_lot": False,
+                   "room": None, "distance_m": 1.0 + i} for i in range(5)]
+        items = self.menu.ordered(here + chairs + kitchen + unknown + street)
+        ids = [item["object_id"] for item, _acts in self.menu.pick(items, lambda item: ["act"])]
+        self.assertEqual(ids, ["h0", "h1", "h2", "h3", "h4", "h5", "c0", "k0", "k1", "k2",
+                               "u0", "u1", "u2", "u3", "s0", "s1", "s2"])
 
     def test_a_build_runs_in_small_steps_and_keeps_what_the_game_allows(self):
         clock = {"t": 0.0}
@@ -296,6 +333,21 @@ class MenuSenseTests(unittest.TestCase):
         self.assertEqual([(job["object_id"], job["guid64"], job["name"]) for job in jobs],
                          [("11", GUID, "ReadBook"), ("12", GUID, "ReadBook")])
         self.assertEqual((jobs[0]["distance_m"], jobs[0]["definition_id"]), (2.0, "511"))
+
+    def test_cheat_and_debug_acts_are_hidden(self):
+        self.things = [_Thing(11, 2.0, [PowerConsumption, DebugOnly, ReadBook])]
+        jobs, _room = self.probe._menu_jobs(self.row)
+        self.assertEqual([job["name"] for job in jobs], ["ReadBook"])
+
+    def test_her_lot_comes_before_the_street(self):
+        mailbox = _Thing(21, 1.0, [PowerConsumption])
+        lily = _Thing(22, 2.0, [ReadBook])
+        bed = _Thing(23, 15.0, [ReadBook])
+        bed.is_on_active_lot = lambda: True
+        lily.is_on_active_lot = lambda: False
+        self.things = [mailbox, lily, bed]
+        jobs, _room = self.probe._menu_jobs(self.row)
+        self.assertEqual([job["object_id"] for job in jobs], ["23", "22"])
 
     def test_an_unreadable_lot_is_no_menu_not_an_empty_one(self):
         self.probe._lot_snapshot = lambda: (None, "TUNED_NO_LOT")

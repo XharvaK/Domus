@@ -1,6 +1,6 @@
-"""8f (2.16.0): what Ashley can do near her body, as the game offers it. No game imports.
+"""8f (2.16.0): what Ashley can do in her home, as the game offers it. No game imports.
 
-The probe lists the objects near her (her room, or within NEAR_M), and for each the
+The probe lists the objects of the lot she is on (her room first), and for each the
 user-directed affordances the trial guard does not exclude. This builder asks the game,
 a few at a time within a small budget per sampling tick, whether it would refuse each
 one now (the same test a player's click runs, no push). What passes is the menu.
@@ -9,25 +9,69 @@ import time
 
 from . import schema
 
-NEAR_M = 8.0
 REBUILD_S = 20.0
-CANDIDATE_OBJECTS = 24
+CANDIDATE_OBJECTS = 30
 CANDIDATE_ACTS = 16
+# 2.16.2: one room never fills the menu, so choosing a thing in another room is how she
+# moves around the house.
+HER_ROOM_OBJECTS = 6
+ROOM_OBJECTS = 3
+# Objects whose offers are read for one build: bounds the work of a single sampling tick.
+SCAN_OBJECTS = 120
 
 
-def near(objects, limit=CANDIDATE_OBJECTS):
-    """Objects in her room or within NEAR_M first, then (2.16.1) the nearest of the rest, so
-    standing outside she still sees her house, not only the mailbox (live 2026-10-05). Items
-    carry distance_m and same_room; an object with no position comes last."""
+def ordered(objects):
+    """2.16.2 (live 2026-10-05: on the sidewalk the nearest 24 objects were the street, and
+    21 of them offered nothing): her room, then the rest of the lot she is on, then what is
+    off the lot, each nearest first. Items carry distance_m, same_room and on_lot; an
+    object with no position and not on the lot is left out."""
+    def tier(item):
+        if item.get("same_room") is True:
+            return 0
+        return 1 if item.get("on_lot") is True else 2
+
     def order(item):
-        return (item.get("distance_m") is None, item.get("distance_m") or 0.0, item.get("object_id") or "")
-    close = [item for item in objects
-             if item.get("same_room") is True or
-             (item.get("distance_m") is not None and item["distance_m"] <= NEAR_M)]
-    rest = [item for item in objects if item not in close and item.get("distance_m") is not None]
-    close.sort(key=order)
-    rest.sort(key=order)
-    return (close + rest)[:limit]
+        distance = item.get("distance_m")
+        return (tier(item), distance is None, distance or 0.0, item.get("object_id") or "")
+    kept = [item for item in objects
+            if item.get("distance_m") is not None or item.get("same_room") is True or item.get("on_lot") is True]
+    return sorted(kept, key=order)
+
+
+def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
+    """[(item, acts)] for a build, in the given order. offers(item) lists the item's candidate
+    acts. An object that offers nothing is passed over before it counts toward limit; one
+    object per definition (four dining chairs are one choice); at most HER_ROOM_OBJECTS from
+    her room and ROOM_OBJECTS from any other room or from off the lot. An object whose room
+    is unknown has no room cap. At most scan objects have their offers read."""
+    picked = []
+    definitions = set()
+    per_room = {}
+    scanned = 0
+    for item in items:
+        if len(picked) >= limit or scanned >= scan:
+            break
+        definition = item.get("definition_id")
+        if definition is not None and definition in definitions:
+            continue
+        if item.get("same_room") is True:
+            room, cap = "here", HER_ROOM_OBJECTS
+        elif item.get("on_lot") is not True:
+            room, cap = "off", ROOM_OBJECTS
+        else:
+            room, cap = item.get("room"), ROOM_OBJECTS
+        if room is not None and per_room.get(room, 0) >= cap:
+            continue
+        scanned += 1
+        acts = offers(item)
+        if not acts:
+            continue
+        picked.append((item, acts))
+        if definition is not None:
+            definitions.add(definition)
+        if room is not None:
+            per_room[room] = per_room.get(room, 0) + 1
+    return picked
 
 
 class MenuBuild(object):
