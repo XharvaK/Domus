@@ -423,13 +423,16 @@ class BindingTests(unittest.TestCase):
         self.assertFalse(probe._cmd_arm("LAB_E1_FORK"))
         self.assertEqual(probe.get_status()["armed_name"], "LAB_E1")
 
-    def test_dead_alarm_handle_stops_sampling_for_explicit_rearm(self):
+    def test_a_stray_alarm_retires_itself_and_sampling_goes_on(self):
+        """D43 (live 2.15.0): real-time alarms outlive a lot change; the old lot's
+        timer used to stop the sampling that had just resumed."""
         _, probe, calls = load_probe()
         self.assertTrue(probe._cmd_arm("LAB_E1"))
         self.assertTrue(probe._cmd_start())
-        probe._poll_tick(FakeHandle())
-        self.assertEqual(probe.get_status()["state"], "ARMED")
-        self.assertEqual(len(calls["cancelled"]), 1)
+        stray = FakeHandle()
+        probe._poll_tick(stray)
+        self.assertEqual(probe.get_status()["state"], "SAMPLING")
+        self.assertEqual(calls["cancelled"], [stray])
 
     def test_first_successful_poll_populates_snapshot_before_session_open(self):
         _, probe, calls = load_probe()

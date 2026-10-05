@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 8
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v8"
-PROBE_VERSION = "2.15.0"
+PROBE_VERSION = "2.15.1"
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
@@ -1046,7 +1046,7 @@ def validate_record(row):
         _validate_id_fields(row.get("save"), ("save_slot_guid", "slot_id"), "save")
     if kind == "session_checkpoint":
         _require(row.get("telemetry_session_id") is not None, "checkpoint session id")
-        _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM",
+        _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM", "SAMPLER_RESTARTED",
                                                    "ZONE_RESUMED"),
                  "checkpoint_reason")
     if kind == "session_close":

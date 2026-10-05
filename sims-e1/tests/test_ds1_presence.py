@@ -131,7 +131,7 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual(presence, [presence_row(
             "lab", active_household=True, is_body=True, household_id="hh1",
             position={"x": 0.0, "y": 0.0, "z": 0.0, "level": None})])
-        self.assertFalse(truncated)
+        self.assertEqual(truncated, {"on_lot": 0, "other": 0})
 
     def test_cap_eight_sets_truncation_and_skips_no_instance(self):
         entries = [FakeSimInfoEntry("s%d" % i, sim=FakeSim("s%d" % i),
@@ -141,7 +141,7 @@ class PresenceTests(unittest.TestCase):
         probe = self.context(entries)
         presence, truncated, _ = probe.observers.read_presence("lab")
         self.assertEqual(len(presence), 8)
-        self.assertTrue(truncated)
+        self.assertEqual(truncated, {"on_lot": 2, "other": 0})
         self.assertNotIn("ghost", [row["id"] for row in presence])
 
     def test_level_and_household_flag(self):
@@ -174,7 +174,7 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in presence], ["lab", "new", "friend"])
         self.assertEqual([row["on_lot"] for row in presence], [False, None, False])
         self.assertEqual(skipped, 1)
-        self.assertFalse(truncated)
+        self.assertEqual(truncated, {"on_lot": 0, "other": 0})
 
     def test_social_keeps_lab_targeted_drops_others(self):
         lab = LabSim("lab")

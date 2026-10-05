@@ -990,7 +990,8 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
 def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None,
                   now_ticks=None):
     """Every instanced Sim in the zone, her body first, then nearest first.
-    Returns (presence, truncated, skipped).
+    Returns (presence, dropped, skipped); dropped counts the Sims past the cap,
+    {"on_lot": n, "other": m}.
 
     D37 (live: presence was empty in every row with 8 Sims on the lot): the reader
     must not call get_sim_instance on a Sim object.
@@ -1026,11 +1027,16 @@ def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=Non
             skipped += 1
             continue
         presence.append(row)
+    # D45 (live 2.15.0): passers-by on the street filled the cap by distance and could
+    # push a guest out. Her body first, then everyone on the lot, then the nearest.
     presence.sort(key=lambda row: (0 if row["is_body"] else 1,
+                                   0 if row["on_lot"] is True else 1,
                                    row["distance_m"] if row["distance_m"] is not None else 1e9,
                                    row["id"]))
-    truncated = len(presence) > schema.MAX_PRESENCE
-    return presence[:schema.MAX_PRESENCE], truncated, skipped
+    left_out = presence[schema.MAX_PRESENCE:]
+    dropped = {"on_lot": sum(1 for row in left_out if row["on_lot"] is True),
+               "other": sum(1 for row in left_out if row["on_lot"] is not True)}
+    return presence[:schema.MAX_PRESENCE], dropped, skipped
 
 
 def _target_matches(entry, lab_sim, lab_sim_id):
@@ -1144,15 +1150,15 @@ def poll_once(telemetry_session_id, armed_name,
         lab_id = None if raw_lab_id is None else str(raw_lab_id)
     except Exception:
         lab_id = None
-    presence, presence_truncated, skipped = ([], False, None)
+    presence, dropped, skipped = ([], {"on_lot": 0, "other": 0}, None)
     social, social_truncated = ([], False)
     zone = zone_snapshot(sim)
     if lab_id is not None:
         try:
-            presence, presence_truncated, skipped = read_presence(
+            presence, dropped, skipped = read_presence(
                 lab_id, body_position=zone["position"], now_ticks=now_ticks)
         except Exception:
-            presence, presence_truncated, skipped = ([], False, None)
+            presence, dropped, skipped = ([], {"on_lot": 0, "other": 0}, None)
         if any(not row["is_body"] for row in presence):
             try:
                 candidates = services.sim_info_manager().get_all()
@@ -1172,17 +1178,26 @@ def poll_once(telemetry_session_id, armed_name,
             "is_selected": None, "posture": _posture_snapshot(sim)}
     complete = snapshot.interactions_complete(
         queue_truncated, running_truncated, capture_complete)
-    if presence_truncated or social_truncated:
+    if social_truncated:
         complete = False
     missingness = {}
-    if skipped is None or skipped > 0 or not any(item["is_body"] for item in presence):
+    missed = []
+    if skipped is None:
+        missed.append("unreadable")
+    elif skipped > 0:
+        missed.append("skipped %d Sims" % skipped)
+    if not any(item["is_body"] for item in presence):
+        missed.append("body absent")
+    if dropped["on_lot"]:
+        missed.append("%d on the lot not listed" % dropped["on_lot"])
+    if missed:
         # D40: a presence read that missed anyone, her body included, says so.
         complete = False
-        missingness["presence"] = {
-            "status": "MISSING",
-            "detail": ("unreadable" if skipped is None else
-                       "skipped %d Sims%s" % (skipped, "" if any(
-                           item["is_body"] for item in presence) else ", body absent"))}
+        missingness["presence"] = {"status": "MISSING", "detail": ", ".join(missed)}
+    if dropped["other"]:
+        # D45: Sims off the lot past the cap are named as left out; the lot stays whole.
+        missingness["presence_nearby"] = {
+            "status": "MISSING", "detail": "%d off the lot not listed" % dropped["other"]}
     row = schema.make_record(
         "presence_snapshot", telemetry_session_id=telemetry_session_id,
         wall_timestamp_ms=wall, monotonic_ns=mono,
@@ -1224,6 +1239,22 @@ def _skill_level(instance):
     return level if type(level) is int else None
 
 
+# D46 (live 2.15.0): the game's own settings (gender options, walk style, phone case,
+# hidden) took her 12 trait slots. TraitType values, bytecode traits/trait_type:
+# WALKSTYLE 2, HIDDEN 4, TAILSTYLE 7, GENDER_OPTIONS 8, SIM_PHONE 9,
+# ROBOT_MODULE_LOCKED 19, INFANT_CARRIER 32.
+MECHANICAL_TRAIT_TYPES = frozenset((2, 4, 7, 8, 9, 19, 32))
+
+
+def _mechanical_trait(trait):
+    """A trait that is a game setting, not part of who she is (a tuned class
+    attribute, plain read). Unreadable counts as not mechanical."""
+    try:
+        return int(trait.trait_type) in MECHANICAL_TRAIT_TYPES
+    except Exception:
+        return False
+
+
 def read_self(sim_info):
     """2.15.0: what she is like and has: her traits (personality first), her skills
     (highest first) and her household's money. Plain reads: trait_tracker
@@ -1240,6 +1271,8 @@ def read_self(sim_info):
     except Exception:
         personality = set()
     for trait in equipped or []:
+        if _mechanical_trait(trait):
+            continue
         entry = _trait_entry(trait)
         if entry is None or entry["text_key"] is None:
             continue  # hidden gameplay traits carry no name of their own

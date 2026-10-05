@@ -361,7 +361,9 @@ class TelemetryWriter:
         return self.state == "OK"
 
     def _flush_if_due(self):
-        if not self._sampling or not self._dirty:
+        # D43 (live 2.15.0): rows written while sampling was stopped (a guard, a
+        # checkpoint, command events) stayed in memory, and the file looked cut off.
+        if not self._dirty:
             return True
         if (time.perf_counter() - self._last_flush_monotonic >=
                 MAX_SAMPLING_FLUSH_INTERVAL_SECONDS):
@@ -637,7 +639,7 @@ class TelemetryWriter:
                     if self._stop_event.is_set() and deadline is None:
                         self._begin_shutdown()
                         deadline = time.time() + 2.0
-                    elif self._sampling:
+                    else:
                         self._flush_if_due()
                     if self._stop_event.is_set():
                         if not self._queue.unfinished_tasks or time.time() >= deadline:

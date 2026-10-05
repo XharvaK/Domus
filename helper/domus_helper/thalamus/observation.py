@@ -172,6 +172,9 @@ def _portrait(row, resolve=None):
     if "presence" in (row.get("missingness") or {}):
         # D40: the company list missed someone this sample.
         portrait["company_complete"] = False
+    if "presence_nearby" in (row.get("missingness") or {}):
+        # D45: more Sims off the lot than the list holds; the lot itself is whole.
+        portrait["more_nearby"] = True
     own = row.get("self")
     if isinstance(own, dict):
         # 2.15.0: what she is like and has, in the game's words.

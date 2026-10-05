@@ -110,19 +110,29 @@ def observed(records, name):
         for moodlet, count in sorted(gained.items()):
             lines.append(dict(base, effect={"type": "MOODLET", "name": moodlet, "times": count,
                                             "sensed_in": len(sensed)}))
-        # S5/2.15.0: what it did between her and the Sim it was aimed at (never a
-        # bystander's drift), and to her: skills and money.
+        # S5/2.15.0: what it did between her and the Sim it was aimed at, and
+        # (2.15.1) with a Sim who reacted to her while it ran; never a bystander's
+        # drift. Then to her: skills and money.
+        reactions = {}
+        for record in group:
+            for name in sorted({item["reaction"] for item in record.get("reactions") or []}):
+                reactions[name] = reactions.get(name, 0) + 1
+        for name, count in sorted(reactions.items()):
+            lines.append(dict(base, effect={"type": "REACTION", "reaction": name,
+                                            "times": count}))
         tracks = {}
         for record in group:
             for change in record.get("relationships") or []:
-                if change.get("role") != "target":
+                if change.get("role") not in ("target", "reactor"):
                     continue
                 for track, value in change["tracks"].items():
-                    tracks.setdefault(track, []).append(value)
-        for track in sorted(tracks):
-            lines.append(dict(base, effect={"type": "RELATIONSHIP", "track": track,
-                                            "change_median": statistics.median(tracks[track]),
-                                            "seen_in": len(tracks[track])}))
+                    tracks.setdefault((change["role"], track), []).append(value)
+        for role, track in sorted(tracks):
+            values = tracks[(role, track)]
+            lines.append(dict(base, effect={"type": "RELATIONSHIP", "role": role,
+                                            "track": track,
+                                            "change_median": statistics.median(values),
+                                            "seen_in": len(values)}))
         skills, funds = {}, []
         for record in group:
             own = record.get("self") or {}
