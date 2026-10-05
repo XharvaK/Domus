@@ -11,8 +11,10 @@ $env:PYTHONPATH = '.'
 $dataDir = & $python -c "from domus_helper.paths import Paths; print(Paths.from_env().data_dir)"
 New-Item -ItemType Directory -Force $dataDir | Out-Null
 $log = Join-Path $dataDir 'bridge.log'
+# Only shells and Python count: the headless conhost that hosts this watcher names bridge.ps1 too.
 $others = Get-CimInstance Win32_Process | Where-Object {
-    $_.ProcessId -ne $PID -and $_.CommandLine -match 'domus_helper\.bridge --interval|tools\\bridge\.ps1' }
+    $_.ProcessId -ne $PID -and $_.Name -match '^(powershell|pwsh|python)\.exe$' -and
+    $_.CommandLine -match 'domus_helper\.bridge --interval|tools\\bridge\.ps1' }
 if ($others) { exit 0 }
 while ($true) {
     if (Get-Process -Name 'TS4_x64' -ErrorAction SilentlyContinue) {
