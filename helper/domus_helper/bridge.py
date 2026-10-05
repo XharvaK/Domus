@@ -6,7 +6,7 @@ import uuid
 
 from . import commands
 from . import fingerprints as fingerprint_reader
-from .acts import ActCourier, options as act_options
+from .acts import ActCourier, options as act_options, people_names
 from .attachment import AttachmentMonitor
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -131,7 +131,8 @@ class Bridge:
                 self._catalog = Catalog(self.paths)
             except Exception:
                 self._catalog = False
-        return act_options(menu.get("payload"), self._resolve_text, self._catalog or None)
+        return act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
+                           people=people_names(row))
 
     def status(self):
         if self.client is None and self._disabled:

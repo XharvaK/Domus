@@ -36,7 +36,10 @@ def _text(resolve, key):
     return text.strip()[:80] if isinstance(text, str) and text.strip() else None
 
 
-def _object_name(item, resolve, catalog):
+def _object_name(item, resolve, catalog, people=None):
+    if item.get("class") == "sim":
+        # 2.17.0: a person in her menu is named as her senses name them.
+        return (people or {}).get(str(item.get("object_id"))) or "someone"
     if catalog is not None and item.get("definition_id"):
         try:
             entry = catalog(item["definition_id"])
@@ -48,7 +51,16 @@ def _object_name(item, resolve, catalog):
     return humanize(item.get("class") or "object")
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT):
+def people_names(row):
+    """{sim id: name} from a presence row: who her menu's people are."""
+    names = {}
+    for item in (row or {}).get("presence") or []:
+        if isinstance(item, dict) and item.get("id") is not None and isinstance(item.get("name"), str):
+            names[str(item["id"])] = item["name"]
+    return names
+
+
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None):
     """The observation's options: nearest objects first, each act with a short ref (a1, a2,
     ...) unique in this observation, its guid64 and its text. Farthest objects are left out
     until it fits the byte budget."""
@@ -71,7 +83,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT):
             acts.append({"ref": "a%d" % count, "guid64": str(act["guid64"]),
                          "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))})
         if acts:
-            result.append({"object": _object_name(item, resolve, catalog),
+            result.append({"object": _object_name(item, resolve, catalog, people),
                            "object_id": str(item.get("object_id")), "where": where, "acts": acts})
     while result and _bytes(result) > limit:
         result.pop()

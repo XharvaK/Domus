@@ -108,6 +108,13 @@ def excluded(affordance):
     except Exception:
         social = False
     if social is True:
+        try:
+            low = str(affordance.__name__).lower()
+        except Exception:
+            low = ""
+        for part in e2_trial.SOCIAL_DENY_PARTS:
+            if part in low:
+                return "deny_name"
         return "social"
     try:
         low = str(affordance.__name__).lower()
@@ -117,6 +124,16 @@ def excluded(affordance):
         if part in low:
             return "deny_name"
     return None
+
+
+def act_excluded(affordance, person):
+    """2.17.0: excluded() for her own acts. Toward another Sim (person), a social is how she
+    greets, invites in or talks; pickers and deny names stay excluded. Toward an object,
+    exactly excluded()."""
+    reason = excluded(affordance)
+    if person and reason == "social":
+        return None
+    return reason
 
 
 def push_affordance(sim, obj, affordance, context):

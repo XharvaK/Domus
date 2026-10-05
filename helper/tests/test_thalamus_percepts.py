@@ -307,6 +307,24 @@ def test_ds3_presence_facts_skip_her_body_and_room_moves():
     assert [(p.object, dict(p.facts)["from_room"]) for p in room] == [("4", "3")]
 
 
+def test_someone_stepping_onto_her_lot_wakes_her_with_their_situation():
+    """2.17.0 (live 2026-10-06): the welcome wagon walked from the street to her door and
+    waited, ungreeted, while she stood at the mirror. The step onto the lot wakes her."""
+    ext = Extractor()
+    body = {"id": "100", "is_body": True, "name": "E1 Proband", "room": "3"}
+    street = {"id": "300", "name": "Dennis Kim", "room": "0", "distance_m": 40.0, "on_lot": False}
+    zone = {"zone": {"zone_id": "1", "lot_id": "9", "room": "3", "position": None}}
+    ext.step(_row(1, include_presence=True, presence=[body, street], social=[], extra=zone))
+    door = dict(street, distance_m=6.8, on_lot=True, situations=[
+        {"situation": "situation_welcomeWagon", "role": "Role_welcomeWagon_WelcomingNeighbor_Wait_Ungreeted"}])
+    second = ext.step(_row(2, include_presence=True, presence=[body, door], social=[], extra=zone))
+    came = [p for p in second if p.kind == "presence" and p.bucket == "on_lot"]
+    assert [(p.subject, p.urgency) for p in came] == [("300", "wake")]
+    assert dict(came[0].facts)["role"] == "Role_welcomeWagon_WelcomingNeighbor_Wait_Ungreeted"
+    third = ext.step(_row(3, include_presence=True, presence=[body, door], social=[], extra=zone))
+    assert [p for p in third if p.kind == "presence"] == []
+
+
 def test_a_new_save_is_its_own_world_and_nothing_is_compared_across_sessions():
     """D51 (live 2026-10-05): after a switch from the lab fork to her home save, the first
     observation still said slot0 and four lab Sims "left" her new home."""

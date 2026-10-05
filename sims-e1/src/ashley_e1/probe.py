@@ -1843,7 +1843,8 @@ def _menu_offers(item, sim, context):
         guid = tuned._class_plain(affordance, "guid64")
         if type(guid) is not int:
             continue
-        if e2_actuator.excluded(affordance) is not None or not e2_actuator.user_directed(affordance):
+        if (e2_actuator.act_excluded(affordance, item.get("person") is True) is not None
+                or not e2_actuator.user_directed(affordance)):
             continue
         if _menu_hidden(affordance):
             continue
@@ -1888,9 +1889,10 @@ def _menu_jobs(row):
     items = []
     for obj in objects:
         try:
-            if obj.is_sim is True:
-                continue
+            person = obj.is_sim is True
         except Exception:
+            continue
+        if person and obj is sim:
             continue
         object_id = situation._int_id(tuned._plain(obj, "id", True))
         if object_id is None or object_id in e2_control.EXCLUDED_OBJECT_IDS:
@@ -1901,9 +1903,11 @@ def _menu_jobs(row):
         # The room lookup is only worth it for objects of this lot or near her.
         room = (observers._room(obj, position)
                 if on_lot is True or (distance is not None and distance <= 20.0) else None)
+        if person and on_lot is not True and (distance is None or distance > act_menu.PEOPLE_NEAR_M):
+            continue  # 2.17.0: people she could reach: on this lot or close by, not the street
         items.append({
             "object_id": object_id, "obj": obj, "distance_m": distance, "on_lot": on_lot,
-            "room": room,
+            "room": room, "person": person,
             "same_room": (room is not None and body_room is not None and room == body_room
                           and room != "0"),
         })
@@ -1913,6 +1917,11 @@ def _menu_jobs(row):
         return _menu_offers(item, sim, context)
 
     for item in ordered:
+        if item["person"]:
+            # One person is never "the same kind" as another; the helper names them.
+            item["definition_id"] = None
+            item["class"] = "sim"
+            continue
         try:
             item["definition_id"] = situation._int_id(item["obj"].definition.id)
         except Exception:
