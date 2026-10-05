@@ -212,7 +212,10 @@ class MenuBuildTests(unittest.TestCase):
                  {"object_id": "2", "distance_m": 3.0, "same_room": False},
                  {"object_id": "3", "distance_m": 9.0, "same_room": False},
                  {"object_id": "4", "distance_m": None, "same_room": False}]
-        self.assertEqual([item["object_id"] for item in self.menu.near(items)], ["2", "1"])
+        self.assertEqual([item["object_id"] for item in self.menu.near(items)], ["2", "1", "3"])
+        self.assertEqual([item["object_id"] for item in self.menu.near(items, limit=2)], ["2", "1"])
+        far = [{"object_id": str(i), "distance_m": 20.0 + i, "same_room": False} for i in range(30)]
+        self.assertEqual(len(self.menu.near(far)), self.menu.CANDIDATE_OBJECTS)
 
     def test_a_build_runs_in_small_steps_and_keeps_what_the_game_allows(self):
         clock = {"t": 0.0}
@@ -290,7 +293,8 @@ class MenuSenseTests(unittest.TestCase):
     def test_jobs_are_her_near_user_directed_offers(self):
         jobs, room = self.probe._menu_jobs(self.row)
         self.assertEqual(room, "4")
-        self.assertEqual([(job["object_id"], job["guid64"], job["name"]) for job in jobs], [("11", GUID, "ReadBook")])
+        self.assertEqual([(job["object_id"], job["guid64"], job["name"]) for job in jobs],
+                         [("11", GUID, "ReadBook"), ("12", GUID, "ReadBook")])
         self.assertEqual((jobs[0]["distance_m"], jobs[0]["definition_id"]), (2.0, "511"))
 
     def test_an_unreadable_lot_is_no_menu_not_an_empty_one(self):

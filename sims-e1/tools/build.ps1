@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.16.0",
+    [string]$Version = "2.16.1",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$ImplementedCommit = "WORKTREE_UNCOMMITTED",
     [string]$BaselineCommit = ""
