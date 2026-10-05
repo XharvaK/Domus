@@ -16,13 +16,18 @@ CANDIDATE_ACTS = 16
 
 
 def near(objects, limit=CANDIDATE_OBJECTS):
-    """Objects in her room or within NEAR_M, nearest first. Items carry distance_m and same_room."""
-    kept = [item for item in objects
-            if item.get("same_room") is True or
-            (item.get("distance_m") is not None and item["distance_m"] <= NEAR_M)]
-    kept.sort(key=lambda item: (item.get("distance_m") is None, item.get("distance_m") or 0.0,
-                                item.get("object_id") or ""))
-    return kept[:limit]
+    """Objects in her room or within NEAR_M first, then (2.16.1) the nearest of the rest, so
+    standing outside she still sees her house, not only the mailbox (live 2026-10-05). Items
+    carry distance_m and same_room; an object with no position comes last."""
+    def order(item):
+        return (item.get("distance_m") is None, item.get("distance_m") or 0.0, item.get("object_id") or "")
+    close = [item for item in objects
+             if item.get("same_room") is True or
+             (item.get("distance_m") is not None and item["distance_m"] <= NEAR_M)]
+    rest = [item for item in objects if item not in close and item.get("distance_m") is not None]
+    close.sort(key=order)
+    rest.sort(key=order)
+    return (close + rest)[:limit]
 
 
 class MenuBuild(object):

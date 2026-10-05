@@ -137,7 +137,7 @@ class InboxTests(unittest.TestCase):
         reply=self.reply()
         self.assertEqual(reply['status'],'OK')
         result=reply['result']
-        self.assertEqual((result['state'],result['inbox'],result['probe_version'],result['schema_version']),('UNARMED','on','2.16.0',10))
+        self.assertEqual((result['state'],result['inbox'],result['probe_version'],result['schema_version']),('UNARMED','on','2.16.1',10))
         for key in ('armed_name','signatures','continuation','lineage_class','designated_sim_id','verdicts'): self.assertIn(key,result)
         self.assertIsNone(self.p._WRITER)
         self.assertTrue((self.root/'done'/('a'*32+'.json')).exists())
@@ -251,7 +251,7 @@ class RemainingContractsTests(unittest.TestCase):
     def test_version_and_exact_a12(self):
         for path in ('src/ashley_e1/__init__.py','src/ashley_e1/schema.py',
                      'tools/build.ps1','tools/verify.ps1','README.md'):
-            self.assertIn('2.16.0',(ROOT/path).read_text(encoding='utf-8'),path)
+            self.assertIn('2.16.1',(ROOT/path).read_text(encoding='utf-8'),path)
         self.assertIn('2.3.1',(ROOT/'tools/install.ps1').read_text(encoding='utf-8'))
         # D18: remove takes no default version; without one it removes every package.
         self.assertIn('[string]$Version = ""',(ROOT/'tools/remove.ps1').read_text(encoding='utf-8'))

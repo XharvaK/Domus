@@ -17,7 +17,7 @@ if ($others) { exit 0 }
 while ($true) {
     if (Get-Process -Name 'TS4_x64' -ErrorAction SilentlyContinue) {
         Add-Content -Path $log -Value ("== game seen, bridge start {0:u}" -f (Get-Date)) -Encoding utf8
-        & $python -u -m domus_helper.bridge --interval 5 --with-game *>> $log
+        & $python -u -m domus_helper.bridge --interval 2 --with-game *>> $log
         Add-Content -Path $log -Value ("== bridge stop {0:u}" -f (Get-Date)) -Encoding utf8
     }
     Start-Sleep -Seconds 15
