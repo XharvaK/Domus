@@ -74,6 +74,8 @@ class Extractor:
         kind = row.get("event_kind")
         session = row.get("telemetry_session_id")
         seq = row.get("written_sequence")
+        if kind == "session_open":
+            self._new_session(row)
         if self._seen_row and kind == "session_open":
             percepts.append(self._gap(session))
         elif (self._seq is not None and type(seq) is int and session == self._session
@@ -89,6 +91,22 @@ class Extractor:
         if kind is not None:
             self._seen_row = True
         return percepts
+
+    def _new_session(self, row):
+        """D51 (live 2026-10-05): a new session may be another save. Its first observation
+        carried the old save's world, and its first snapshot was compared with the old
+        save's last row (four lab Sims "left" her new home). The save comes from
+        session_open itself; nothing is compared across sessions."""
+        save = row.get("save") or {}
+        slot, guid = save.get("slot_id"), save.get("save_slot_guid")
+        if slot is not None and guid is not None and (str(slot), str(guid)) != (str(self.slot_id), str(self.guid)):
+            self.slot_id, self.guid = slot, guid
+            self.lineage_class = ""
+            self.lineage_id = f"{slot}:{guid}"
+        self._prev = None
+        self._open = {}
+        self._presence = None
+        self._social = set()
 
     def _gap(self, session):
         self.needs.reset()
