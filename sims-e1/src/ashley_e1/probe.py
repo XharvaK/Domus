@@ -1910,7 +1910,6 @@ def _menu_jobs(row):
     ordered = act_menu.ordered(items)
 
     def offers(item):
-        item["class"] = situation._name(type(item["obj"])) or ""
         return _menu_offers(item, sim, context)
 
     for item in ordered:
@@ -1918,6 +1917,7 @@ def _menu_jobs(row):
             item["definition_id"] = situation._int_id(item["obj"].definition.id)
         except Exception:
             item["definition_id"] = None
+        item["class"] = situation._name(type(item["obj"])) or ""
     jobs = []
     for _item, acts in act_menu.pick(ordered, offers):
         jobs.extend(acts)
