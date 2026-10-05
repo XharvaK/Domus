@@ -6,7 +6,7 @@ import uuid
 
 from . import commands
 from . import fingerprints as fingerprint_reader
-from .acts import ActCourier, options as act_options, people_names
+from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names
 from .attachment import AttachmentMonitor
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -121,18 +121,25 @@ class Bridge:
             self._acts.tick(self.client, self.helper_session, now, self._state == "attached")
 
     def _options(self, row):
-        """8f: her options from the newest menu of this telemetry session, or none."""
-        menu = self._menu
-        if not isinstance(menu, dict) or not isinstance(row, dict) or menu.get("session") != row.get("telemetry_session_id"):
+        """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
+        the game is asking her (an open dialog that is hers) comes first, menu or not."""
+        if not isinstance(row, dict):
             return []
+        asked = dialog_options(row, self._resolve_text)
+        menu = self._menu
+        if not isinstance(menu, dict) or menu.get("session") != row.get("telemetry_session_id"):
+            return asked
         if self._catalog is None:
             try:
                 from .catalog import Catalog
                 self._catalog = Catalog(self.paths)
             except Exception:
                 self._catalog = False
-        return act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
-                           people=people_names(row))
+        count = sum(len(item["acts"]) for item in asked)
+        room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
+        listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
+                             people=people_names(row), start=count, limit=max(0, room))
+        return asked + listed
 
     def status(self):
         if self.client is None and self._disabled:

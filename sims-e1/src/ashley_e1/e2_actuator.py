@@ -133,6 +133,9 @@ def act_excluded(affordance, person):
     reason = excluded(affordance)
     if person and reason == "social":
         return None
+    if reason == "picker":
+        # 2.18.0: a picker opens a dialog; the dialog is hers to answer (cmd answer).
+        return None
     return reason
 
 

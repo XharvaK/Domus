@@ -1055,6 +1055,7 @@ def read_place(sim_info):
 # 2.15.2: the game's dialog answers (ButtonType, bytecode ui/ui_dialog).
 DIALOG_RESPONSES = {-1: "closed", 10000: "no_response", 10001: "ok", 10002: "cancel",
                     10003: "ok_alt", 10004: "custom_1", 10005: "custom_2", 10006: "custom_3"}
+RESPONSE_IDS = {name: number for number, name in DIALOG_RESPONSES.items()}
 _DIALOGS_OPEN = {}
 
 
@@ -1130,7 +1131,50 @@ def _describe_dialog(dialog_id, dialog, auto):
         except Exception:
             entry[field] = None
     entry["responses"] = _dialog_responses(dialog)
+    entry["rows"] = _dialog_rows(dialog)
     return entry
+
+
+def _dialog_rows(dialog):
+    """2.18.0: the rows a picker dialog offers (picker_rows, plain list on UiDialogObjectPicker;
+    bytecode ui/ui_dialog_picker): option id, name, whether it can be picked, and its price
+    (RecipePickerRow.price, ObjectPickerRow.cost). Enabled rows first; none for a plain pop-up."""
+    try:
+        rows = list(dialog.picker_rows or ())
+    except Exception:
+        return []
+    found = []
+    for row in rows:
+        try:
+            option_id = int(row.option_id)
+        except Exception:
+            continue
+        if option_id < 0:
+            continue
+        name_key = None
+        for read in (lambda: row.name, lambda: row.display_name):
+            try:
+                name_key = _string_key(read())
+            except Exception:
+                name_key = None
+            if name_key is not None:
+                break
+        try:
+            enabled = row.is_enable is True
+        except Exception:
+            enabled = False
+        price = None
+        for read in (lambda: row.price, lambda: row.cost):
+            try:
+                value = read()
+            except Exception:
+                continue
+            if type(value) is int and value >= 0:
+                price = value
+                break
+        found.append({"option_id": str(option_id), "name_key": name_key, "enabled": enabled, "price": price})
+    found.sort(key=lambda item: not item["enabled"])
+    return found[:schema.MAX_DIALOG_ROWS]
 
 
 def read_dialogs():
