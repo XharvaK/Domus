@@ -252,6 +252,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m domus_helper.bridge")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--interval", type=float)
+    parser.add_argument("--with-game", action="store_true",
+                        help="live as long as the game: exit once it has been closed for GAME_DRAIN_S")
     args = parser.parse_args(argv)
     bridge = Bridge()
     if args.once:
@@ -261,9 +263,15 @@ def main(argv=None):
     if args.interval is None:
         parser.error("pass --once or --interval")
     archived_at = None
+    game_seen_at = None
     while True:
         try:
             now = time.time()
+            if args.with_game:
+                if bridge._process() is not None:
+                    game_seen_at = now
+                elif game_seen_at is None or now - game_seen_at >= GAME_DRAIN_S:
+                    return 0
             if archived_at is None or now - archived_at >= ARCHIVE_EVERY_S:
                 archived_at = now
                 _archive_quietly(now)
@@ -278,6 +286,11 @@ def main(argv=None):
 # 2.15.2); finished sessions older than a day move to the helper's data folder
 # (verified gzip) at start and every 6 h.
 ARCHIVE_EVERY_S = 6 * 3600
+
+# The bridge lives with the game (tools/bridge.ps1 starts it when TS4_x64.exe appears). After the
+# game closes it keeps ticking this long: the probe's last rows are read and sent, and Ashley gets
+# a heartbeat with attached false.
+GAME_DRAIN_S = 150
 
 
 def _strings_quietly():

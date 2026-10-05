@@ -314,3 +314,29 @@ def test_cli_once_and_interval(paths, tmp_path, monkeypatch):
     monkeypatch.setattr(Bridge, "tick", tick)
     assert main(["--interval", "5"]) == 0
     assert calls["n"] == 1
+
+
+def test_cli_with_game_lives_as_long_as_the_game(paths, tmp_path, monkeypatch):
+    import domus_helper.bridge as bridge_module
+    from domus_helper import fingerprints
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DOMUS_SIMS_ROOT", str(paths.sims_root))
+    monkeypatch.delenv("DOMUS_ASHLEY_URL", raising=False)
+    monkeypatch.delenv("DOMUS_ASHLEY_TOKEN", raising=False)
+    clock = {"s": 1_000_000.0}
+    monkeypatch.setattr(bridge_module.time, "time", lambda: clock["s"])
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda seconds: clock.__setitem__("s", clock["s"] + seconds))
+    monkeypatch.setattr(bridge_module, "_archive_quietly", lambda now: None)
+    monkeypatch.setattr(bridge_module, "_strings_quietly", lambda: None)
+    ticks = []
+    monkeypatch.setattr(Bridge, "tick", lambda self, now: ticks.append(now))
+    # The game is closed: nothing to do, the process exits at once.
+    monkeypatch.setattr(fingerprints, "_process", lambda: None)
+    assert main(["--interval", "5", "--with-game"]) == 0
+    assert ticks == []
+    # The game runs for 30 s, then closes: the bridge keeps ticking for the drain, then exits.
+    closes_at = clock["s"] + 30
+    monkeypatch.setattr(fingerprints, "_process", lambda: (4242, "0:00:01") if clock["s"] < closes_at else None)
+    assert main(["--interval", "5", "--with-game"]) == 0
+    assert len(ticks) == 6 + bridge_module.GAME_DRAIN_S // 5 - 1
+    assert ticks[-1] - ticks[5] == (bridge_module.GAME_DRAIN_S - 5) * 1000
