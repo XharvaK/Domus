@@ -43,20 +43,35 @@ def full_signal(index=0):
 
 
 def full_presence(index=0):
-    return {"id": "%064d" % index, "active_household": True, "level": 2 ** 30,
+    return {"id": "%064d" % index, "on_lot": True, "active_household": True, "level": 2 ** 30,
             "is_body": False, "household_id": "1" * 64, "name": "n" * 128,
             "position": {"x": 1.25, "y": 0.0, "z": -3.5, "level": 2 ** 30},
             "room": "2" * 64, "posture": "p" * 160, "doing": "d" * 160,
             "doing_target": "3" * 64, "distance_m": 12.3,
             "relationship": {"known": True,
                              "tracks": [{"track": "t" * 128, "value": -100.0}] * 4,
-                             "labels": [{"label": "l" * 128, "text_key": "4294967295"}] * 6}}
+                             "labels": [{"label": "l" * 128, "text_key": "4294967295"}] * 6,
+                             "knows": {"traits": [{"trait": "k" * 128,
+                                                   "text_key": "4294967295"}] * 6,
+                                       "careers": ["c" * 128] * 4,
+                                       "relationship_status": True,
+                                       "romantic_preference": True,
+                                       "net_worth": 2 ** 40},
+                             "sentiments": [{"sentiment": "s" * 128,
+                                             "text_key": "4294967295"}] * 3}}
+
+
+def full_self():
+    return {"traits": [{"trait": "t" * 128, "text_key": "4294967295",
+                        "personality": True}] * 12,
+            "skills": [{"skill": "s" * 128, "text_key": "4294967295", "level": 10}] * 12,
+            "funds": 2 ** 40}
 
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 7)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v7")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 8)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v8")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -64,7 +79,7 @@ class SchemaV4Tests(unittest.TestCase):
 
     def test_presence_snapshot_carries_senses(self):
         row = presence_row(
-            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None}],
+            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True}],
             social=[],
             mood={"type": "123", "intensity": 5, "name": None},
             motives=[{"id": "hunger", "value": 50, "band": "ok",
@@ -181,6 +196,7 @@ class SchemaV4Tests(unittest.TestCase):
                           "queue_truncated": True, "running_truncated": True,
                           "observation_complete": False},
         )
+        row["self"] = full_self()
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)

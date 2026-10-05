@@ -3,10 +3,10 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 7
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v7"
-PROBE_VERSION = "2.14.0"
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7)
+OBSERVATION_SCHEMA_VERSION = 8
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v8"
+PROBE_VERSION = "2.15.0"
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -130,10 +130,16 @@ COMMON_KEYS = {
     "availability", "counters", "writer", "note", "e2",
     # S5 (schema 7): what appeared, vanished or changed on the lot; observation rows only.
     "objects",
+    # 2.15.0 (schema 8): her traits, skills and household money; observation rows only.
+    "self",
 }
 MAX_OBJECT_EVENTS = 8
 MAX_REL_TRACKS = 4
 MAX_REL_LABELS = 6
+MAX_KNOWN_TRAITS = 6
+MAX_SENTIMENTS = 3
+MAX_SELF_TRAITS = 12
+MAX_SELF_SKILLS = 12
 
 
 class SchemaError(ValueError):
@@ -380,7 +386,9 @@ def _validate_string_tree(value, key="value"):
                       # DS3: names and texts that are not ids.
                       "name", "doing", "mood_type", "tuning_name",
                       # S5: tuning names of tracks, labels, classes and states.
-                      "track", "label", "class", "state", "from", "to"):
+                      "track", "label", "class", "state", "from", "to",
+                      # 2.15.0: tuning names of traits, skills, sentiments, careers.
+                      "trait", "skill", "sentiment", "careers"):
             bounded_string(value, MAX_DISPLAY_TEXT_LENGTH, key, False)
         else:
             bounded_string(value, MAX_ID_LENGTH, key, False)
@@ -557,6 +565,7 @@ def _validate_motives(value):
 PRESENCE_V6 = {"id", "active_household", "level", "is_body", "household_id", "name",
                "position", "room", "posture", "doing", "doing_target", "distance_m"}
 PRESENCE_V7 = PRESENCE_V6 | {"relationship"}
+PRESENCE_V8 = PRESENCE_V7 | {"on_lot"}
 
 
 def _number_or_none(value, label):
@@ -578,12 +587,78 @@ def _validate_position(value, label):
         _require(type(value["level"]) is int, "%s.level must be int" % label)
 
 
-def _validate_relationship(value):
-    """S5: None for her own body; else what the game holds between her and this Sim."""
+def _validate_named(items, key, limit, label):
+    _require(isinstance(items, list) and len(items) <= limit, label)
+    for item in items:
+        _require(isinstance(item, dict) and key in item, "%s entry" % label)
+        bounded_string(item[key], 128, "%s.%s" % (label, key), False)
+        if item.get("text_key") is not None:
+            _require(isinstance(item["text_key"], str), "%s.text_key must be a string" % label)
+            string_id(item["text_key"], "%s.text_key" % label)
+
+
+def _validate_knows(value):
+    """2.15.0: what she has learned about the other Sim; None when unreadable."""
     if value is None:
         return
-    _require(isinstance(value, dict) and set(value) == {"known", "tracks", "labels"},
+    _require(isinstance(value, dict) and set(value) == {
+        "traits", "careers", "relationship_status", "romantic_preference", "net_worth"},
+        "relationship.knows shape")
+    _validate_named(value["traits"], "trait", MAX_KNOWN_TRAITS, "knows.traits")
+    for item in value["traits"]:
+        _require(set(item) == {"trait", "text_key"}, "knows.traits entry")
+    if value["careers"] is not None:
+        _require(isinstance(value["careers"], list) and len(value["careers"]) <= 4,
+                 "knows.careers")
+        for career in value["careers"]:
+            bounded_string(career, 128, "knows.career", False)
+    for key in ("relationship_status", "romantic_preference"):
+        _require(type(value[key]) is bool, "knows.%s" % key)
+    if value["net_worth"] is not None:
+        _require(type(value["net_worth"]) is int, "knows.net_worth")
+
+
+def _validate_self(row):
+    """2.15.0 (schema 8 presence_snapshot only): her traits, skills and money."""
+    if "self" not in row:
+        return
+    _require(row["event_kind"] == "presence_snapshot" and row["schema_version"] >= 8,
+             "self outside a schema 8 observation")
+    value = row["self"]
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == {"traits", "skills", "funds"},
+             "self shape")
+    if value["traits"] is not None:
+        _validate_named(value["traits"], "trait", MAX_SELF_TRAITS, "self.traits")
+        for item in value["traits"]:
+            _require(set(item) == {"trait", "text_key", "personality"} and
+                     type(item["personality"]) is bool, "self.traits entry")
+    if value["skills"] is not None:
+        _validate_named(value["skills"], "skill", MAX_SELF_SKILLS, "self.skills")
+        for item in value["skills"]:
+            _require(set(item) == {"skill", "text_key", "level"} and
+                     type(item["level"]) is int, "self.skills entry")
+    if value["funds"] is not None:
+        _require(type(value["funds"]) is int, "self.funds")
+
+
+def _validate_relationship(value, version=7):
+    """S5: None for her own body; else what the game holds between her and this Sim.
+    Schema 8 adds what she knows about them and her sentiments toward them."""
+    if value is None:
+        return
+    keys = {"known", "tracks", "labels"}
+    if version >= 8:
+        keys = keys | {"knows", "sentiments"}
+    _require(isinstance(value, dict) and set(value) == keys,
              "presence.relationship shape")
+    if version >= 8:
+        _validate_knows(value["knows"])
+        _validate_named(value["sentiments"], "sentiment", MAX_SENTIMENTS,
+                        "relationship.sentiments")
+        for item in value["sentiments"]:
+            _require(set(item) == {"sentiment", "text_key"}, "sentiment entry")
     _require(type(value["known"]) is bool, "relationship.known")
     _require(isinstance(value["tracks"], list) and len(value["tracks"]) <= MAX_REL_TRACKS,
              "relationship.tracks")
@@ -635,12 +710,15 @@ def _validate_presence(value, version=5):
     _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
     for item in value:
         _require(isinstance(item, dict), "presence entry must be an object")
-        _require(set(item) == (PRESENCE_V7 if version >= 7 else
+        _require(set(item) == (PRESENCE_V8 if version >= 8 else
+                               PRESENCE_V7 if version >= 7 else
                                PRESENCE_V6 if version >= 6 else
                                {"id", "active_household", "level"}),
                  "presence shape")
+        if version >= 8 and item.get("on_lot") is not None:
+            _require(type(item["on_lot"]) is bool, "presence.on_lot must be bool")
         if version >= 7:
-            _validate_relationship(item.get("relationship"))
+            _validate_relationship(item.get("relationship"), version)
         if version >= 6:
             _require(type(item.get("is_body")) is bool, "presence.is_body must be bool")
             for key in ("household_id", "room", "doing_target"):
@@ -941,6 +1019,7 @@ def validate_record(row):
     else:
         _validate_common(row)
     _validate_objects(row)
+    _validate_self(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
     _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds 16 KiB")
@@ -967,7 +1046,8 @@ def validate_record(row):
         _validate_id_fields(row.get("save"), ("save_slot_guid", "slot_id"), "save")
     if kind == "session_checkpoint":
         _require(row.get("telemetry_session_id") is not None, "checkpoint session id")
-        _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM"),
+        _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM",
+                                                   "ZONE_RESUMED"),
                  "checkpoint_reason")
     if kind == "session_close":
         _require(row.get("telemetry_session_id") is not None, "close session id")

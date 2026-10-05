@@ -56,7 +56,7 @@ def test_grab_then_eat_is_one_chain_and_posture_is_left_out():
     assert eat["needs"]["delta"] == {"hunger": 40} and eat["span"]["game_minutes"] == 13
     assert wash["origin"] == "body"
     assert [m["name"] for m in wash["moodlets"]["gained"]] == ["Buff_Full"]
-    assert grab["unknown"] == ["objects", "relationships"]
+    assert grab["unknown"] == ["objects", "relationships", "self"]
 
 
 def test_an_experiments_meal_is_never_credited_to_the_owner():

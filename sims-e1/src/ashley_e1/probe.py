@@ -134,6 +134,12 @@ _INBOX_ERRORS = 0
 _INBOX_USED_IDS = set()
 _INBOX_VERDICTS = []
 _STATE = "UNARMED"
+# D41: travel. The User's start holds until the User's stop or disarm; the zone that
+# sampling runs in; poll ticks with no selectable body (the loading screen) so far.
+_RESUME_SAMPLING = False
+_ALARM_ZONE = None
+_ZERO_BODY_TICKS = 0
+ZONE_SETTLE_TICKS = 60
 _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
@@ -193,21 +199,29 @@ def _dispatch_arm(*args, _session_id=0, **kwargs):
 
 
 def _dispatch_disarm(*args, _session_id=0, **kwargs):
+    global _RESUME_SAMPLING
     if args or kwargs:
         return False
+    _RESUME_SAMPLING = False
     return _cmd_disarm(_connection=_session_id)
 
 
 def _dispatch_start(*args, _session_id=0, **kwargs):
+    global _RESUME_SAMPLING
     if args or kwargs:
         return False
-    return _cmd_start(_connection=_session_id)
+    started = _cmd_start(_connection=_session_id)
+    if started:
+        _RESUME_SAMPLING = True  # D41: the User wants sampling, in whatever zone
+    return started
 
 
 def _dispatch_stop(*args, _session_id=0, **kwargs):
+    global _RESUME_SAMPLING
     if args or kwargs:
         _emit_stop_failure("STOP_DISPATCH_INVALID_SHAPE")
         return False
+    _RESUME_SAMPLING = False
     return _cmd_stop(_connection=_session_id)
 
 
@@ -368,9 +382,47 @@ def _start_inbox_pump(source=None):
             cross_zone=False)
         _INBOX_STARTED_ZONE = _INBOX_ZONE
         _INBOX_AUTOSTART = "ZONE:" + (source or _INBOX_ARM_SOURCE)
-        return True
     except Exception:
         return False
+    try:
+        _resume_sampling_in_zone()
+    except Exception:
+        pass
+    return True
+
+
+def _current_zone():
+    try:
+        return _services_module.current_zone()
+    except Exception:
+        return None
+
+
+def _resume_sampling_in_zone():
+    """D41 (live, 2.14.0): each trip to another lot stopped sampling until the User
+    started it again. The sampling alarm is not cross-zone (it goes with the zone that
+    unloads), and on the loading screen there is no selectable body
+    (LAB_IDENTITY_AMBIGUOUS:0). While the User's start holds, sampling resumes when the
+    next zone is running, in the same session, after a ZONE_RESUMED checkpoint."""
+    global _STATE, _ALARM_HANDLE, _ZERO_BODY_TICKS
+    if not _RESUME_SAMPLING:
+        return False
+    zone = _current_zone()
+    if _STATE == "SAMPLING":
+        if zone is not None and _ALARM_ZONE is zone:
+            return True
+        _ALARM_HANDLE = None  # it belonged to the zone that unloaded
+        _STATE = "ARMED"
+        _set_writer_sampling(False)
+        _E2.on_stop("ZONE_CHANGE")
+    if _STATE != "ARMED":
+        return False
+    _ZERO_BODY_TICKS = 0
+    _emit(schema.make_record("session_checkpoint", telemetry_session_id=_TELEMETRY_SESSION_ID,
+                             wall_timestamp_ms=int(time.time() * 1000),
+                             monotonic_ns=time.perf_counter_ns(),
+                             checkpoint_reason="ZONE_RESUMED"))
+    return _cmd_start()
 
 
 def _dispatch_inbox(*args, _session_id=0, **kwargs):
@@ -1426,7 +1478,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
 
 
 def _cmd_start(_connection=None) -> bool:
-    global _STATE, _ALARM_HANDLE
+    global _STATE, _ALARM_HANDLE, _ALARM_ZONE
     if _STATE == "SAMPLING":
         _COUNTERS["redundant_starts"] += 1
         if _WRITER is not None:
@@ -1444,6 +1496,7 @@ def _cmd_start(_connection=None) -> bool:
     except Exception:
         _ALARM_HANDLE = None
         return False
+    _ALARM_ZONE = _current_zone()
     _STATE = "SAMPLING"
     _set_writer_sampling(True)
     return True
@@ -1565,7 +1618,7 @@ def _poll_tick(alarm_handle=None):
 
 
 def _poll_tick_body():
-    global _SESSION_OPENED, _LAST_CAPTURE_COUNTERS
+    global _SESSION_OPENED, _LAST_CAPTURE_COUNTERS, _ZERO_BODY_TICKS
     try:
         row = observers.poll_once(_TELEMETRY_SESSION_ID, _ARMED_NAME)
     except observers.SelectabilityReadFailure:
@@ -1576,6 +1629,11 @@ def _poll_tick_body():
         _cmd_stop()
         return
     except observers.LabIdentityAmbiguous as error:
+        if error.eligible_count == 0 and _RESUME_SAMPLING:
+            # D41: a loading screen has no selectable body; wait it out (no rows).
+            _ZERO_BODY_TICKS += 1
+            if _ZERO_BODY_TICKS < ZONE_SETTLE_TICKS:
+                return
         _emit(schema.make_record("guard_exhausted", telemetry_session_id=_TELEMETRY_SESSION_ID,
                                  wall_timestamp_ms=int(time.time() * 1000),
                                  monotonic_ns=time.perf_counter_ns(),
@@ -1590,6 +1648,7 @@ def _poll_tick_body():
                                  monotonic_ns=time.perf_counter_ns(), reason=reason))
         _cmd_stop()
         return
+    _ZERO_BODY_TICKS = 0
     current = dict(_COUNTERS)
     writer_state = "OK"
     if _WRITER is not None:

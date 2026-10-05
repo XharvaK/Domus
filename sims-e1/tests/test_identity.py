@@ -209,8 +209,10 @@ class ObserverPollTests(unittest.TestCase):
 
     def test_poll_default_uses_approved_hidden_flags(self):
         _, seen_flags = self._poll_once([], [])
-        self.assertEqual(len(seen_flags), 1)
-        self.assertIs(seen_flags[0], observers.ALL_HIDDEN_REASONS)
+        # Her body, then presence (D40 reads each instance itself), same flags.
+        self.assertGreaterEqual(len(seen_flags), 1)
+        for flags in seen_flags:
+            self.assertIs(flags, observers.ALL_HIDDEN_REASONS)
 
     def test_none_queue_or_running_view_is_incomplete_not_an_exception(self):
         for queue, running in ((None, []), ([], None), (None, None)):

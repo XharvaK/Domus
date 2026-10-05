@@ -110,6 +110,34 @@ def observed(records, name):
         for moodlet, count in sorted(gained.items()):
             lines.append(dict(base, effect={"type": "MOODLET", "name": moodlet, "times": count,
                                             "sensed_in": len(sensed)}))
+        # S5/2.15.0: what it did between her and the Sim it was aimed at (never a
+        # bystander's drift), and to her: skills and money.
+        tracks = {}
+        for record in group:
+            for change in record.get("relationships") or []:
+                if change.get("role") != "target":
+                    continue
+                for track, value in change["tracks"].items():
+                    tracks.setdefault(track, []).append(value)
+        for track in sorted(tracks):
+            lines.append(dict(base, effect={"type": "RELATIONSHIP", "track": track,
+                                            "change_median": statistics.median(tracks[track]),
+                                            "seen_in": len(tracks[track])}))
+        skills, funds = {}, []
+        for record in group:
+            own = record.get("self") or {}
+            for skill, value in (own.get("skills") or {}).items():
+                skills.setdefault(skill, []).append(value)
+            if own.get("funds") is not None:
+                funds.append(own["funds"])
+        for skill in sorted(skills):
+            lines.append(dict(base, effect={"type": "SKILL", "skill": skill,
+                                            "levels": sum(skills[skill]),
+                                            "seen_in": len(skills[skill])}))
+        if funds:
+            lines.append(dict(base, effect={"type": "FUNDS",
+                                            "change_median": statistics.median(funds),
+                                            "seen_in": len(funds)}))
         lines.append(dict(base, effect={"type": "UNKNOWN",
                                         "what": sorted({item for r in group for item in r["unknown"]})}))
     return lines

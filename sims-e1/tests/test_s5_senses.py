@@ -17,6 +17,7 @@ if "ashley_e1" not in sys.modules:
 import test_ds3_senses as ds3
 from test_binding import load_probe
 from test_ds3_senses import _Wrapper
+from test_ds1_senses import CreatingTrackers, stat_component_of
 
 
 class LTR_Friendship_Main(object):
@@ -86,8 +87,14 @@ class RelationshipTests(unittest.TestCase):
             "known": True,
             "tracks": [{"track": "LTR_Friendship_Main", "value": 35.2},
                        {"track": "LTR_Romance_Main", "value": -3.0}],
-            "labels": [{"label": "RelBit_Friends", "text_key": str(0x1111)}]})
-        self.assertEqual(far["relationship"], {"known": False, "tracks": [], "labels": []})
+            "labels": [{"label": "RelBit_Friends", "text_key": str(0x1111)}],
+            # 2.15.0: this fake has no per-side data, so what she knows is unreadable.
+            "knows": None, "sentiments": []})
+        self.assertEqual(far["relationship"], {
+            "known": False, "tracks": [], "labels": [],
+            "knows": {"traits": [], "careers": None, "relationship_status": False,
+                      "romantic_preference": False, "net_worth": None},
+            "sentiments": []})
 
     def test_key_is_smaller_id_first_whichever_side_asks(self):
         observers = self.probe.observers
@@ -134,8 +141,8 @@ class MoodletTests(unittest.TestCase):
 
     def test_reason_and_minutes_left(self):
         owning = type("commodity_Buff_Nauseous", (object,), {})
-        sim_info = types.SimpleNamespace(commodity_tracker=types.SimpleNamespace(
-            _statistics={owning: _TimedCommodity()}))
+        sim_info = CreatingTrackers()
+        sim_info.get_component = stat_component_of(commodity={owning: _TimedCommodity()})
         reason = types.SimpleNamespace(hash=0xABC)
         row = self.probe.observers._describe_buff(_TimedBuff(owning, reason), sim_info, 5000)
         self.assertEqual((row["reason_key"], row["minutes_left"]), (str(0xABC), 90.0))
@@ -146,7 +153,7 @@ class MoodletTests(unittest.TestCase):
         self.assertEqual((row["reason_key"], row["minutes_left"]), (None, None))
 
 
-class _Obj(object):
+class _Obj(CreatingTrackers):
     is_sim = False
 
     def __init__(self, oid, x, states=None, cls_name="object_Food_PlateFork_Multi"):
@@ -259,7 +266,7 @@ class SchemaTests(unittest.TestCase):
             self.schema.validate_record(bad)
 
     def test_worst_case_with_objects_fits_and_keeps_social(self):
-        from test_ds1_schema import full_presence, full_signal
+        from test_ds1_schema import full_presence, full_self, full_signal
         from ashley_e1 import snapshot
         entry = {"entry_key": "k", "interaction_id": "1", "affordance_id": "2",
                  "affordance_text": "t" * 160, "target_id": "3", "source_raw": "s",
@@ -268,6 +275,7 @@ class SchemaTests(unittest.TestCase):
         row = self._row(presence=[full_presence(i) for i in range(8)],
                         social=[dict(entry, actor_id="4") for _ in range(4)],
                         sim_signals=[full_signal() for _ in range(16)])
+        row["self"] = full_self()
         long = "x" * 128
         row["objects"] = {"baseline": False, "truncated": False,
                           "created": [{"object_id": "9" * 20, "class": long,
@@ -327,8 +335,7 @@ class SituationExtrasTests(unittest.TestCase):
                                                                       _Tag("Func_Food")])
         obj._reservation_handlers = [_Handler(100)]
         obj.parts = [types.SimpleNamespace(_reservation_handlers=[_Handler(200)])]
-        obj.commodity_tracker = types.SimpleNamespace(
-            _statistics={commodity_freshness: _Decaying()})
+        obj.get_component = stat_component_of(commodity={commodity_freshness: _Decaying()})
         row = self.probe.situation.object_fact(obj, 1500 * 10)
         self.assertEqual(row["tags"], ["Func_Food"])
         self.assertEqual((row["in_use"], row["used_by"]), (True, ["100", "200"]))

@@ -75,8 +75,11 @@ class FakeTracker:
 
 
 class FakeComponent:
-    def __init__(self, tracker):
+    def __init__(self, tracker, statistic_tracker=None):
         self._tracker = tracker
+        # D42: what the probe reads, the component's own fields.
+        self._commodity_tracker = tracker
+        self._statistic_tracker = statistic_tracker
 
     def get_commodity_tracker(self, create=True):
         if create:
@@ -98,6 +101,27 @@ class FakeSimInfo:
     @property
     def commodity_tracker(self):
         raise AssertionError("forbidden commodity_tracker")
+
+
+class CreatingTrackers(object):
+    """D42: the game's tracker properties add a statistic component and create trackers;
+    a probe read through them fails the test."""
+
+    @property
+    def commodity_tracker(self):
+        raise AssertionError("commodity_tracker adds a component (D42)")
+
+    @property
+    def statistic_tracker(self):
+        raise AssertionError("statistic_tracker adds a component (D42)")
+
+
+def stat_component_of(statistic=None, commodity=None):
+    component = FakeComponent(None if commodity is None else
+                              type("T", (object,), {"_statistics": commodity})(),
+                              None if statistic is None else
+                              type("T", (object,), {"_statistics": statistic})())
+    return lambda kind: component
 
 
 def make_row(context, sim_info):

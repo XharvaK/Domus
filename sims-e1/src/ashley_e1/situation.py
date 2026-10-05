@@ -83,9 +83,9 @@ def _stat_value(instance, now_ticks):
 
 def _stats(obj, now_ticks):
     found = {}
-    for read in (lambda: obj.statistic_tracker, lambda: obj.commodity_tracker):
+    # D42: the existing trackers only; the properties add a component to the object.
+    for tracker in observers.stat_trackers(obj):
         try:
-            tracker = read()
             items = list(tracker._statistics.items())
         except Exception:
             continue
@@ -189,7 +189,7 @@ def _rates(obj, now_ticks):
     D25-checked decay math: the change over the next 60 game minutes."""
     found = {}
     try:
-        items = list(obj.commodity_tracker._statistics.items())
+        items = list(observers.stat_trackers(obj)[1]._statistics.items())
     except Exception:
         return found
     for stat_type, instance in items:

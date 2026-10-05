@@ -1,11 +1,16 @@
 """S6: outcome records, one per act, rebuilt from recorded telemetry.
 
 An act is one running super interaction (posture plumbing left out), from the first
-sample it runs in to the last. Each record carries its game time span, its origin
+sample it runs in to the last. A social (a mixer: Chat About Property Values, Flirt) is
+an act of its own with its own origin, even though the game only shows it queued inside
+the chat that holds it; the chat lists the socials it held (`socials`), each social
+names its chat (`part_of`). Each record carries its game time span, its origin
 (the Owner at the controls, the body on its own, a game reaction, an experiment),
 needs before and after, moodlets gained and lost, the acts that followed it, and an
-experiment verdict when one is attributable. Objects and relationships stay UNKNOWN
-until S5 senses them. The records are facts for her diary; nothing here judges an act.
+experiment verdict when one is attributable. Objects, relationships and her self (skills,
+money, traits) stay UNKNOWN in rows that did not sense them. A relationship change says
+whether that Sim was the act's target or a bystander (whose drift the act did not
+cause). The records are facts for her diary; nothing here judges an act.
 
 Origins: a click is the Owner's; the game's autonomy and reactions are the body's or
 the game's; an act the probe pushed is an experiment. A continuation the game runs with
@@ -45,6 +50,8 @@ NAP = re.compile(r"nap", re.I)
 DIARY_SPACING_MIN = 12 * 60
 # Standing idle is the absence of an act, not one ("nothing followed" is a fact).
 IDLE = frozenset(("sim-stand", "stand_Passive"))
+MIXER = re.compile(r"^mixer_", re.I)
+MAX_SELF_SKILLS = 12
 SLEEP_CONFIRM_MIN = 30
 FOLLOW_WINDOW_MIN = 30
 MAX_FOLLOWED = 4
@@ -90,23 +97,45 @@ def _sample(row):
         for item in row["presence"]:
             relationship = item.get("relationship") if isinstance(item, dict) else None
             if isinstance(relationship, dict):
-                relationships[str(item.get("name") or item.get("id"))] = {
+                knows = relationship.get("knows")
+                knows = knows if isinstance(knows, dict) else None
+                relationships[str(item.get("id"))] = {
+                    "name": str(item.get("name") or item.get("id")),
                     "tracks": {t.get("track"): t.get("value")
                                for t in relationship.get("tracks") or []},
-                    "labels": sorted(l.get("label") for l in relationship.get("labels") or [])}
+                    "labels": sorted(l.get("label") for l in relationship.get("labels") or []),
+                    # 2.15.0 (schema 8): what she knows about them, how she feels.
+                    "known_traits": None if knows is None else
+                    sorted(t.get("trait") for t in knows.get("traits") or []),
+                    "careers": None if knows is None else knows.get("careers"),
+                    "sentiments": None if "sentiments" not in relationship else
+                    sorted(s.get("sentiment") for s in relationship.get("sentiments") or [])}
     objects = row.get("objects") if (row.get("schema_version") or 0) >= 7 else None
+    own = None
+    if (row.get("schema_version") or 0) >= 8 and isinstance(row.get("self"), dict):
+        value = row["self"]
+        own = {"funds": value.get("funds"),
+               "skills": None if value.get("skills") is None else
+               {item["skill"]: item["level"] for item in value["skills"]},
+               "traits": None if value.get("traits") is None else
+               sorted(item["trait"] for item in value["traits"])}
     return {"wall_ms": row.get("wall_timestamp_ms"),
             "calendar": (row.get("game") or {}).get("calendar"),
             "minute": game_minute((row.get("game") or {}).get("calendar")),
             "motives": motives, "moodlets": moodlets, "company": company,
             "relationships": relationships,
-            "objects": objects if isinstance(objects, dict) else None}
+            "objects": objects if isinstance(objects, dict) else None,
+            "self": own}
 
 
 def _live_acts(row):
     found = {}
     for entry in (row.get("interactions") or {}).get("observed") or []:
-        if not isinstance(entry, dict) or entry.get("membership") not in LIVE:
+        if not isinstance(entry, dict):
+            continue
+        # Socials (mixers) show only queued inside the chat that runs them.
+        if entry.get("membership") not in LIVE and \
+                not MIXER.match(_affordance_name(entry.get("affordance_text")) or ""):
             continue
         source = entry.get("source_raw")
         if source == "InteractionSource.POSTURE_GRAPH" or entry.get("interaction_id") is None:
@@ -132,23 +161,74 @@ def _needs(before, after):
                       if round(after[key] - before[key], 1) != 0}}
 
 
-def _relationship_changes(before, after):
-    """S5: track changes and labels gained or lost with each Sim seen at both ends."""
+def _added(before, after):
+    if before is None or after is None:
+        return []
+    return sorted(set(after) - set(before))
+
+
+def _relationship_changes(before, after, target_id=None):
+    """S5: track changes and labels gained or lost with each Sim seen at both ends.
+    role: "target" when the act was aimed at that Sim, else "bystander" (live
+    2026-10-05: a Sim playing on the computer drifted +0.1 during her chat, and a
+    passer-by's conversation track faded, and both read as the chat's doing).
+    2.15.0: traits and a career she learned, sentiments gained or lost."""
     if before is None or after is None:
         return None
     changes = []
-    for name in sorted(set(before) & set(after)):
-        a, b = before[name], after[name]
+    for key in sorted(set(before) & set(after), key=lambda k: (after[k]["name"], k)):
+        a, b = before[key], after[key]
         deltas = {track: round(b["tracks"][track] - a["tracks"][track], 1)
                   for track in sorted(set(a["tracks"]) & set(b["tracks"]))
                   if a["tracks"][track] is not None and b["tracks"][track] is not None
                   and round(b["tracks"][track] - a["tracks"][track], 1) != 0}
         gained = sorted(set(b["labels"]) - set(a["labels"]))
         lost = sorted(set(a["labels"]) - set(b["labels"]))
-        if deltas or gained or lost:
-            changes.append({"with": name, "tracks": deltas, "labels_gained": gained,
-                            "labels_lost": lost})
+        learned = _added(a.get("known_traits"), b.get("known_traits"))
+        career = a.get("careers") is None and b.get("careers") is not None
+        felt = _added(a.get("sentiments"), b.get("sentiments"))
+        faded = _added(b.get("sentiments"), a.get("sentiments"))
+        if deltas or gained or lost or learned or career or felt or faded:
+            change = {"with": b["name"],
+                      "role": "target" if target_id is not None and key == str(target_id)
+                      else "bystander",
+                      "tracks": deltas, "labels_gained": gained, "labels_lost": lost}
+            if learned:
+                change["learned_traits"] = learned
+            if career:
+                change["learned_career"] = b["careers"]
+            if felt or faded:
+                change["sentiments_gained"], change["sentiments_lost"] = felt, faded
+            changes.append(change)
     return changes
+
+
+def _self_changes(before, after):
+    """2.15.0: what the act did to her: money, skill levels, traits. None unsensed."""
+    if before is None or after is None:
+        return None
+    found = {}
+    if type(before["funds"]) is int and type(after["funds"]) is int and \
+            after["funds"] != before["funds"]:
+        found["funds"] = after["funds"] - before["funds"]
+    a, b = before["skills"], after["skills"]
+    if a is not None and b is not None:
+        ups = {skill: b[skill] - a[skill] for skill in sorted(set(a) & set(b))
+               if b[skill] != a[skill]}
+        if ups:
+            found["skills"] = ups
+        # A skill new to a full list may only have climbed into it.
+        if len(a) < MAX_SELF_SKILLS:
+            new = sorted(set(b) - set(a))
+            if new:
+                found["skills_new"] = {skill: b[skill] for skill in new}
+    gained = _added(before["traits"], after["traits"])
+    lost = _added(after["traits"], before["traits"])
+    if gained:
+        found["traits_gained"] = gained
+    if lost:
+        found["traits_lost"] = lost
+    return found
 
 
 def _object_changes(samples):
@@ -237,7 +317,9 @@ def acts(rows, session=None):
             "moodlets": _moodlet_diff(before["moodlets"], after["moodlets"]),
             "company": samples[first]["company"],
             "relationships": _relationship_changes(before["relationships"],
-                                                   after["relationships"]),
+                                                   after["relationships"],
+                                                   entry.get("target_id")),
+            "self": _self_changes(before["self"], after["self"]),
             # Events each sample reports happened since the one before it.
             "objects": None if samples[first]["objects"] is None else
             _object_changes(samples[first + 1:after_index + 1]),
@@ -246,15 +328,36 @@ def acts(rows, session=None):
             "_order": (first, last),
         }
         # Anything not sensed in these rows (schema 6 and older) stays UNKNOWN.
-        record["unknown"] = [name for name in ("objects", "relationships")
+        record["unknown"] = [name for name in ("objects", "relationships", "self")
                              if record[name] is None]
+        if MIXER.match(record["interaction"]["name"] or ""):
+            record["social"] = True
         records.append(record)
     records.sort(key=lambda item: (item["_order"][0], item["act_id"]))
+    _nest_socials(records)
     _link_followers(records)
     _resolve_continuations(records)
     for record in records:
         del record["_order"]
     return records
+
+
+def _nest_socials(records):
+    """A social runs inside the chat aimed at the same Sim that is running then."""
+    for social in records:
+        if not social.get("social"):
+            continue
+        first = social["_order"][0]
+        for chat in records:
+            if chat.get("social") or chat is social:
+                continue
+            if chat["_order"][0] <= first <= chat["_order"][1] and \
+                    chat["interaction"]["target_id"] == social["interaction"]["target_id"]:
+                social["part_of"] = chat["act_id"]
+                chat.setdefault("socials", []).append(
+                    {"act_id": social["act_id"], "name": social["interaction"]["name"],
+                     "origin": social["origin"]})
+                break
 
 
 def _resolve_continuations(records):
@@ -288,6 +391,8 @@ def _link_followers(records):
         for other in records:
             if other is record or other["_order"][0] <= first:
                 continue
+            if other.get("part_of") == record["act_id"]:
+                continue  # its own socials are listed under socials
             start = other["span"]["start_minute"]
             if other["_order"][0] > last + 1 and (end is None or start is None or
                                                   start - end > FOLLOW_WINDOW_MIN):

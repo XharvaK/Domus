@@ -432,18 +432,49 @@ def _string_key(value):
     return None
 
 
+def stat_trackers(owner):
+    """D42 (bytecode objects/components/statistic_component): the `statistic_tracker`
+    and `commodity_tracker` properties call _get_or_add_statistic_component, which adds
+    a component to an object that has none (add_dynamic_component), and the getters
+    create a tracker. Only the existing component's fields are read here:
+    (statistic tracker or None, commodity tracker or None)."""
+    try:
+        from objects.components.types import STATISTIC_COMPONENT
+        component = owner.get_component(STATISTIC_COMPONENT)
+    except Exception:
+        return None, None
+    if component is None:
+        return None, None
+    found = []
+    for read in (lambda: component._statistic_tracker,
+                 lambda: component._commodity_tracker):
+        try:
+            found.append(read())
+        except Exception:
+            found.append(None)
+    return found[0], found[1]
+
+
+def _commodity_tracker(sim_info):
+    """D42: her commodity tracker without the creating property."""
+    return stat_trackers(sim_info)[1]
+
+
 def _moodlet_minutes_left(entry, sim_info, now_ticks):
     """S5: game minutes until a timed moodlet ends. Bytecode (buffs/buff): a timed buff
     has `_temporary_commodity_info` and keeps `_owning_commodity`; the `commodity`
     property can create one (a store), so the instance is read from the Sim's own
-    commodity tracker. Minutes come from the D25-checked decay calls. None otherwise."""
+    commodity tracker (D42: through the pure route). Minutes come from the D25-checked decay calls. None otherwise."""
     try:
         if entry._temporary_commodity_info is None:
             return None
         owning = entry._owning_commodity
         if owning is None or sim_info is None:
             return None
-        instance = sim_info.commodity_tracker._statistics.get(owning)
+        tracker = _commodity_tracker(sim_info)
+        if tracker is None:
+            return None
+        instance = tracker._statistics.get(owning)
     except Exception:
         return None
     if instance is None:
@@ -723,7 +754,114 @@ def _type_name(value):
     return name if isinstance(name, str) else None
 
 
-def relationship_between(body_id, other_id, now_ticks=None):
+def _trait_entry(trait):
+    name = _bounded_name(_type_name(trait), "trait")
+    if name is None:
+        return None
+    try:
+        text_key = _string_key(trait.display_name)
+    except Exception:
+        text_key = None
+    return {"trait": name, "text_key": text_key}
+
+
+def _careers_of(sim_info):
+    """Career type names from career_tracker._careers (a plain dict read)."""
+    try:
+        values = list(sim_info.career_tracker._careers.values())
+    except Exception:
+        return None
+    names = []
+    for career in values[:4]:
+        name = _bounded_name(_type_name(type(career)), "career")
+        if name is not None:
+            names.append(name)
+    return sorted(names)
+
+
+NOTHING_KNOWN = {"traits": [], "careers": None, "relationship_status": False,
+                 "romantic_preference": False, "net_worth": None}
+
+
+def _knowledge(data, other_info):
+    """2.15.0: what she has learned about the other Sim. Bytecode (relationships/
+    sim_knowledge, data/unidirectional_relationship_data): her side of the relationship
+    keeps `_knowledge`, None until she learns something; SimKnowledge keeps plain
+    fields. SimRelationship.get_knowledge was not used: it creates the record
+    (initialize_knowledge). None when unreadable."""
+    try:
+        knowledge = data._knowledge
+    except Exception:
+        return None
+    known = dict(NOTHING_KNOWN)
+    if knowledge is None:
+        return known
+    try:
+        traits = list(knowledge._known_traits)
+    except Exception:
+        traits = []
+    entries = [entry for entry in (_trait_entry(trait) for trait in traits) if entry]
+    known["traits"] = sorted(entries, key=lambda item: item["trait"])[:schema.MAX_KNOWN_TRAITS]
+    for key, read in (("relationship_status", lambda: knowledge._knows_rel_status),
+                      ("romantic_preference", lambda: knowledge._knows_romantic_preference)):
+        try:
+            known[key] = read() is True
+        except Exception:
+            known[key] = False
+    try:
+        knows_career = knowledge._knows_career is True
+    except Exception:
+        knows_career = False
+    if knows_career and other_info is not None:
+        known["careers"] = _careers_of(other_info)
+    try:
+        worth = knowledge._known_net_worth
+    except Exception:
+        worth = None
+    if type(worth) is int:
+        known["net_worth"] = worth
+    return known
+
+
+def _sentiments(data):
+    """2.15.0: her sentiments toward the other Sim (Close, Hurt, ...): the types held in
+    her side's `_sentiment_tracker._statistics` (plain read)."""
+    try:
+        tracker = data._sentiment_tracker
+    except Exception:
+        return []
+    if tracker is None:
+        return []
+    try:
+        types_ = list(tracker._statistics.keys())
+    except Exception:
+        return []
+    found = []
+    for track_type in types_:
+        name = _bounded_name(_type_name(track_type), "sentiment")
+        if name is None:
+            continue
+        try:
+            text_key = _string_key(track_type.display_name)
+        except Exception:
+            text_key = None
+        found.append({"sentiment": name, "text_key": text_key})
+    found.sort(key=lambda item: item["sentiment"])
+    return found[:schema.MAX_SENTIMENTS]
+
+
+def _her_side(relationship, body_id):
+    """Her uni-directional data (SimRelationship._get_uni_directional_rel_data, read
+    without the call): `_sim_a_relationship_data` when she is `_sim_id_a`."""
+    try:
+        if relationship._sim_id_a == body_id:
+            return relationship._sim_a_relationship_data
+        return relationship._sim_b_relationship_data
+    except Exception:
+        return None
+
+
+def relationship_between(body_id, other_id, now_ticks=None, other_info=None):
     """S5: what the game holds between her and another Sim, from plain attributes.
 
     Bytecode (relationships/*): RelationshipService keeps `_relationships` keyed by
@@ -740,7 +878,8 @@ def relationship_between(body_id, other_id, now_ticks=None):
     except Exception:
         return None
     if relationship is None:
-        return {"known": False, "tracks": [], "labels": []}
+        return {"known": False, "tracks": [], "labels": [],
+                "knows": dict(NOTHING_KNOWN), "sentiments": []}
     try:
         data = relationship._bi_directional_relationship_data
     except Exception:
@@ -788,8 +927,11 @@ def relationship_between(body_id, other_id, now_ticks=None):
             text_key = None
         labels.append({"label": name, "text_key": text_key})
     labels.sort(key=lambda item: item["label"])
+    side = _her_side(relationship, a)  # a is her id (before the key sort)
     return {"known": True, "tracks": tracks[:schema.MAX_REL_TRACKS],
-            "labels": labels[:schema.MAX_REL_LABELS]}
+            "labels": labels[:schema.MAX_REL_LABELS],
+            "knows": None if side is None else _knowledge(side, other_info),
+            "sentiments": [] if side is None else _sentiments(side)}
 
 
 def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_position=None,
@@ -821,10 +963,16 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
     relationship = None
     if not is_body and lab_sim_id is not None:
         try:
-            relationship = relationship_between(lab_sim_id, entry_id, now_ticks)
+            relationship = relationship_between(lab_sim_id, entry_id, now_ticks,
+                                                sim_info)
         except Exception:
             relationship = None
+    try:
+        on_lot = sim.is_on_active_lot()
+    except Exception:
+        on_lot = None
     return {"id": entry_id,
+            "on_lot": on_lot if type(on_lot) is bool else None,
             "active_household": household_id is not None and own_household == household_id,
             "level": level,
             "is_body": lab_sim_id is not None and entry_id == str(lab_sim_id),
@@ -841,61 +989,48 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
 
 def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None,
                   now_ticks=None):
-    """Every instanced Sim on the active lot, her body first, then nearest first.
+    """Every instanced Sim in the zone, her body first, then nearest first.
+    Returns (presence, truncated, skipped).
 
-    D37 (live: presence was empty in every row with 8 Sims on the lot):
-    instanced_sims_on_active_lot_gen yields Sim objects, not SimInfo. The old reader
-    called get_sim_instance on each Sim, which failed and was swallowed, so she never
-    saw anyone and social (gated on presence) never ran.
+    D37 (live: presence was empty in every row with 8 Sims on the lot): the reader
+    must not call get_sim_instance on a Sim object.
+    D40 (live, 2.14.0): the game's instanced_sims_on_active_lot_gen asks each Sim
+    is_on_active_lot() inside the generator. A Sim arriving for a group chat made that
+    raise, which ends a generator: for an hour of game time her presence was empty,
+    her own body included, and the rows still said complete. The lot test also hid
+    Sims on the sidewalk next to her. Now each SimInfo's instance is read on its own
+    (get_sim_instance reads `_sim_ref`, bytecode sims/sim_info), on_lot is asked per
+    Sim, and a Sim that cannot be read is counted in `skipped`.
     """
     try:
-        manager = services.sim_info_manager()
+        infos = list(services.sim_info_manager().get_all())
     except Exception:
-        return [], False
-    try:
-        generator = manager.instanced_sims_on_active_lot_gen(
-            hidden_flags, include_spawn_point=False)
-    except Exception:
-        try:
-            generator = manager.instanced_sims_on_active_lot_gen(hidden_flags)
-        except Exception:
-            return [], False
-    try:
-        iterator = iter(generator)
-    except TypeError:
-        return [], False
+        return [], False, None
     household_id = _active_household_id()
     presence = []
-    while True:
+    skipped = 0
+    for sim_info in infos:
         try:
-            sim = next(iterator)
-        except StopIteration:
-            break
+            sim = sim_info.get_sim_instance(allow_hidden_flags=hidden_flags)
         except Exception:
+            skipped += 1
             continue
         if sim is None:
-            continue
-        try:
-            sim_info = sim.sim_info
-        except Exception:
-            continue
-        if sim_info is None:
             continue
         try:
             row = _describe_presence(sim_info, sim, household_id, lab_sim_id, body_position,
                                      now_ticks)
         except Exception:
-            continue
+            row = None
         if row is None:
+            skipped += 1
             continue
         presence.append(row)
-        if len(presence) >= schema.MAX_PRESENCE * 4:
-            break
     presence.sort(key=lambda row: (0 if row["is_body"] else 1,
                                    row["distance_m"] if row["distance_m"] is not None else 1e9,
                                    row["id"]))
     truncated = len(presence) > schema.MAX_PRESENCE
-    return presence[:schema.MAX_PRESENCE], truncated
+    return presence[:schema.MAX_PRESENCE], truncated, skipped
 
 
 def _target_matches(entry, lab_sim, lab_sim_id):
@@ -1009,15 +1144,15 @@ def poll_once(telemetry_session_id, armed_name,
         lab_id = None if raw_lab_id is None else str(raw_lab_id)
     except Exception:
         lab_id = None
-    presence, presence_truncated = ([], False)
+    presence, presence_truncated, skipped = ([], False, None)
     social, social_truncated = ([], False)
     zone = zone_snapshot(sim)
     if lab_id is not None:
         try:
-            presence, presence_truncated = read_presence(
+            presence, presence_truncated, skipped = read_presence(
                 lab_id, body_position=zone["position"], now_ticks=now_ticks)
         except Exception:
-            presence, presence_truncated = ([], False)
+            presence, presence_truncated, skipped = ([], False, None)
         if any(not row["is_body"] for row in presence):
             try:
                 candidates = services.sim_info_manager().get_all()
@@ -1039,6 +1174,15 @@ def poll_once(telemetry_session_id, armed_name,
         queue_truncated, running_truncated, capture_complete)
     if presence_truncated or social_truncated:
         complete = False
+    missingness = {}
+    if skipped is None or skipped > 0 or not any(item["is_body"] for item in presence):
+        # D40: a presence read that missed anyone, her body included, says so.
+        complete = False
+        missingness["presence"] = {
+            "status": "MISSING",
+            "detail": ("unreadable" if skipped is None else
+                       "skipped %d Sims%s" % (skipped, "" if any(
+                           item["is_body"] for item in presence) else ", body absent"))}
     row = schema.make_record(
         "presence_snapshot", telemetry_session_id=telemetry_session_id,
         wall_timestamp_ms=wall, monotonic_ns=mono,
@@ -1049,14 +1193,95 @@ def poll_once(telemetry_session_id, armed_name,
                       "observation_complete": complete},
         observation_complete=complete,
         motives=motives, sim_signals=signals, mood=mood,
-        presence=presence, social=social,
+        presence=presence, social=social, missingness=missingness,
     )
+    try:
+        row["self"] = read_self(sim_info)
+    except Exception:
+        row["self"] = None
     try:
         row["objects"] = read_object_events(zone.get("zone_id"), zone.get("position"),
                                             int(time.time() * 1000))
     except Exception:
         row["objects"] = None
     return snapshot.apply_size_budget(row)
+
+
+def _skill_level(instance):
+    """Skill level without Skill.get_user_value, which caches into `_user_value` (a
+    store; bytecode statistics/skill): the cached `_user_value`, else the game's own
+    convert_to_user_value (reads the level list only) on the stored `_value`."""
+    try:
+        cached = instance._user_value
+    except Exception:
+        cached = None
+    if type(cached) is int:
+        return cached
+    try:
+        level = instance.convert_to_user_value(instance._value)
+    except Exception:
+        return None
+    return level if type(level) is int else None
+
+
+def read_self(sim_info):
+    """2.15.0: what she is like and has: her traits (personality first), her skills
+    (highest first) and her household's money. Plain reads: trait_tracker
+    `_equipped_traits` and `_equipped_personality_traits`, the skills in the commodity
+    tracker's `_statistics` (D42 route; a Skill has `skill_level_type`), and
+    household `_funds._funds` (bytecode traits/trait_tracker, sims/funds)."""
+    traits = []
+    try:
+        equipped = list(sim_info.trait_tracker._equipped_traits)
+    except Exception:
+        equipped = None
+    try:
+        personality = set(sim_info.trait_tracker._equipped_personality_traits)
+    except Exception:
+        personality = set()
+    for trait in equipped or []:
+        entry = _trait_entry(trait)
+        if entry is None or entry["text_key"] is None:
+            continue  # hidden gameplay traits carry no name of their own
+        entry["personality"] = trait in personality
+        traits.append(entry)
+    traits.sort(key=lambda item: (not item["personality"], item["trait"]))
+    skills = []
+    try:
+        items = list(_commodity_tracker(sim_info)._statistics.items())
+    except Exception:
+        items = None
+    for stat_type, instance in items or []:
+        try:
+            stat_type.skill_level_type
+        except Exception:
+            continue
+        name = _bounded_name(_type_name(stat_type), "skill")
+        if name is None or instance is None:
+            continue
+        level = _skill_level(instance)
+        if level is None:
+            continue
+        text_key = None
+        for read in (lambda: stat_type.stat_name, lambda: stat_type.display_name):
+            try:
+                text_key = _string_key(read())
+            except Exception:
+                text_key = None
+            if text_key is not None:
+                break
+        skills.append({"skill": name, "text_key": text_key, "level": level})
+    skills.sort(key=lambda item: (-item["level"], item["skill"]))
+    funds = None
+    try:
+        money = sim_info.household._funds._funds
+    except Exception:
+        money = None
+    if type(money) is int:
+        funds = money
+    return {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
+            "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
+            "funds": funds}
 
 
 # S5: object events. The previous sample's object ids (with class names) and the

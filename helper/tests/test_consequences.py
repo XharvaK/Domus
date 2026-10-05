@@ -56,7 +56,7 @@ def test_groups_by_origin_and_never_mixes_sources():
     assert origins == ["experiment", "owner"]
     assert all(l["kind"] == "DECLARED" for l in result["declared"])
     assert all(l["kind"] == "OBSERVED" for l in result["observed"])
-    assert {"type": "UNKNOWN", "what": ["objects", "relationships"]} in [
+    assert {"type": "UNKNOWN", "what": ["objects", "relationships", "self"]} in [
         l["effect"] for l in result["observed"]]
 
 
