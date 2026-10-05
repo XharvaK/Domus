@@ -184,7 +184,7 @@ class SelfTests(unittest.TestCase):
         lab.trait_tracker = self._sim_info().trait_tracker
         lab.household = types.SimpleNamespace(_funds=types.SimpleNamespace(_funds=500))
         row = ds3.PollOnceTests.row(self)
-        self.assertEqual(row["schema_version"], 8)
+        self.assertEqual(row["schema_version"], 9)
         self.assertEqual(row["self"]["funds"], 500)
         self.assertEqual(row["self"]["traits"][0]["trait"], "trait_Cheerful")
         self.assertEqual([item["on_lot"] for item in row["presence"]], [True, True, True])
@@ -270,15 +270,14 @@ class TravelTests(unittest.TestCase):
                            if entry[2]["callback"] is self.probe._poll_tick]
         self.assertEqual(len(sampling_alarms), 2)
 
-    def test_resume_after_the_guard_stopped_it(self):
-        for _ in range(self.probe.ZONE_SETTLE_TICKS):
+    def test_a_long_loading_screen_waits_and_says_so_once(self):
+        """2.15.2: a first load after a relaunch can take longer than a minute."""
+        for _ in range(3 * self.probe.ZONE_SETTLE_TICKS):
             self.probe._poll_tick()
-        self.assertEqual(self.probe._STATE, "ARMED")
-        self.assertEqual([row["reason"] for row in self.writer.rows],
-                         ["LAB_IDENTITY_AMBIGUOUS:0"])
-        self._travel()
-        self.assertTrue(self.probe._resume_sampling_in_zone())
         self.assertEqual(self.probe._STATE, "SAMPLING")
+        self.assertEqual([row.get("checkpoint_reason") for row in self.writer.rows],
+                         ["WAITING_FOR_BODY"])
+        self.probe.schema.validate_record(self.writer.rows[0])
 
     def test_the_users_stop_holds_across_travel(self):
         self.assertTrue(self.probe._dispatch_stop())

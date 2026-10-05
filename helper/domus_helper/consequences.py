@@ -165,7 +165,8 @@ def load_records(paths):
     for path in sorted(folder.glob("*.jsonl")) if folder.is_dir() else []:
         with path.open(encoding="utf-8") as handle:
             records.extend(json.loads(line) for line in handle if line.strip())
-    return records
+    # 2.15.2: the files also hold question records (the game's pop-ups).
+    return [record for record in records if record.get("kind", "outcome") == "outcome"]
 
 
 def main(argv=None):

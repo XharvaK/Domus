@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.15.1 (sampling kept alive across lots, the lot first in presence)
+## Current build: 2.15.2 (sampling across launches, place, situations, pop-ups)
 
-The source is version `2.15.1` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 8, schema 4 to 7 rows still validate). It is no longer read-only:
+The source is version `2.15.2` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 9, schema 4 to 8 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.15.1 has not yet passed its E2 first-load gate or trials; those run on the
+2.15.2 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -38,6 +38,19 @@ The crawl asks for a fresh preflight when it starts. After a relief trial it wai
 ## Live hardening (DA6F)
 
 The second session (2.11.1) added these. A motive's `value` is the game's current value: the probe applies the game's own rate formula to the cached value without writing it, so a reading is current at any game speed (`age_ticks` 0). Only if a rate cannot be read does it report the cache and its age. Sleep and work switch the game to speed 3, where rows are about 37000 ticks apart. A maintained interaction trial ends 30 s after it finishes, not at its 180 s window, and a relief trial's verdict carries the need's start, peak, and end (`relief=energy energy=24->100->100`). The crawl does not push a trial into a body distress it can already see, and its stop names the need. Preflight and the food scan tick four times a second at the same 5 ms budget and show progress on `status`. The food scan matches name words, not substrings ("eat" no longer matches cheat or death), reads menus only from classes that have one, and names recipes. `remove.ps1` without `-Version` removes every installed probe package.
+
+## Launches, place, situations and pop-ups (2.15.2, schema 9)
+
+Sampling carries over to the next launch. When the User starts sampling, the probe writes `autosample.json` beside the telemetry with the save it belongs to. On a later launch, once a zone is running and the loaded save is the same one, the probe arms and starts by itself and writes an `AUTOSTARTED` checkpoint. Another save is never sampled. The User's stop or disarm deletes the file. While the User's start holds, a loading screen with no selectable body is waited out without end; after 60 ticks one `WAITING_FOR_BODY` checkpoint says so.
+
+The telemetry folder holds 1 GiB, and one session may reach it (127 rotations). A `TELEMETRY_DIR_75` checkpoint marks the first row past 75% of the cap, and `status` reports `telemetry_dir` (bytes, cap) and `autosample`. The helper's daily task archives finished sessions and packs week-old archives into weekly zips. Nothing is deleted.
+
+Observation rows carry three new things:
+- `place`: whose lot she is on (the zone lot's `zone_owner_household_id`), whether it is her home, and the venue.
+- Each presence entry's `situations`: the game situations that Sim is in (a visit, a party), with its role there. They are read from each situation's `_situation_sims`.
+- `dialogs`: the game's pop-ups. `open` lists those showing, with kind, owner, title and text string keys, the choices the game offers, and whether the game will answer by itself. `closed` lists those gone since the last row, with the answer the game stored (`ok`, `cancel`, `closed` or a response id). Nothing is answered here.
+
+The size budget trims other Sims' situations, down to the first one each and then none, before it would drop someone addressing her.
 
 ## Travel fixes (2.15.1, schema 8)
 
@@ -78,7 +91,7 @@ Each present Sim other than her body carries `relationship`: the friendship, rom
 
 ## Senses (DS3, telemetry schema 6)
 
-Each row now says where her body is and who is with her. `zone` carries the zone, lot and room ids and the body's position (`{x, y, z, level}`; the room comes from the game's own `build_buy.get_room_id`, the only name the guard allows from that module). `presence` lists every Sim on the lot, her body first and then nearest first, with name, household, room, position, distance, posture and what that Sim is doing; `social` (who is addressing her) runs whenever someone else is present. Before 2.12.0 presence was always empty: the game yields Sim objects and the reader treated them as SimInfo. Moodlets read their tuned blueprint, so each carries its real name, weight, mood type, visibility and the game's string key for its display name (the helper resolves text from the game's own string tables). Rows may be up to 16 KiB; when one would be larger, hidden and light moodlets go first, then the farthest Sims, and someone addressing her goes last. A session may rotate 24 times. The helper's observation portrait adds the game time (weekday from the game's Days enum), the room, company, visible moodlets and who is addressing her. Finished sessions older than a day move out of the probe's capped telemetry folder into the helper's data folder as verified gzip files (`python -m domus_helper.telemetry_archive`, and every 6 hours from the bridge).
+Each row now says where her body is and who is with her. `zone` carries the zone, lot and room ids and the body's position (`{x, y, z, level}`; the room comes from the game's own `build_buy.get_room_id`, the only name the guard allows from that module). `presence` lists every Sim on the lot, her body first and then nearest first, with name, household, room, position, distance, posture and what that Sim is doing; `social` (who is addressing her) runs whenever someone else is present. Before 2.12.0 presence was always empty: the game yields Sim objects and the reader treated them as SimInfo. Moodlets read their tuned blueprint, so each carries its real name, weight, mood type, visibility and the game's string key for its display name (the helper resolves text from the game's own string tables). Rows may be up to 16 KiB; when one would be larger, hidden and light moodlets go first, then the farthest Sims, and someone addressing her goes last. A session may rotate 127 times (2.15.2). The helper's observation portrait adds the game time (weekday from the game's Days enum), the room, company, visible moodlets and who is addressing her. Finished sessions older than a day move out of the probe's capped telemetry folder into the helper's data folder as verified gzip files (`python -m domus_helper.telemetry_archive`, and every 6 hours from the bridge).
 
 ## Live hardening (DA6G)
 
@@ -112,8 +125,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.15.1
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.15.1
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.15.2
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.15.2
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

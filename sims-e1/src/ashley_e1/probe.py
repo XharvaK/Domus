@@ -60,6 +60,7 @@ from . import e2_control
 from . import observers
 from . import schema
 from .writer import TelemetryWriter, bootstrap_from_module_path, derive_telemetry_root, read_command_file, write_command_reply
+from .writer import read_small_json, remove_file, write_small_json
 
 
 E1_PROBE_VERSION = schema.PROBE_VERSION
@@ -149,6 +150,14 @@ _LAST_SUPERVISE_S = None
 _LAST_RESTART_S = None
 SAMPLER_STALL_SECONDS = 10.0
 SAMPLER_RESTART_SPACING = 30.0
+# D47 (live 2026-10-05): a relaunch left the probe unarmed and the User's first half
+# hour of play (cleaning spoiled food, a book back on the shelf) was not recorded.
+# The User's start is remembered for that save (AUTOSAMPLE_FILE beside the telemetry);
+# loading the same save starts sampling again; the User's stop or disarm forgets it.
+AUTOSAMPLE_FILE = "autosample.json"
+_AUTOSTART_TRIED_ZONE = None
+# D48: one TELEMETRY_DIR_75 checkpoint per session when the folder passes 75% of its cap.
+_DIR_WARNED = False
 _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
@@ -213,6 +222,7 @@ def _dispatch_disarm(*args, _session_id=0, **kwargs):
         return False
     _RESUME_SAMPLING = False
     _clear_resume_pending()
+    _forget_autosample()
     return _cmd_disarm(_connection=_session_id)
 
 
@@ -223,6 +233,7 @@ def _dispatch_start(*args, _session_id=0, **kwargs):
     started = _cmd_start(_connection=_session_id)
     if started:
         _RESUME_SAMPLING = True  # D41: the User wants sampling, in whatever zone
+        _remember_autosample()  # D47: and after a relaunch of this save
     return started
 
 
@@ -233,6 +244,7 @@ def _dispatch_stop(*args, _session_id=0, **kwargs):
         return False
     _RESUME_SAMPLING = False
     _clear_resume_pending()
+    _forget_autosample()
     return _cmd_stop(_connection=_session_id)
 
 
@@ -413,6 +425,61 @@ def _now_s():
     return time.monotonic()
 
 
+def _autosample_path():
+    return None if _TELEMETRY_ROOT is None else os.path.join(_TELEMETRY_ROOT, AUTOSAMPLE_FILE)
+
+
+def _remember_autosample():
+    """Write the save this sampling belongs to (after session_open has its identity)."""
+    path = _autosample_path()
+    if path is None or _ARMED_SNAPSHOT is None or not _RESUME_SAMPLING:
+        return False
+    return write_small_json(path, {
+        "armed_name": _ARMED_NAME, "save_slot_guid": _ARMED_SNAPSHOT["guid"],
+        "slot_id": _ARMED_SNAPSHOT["slot_id"], "sim_id": _ARMED_SNAPSHOT["sim_id"]})
+
+
+def _forget_autosample():
+    path = _autosample_path()
+    if path is not None:
+        remove_file(path)
+
+
+def _autostart_from_memory(zone):
+    """D47: while unarmed, once per zone: if the User's last start was for the save that
+    is loaded now, arm and start again (AUTOSTARTED). Another save is never sampled."""
+    global _AUTOSTART_TRIED_ZONE, _RESUME_SAMPLING
+    if _STATE != "UNARMED" or _AUTOSTART_TRIED_ZONE is zone:
+        return False
+    path = _autosample_path()
+    remembered = None if path is None else read_small_json(path)
+    if remembered is None:
+        _AUTOSTART_TRIED_ZONE = zone
+        return False
+    try:
+        save = observers._save_snapshot()
+    except Exception:
+        return False  # the save is not readable yet; the next tick tries again
+    if save.get("save_slot_guid") is None:
+        return False
+    _AUTOSTART_TRIED_ZONE = zone
+    if type(remembered) is not dict or \
+            remembered.get("armed_name") not in ("LAB_E1", "LAB_E1_FORK") or \
+            save.get("save_slot_guid") != remembered.get("save_slot_guid") or \
+            save.get("slot_id") != remembered.get("slot_id"):
+        return False
+    if not _cmd_arm(remembered["armed_name"]):
+        return False
+    if not _cmd_start():
+        return False
+    _RESUME_SAMPLING = True
+    _emit(schema.make_record("session_checkpoint", telemetry_session_id=_TELEMETRY_SESSION_ID,
+                             wall_timestamp_ms=int(time.time() * 1000),
+                             monotonic_ns=time.perf_counter_ns(),
+                             checkpoint_reason="AUTOSTARTED"))
+    return True
+
+
 def _clear_resume_pending():
     global _RESUME_PENDING
     _RESUME_PENDING = False
@@ -487,10 +554,12 @@ def _supervise_sampling():
     game_stalled = (_LAST_SUPERVISE_S is not None and
                     now - _LAST_SUPERVISE_S > SAMPLER_STALL_SECONDS / 2)
     _LAST_SUPERVISE_S = now
-    if not _RESUME_SAMPLING:
-        return False
     zone = _current_zone()
     if zone is None:
+        return False
+    if _STATE == "UNARMED":
+        return _autostart_from_memory(zone)
+    if not _RESUME_SAMPLING:
         return False
     if _STATE == "ARMED":
         return _resume_sampling_in_zone() if _RESUME_PENDING else False
@@ -552,7 +621,10 @@ def _inbox_status():
                 motive_diag=observers.motive_diag(),
                 atlas=_atlas_progress(), tuned=_tuned_progress(),
                 preflight=_scan_progress(_PREFLIGHT), food=_scan_progress(_FOOD),
-                situation=_scan_progress(_SITUATION))
+                situation=_scan_progress(_SITUATION),
+                telemetry_dir=dict(zip(("bytes", "cap"), _telemetry_dir())),
+                autosample=_autosample_path() is not None and
+                os.path.exists(_autosample_path()))
 
 
 _IDLE_SCAN = {"state": "idle", "done": 0, "total": 0, "chunks": 0, "max_chunk_ms": 0,
@@ -1467,6 +1539,29 @@ def get_status():
     }
 
 
+def _telemetry_dir():
+    """(bytes the writer counts in the telemetry folder, its cap) or (None, None)."""
+    try:
+        return _WRITER._logical_directory_bytes, _WRITER.max_dir_bytes
+    except AttributeError:
+        return None, None
+
+
+def _warn_dir_fill():
+    """D48 (live 2026-10-05): the folder was at 121 of 200 MB and would have stopped
+    sampling after about two more hours of play without a word before it."""
+    global _DIR_WARNED
+    used, cap = _telemetry_dir()
+    if _DIR_WARNED or type(used) is not int or type(cap) is not int or used * 4 < cap * 3:
+        return False
+    _DIR_WARNED = True
+    return _emit(schema.make_record("session_checkpoint",
+                                    telemetry_session_id=_TELEMETRY_SESSION_ID,
+                                    wall_timestamp_ms=int(time.time() * 1000),
+                                    monotonic_ns=time.perf_counter_ns(),
+                                    checkpoint_reason="TELEMETRY_DIR_75"))
+
+
 def _writer_became_idle():
     global _WRITER_IDLE
     _WRITER_IDLE = True
@@ -1538,7 +1633,7 @@ def _note_calibrate_speed(row):
 def _cmd_arm(arm_name: str, _connection=None) -> bool:
     global _STATE, _ARMED_NAME, _ARMED_SNAPSHOT, _TELEMETRY_SESSION_ID
     global _WRITER, _WRITER_IDLE, _SESSION_OPENED, _MISUSE_COUNT
-    global _LAST_CAPTURE_COUNTERS, _CALIBRATE, _CAL_SPEED
+    global _LAST_CAPTURE_COUNTERS, _CALIBRATE, _CAL_SPEED, _DIR_WARNED
     if arm_name not in ("LAB_E1", "LAB_E1_FORK"):
         _MISUSE_COUNT += 1
         return False
@@ -1553,6 +1648,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
     _ARMED_SNAPSHOT = None
     _SESSION_OPENED = False
     _LAST_CAPTURE_COUNTERS = None
+    _DIR_WARNED = False
     for key in _COUNTERS:
         _COUNTERS[key] = 0
     try:
@@ -1735,9 +1831,16 @@ def _poll_tick_body():
     except observers.LabIdentityAmbiguous as error:
         if error.eligible_count == 0 and _RESUME_SAMPLING:
             # D41: a loading screen has no selectable body; wait it out (no rows).
+            # 2.15.2: a first load after a relaunch (D47) can take longer than a
+            # minute, so the wait has no end; one WAITING_FOR_BODY says it is waiting.
             _ZERO_BODY_TICKS += 1
-            if _ZERO_BODY_TICKS < ZONE_SETTLE_TICKS:
-                return
+            if _ZERO_BODY_TICKS == ZONE_SETTLE_TICKS:
+                _emit(schema.make_record(
+                    "session_checkpoint", telemetry_session_id=_TELEMETRY_SESSION_ID,
+                    wall_timestamp_ms=int(time.time() * 1000),
+                    monotonic_ns=time.perf_counter_ns(),
+                    checkpoint_reason="WAITING_FOR_BODY"))
+            return
         _emit(schema.make_record("guard_exhausted", telemetry_session_id=_TELEMETRY_SESSION_ID,
                                  wall_timestamp_ms=int(time.time() * 1000),
                                  monotonic_ns=time.perf_counter_ns(),
@@ -1798,6 +1901,7 @@ def _poll_tick_body():
             _cmd_stop()
             return
         _SESSION_OPENED = True
+        _remember_autosample()
     row = dict(row)
     row["attestation"] = schema.attestation(
         _ARMED_NAME, None, _ARMED_SNAPSHOT["guid"], _ARMED_SNAPSHOT["slot_id"],
@@ -1807,6 +1911,7 @@ def _poll_tick_body():
         return
     if row.get("event_kind") == "presence_snapshot":
         _note_calibrate_speed(row)
+    _warn_dir_fill()
     try:
         _E2.on_poll_row(row)
     except Exception as error:

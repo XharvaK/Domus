@@ -1,8 +1,9 @@
 """D38: finished sessions leave the probe's capped telemetry folder, verified."""
 import gzip
+import zipfile
 import os
 
-from domus_helper import telemetry_archive
+from domus_helper import outcomes, telemetry_archive
 from domus_helper.paths import Paths
 
 OLD = "ashley_e1_00000000-0000-4000-8000-000000000001.jsonl"
@@ -88,32 +89,70 @@ def test_archives_keep_the_sessions_age(tmp_path, monkeypatch):
     assert abs((folder / (OLD + ".gz")).stat().st_mtime - (NOW - 3 * 86400)) < 2
 
 
-def test_week_old_archives_with_records_are_deleted(tmp_path, monkeypatch):
-    """The User's rule (2026-10-05): raw telemetry goes after 7 days."""
-    paths, folder = _archived(tmp_path, monkeypatch, 8, records=True)
-    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7,
-                                         out=lambda line: None)
-    assert removed == 2 and not folder.exists()
+def test_week_old_archives_go_into_a_weekly_zip_and_are_kept(tmp_path, monkeypatch):
+    """The User's rule (2026-10-05): older than a week, packed by week, never deleted."""
+    paths, folder = _archived(tmp_path, monkeypatch, 8, records=False)
+    packed = telemetry_archive.weekly(paths=paths, now=NOW, after_days=7, out=lambda line: None)
+    assert packed == 2 and not folder.exists()
+    week = telemetry_archive.week_of(NOW - 8 * 86400)
+    bundle = tmp_path / "data" / "telemetry-archive" / "weekly" / ("%s.zip" % week)
+    with zipfile.ZipFile(bundle) as archive:
+        name = "%s/%s.gz" % (folder.name, OLD)
+        assert gzip.decompress(archive.read(name)) == b'{"a":1}\n'
 
 
-def test_younger_archives_stay(tmp_path, monkeypatch):
-    paths, folder = _archived(tmp_path, monkeypatch, 6, records=True)
-    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7,
-                                         out=lambda line: None)
-    assert removed == 0 and (folder / (OLD + ".gz")).exists()
+def test_the_outcome_builder_reads_sessions_in_weekly_zips(tmp_path, monkeypatch):
+    paths, _ = _archived(tmp_path, monkeypatch, 8, records=False)
+    telemetry_archive.weekly(paths=paths, now=NOW, after_days=7, out=lambda line: None)
+    found = outcomes.sessions(paths)
+    session = OLD[len("ashley_e1_"):-len(".jsonl")]
+    assert [part.name for part in found[session]] == [OLD + ".gz", OLD + ".1.gz"]
+    assert list(outcomes.read_rows(found[session])) == [{"a": 1}, {"a": 2}]
 
 
-def test_no_records_no_delete(tmp_path, monkeypatch):
-    """Her outcome records are built from these rows; they must exist first."""
-    paths, folder = _archived(tmp_path, monkeypatch, 30, records=False)
-    lines = []
-    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7, out=lines.append)
-    assert removed == 0 and (folder / (OLD + ".gz")).exists()
-    assert lines[0].startswith("keep ")
+def test_a_second_session_joins_the_same_week(tmp_path, monkeypatch):
+    paths, first = _archived(tmp_path, monkeypatch, 8, records=False)
+    other = first.parent / "ashley_e1_00000000-0000-4000-8000-000000000003"
+    other.mkdir()
+    gz = other / "ashley_e1_00000000-0000-4000-8000-000000000003.jsonl.gz"
+    gz.write_bytes(gzip.compress(b'{"c":1}\n'))
+    os.utime(gz, (NOW - 8 * 86400, NOW - 8 * 86400))
+    assert telemetry_archive.weekly(paths=paths, now=NOW, after_days=7,
+                                    out=lambda line: None) == 3
+    zips = list((first.parent / "weekly").glob("*.zip"))
+    assert len(zips) == 1
+    with zipfile.ZipFile(zips[0]) as archive:
+        assert len(archive.namelist()) == 3
 
 
-def test_dry_run_deletes_nothing(tmp_path, monkeypatch):
-    paths, folder = _archived(tmp_path, monkeypatch, 8, records=True)
-    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7, dry_run=True,
-                                         out=lambda line: None)
-    assert removed == 2 and (folder / (OLD + ".gz")).exists()
+def test_younger_archives_stay_loose(tmp_path, monkeypatch):
+    paths, folder = _archived(tmp_path, monkeypatch, 6, records=False)
+    assert telemetry_archive.weekly(paths=paths, now=NOW, after_days=7,
+                                    out=lambda line: None) == 0
+    assert (folder / (OLD + ".gz")).exists()
+
+
+def test_a_failed_check_keeps_the_loose_copy(tmp_path, monkeypatch):
+    paths, folder = _archived(tmp_path, monkeypatch, 8, records=False)
+    real = telemetry_archive._digest
+    calls = []
+
+    def flaky(handle):
+        calls.append(1)
+        return "bad" if len(calls) == 2 else real(handle)
+
+    monkeypatch.setattr(telemetry_archive, "_digest", flaky)
+    try:
+        telemetry_archive.weekly(paths=paths, now=NOW, after_days=7, out=lambda line: None)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("verification failure must raise")
+    assert (folder / (OLD + ".gz")).exists()
+
+
+def test_dry_run_moves_nothing(tmp_path, monkeypatch):
+    paths, folder = _archived(tmp_path, monkeypatch, 8, records=False)
+    assert telemetry_archive.weekly(paths=paths, now=NOW, after_days=7, dry_run=True,
+                                    out=lambda line: None) == 2
+    assert (folder / (OLD + ".gz")).exists()

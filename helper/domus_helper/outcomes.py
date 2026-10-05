@@ -29,9 +29,11 @@ Design: _Internal/papers/DOMUS_LIVED_WORLD_DESIGN_v0.2.md §7.1-7.2.
     python -m domus_helper.outcomes --all --write
 """
 import argparse
+import contextlib
 import gzip
 import json
 import re
+import zipfile
 from pathlib import Path
 
 from .paths import Paths
@@ -377,6 +379,70 @@ def acts(rows, session=None):
     return records
 
 
+def _answered_by(answer, auto_respond):
+    """Who closed a pop-up. Until she can answer herself (E4), a chosen answer on a
+    dialog the game would not answer by itself came from the User at the controls
+    (the User's ruling 2026-10-05: hers to answer, the User only as a fallback)."""
+    if answer in (None, "closed", "no_response"):
+        return "none"
+    return "owner_or_game" if auto_respond else "owner"
+
+
+def questions(rows, session=None, after_samples=5):
+    """2.15.2: one record per pop-up the game showed (schema 9 `dialogs`): what it
+    asked (string keys), the choices it offered, when it was asked and closed, the
+    answer the game stored, who answered, and what changed for her in the samples
+    after (traits gained or lost, skills, money, moodlets)."""
+    samples, opened, records = [], {}, []
+    for row in rows:
+        if row.get("event_kind") != "presence_snapshot":
+            continue
+        samples.append(_sample(row))
+        index = len(samples) - 1
+        dialogs = row.get("dialogs") if (row.get("schema_version") or 0) >= 9 else None
+        if not isinstance(dialogs, dict):
+            continue
+        for item in dialogs.get("open") or []:
+            if not isinstance(item, dict) or item.get("dialog_id") is None:
+                continue
+            seen = opened.setdefault(item["dialog_id"], {"first": index, "entry": item})
+            seen["last"], seen["entry"] = index, item
+        for item in dialogs.get("closed") or []:
+            if not isinstance(item, dict):
+                continue
+            seen = opened.pop(item.get("dialog_id"), None)
+            entry = (seen or {}).get("entry") or item
+            records.append({"_first": (seen or {}).get("first", index), "_closed": index,
+                            "entry": entry, "answer": item.get("response")})
+    for key, seen in opened.items():
+        records.append({"_first": seen["first"], "_closed": None, "entry": seen["entry"],
+                        "answer": None})
+    built = []
+    for item in records:
+        entry, closed = item["entry"], item["_closed"]
+        record = {
+            "kind": "question", "v": OUTCOME_VERSION,
+            "question_id": "%s:dialog:%s" % ((session or "session")[:8], entry["dialog_id"]),
+            "session": session,
+            "dialog": {"kind": entry.get("kind"), "title_key": entry.get("title_key"),
+                       "text_key": entry.get("text_key"), "owner_id": entry.get("owner_id")},
+            "choices": entry.get("responses") or [],
+            "asked": samples[item["_first"]]["calendar"],
+            "closed": None if closed is None else samples[closed]["calendar"],
+            "answer": item["answer"],
+            "answered_by": None if closed is None else
+            _answered_by(item["answer"], entry.get("auto_respond") is True)}
+        if closed is not None:
+            before = samples[max(closed - 1, 0)]
+            after = samples[min(closed + after_samples, len(samples) - 1)]
+            record["changed"] = {"self": _self_changes(before["self"], after["self"]),
+                                 "moodlets": _moodlet_diff(before["moodlets"],
+                                                           after["moodlets"])}
+        built.append(record)
+    built.sort(key=lambda record: record["question_id"])
+    return built
+
+
 def _nest_socials(records):
     """A social runs inside the chat aimed at the same Sim that is running then."""
     for social in records:
@@ -489,7 +555,26 @@ def day_frames(records):
     return frames
 
 
+class _ZipMember(object):
+    """A session segment kept in a weekly zip (telemetry_archive.weekly)."""
+
+    def __init__(self, bundle, member):
+        self.bundle, self.member = Path(bundle), member
+        self.name = member.rsplit("/", 1)[-1]
+
+    def stat(self):
+        return self.bundle.stat()
+
+    @contextlib.contextmanager
+    def open(self):
+        with zipfile.ZipFile(self.bundle) as archive, archive.open(self.member) as raw, \
+                gzip.GzipFile(fileobj=raw) as handle:
+            yield handle
+
+
 def _open(path):
+    if isinstance(path, _ZipMember):
+        return path.open()
     path = Path(path)
     return gzip.open(path, "rb") if path.suffix == ".gz" else path.open("rb")
 
@@ -507,7 +592,7 @@ def read_rows(files):
 
 
 def sessions(paths):
-    """session id -> ordered segment files, live and archived (S0 telemetry archive)."""
+    """session id -> ordered segment files: live, archived, and in weekly zips."""
     found = {}
     places = [paths.telemetry, paths.data_dir / "telemetry-archive"]
     for place in places:
@@ -518,6 +603,15 @@ def sessions(paths):
             if match is None or path.name.endswith(".partial"):
                 continue
             found.setdefault(match.group(1), {})[int(match.group(2) or 0)] = path
+    weekly = paths.data_dir / "telemetry-archive" / "weekly"
+    for bundle in sorted(weekly.glob("*.zip")) if weekly.is_dir() else ():
+        with zipfile.ZipFile(bundle) as archive:
+            members = archive.namelist()
+        for member in members:
+            match = _SESSION.match(member.rsplit("/", 1)[-1])
+            if match is not None:
+                found.setdefault(match.group(1), {}).setdefault(
+                    int(match.group(2) or 0), _ZipMember(bundle, member))
     return {session: [segments[index] for index in sorted(segments)]
             for session, segments in found.items()}
 
@@ -540,6 +634,7 @@ def main(argv=None):
     total = sleeps = 0
     for session in sorted(chosen):
         records = acts(read_rows(chosen[session]), session)
+        asked = questions(read_rows(chosen[session]), session)
         onsets = sleep_onsets(records)
         total += len(records)
         sleeps += len(onsets)
@@ -547,7 +642,7 @@ def main(argv=None):
             target = paths.data_dir / "outcomes" / ("%s.jsonl" % session)
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("w", encoding="utf-8") as handle:
-                for record in records:
+                for record in records + asked:
                     handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
         print("%s acts=%d sleep_onsets=%s" % (session[:8], len(records),
                                               [record["span"]["start"] for record in onsets]))

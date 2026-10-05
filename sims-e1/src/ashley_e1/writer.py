@@ -689,6 +689,33 @@ def append_atlas_line(path, payload):
             handle.write(b"\n")
 
 
+def write_small_json(path, payload):
+    """D47: the remembered start (autosample.json), written atomically. True on success."""
+    try:
+        with open(path + ".tmp", "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        os.replace(path + ".tmp", path)
+    except (OSError, IOError, ValueError, TypeError):
+        return False
+    return True
+
+
+def read_small_json(path):
+    """The parsed JSON at path, or None when missing or unreadable."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, IOError, ValueError, TypeError):
+        return None
+
+
+def remove_file(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def write_command_reply(path, payload):
     """Publish a complete reply on the local filesystem."""
     temporary = path + '.tmp'
