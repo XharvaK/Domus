@@ -163,28 +163,32 @@ class Bridge:
             self._theta = float(theta)
 
     def _advance_thalamus(self, wall_ms):
+        # D50: one clock for the thalamus, the wall clock. Rows carry the wall time they were
+        # written; the tick carries now. The game's monotonic clock restarts at every launch
+        # and the bridge's own (uptime) at every boot, and the thalamus never moves time
+        # back, so either one froze it after a restart (live 2026-10-05: arousal 43 against
+        # threshold 1 and no fire).
         self._load_thalamus()
         for rowid, record in self.spool.rows_after(self._last_rowid):
             percepts = self._extractor.step(record)
-            mono = record.get("monotonic_ns") if isinstance(record, dict) else 0
-            mono_ms = int(mono) // 1_000_000 if type(mono) is int else 0
+            written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
+            clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
             self._thalamus, decision = decide(
-                self._thalamus, percepts, mono_ms, self._params, self._context)
+                self._thalamus, percepts, clock_ms, self._params, self._context)
             self._theta = decision.theta
             self._last_row = record
             self._last_rowid = rowid
             seq = record.get("written_sequence") if isinstance(record, dict) else None
-            self._on_decision(decision, percepts, wall_ms, mono_ms, seq if type(seq) is int else None)
-        mono_ms = self._mono()
+            self._on_decision(decision, percepts, wall_ms, clock_ms, seq if type(seq) is int else None)
         self._thalamus, decision = decide(
-            self._thalamus, [], mono_ms, self._params, self._context)
+            self._thalamus, [], wall_ms, self._params, self._context)
         self._theta = decision.theta
-        self._on_decision(decision, [], wall_ms, mono_ms, None)
+        self._on_decision(decision, [], wall_ms, wall_ms, None)
         lineage = self._extractor.lineage_id
-        self._thalamus = prune(self._thalamus, mono_ms, self._params, lineage)
+        self._thalamus = prune(self._thalamus, wall_ms, self._params, lineage)
         self._persist_thalamus()
 
-    def _on_decision(self, decision, percepts, wall_ms, mono_ms, row_seq):
+    def _on_decision(self, decision, percepts, wall_ms, clock_ms, row_seq):
         if not percepts and not decision.fired:
             return
         enqueued = False
@@ -217,7 +221,7 @@ class Bridge:
                         self._enqueued += 1
         self._log.write({
             "wall_ms": wall_ms,
-            "mono_ms": mono_ms,
+            "clock_ms": clock_ms,
             "row_seq": row_seq,
             "fired": decision.fired,
             "reason": decision.reason,
