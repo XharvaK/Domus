@@ -48,6 +48,7 @@ except ImportError:
     CommandRestrictionFlags = None
     register = None
 
+from . import act_menu
 from . import atlas
 from . import food
 from . import preflight
@@ -121,6 +122,14 @@ _FOOD = None
 _FOOD_HANDLE = None
 _SITUATION_ALARM_OWNER = _ProbeAlarmOwner()
 _SITUATION = None
+# 8f (2.16.0): the menu of what she can do near her body, rebuilt while sampling.
+_MENU = None
+_MENU_ZONE = None
+_MENU_REV = 0
+_MENU_LAST = None
+_MENU_STARTED_S = None
+_MENU_ROOM = None
+_MENU_FAILURES = 0
 _SITUATION_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
@@ -166,7 +175,7 @@ _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
-                     "preflight", "food_scan")
+                     "preflight", "food_scan", "act")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -294,6 +303,11 @@ def _dispatch_e2_trial(*args, _session_id=0, **kwargs):
     if not (1 <= len(object_id) <= 20 and 1 <= len(guid64) <= 20):
         return False
     return _E2.cmd_trial(object_id, guid64, _session_id)
+
+
+def _dispatch_e2_act(act_id, object_id, guid64, _session_id=0):
+    """8f: Ashley's chosen action (helper inbox only; cmdbox checked the shapes)."""
+    return _E2.cmd_act(act_id, object_id, guid64, _session_id)
 
 
 class _InboxReply:
@@ -673,6 +687,9 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_e2_sit(_E2.last_prepared_token, _session_id=connection)
     if name == 'trial':
         return _dispatch_e2_trial(args['object_id'], args['guid64'], _session_id=connection)
+    if name == 'act':
+        return _dispatch_e2_act(args['act_id'], args['object_id'], args['guid64'],
+                                _session_id=connection)
     if name == 'atlas_dump':
         return _dispatch_atlas_dump(connection)
     if name == 'tuned_scan':
@@ -1670,6 +1687,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
     _WRITER_IDLE = False
     _STATE = "ARMED"
     _E2.on_arm()
+    _menu_reset()
     _E2.storm.clear()
     return True
 
@@ -1728,6 +1746,7 @@ def _cmd_disarm(_connection=None) -> bool:
         return False
     _set_writer_sampling(False)
     _E2.on_disarm()
+    _menu_reset()
     close_reason = "DISARM_CLEAN" if _SESSION_OPENED else "ARMED_NEVER_STARTED"
     if _WRITER is not None:
         _WRITER.signal_close(close_reason)
@@ -1793,6 +1812,117 @@ def _session_open_from(row):
     )
 
 
+def _menu_reset(keep_last=False):
+    global _MENU, _MENU_ZONE, _MENU_STARTED_S, _MENU_LAST, _MENU_ROOM
+    _MENU = None
+    _MENU_ZONE = None
+    _MENU_STARTED_S = None
+    if not keep_last:
+        _MENU_LAST = None
+        _MENU_ROOM = None
+
+
+def _menu_jobs(row):
+    """8f: (jobs, room) for a new menu build: user-directed, not excluded offers of the
+    objects near her body, nearest first. Plain reads only; the runner tests. Jobs are
+    None when the lot or her body cannot be read (no menu, rather than an empty one)."""
+    zone = row.get("zone") or {}
+    body_position = zone.get("position")
+    body_room = zone.get("room")
+    objects, code = _lot_snapshot()
+    if code is not None:
+        return None, body_room
+    sim_info, sim = observers.select_lab_body(
+        _services_module.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+    del sim_info
+    if sim is None:
+        return None, body_room
+    context = e2_actuator.build_context(sim)
+    items = []
+    for obj in objects:
+        try:
+            if obj.is_sim is True:
+                continue
+        except Exception:
+            continue
+        object_id = situation._int_id(tuned._plain(obj, "id", True))
+        if object_id is None or object_id in e2_control.EXCLUDED_OBJECT_IDS:
+            continue
+        position = observers._position(obj)
+        distance = observers._distance(position, body_position)
+        # The room lookup is only worth it for objects that could share her room.
+        room = observers._room(obj, position) if distance is not None and distance <= 20.0 else None
+        items.append({
+            "object_id": object_id, "obj": obj,
+            "distance_m": distance,
+            "same_room": (room is not None and body_room is not None and room == body_room
+                          and room != "0"),
+        })
+    jobs = []
+    for item in act_menu.near(items):
+        obj = item["obj"]
+        try:
+            definition_id = situation._int_id(obj.definition.id)
+        except Exception:
+            definition_id = None
+        klass = situation._name(type(obj)) or ""
+        count = 0
+        for affordance in _lot_affordances(obj, context):
+            if count >= act_menu.CANDIDATE_ACTS:
+                break
+            guid = tuned._class_plain(affordance, "guid64")
+            if type(guid) is not int:
+                continue
+            if e2_actuator.excluded(affordance) is not None or not e2_actuator.user_directed(affordance):
+                continue
+            try:
+                name = affordance.__name__
+            except Exception:
+                name = ""
+            jobs.append({
+                "object_id": item["object_id"], "definition_id": definition_id, "class": klass,
+                "distance_m": item["distance_m"], "same_room": item["same_room"],
+                "guid64": str(guid), "name": name if type(name) is str else "",
+                "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
+                "obj": obj, "affordance": affordance, "sim": sim, "context": context,
+            })
+            count += 1
+    return jobs, body_room
+
+
+def _menu_test(job):
+    ok, _reason = e2_actuator.preflight_test(job["sim"], job["obj"], job["affordance"], job["context"])
+    return bool(ok)
+
+
+def _menu_tick(row):
+    """8f: one small step of the menu each sampling tick. A finished build is written
+    as an act_menu row when it differs from the last one; a new build starts when there
+    is none, her room changed, or REBUILD_S passed."""
+    global _MENU, _MENU_ZONE, _MENU_REV, _MENU_LAST, _MENU_STARTED_S, _MENU_ROOM
+    now = _now_s()
+    room = (row.get("zone") or {}).get("room")
+    if _MENU is not None and not _MENU.done:
+        _MENU.step()
+    if _MENU is not None and _MENU.done:
+        build, zone = _MENU, _MENU_ZONE
+        _MENU = None
+        if zone is _current_zone():
+            payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
+            if not act_menu.same_menu(payload, _MENU_LAST):
+                if _E2._event("act_menu", payload):
+                    _MENU_REV += 1
+                    _MENU_LAST = payload
+    if _MENU is None and (_MENU_STARTED_S is None or room != _MENU_ROOM or
+                          now - _MENU_STARTED_S >= act_menu.REBUILD_S):
+        jobs, body_room = _menu_jobs(row)
+        _MENU_STARTED_S = now
+        _MENU_ROOM = body_room
+        if jobs is not None:
+            _MENU = act_menu.MenuBuild(jobs, _menu_test)
+            _MENU_ZONE = _current_zone()
+
+
 def _poll_tick(alarm_handle=None):
     global _POLL_BUSY, _LAST_TICK_S
     if _STATE != "SAMPLING":
@@ -1823,7 +1953,7 @@ def _poll_tick(alarm_handle=None):
 
 
 def _poll_tick_body():
-    global _SESSION_OPENED, _LAST_CAPTURE_COUNTERS, _ZERO_BODY_TICKS
+    global _SESSION_OPENED, _LAST_CAPTURE_COUNTERS, _ZERO_BODY_TICKS, _MENU_FAILURES
     try:
         row = observers.poll_once(_TELEMETRY_SESSION_ID, _ARMED_NAME)
     except observers.SelectabilityReadFailure:
@@ -1925,3 +2055,10 @@ def _poll_tick_body():
             wall_timestamp_ms=int(time.time() * 1000),
             monotonic_ns=time.perf_counter_ns(),
             reason="E2_POLL_FAILURE:%s" % type(error).__name__))
+    if row.get("event_kind") == "presence_snapshot":
+        try:
+            _menu_tick(row)
+        except Exception:
+            # The menu is a sense, never a reason to stop sampling; the next build retries.
+            _MENU_FAILURES += 1
+            _menu_reset(keep_last=True)

@@ -146,6 +146,15 @@ def push_affordance(sim, obj, affordance, context):
     return interaction, None, None
 
 
+def user_directed(affordance):
+    """Read: a player could choose this affordance (8f: her menu and her acts)."""
+    try:
+        value = affordance.allow_user_directed
+    except AttributeError:
+        return False
+    return value is True
+
+
 def push_sit(sim, obj, affordance, context):
     """Act: push exactly one admitted sit. Returns (interaction_or_None, detail)."""
     interaction, detail, _kind = push_affordance(sim, obj, affordance, context)

@@ -83,6 +83,8 @@ class Extractor:
             percepts.append(self._gap(session))
         if kind == "lineage_event":
             percepts.append(self._lineage(row))
+        if kind == "act_event":
+            percepts.extend(self._act(row))
         if kind in ("presence_snapshot", "session_open"):
             percepts.extend(self._snapshot(row))
         if type(seq) is int:
@@ -108,6 +110,18 @@ class Extractor:
         self._open = {}
         self._presence = None
         self._social = set()
+
+    def _act(self, row):
+        """8f: her chosen act was refused, or nobody can tell what became of it. Wakes her;
+        a pushed act's start and end are already seen as her interactions."""
+        e2 = row.get("e2") or {}
+        phase = e2.get("phase")
+        if phase not in ("REJECTED", "UNKNOWN"):
+            return []
+        return [Percept("interaction", str(e2.get("act_id") or ""), str(e2.get("guid64") or ""),
+                        "act_" + phase.lower(), urgency="wake", lineage=self.lineage_id,
+                        facts=_facts(None, (("code", e2.get("code")), ("detail", e2.get("detail")),
+                                            ("tuning_name", e2.get("tuning_name")), ("origin", "her_choice"))))]
 
     def _gap(self, session):
         self.needs.reset()

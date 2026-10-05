@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 9
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v9"
-PROBE_VERSION = "2.15.3"
+OBSERVATION_SCHEMA_VERSION = 10
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v10"
+PROBE_VERSION = "2.16.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -55,8 +55,11 @@ EVENT_KINDS = (
     "speed_event",
     "lineage_event",
     "command_event",
+    "act_event",
+    "act_menu",
 )
-E2_EVENT_KINDS = ("experiment_event", "speed_event", "lineage_event", "command_event")
+E2_EVENT_KINDS = ("experiment_event", "speed_event", "lineage_event", "command_event",
+                  "act_event", "act_menu")
 E2_PAYLOAD_KEYS = {
     "command_event": ("id", "issuer", "command", "status", "code"),
     "experiment_event": ("phase", "code", "experiment_id", "object_id", "token",
@@ -65,7 +68,16 @@ E2_PAYLOAD_KEYS = {
     "speed_event": ("phase", "code", "detail"),
     "lineage_event": ("record", "guid", "slot_id", "sim_id", "ticks",
                       "loaded_from_slot_id", "lineage_class", "session_uuid"),
+    # 2.16.0 (schema 10): Ashley's own acts (8f) and what she can do near her body.
+    "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
+                  "tuning_name", "finishing_type", "detail"),
+    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms"),
 }
+ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
+MENU_MAX_OBJECTS = 12
+MENU_MAX_ACTS = 8
+MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "acts")
+MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
     "ADMIT_REJECT", "PUSHED", "PUSH_FAILED", "CLAIM", "FINISHED_CALLBACK",
@@ -74,7 +86,7 @@ EXPERIMENT_PHASES = (
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
-            "calibrate", "trial", "preflight", "food_scan", "situation_scan")
+            "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act")
 
 
 def _command_id(value):
@@ -536,6 +548,22 @@ def _validate_e2(row):
             _require(type(ambiguous) is list and len(ambiguous) <= 16, "experiment ambiguous")
             for item in ambiguous:
                 bounded_string(item, 64, "experiment ambiguous", False)
+    elif kind == "act_event":
+        _require(_command_id(payload["act_id"]), "act id")
+        _require(payload["phase"] in ACT_PHASES, "act phase")
+        for key in ("code", "object_id", "guid64", "interaction_id"):
+            if payload[key] is not None:
+                _require(isinstance(payload[key], str), "act %s" % key)
+                string_id(payload[key], "act %s" % key)
+        if payload["tuning_name"] is not None:
+            bounded_string(payload["tuning_name"], 128, "act tuning_name", False)
+        if payload["finishing_type"] is not None:
+            bounded_string(payload["finishing_type"], MAX_DISPLAY_TEXT_LENGTH,
+                           "act finishing_type", False)
+        if payload["detail"] is not None:
+            bounded_string(payload["detail"], MAX_DETAIL_LENGTH, "act detail", False)
+    elif kind == "act_menu":
+        _validate_menu(payload)
     elif kind == "speed_event":
         _require(payload["phase"] in SPEED_PHASES, "speed phase")
         for key in ("code", "detail"):
@@ -550,6 +578,38 @@ def _validate_e2(row):
                 string_id(payload[key], "lineage %s" % key)
         if payload["ticks"] is not None:
             _require(type(payload["ticks"]) is int, "lineage ticks")
+
+
+def _validate_menu(payload):
+    _require(type(payload["menu_rev"]) is int and payload["menu_rev"] >= 0, "menu rev")
+    if payload["room"] is not None:
+        _require(isinstance(payload["room"], str), "menu room")
+        string_id(payload["room"], "menu room")
+    for key in ("tested", "refused"):
+        _require(type(payload[key]) is int and payload[key] >= 0, "menu %s" % key)
+    _number_or_none(payload["build_ms"], "menu build_ms")
+    objects = payload["objects"]
+    _require(isinstance(objects, list) and len(objects) <= MENU_MAX_OBJECTS, "menu objects")
+    for item in objects:
+        _require(isinstance(item, dict) and set(item) == set(MENU_OBJECT_KEYS), "menu object shape")
+        _require(isinstance(item["object_id"], str), "menu object_id")
+        string_id(item["object_id"], "menu object_id")
+        if item["definition_id"] is not None:
+            _require(isinstance(item["definition_id"], str), "menu definition_id")
+            string_id(item["definition_id"], "menu definition_id")
+        bounded_string(item["class"], 96, "menu class", False)
+        _number_or_none(item["distance_m"], "menu distance_m")
+        _require(item["same_room"] in (True, False, None), "menu same_room")
+        acts = item["acts"]
+        _require(isinstance(acts, list) and 1 <= len(acts) <= MENU_MAX_ACTS, "menu acts")
+        for act in acts:
+            _require(isinstance(act, dict) and set(act) == set(MENU_ACT_KEYS), "menu act shape")
+            _require(isinstance(act["guid64"], str), "menu guid64")
+            string_id(act["guid64"], "menu guid64")
+            bounded_string(act["name"], 128, "menu act name", False)
+            if act["text_key"] is not None:
+                _require(isinstance(act["text_key"], str), "menu text_key")
+                string_id(act["text_key"], "menu text_key")
 
 
 def _validate_motives(value):

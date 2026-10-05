@@ -53,6 +53,21 @@ class AshleyClient:
             return TransportResult(kind, None)
         return self._post("/domus/observation", body, heartbeat=False)
 
+    def sync_acts(self, body):
+        """8f: one act round trip. The parsed 200 response, or None (nothing applied)."""
+        raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        request = urllib.request.Request(
+            self._url + "/domus/acts/sync", data=raw, method="POST",
+            headers={"Content-Type": "application/json", "X-Domus-Token": self._token})
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout_s) as response:
+                if response.status != 200:
+                    return None
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) and payload.get("status") == "ok" else None
+
     def _post(self, path, body, *, heartbeat):
         raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(

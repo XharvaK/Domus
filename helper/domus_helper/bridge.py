@@ -4,7 +4,9 @@ import json
 import time
 import uuid
 
+from . import commands
 from . import fingerprints as fingerprint_reader
+from .acts import ActCourier, options as act_options
 from .attachment import AttachmentMonitor
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -79,6 +81,12 @@ class Bridge:
         self._last_fire_reason = None
         self._last_fire_wall_ms = None
         self._theta = self._params.theta0
+        # 8f: the probe's newest menu of what she can do ({session, payload}), and the courier
+        # that carries her requested acts to the probe (only when Ashley is reachable).
+        self._menu = None
+        self._catalog = None
+        self._acts = None if self.client is None else ActCourier(
+            self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
         if scorer is _AUTO:
             self.scorer, self._scorer_note = load_scorer()
         else:
@@ -109,6 +117,21 @@ class Bridge:
             self._last_heartbeat_ms = now
         if self.client is not None:
             self.spool.flush(self.client, now)
+        if self.client is not None and self._acts is not None and hasattr(self.client, "sync_acts"):
+            self._acts.tick(self.client, self.helper_session, now, self._state == "attached")
+
+    def _options(self, row):
+        """8f: her options from the newest menu of this telemetry session, or none."""
+        menu = self._menu
+        if not isinstance(menu, dict) or not isinstance(row, dict) or menu.get("session") != row.get("telemetry_session_id"):
+            return []
+        if self._catalog is None:
+            try:
+                from .catalog import Catalog
+                self._catalog = Catalog(self.paths)
+            except Exception:
+                self._catalog = False
+        return act_options(menu.get("payload"), self._resolve_text, self._catalog or None)
 
     def status(self):
         if self.client is None and self._disabled:
@@ -153,6 +176,8 @@ class Bridge:
         self._obs_seq = int(self.spool.get_kv("obs_seq") or 0)
         raw = self.spool.get_kv("last_row")
         self._last_row = json.loads(raw) if raw else None
+        raw = self.spool.get_kv("act_menu")
+        self._menu = json.loads(raw) if raw else None
         self._fires = int(self.spool.get_kv("thalamus_fires") or 0)
         self._enqueued = int(self.spool.get_kv("thalamus_enqueued") or 0)
         self._last_fire_reason = self.spool.get_kv("thalamus_last_reason") or None
@@ -170,6 +195,11 @@ class Bridge:
         # threshold 1 and no fire).
         self._load_thalamus()
         for rowid, record in self.spool.rows_after(self._last_rowid):
+            kind = record.get("event_kind") if isinstance(record, dict) else None
+            if kind == "act_menu" and isinstance(record.get("e2"), dict):
+                self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"]}
+            elif kind == "act_event" and self._acts is not None:
+                self._acts.on_row(record)
             percepts = self._extractor.step(record)
             written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
             clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
@@ -207,6 +237,7 @@ class Bridge:
                     "lineage_class": self._extractor.lineage_class,
                     "row": self._last_row,
                     "resolve_text": self._resolve_text,
+                    "options": self._options(self._last_row),
                 })
                 scorer = run_scorer(self.scorer, json.loads(json.dumps(obs)))
                 if self.client is not None and not self._telemetry_only:
@@ -240,6 +271,7 @@ class Bridge:
             "last_rowid": str(self._last_rowid),
             "obs_seq": str(self._obs_seq),
             "last_row": json.dumps(self._last_row),
+            "act_menu": json.dumps(self._menu),
             "thalamus_fires": str(self._fires),
             "thalamus_enqueued": str(self._enqueued),
             "thalamus_last_reason": "" if self._last_fire_reason is None else self._last_fire_reason,
