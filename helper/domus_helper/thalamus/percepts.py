@@ -74,6 +74,8 @@ class Extractor:
         kind = row.get("event_kind")
         session = row.get("telemetry_session_id")
         seq = row.get("written_sequence")
+        if kind == "session_open":
+            self._new_session(row)
         if self._seen_row and kind == "session_open":
             percepts.append(self._gap(session))
         elif (self._seq is not None and type(seq) is int and session == self._session
@@ -81,6 +83,8 @@ class Extractor:
             percepts.append(self._gap(session))
         if kind == "lineage_event":
             percepts.append(self._lineage(row))
+        if kind == "act_event":
+            percepts.extend(self._act(row))
         if kind in ("presence_snapshot", "session_open"):
             percepts.extend(self._snapshot(row))
         if type(seq) is int:
@@ -89,6 +93,35 @@ class Extractor:
         if kind is not None:
             self._seen_row = True
         return percepts
+
+    def _new_session(self, row):
+        """D51 (live 2026-10-05): a new session may be another save. Its first observation
+        carried the old save's world, and its first snapshot was compared with the old
+        save's last row (four lab Sims "left" her new home). The save comes from
+        session_open itself; nothing is compared across sessions."""
+        save = row.get("save") or {}
+        slot, guid = save.get("slot_id"), save.get("save_slot_guid")
+        if slot is not None and guid is not None and (str(slot), str(guid)) != (str(self.slot_id), str(self.guid)):
+            self.slot_id, self.guid = slot, guid
+            self.lineage_class = ""
+            if self.lineage_id:  # a known lineage is left; a first one waits for its lineage event
+                self.lineage_id = f"{slot}:{guid}"
+        self._prev = None
+        self._open = {}
+        self._presence = None
+        self._social = set()
+
+    def _act(self, row):
+        """8f: her chosen act was refused, or nobody can tell what became of it. Wakes her;
+        a pushed act's start and end are already seen as her interactions."""
+        e2 = row.get("e2") or {}
+        phase = e2.get("phase")
+        if phase not in ("REJECTED", "UNKNOWN"):
+            return []
+        return [Percept("interaction", str(e2.get("act_id") or ""), str(e2.get("guid64") or ""),
+                        "act_" + phase.lower(), urgency="wake", lineage=self.lineage_id,
+                        facts=_facts(None, (("code", e2.get("code")), ("detail", e2.get("detail")),
+                                            ("tuning_name", e2.get("tuning_name")), ("origin", "her_choice"))))]
 
     def _gap(self, session):
         self.needs.reset()

@@ -161,6 +161,7 @@ class E2Control:
         self.experiment_counter = 0
         self.storm = e2_trial.StormCounter()
         self.presence = []
+        self.act_ids = set()
 
     def available(self):
         return (e2_actuator is not None and observers is not None and
@@ -510,6 +511,116 @@ class E2Control:
                                    code=code[:64])
             self._say(connection, "TRIAL_REJECT %s" % code)
             return False
+
+    # ------------------------------------------------------------ acts (8f)
+    def _act_event(self, act_id, phase, **payload):
+        payload["act_id"] = act_id
+        payload["phase"] = phase
+        return self._event("act_event", payload)
+
+    def _act_check(self, object_id, guid64):
+        """None when her chosen action may be pushed now, else (code, detail).
+
+        Unlike a trial there is no lab-only gate, no busy gate (it queues like a
+        player's click) and no distress gate (her body's reflexes still act): she
+        chose it. Lineage refuses only a different body."""
+        if self._state() != "SAMPLING":
+            return ("NOT_SAMPLING", None), None
+        if self.lineage_class == e2_lineage.BODY_MISMATCH:
+            return ("BODY_MISMATCH", None), None
+        sim_info, sim = observers.select_lab_body(
+            services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+        if sim is None:
+            return ("BODY_UNAVAILABLE", None), None
+        if self.designated_sim_id is not None and str(sim_info.id) != self.designated_sim_id:
+            return ("BODY_MISMATCH", None), None
+        if object_id in EXCLUDED_OBJECT_IDS:
+            return (e2_admission.OBJECT_EXCLUDED, None), None
+        obj = e2_actuator.find_object(object_id)
+        if obj is None:
+            return ("NO_OBJECT", None), None
+        context = e2_actuator.build_context(sim)
+        offers = e2_actuator.offers_for(obj, context, guid64)
+        if not offers:
+            return ("NOT_OFFERED", None), None
+        affordance = offers[0]
+        excluded = e2_actuator.excluded(affordance)
+        if excluded is not None:
+            return ("EXCLUDED", excluded), None
+        if not e2_actuator.user_directed(affordance):
+            return ("NOT_USER_DIRECTED", None), None
+        ok, reason = e2_actuator.preflight_test(sim, obj, affordance, context)
+        if not ok:
+            return ("GAME_REFUSED", reason), None
+        return None, (sim, obj, affordance, context)
+
+    def cmd_act(self, act_id, object_id, guid64, connection):
+        """8f: push exactly the game action Ashley chose; never another, never twice.
+
+        ACCEPTED is written before the push, so a failure in between leaves
+        dispatched-but-unknown evidence (UNKNOWN), never nothing."""
+        if act_id in self.act_ids:
+            self._say(connection, "ACT_REJECT DUPLICATE")
+            return False
+        self.act_ids.add(act_id)
+        base = {"object_id": object_id, "guid64": guid64}
+        if not self.available():
+            self._act_event(act_id, "REJECTED", code="E2_UNAVAILABLE", **base)
+            self._say(connection, "ACT_REJECT E2_UNAVAILABLE")
+            return False
+        accepted = False
+        try:
+            refusal, bound = self._act_check(object_id, guid64)
+            if refusal is not None:
+                code, detail = refusal
+                self._act_event(act_id, "REJECTED", code=code,
+                                detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH],
+                                **base)
+                self._say(connection, "ACT_REJECT %s" % code)
+                return False
+            sim, obj, affordance, context = bound
+            tuning_name = _tuning_name(affordance)
+            self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, **base)
+            accepted = True
+            interaction, detail, kind = e2_actuator.push_affordance(sim, obj, affordance, context)
+            if interaction is None:
+                code = "PUSH_REFUSED" if kind == "refused" else "PUSH_FAILED"
+                self._act_event(act_id, "REJECTED", code=code, tuning_name=tuning_name,
+                                detail=(detail or "")[:schema.MAX_DETAIL_LENGTH] or None, **base)
+                self._say(connection, "ACT_REJECT %s" % code)
+                return False
+            interaction_id = str(interaction.id)
+            self._act_event(act_id, "PUSHED", interaction_id=interaction_id,
+                            tuning_name=tuning_name, **base)
+            self._watch_act(act_id, base, interaction_id, tuning_name, interaction)
+            self._say(connection, "ACT_PUSHED %s interaction %s" % (act_id, interaction_id))
+            return True
+        except observers.LabIdentityAmbiguous:
+            phase, code = ("UNKNOWN", "BODY_UNAVAILABLE") if accepted else ("REJECTED", "BODY_UNAVAILABLE")
+            self._act_event(act_id, phase, code=code, **base)
+            self._say(connection, "ACT_%s %s" % (phase, code))
+            return False
+        except Exception as error:
+            code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
+            phase = "UNKNOWN" if accepted else "REJECTED"
+            self._act_event(act_id, phase, code=code, **base)
+            self._say(connection, "ACT_%s %s" % (phase, code))
+            return False
+
+    def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction):
+        def _finished(finished_interaction, _act_id=act_id):
+            try:
+                finishing = str(finished_interaction.finishing_type)
+            except Exception:
+                finishing = "UNREADABLE"
+            self._act_event(_act_id, "FINISHED", interaction_id=interaction_id,
+                            tuning_name=tuning_name,
+                            finishing_type=finishing[:schema.MAX_DISPLAY_TEXT_LENGTH], **base)
+
+        try:
+            e2_actuator.watch_finish(interaction, _finished)
+        except Exception:
+            return
 
     def _trial_view(self, object_id, guid64):
         view, sim, obj, _sit_offers, context = self._view(object_id)

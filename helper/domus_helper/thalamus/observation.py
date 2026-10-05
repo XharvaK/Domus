@@ -269,4 +269,5 @@ def build(decision, ctx):
         "lineage_class": lineage,
         "percepts": percepts,
         "portrait": _portrait(row, ctx.get("resolve_text")),
+        **({"options": ctx["options"]} if ctx.get("options") else {}),
     }

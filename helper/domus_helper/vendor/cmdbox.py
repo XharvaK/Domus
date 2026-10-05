@@ -3,7 +3,7 @@ import json
 
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
-            'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan')
+            'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -82,6 +82,9 @@ def parse(raw_bytes, now_ms, used_ids):
         good = set(args) == {'token'} and valid_hex(args['token'], 16)
     elif good and name == 'trial':
         good = (set(args) == {'object_id', 'guid64'} and
+                _digits(args.get('object_id')) and _digits(args.get('guid64')))
+    elif good and name == 'act':
+        good = (set(args) == {'act_id', 'object_id', 'guid64'} and valid_hex(args.get('act_id'), 32) and
                 _digits(args.get('object_id')) and _digits(args.get('guid64')))
     elif good:
         good = not args

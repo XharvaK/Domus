@@ -449,3 +449,34 @@ def test_thalamus_keeps_firing_after_a_reboot_or_game_relaunch(paths, tmp_path, 
     payloads = _payloads(second)
     assert len(payloads) == 2
     assert payloads[1]["portrait"]["needs"]["hunger"]["band"] == "low"
+
+
+def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_session(paths, tmp_path, monkeypatch):
+    """8f: the probe's act_menu becomes the observation's options; a menu of another session never does."""
+    from domus_helper.contract import validate_observation as check
+    _data(paths, tmp_path, monkeypatch)
+    menu = {"menu_rev": 1, "room": "4", "tested": 1, "refused": 0, "build_ms": 1.0, "objects": [
+        {"object_id": "11", "definition_id": None, "class": "object_bookshelf", "distance_m": 2.0, "same_room": True,
+         "acts": [{"guid64": "4242", "name": "bookshelf_ReadBook", "text_key": None}]}]}
+    stale = dict(menu, objects=[dict(menu["objects"][0], object_id="99")])
+    _append(paths, [
+        _lineage(1, WALL),
+        {"event_kind": "act_menu", "written_sequence": 2, "wall_timestamp_ms": WALL, "monotonic_ns": WALL * 1_000_000,
+         "telemetry_session_id": "old-session", "sims_build": BUILD, "probe_version": "2.16.0", "e2": stale},
+        {"event_kind": "act_menu", "written_sequence": 3, "wall_timestamp_ms": WALL, "monotonic_ns": WALL * 1_000_000,
+         "telemetry_session_id": "sess-1", "sims_build": BUILD, "probe_version": "2.16.0", "e2": menu},
+        _snap(4, "ok", WALL, 10),
+        _snap(5, "low", WALL, 20),
+    ])
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    bridge.tick(WALL)
+    mono["ms"] = WALL + 1500
+    bridge.tick(WALL + 1500)
+    payloads = _payloads(bridge)
+    assert len(payloads) == 1
+    obs = check(payloads[0], WALL + 1500)
+    assert obs["options"] == [{"object": "object bookshelf", "object_id": "11", "where": "here, 2.0 m",
+                               "acts": [{"ref": "a1", "guid64": "4242", "text": "bookshelf Read Book"}]}]
+    bridge._menu = dict(bridge._menu, session="another")
+    assert bridge._options(bridge._last_row) == []

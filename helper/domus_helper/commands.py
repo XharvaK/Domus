@@ -34,11 +34,15 @@ def envelope(command, args, issuer):
     return row, raw
 
 
-def send(command, args, issuer, timeout_s=15, *, paths=None):
-    if not math.isfinite(timeout_s) or timeout_s <= 0:
-        raise ValueError("timeout_s must be positive and finite")
+def publish(command, args, issuer, *, paths=None):
+    """Write one command to the probe's inbox and return its id without waiting (8f: the
+    bridge reads what happened from the telemetry, never blocks its tick on a reply)."""
     row, raw = envelope(command, args, issuer)
-    paths = paths or Paths.from_env()
+    _write(row, raw, paths or Paths.from_env())
+    return row["id"]
+
+
+def _write(row, raw, paths):
     paths.check_inbox()
     # Do not bootstrap cmd directories: the probe/Owner owns their creation.
     temporary = paths.inbox / (row["id"] + ".json.tmp")
@@ -57,6 +61,14 @@ def send(command, args, issuer, timeout_s=15, *, paths=None):
         # This is the only file we may remove, and only if publication failed.
         if created and temporary.exists():
             temporary.unlink()
+
+
+def send(command, args, issuer, timeout_s=15, *, paths=None):
+    if not math.isfinite(timeout_s) or timeout_s <= 0:
+        raise ValueError("timeout_s must be positive and finite")
+    row, raw = envelope(command, args, issuer)
+    paths = paths or Paths.from_env()
+    _write(row, raw, paths)
     deadline = time.monotonic() + timeout_s
     reply_path = paths.outbox / (row["id"] + ".json")
     while True:

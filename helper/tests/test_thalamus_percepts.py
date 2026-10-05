@@ -305,3 +305,28 @@ def test_ds3_presence_facts_skip_her_body_and_room_moves():
     assert facts["distance_m"] == "1.0" and facts["doing"] == "<class 'social_Chat'>"
     room = [p for p in second if p.kind == "env" and p.subject == "room"]
     assert [(p.object, dict(p.facts)["from_room"]) for p in room] == [("4", "3")]
+
+
+def test_a_new_save_is_its_own_world_and_nothing_is_compared_across_sessions():
+    """D51 (live 2026-10-05): after a switch from the lab fork to her home save, the first
+    observation still said slot0 and four lab Sims "left" her new home."""
+    lab = [{"id": "LAB1", "name": "Summer"}, {"id": "LAB2", "name": "Travis"}]
+    ex = Extractor()
+    ex.step(_row(0, kind="session_open", session="lab", extra={"save": {"slot_id": "0", "save_slot_guid": "111"}}))
+    ex.step(_row(1, session="lab", include_presence=True, presence=lab, zone_id=1, lot_id=9))
+    ex.step(_row(2, kind="lineage_event", session="lab", e2={"slot_id": 0, "guid": 111, "lineage_class": "X"}))
+    assert (ex.slot_id, ex.guid) == (0, 111)
+    home = [{"id": "N1", "name": "Dennis"}]
+    first = ex.step(_row(0, kind="session_open", session="home", zone_id=5, lot_id=7, posture="sit",
+                         include_presence=True, presence=home,
+                         extra={"save": {"slot_id": "8", "save_slot_guid": "222"}}))
+    assert (ex.slot_id, ex.guid, ex.lineage_class) == ("8", "222", "")
+    assert ex.lineage_id == "8:222"
+    buckets = [(p.kind, p.bucket) for p in first]
+    assert ("presence", "left") not in buckets
+    assert ("presence", "arrived") in buckets
+    assert not [p for p in first if p.kind in ("posture", "env")]
+    # The same save again (a relaunch) keeps its lineage class.
+    ex.step(_row(1, kind="lineage_event", session="home", e2={"slot_id": 8, "guid": 222, "lineage_class": "Y"}))
+    ex.step(_row(0, kind="session_open", session="home2", extra={"save": {"slot_id": "8", "save_slot_guid": "222"}}))
+    assert ex.lineage_class == "Y"
