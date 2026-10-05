@@ -5,7 +5,9 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 9
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v9"
-PROBE_VERSION = "2.15.2"
+PROBE_VERSION = "2.15.3"
+# 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
+ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
@@ -242,7 +244,7 @@ def string_id(value, field="id"):
 
 def attestation(armed_name="UNARMED", armed_name_hash=None, snapshot_guid=None,
                 snapshot_slot=None, snapshot_sim=None):
-    _require(armed_name in ("LAB_E1", "LAB_E1_FORK", "UNARMED"),
+    _require(armed_name in ARM_NAMES + ("UNARMED",),
              "invalid armed_name")
     return {
         "armed_name": armed_name,
@@ -412,7 +414,7 @@ def _validate_attestation(value):
     _require(set(value) == {"armed_name", "armed_name_hash", "snapshot_guid",
                             "snapshot_slot", "snapshot_sim"},
              "attestation shape")
-    _require(value.get("armed_name") in ("LAB_E1", "LAB_E1_FORK", "UNARMED"),
+    _require(value.get("armed_name") in ARM_NAMES + ("UNARMED",),
              "invalid attestation armed_name")
     for key in ("armed_name_hash", "snapshot_guid", "snapshot_slot", "snapshot_sim"):
         _require(key in value, "missing attestation.%s" % key)
@@ -1129,7 +1131,7 @@ def validate_record(row):
     if kind in ("session_open", "presence_snapshot", "save_observation"):
         _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
     if kind == "session_open":
-        _require(row["attestation"]["armed_name"] in ("LAB_E1", "LAB_E1_FORK"),
+        _require(row["attestation"]["armed_name"] in ARM_NAMES,
                  "session_open attestation")
         _require(row["attestation"]["snapshot_guid"] is not None and
                  row["attestation"]["snapshot_slot"] is not None and

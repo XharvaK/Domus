@@ -155,6 +155,10 @@ SAMPLER_RESTART_SPACING = 30.0
 # The User's start is remembered for that save (AUTOSAMPLE_FILE beside the telemetry);
 # loading the same save starts sampling again; the User's stop or disarm forgets it.
 AUTOSAMPLE_FILE = "autosample.json"
+# 2.15.3: HOME is Ashley's own save (her household and lot). It is sensed like a lab, but the
+# lab-only tools (preflight, food, situation and E2 trials, helper actuation) check for a lab
+# name and refuse there.
+ARM_NAMES = schema.ARM_NAMES
 _AUTOSTART_TRIED_ZONE = None
 # D48: one TELEMETRY_DIR_75 checkpoint per session when the folder passes 75% of its cap.
 _DIR_WARNED = False
@@ -201,6 +205,7 @@ _E2 = e2_control.E2Control(
 _ARM_NATIVE_TO_CANONICAL = {
     "lab_e1": "LAB_E1",
     "lab_e1_fork": "LAB_E1_FORK",
+    "home": "HOME",
 }
 
 
@@ -464,7 +469,7 @@ def _autostart_from_memory(zone):
         return False
     _AUTOSTART_TRIED_ZONE = zone
     if type(remembered) is not dict or \
-            remembered.get("armed_name") not in ("LAB_E1", "LAB_E1_FORK") or \
+            remembered.get("armed_name") not in ARM_NAMES or \
             save.get("save_slot_guid") != remembered.get("save_slot_guid") or \
             save.get("slot_id") != remembered.get("slot_id"):
         return False
@@ -1418,8 +1423,8 @@ def _register_commands():
              _dispatch_status, 'Report probe and inbox state.',
              'ashley_e1.status', CommandType.Live)
     register('ashley_e1.arm', CommandRestrictionFlags.UNRESTRICTED,
-             _dispatch_arm, 'Arm the Ashley E1 probe in LAB_E1 or LAB_E1_FORK.',
-             'ashley_e1.arm LAB_E1 | ashley_e1.arm LAB_E1_FORK', CommandType.Live)
+             _dispatch_arm, 'Arm the Ashley E1 probe in LAB_E1, LAB_E1_FORK or HOME.',
+             'ashley_e1.arm LAB_E1 | ashley_e1.arm LAB_E1_FORK | ashley_e1.arm HOME', CommandType.Live)
     register('ashley_e1.disarm', CommandRestrictionFlags.UNRESTRICTED,
              _dispatch_disarm, 'Disarm the Ashley E1 probe and close the session.',
              'ashley_e1.disarm', CommandType.Live)
@@ -1634,7 +1639,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
     global _STATE, _ARMED_NAME, _ARMED_SNAPSHOT, _TELEMETRY_SESSION_ID
     global _WRITER, _WRITER_IDLE, _SESSION_OPENED, _MISUSE_COUNT
     global _LAST_CAPTURE_COUNTERS, _CALIBRATE, _CAL_SPEED, _DIR_WARNED
-    if arm_name not in ("LAB_E1", "LAB_E1_FORK"):
+    if arm_name not in ARM_NAMES:
         _MISUSE_COUNT += 1
         return False
     if _STATE != "UNARMED" or not _WRITER_IDLE:
