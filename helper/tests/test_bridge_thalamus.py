@@ -118,7 +118,7 @@ def test_decision_log_shape_and_quota(tmp_path):
     (old / "decisions-20200102.jsonl").write_text("b" * 80, encoding="utf-8")
     wall = 1_700_000_000_000
     log.write({
-        "wall_ms": wall, "mono_ms": 10, "row_seq": 3, "fired": True, "reason": "threshold",
+        "wall_ms": wall, "clock_ms": 10, "row_seq": 3, "fired": True, "reason": "threshold",
         "theta": 1.0, "arousal": 0.2, "traces": [{
             "key": "need:hunger::low", "raw": 1.1, "h_before": 1.0, "h_after": 0.7,
             "salience": 1.1, "novelty": 0.6,
@@ -130,7 +130,7 @@ def test_decision_log_shape_and_quota(tmp_path):
     assert today.is_file()
     line = json.loads(today.read_text(encoding="utf-8").splitlines()[0])
     assert set(line) == {
-        "wall_ms", "mono_ms", "row_seq", "fired", "reason", "theta", "arousal",
+        "wall_ms", "clock_ms", "row_seq", "fired", "reason", "theta", "arousal",
         "traces", "enqueued", "observation_id", "scorer",
     }
     names = sorted(path.name for path in old.glob("decisions-*.jsonl"))
@@ -419,3 +419,33 @@ def test_ds3_portrait_has_time_room_company_moodlets():
     assert [item["name"] for item in portrait["moodlets"]] == ["Buff_Hungry"]
     assert portrait["addressed_by"] == [{"by": "200", "interaction": "social_Chat"}]
     assert portrait["mood"] == "Mood_Uncomfortable"
+
+
+def test_thalamus_keeps_firing_after_a_reboot_or_game_relaunch(paths, tmp_path, monkeypatch):
+    """D50: the thalamus runs on the wall clock. Live 2026-10-05 it ran on the game's monotonic
+    clock (restarts every launch) and the bridge's uptime (restarts every boot) and froze."""
+    from domus_helper.bridge import Bridge
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL)])
+    uptime = {"ms": 10 ** 10}
+    first = _bridge(paths, uptime)
+    first.tick(WALL)
+    first.spool.close()
+    restarted = {"ms": 1000}
+    second = Bridge(paths, client=_Client(), process=(1, "t"), detected_build=BUILD,
+                    mono=lambda: restarted["ms"])
+
+    def relaunched(row):
+        row["monotonic_ns"] = 5_000_000
+        return row
+
+    _append(paths, [relaunched(_snap(2, "ok", WALL + 60_000, 10))])
+    second.tick(WALL + 60_000)
+    assert len(_payloads(second)) == 1
+    _append(paths, [relaunched(_snap(3, "low", WALL + 100_000, 20))])
+    second.tick(WALL + 100_000)
+    restarted["ms"] += 1500
+    second.tick(WALL + 101_500)
+    payloads = _payloads(second)
+    assert len(payloads) == 2
+    assert payloads[1]["portrait"]["needs"]["hunger"]["band"] == "low"
