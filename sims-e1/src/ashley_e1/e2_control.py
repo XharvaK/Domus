@@ -611,6 +611,78 @@ class E2Control:
             self._say(connection, "ACT_%s %s" % (phase, code))
             return False
 
+    def _answer_check(self, dialog_id, pick):
+        """None when her answer may be given now, else (code, detail). The dialog must be open
+        and hers (or the game's own, with no owner); a row must be one it offers, enabled."""
+        if self._state() != "SAMPLING":
+            return ("NOT_SAMPLING", None), None
+        if self.lineage_class == e2_lineage.BODY_MISMATCH:
+            return ("BODY_MISMATCH", None), None
+        sim_info, sim = observers.select_lab_body(
+            services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+        if sim is None:
+            return ("BODY_UNAVAILABLE", None), None
+        service = services.ui_dialog_service()
+        dialog = service._active_dialogs.get(int(dialog_id))
+        if dialog is None:
+            return ("NO_DIALOG", None), None
+        try:
+            owner = dialog._owner()
+        except Exception:
+            owner = None
+        if owner is not None and owner.id != sim_info.id:
+            return ("NOT_HERS", None), None
+        if pick.isdigit():
+            rows = [row for row in observers._dialog_rows(dialog) if row["option_id"] == pick]
+            if not rows:
+                return ("NO_ROW", None), None
+            if not rows[0]["enabled"]:
+                return ("ROW_DISABLED", None), None
+            return None, (service, dialog, int(pick), observers.RESPONSE_IDS["ok"])
+        response = observers.RESPONSE_IDS.get(pick)
+        offered = [item["response"] for item in observers._dialog_responses(dialog)]
+        if response is None or (pick not in offered and pick not in ("ok", "cancel")):
+            return ("NO_RESPONSE", pick), None
+        return None, (service, dialog, None, response)
+
+    def cmd_answer(self, act_id, dialog_id, pick, connection):
+        """2.18.0: answer a game dialog as she chose, the way the client does: pick the row
+        (dialog_pick_result), then respond (dialog_respond). Once per act id."""
+        if act_id in self.act_ids:
+            self._say(connection, "ACT_REJECT DUPLICATE")
+            return False
+        self.act_ids.add(act_id)
+        base = {"object_id": dialog_id, "guid64": pick if pick.isdigit() else None}
+        if not self.available():
+            self._act_event(act_id, "REJECTED", code="E2_UNAVAILABLE", **base)
+            self._say(connection, "ACT_REJECT E2_UNAVAILABLE")
+            return False
+        accepted = False
+        try:
+            refusal, bound = self._answer_check(dialog_id, pick)
+            if refusal is not None:
+                code, detail = refusal
+                self._act_event(act_id, "REJECTED", code=code,
+                                detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH], **base)
+                self._say(connection, "ACT_REJECT %s" % code)
+                return False
+            service, dialog, row, response = bound
+            kind = _tuning_name(dialog)
+            self._act_event(act_id, "ACCEPTED", tuning_name=kind, **base)
+            accepted = True
+            if row is not None:
+                service.dialog_pick_result(int(dialog_id), [row])
+            service.dialog_respond(int(dialog_id), response)
+            self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED", **base)
+            self._say(connection, "ACT_ANSWERED %s" % act_id)
+            return True
+        except Exception as error:
+            code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
+            phase = "UNKNOWN" if accepted else "REJECTED"
+            self._act_event(act_id, phase, code=code, **base)
+            self._say(connection, "ACT_%s %s" % (phase, code))
+            return False
+
     def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction):
         def _finished(finished_interaction, _act_id=act_id):
             try:

@@ -51,6 +51,48 @@ def _object_name(item, resolve, catalog, people=None):
     return humanize(item.get("class") or "object")
 
 
+DIALOG_PREFIX = "dialog:"
+DIALOG_ROWS_SHOWN = 12
+
+
+def dialog_options(row, resolve=None, start=0):
+    """2.18.0: the game's open dialogs that are hers (or nobody's), as options she answers:
+    a picker's enabled rows (with price), then its buttons. Refs continue from start."""
+    dialogs = ((row or {}).get("dialogs") or {}).get("open") or []
+    body = None
+    for item in (row or {}).get("presence") or []:
+        if isinstance(item, dict) and item.get("is_body") and item.get("id") is not None:
+            body = str(item["id"])
+    result = []
+    count = start
+    for dialog in dialogs:
+        if not isinstance(dialog, dict) or not dialog.get("dialog_id"):
+            continue
+        owner = dialog.get("owner_id")
+        if owner is not None and body is not None and str(owner) != body:
+            continue
+        acts = []
+        for entry in [r for r in dialog.get("rows") or [] if isinstance(r, dict) and r.get("enabled")][:DIALOG_ROWS_SHOWN]:
+            text = _text(resolve, entry.get("name_key")) or "choice %s" % entry.get("option_id")
+            if isinstance(entry.get("price"), int):
+                text = "%s (§%d)" % (text, entry["price"])
+            count += 1
+            acts.append({"ref": "a%d" % count, "guid64": str(entry["option_id"]), "text": text})
+        for response in dialog.get("responses") or []:
+            name = response.get("response") if isinstance(response, dict) else None
+            if not isinstance(name, str) or (acts and name == "ok"):
+                continue  # with rows, picking a row is the ok
+            count += 1
+            acts.append({"ref": "a%d" % count, "guid64": name,
+                         "text": _text(resolve, response.get("text_key")) or name})
+        if acts:
+            title = _text(resolve, dialog.get("title_key")) or _text(resolve, dialog.get("text_key"))
+            result.append({"object": "The game asks: %s" % (title or "a question"),
+                           "object_id": DIALOG_PREFIX + str(dialog["dialog_id"]),
+                           "where": "asked now", "acts": acts})
+    return result
+
+
 def people_names(row):
     """{sim id: name} from a presence row: who her menu's people are."""
     names = {}
@@ -60,14 +102,14 @@ def people_names(row):
     return names
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None):
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0):
     """The observation's options: nearest objects first, each act with a short ref (a1, a2,
     ...) unique in this observation, its guid64 and its text. Farthest objects are left out
     until it fits the byte budget."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
     result = []
-    count = 0
+    count = start
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
@@ -157,8 +199,14 @@ class ActCourier(object):
                 self._event(act_id, "rejected", now_ms, {"code": "NOT_ATTACHED"})
                 continue
             try:
-                self._publish("act", {"act_id": act_id, "object_id": str(act.get("object_id")),
-                                      "guid64": str(act.get("guid64"))})
+                object_id = str(act.get("object_id"))
+                if object_id.startswith(DIALOG_PREFIX):
+                    # 2.18.0: her answer to a game dialog (a picker row or a button).
+                    self._publish("answer", {"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
+                                             "pick": str(act.get("guid64"))})
+                else:
+                    self._publish("act", {"act_id": act_id, "object_id": object_id,
+                                          "guid64": str(act.get("guid64"))})
             except Exception as error:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
                 self._event(act_id, "rejected", now_ms, {"code": "INBOX_" + type(error).__name__[:40]})

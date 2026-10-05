@@ -3,7 +3,7 @@ import json
 
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
-            'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act')
+            'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -86,6 +86,13 @@ def parse(raw_bytes, now_ms, used_ids):
     elif good and name == 'act':
         good = (set(args) == {'act_id', 'object_id', 'guid64'} and valid_hex(args.get('act_id'), 32) and
                 _digits(args.get('object_id')) and _digits(args.get('guid64')))
+    elif good and name == 'answer':
+        # 2.18.0: her answer to a game dialog: a picker row (digits) or a button by name.
+        pick = args.get('pick')
+        good = (set(args) == {'act_id', 'dialog_id', 'pick'} and valid_hex(args.get('act_id'), 32) and
+                _digits(args.get('dialog_id')) and (_digits(pick) or (
+                    type(pick) is str and 1 <= len(pick) <= 16 and
+                    all(ch in 'abcdefghijklmnopqrstuvwxyz_0123456789' for ch in pick))))
     elif good:
         good = not args
     if not good:

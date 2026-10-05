@@ -107,7 +107,7 @@ class WriterBoundTests(unittest.TestCase):
         self.assertEqual(writer.MAX_ACTIVE_FILE_BYTES, 8 * 1024 * 1024)
         self.assertEqual(writer.MAX_ROTATED_SIBLINGS_PER_SESSION, 127)
         self.assertEqual(writer.MAX_TELEMETRY_DIR_BYTES, 1024 * 1024 * 1024)
-        self.assertEqual(schema.MAX_SERIALIZED_RECORD_BYTES, 16 * 1024)
+        self.assertEqual(schema.MAX_SERIALIZED_RECORD_BYTES, 32 * 1024)
 
     def test_full_queue_evicts_clock_before_critical(self):
         with tempfile.TemporaryDirectory() as temp:

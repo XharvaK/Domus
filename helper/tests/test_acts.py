@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from domus_helper.acts import PROBE_REPLY_MS, ActCourier, humanize, options, people_names
+from domus_helper.acts import PROBE_REPLY_MS, ActCourier, dialog_options, humanize, options, people_names
 from domus_helper.contract import ContractError, validate_observation
 from domus_helper.spool import Spool
 from domus_helper.thalamus.percepts import Extractor
@@ -49,6 +49,34 @@ def test_people_in_her_menu_are_named_as_her_senses_name_them():
     result = options(menu, people=names)
     assert [(o["object"], o["acts"][0]["text"]) for o in result] == [
         ("Dennis Kim", "social Greet Neighbor"), ("someone", "sim Invite In")]
+
+
+DIALOG_ROW = {"presence": [{"id": "100", "is_body": True, "name": "Her"}], "dialogs": {"open": [
+    {"dialog_id": "555", "kind": "UiRecipePicker", "owner_id": "100", "title_key": "1", "text_key": None,
+     "auto_respond": False, "responses": [{"response": "ok", "text_key": "2"}, {"response": "cancel", "text_key": "3"}],
+     "rows": [{"option_id": "11", "name_key": "4", "enabled": True, "price": 5},
+              {"option_id": "12", "name_key": "5", "enabled": False, "price": 9}]},
+    {"dialog_id": "556", "kind": "UiDialogOkCancel", "owner_id": "42", "title_key": "1", "text_key": None,
+     "auto_respond": False, "responses": [{"response": "ok", "text_key": "2"}], "rows": []}],
+    "closed": [], "truncated": False}}
+
+
+def test_a_question_the_game_asks_her_is_answered_by_choosing():
+    texts = {"1": "What do you want to cook?", "2": "OK", "3": "Cancel", "4": "Grilled Cheese"}
+    result = dialog_options(DIALOG_ROW, texts.get, start=2)
+    assert result == [{"object": "The game asks: What do you want to cook?", "object_id": "dialog:555",
+                       "where": "asked now", "acts": [
+                           {"ref": "a3", "guid64": "11", "text": "Grilled Cheese (§5)"},
+                           {"ref": "a4", "guid64": "cancel", "text": "Cancel"}]}]
+    assert dialog_options({}) == [] and dialog_options({"dialogs": {"open": ["x"]}}) == []
+
+
+def test_an_answer_goes_to_the_probe_as_an_answer(tmp_path):
+    spool = Spool(tmp_path / "spool.db")
+    published = []
+    client = _Client([dict(ACT, object_id="dialog:555", guid64="11")])
+    ActCourier(spool, lambda command, args: published.append((command, args))).tick(client, "h", 1000, True)
+    assert published == [("answer", {"act_id": "a" * 32, "dialog_id": "555", "pick": "11"})]
 
 
 def test_the_contract_carries_options_within_8_kib():

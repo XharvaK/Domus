@@ -71,8 +71,8 @@ def full_self():
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 10)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v10")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 11)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v11")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -175,7 +175,7 @@ class SchemaV4Tests(unittest.TestCase):
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)
-        self.assertLessEqual(len(payload), 16 * 1024)
+        self.assertLessEqual(len(payload), 32 * 1024)
         self.assertEqual(len(row["social"]), 4)
         self.assertEqual(len(row["sim_signals"]), 8)
         self.assertFalse(row["observation_complete"])
@@ -204,16 +204,19 @@ class SchemaV4Tests(unittest.TestCase):
             "open": [{"dialog_id": "%064d" % i, "kind": "k" * 128, "owner_id": "8" * 64,
                       "title_key": key, "text_key": key,
                       "responses": [{"response": "r" * 16, "text_key": key}] * 6,
-                      "auto_respond": True} for i in range(4)],
+                      "auto_respond": True,
+                      "rows": [{"option_id": "9" * 20, "name_key": key, "enabled": True, "price": 99999}] * 40}
+                     for i in range(4)],
             "closed": [{"dialog_id": "%064d" % i, "kind": "k" * 128, "title_key": key,
                         "text_key": key, "response": "r" * 16} for i in range(4)],
             "truncated": True}
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)
-        self.assertLessEqual(len(payload), 16 * 1024)
-        self.assertEqual(len(row["dialogs"]["open"]), 2)  # the newest two stay
-        self.assertTrue(row["dialogs"]["truncated"])
+        self.assertLessEqual(len(payload), 32 * 1024)
+        self.assertLessEqual(len(row["dialogs"]["open"]), 4)  # 2.18.0 (32 KiB): dialogs keep their rows
+        # Rows go before someone addressing her does; the worst case keeps a few.
+        self.assertGreaterEqual(len(row["dialogs"]["open"][-1]["rows"]), 5)
         self.assertEqual(len(row["social"]), 4)
         self.assertLessEqual(len(row["sim_signals"]), 16)
         self.assertFalse(row["observation_complete"])

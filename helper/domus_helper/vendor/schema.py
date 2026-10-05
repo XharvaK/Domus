@@ -3,16 +3,17 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 10
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v10"
-PROBE_VERSION = "2.17.0"
+OBSERVATION_SCHEMA_VERSION = 11
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v11"
+PROBE_VERSION = "2.18.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
-MAX_SERIALIZED_RECORD_BYTES = 16 * 1024
+# 2.18.0: 32 KiB (was 16): picker rows of an open dialog fit beside everything else.
+MAX_SERIALIZED_RECORD_BYTES = 32 * 1024
 MAX_ID_LENGTH = 64
 MAX_DISPLAY_TEXT_LENGTH = 160
 MAX_REASON_LENGTH = 128
@@ -159,6 +160,9 @@ MAX_SELF_SKILLS = 12
 MAX_SITUATIONS = 3
 MAX_DIALOGS = 4
 MAX_DIALOG_RESPONSES = 6
+# 2.18.0 (schema 11): the rows a picker dialog offers (a recipe, a Sim, an object), so she can answer.
+MAX_DIALOG_ROWS = 40
+DIALOG_ROW_KEYS = ("option_id", "name_key", "enabled", "price")
 
 
 class SchemaError(ValueError):
@@ -776,9 +780,23 @@ def _validate_dialogs(row):
     _require(isinstance(value["open"], list) and len(value["open"]) <= MAX_DIALOGS,
              "dialogs.open")
     for item in value["open"]:
-        _require(isinstance(item, dict) and set(item) == {
-            "dialog_id", "kind", "owner_id", "title_key", "text_key", "responses",
-            "auto_respond"}, "dialogs.open entry")
+        keys = {"dialog_id", "kind", "owner_id", "title_key", "text_key", "responses", "auto_respond"}
+        if row["schema_version"] >= 11:
+            keys.add("rows")
+        _require(isinstance(item, dict) and set(item) == keys, "dialogs.open entry")
+        if "rows" in keys:
+            _require(isinstance(item["rows"], list) and len(item["rows"]) <= MAX_DIALOG_ROWS,
+                     "dialogs.rows")
+            for entry in item["rows"]:
+                _require(isinstance(entry, dict) and set(entry) == set(DIALOG_ROW_KEYS),
+                         "dialogs.row entry")
+                _require(isinstance(entry["option_id"], str) and entry["option_id"].isdigit()
+                         and len(entry["option_id"]) <= 20, "dialogs.row.option_id")
+                if entry["name_key"] is not None:
+                    string_id(entry["name_key"], "dialogs.row.name_key")
+                _require(type(entry["enabled"]) is bool, "dialogs.row.enabled")
+                _require(entry["price"] is None or (type(entry["price"]) is int and entry["price"] >= 0),
+                         "dialogs.row.price")
         _validate_dialog_text(item, "dialogs.open")
         if item["owner_id"] is not None:
             _require(isinstance(item["owner_id"], str), "dialogs.owner_id")

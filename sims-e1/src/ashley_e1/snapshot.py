@@ -211,6 +211,20 @@ def apply_size_budget(row):
             and (len(dialogs.get("open") or ()) > 2 or len(dialogs.get("closed") or ()) > 2):
         row["dialogs"] = dict(dialogs, open=list(dialogs.get("open") or ())[-2:],
                               closed=list(dialogs.get("closed") or ())[-2:], truncated=True)
+    # 2.18.0: picker rows next: the older open dialog's rows first, then the newest one's
+    # down to 10, which is still enough to answer from (enabled rows sort first).
+    dialogs = row.get("dialogs")
+    if isinstance(dialogs, dict):
+        opened = list(dialogs.get("open") or ())
+        last = len(opened) - 1
+        for index, keep in [(i, 0) for i in range(last)] + [(last, 20), (last, 10), (last, 5), (last, 0)]:
+            if index < 0 or _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+                break
+            entry = opened[index]
+            if isinstance(entry, dict) and len(entry.get("rows") or ()) > keep:
+                opened[index] = dict(entry, rows=list(entry["rows"])[:keep])
+                row["dialogs"] = dict(dialogs, open=opened, truncated=True)
+                dialogs = row["dialogs"]
     if _encoded_bytes(row) > schema.MAX_SERIALIZED_RECORD_BYTES and row.get("social"):
         row["social"] = []
         _mark_truncated(row)
