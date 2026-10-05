@@ -1822,10 +1822,57 @@ def _menu_reset(keep_last=False):
         _MENU_ROOM = None
 
 
+def _menu_hidden(affordance):
+    """2.16.2 (live: the mailbox offered "Power Consumption" acts): the game's own cheat,
+    debug and automation flags on the interaction tuning (interactions/base/interaction).
+    Those acts are for testers, not her."""
+    for flag in ("cheat", "debug", "automation"):
+        if tuned._class_plain(affordance, flag) is True:
+            return True
+    return False
+
+
+def _menu_offers(item, sim, context):
+    """The candidate acts of one object: user-directed offers the trial guard does not
+    exclude and the game does not mark as a cheat, at most CANDIDATE_ACTS."""
+    obj = item["obj"]
+    jobs = []
+    for affordance in _lot_affordances(obj, context):
+        if len(jobs) >= act_menu.CANDIDATE_ACTS:
+            break
+        guid = tuned._class_plain(affordance, "guid64")
+        if type(guid) is not int:
+            continue
+        if e2_actuator.excluded(affordance) is not None or not e2_actuator.user_directed(affordance):
+            continue
+        if _menu_hidden(affordance):
+            continue
+        try:
+            name = affordance.__name__
+        except Exception:
+            name = ""
+        jobs.append({
+            "object_id": item["object_id"], "definition_id": item["definition_id"], "class": item["class"],
+            "distance_m": item["distance_m"], "same_room": item["same_room"],
+            "guid64": str(guid), "name": name if type(name) is str else "",
+            "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
+            "obj": obj, "affordance": affordance, "sim": sim, "context": context,
+        })
+    return jobs
+
+
+def _on_lot(obj):
+    try:
+        value = obj.is_on_active_lot()
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
 def _menu_jobs(row):
-    """8f: (jobs, room) for a new menu build: user-directed, not excluded offers of the
-    objects near her body, nearest first. Plain reads only; the runner tests. Jobs are
-    None when the lot or her body cannot be read (no menu, rather than an empty one)."""
+    """8f: (jobs, room) for a new menu build: the user-directed offers of the lot she is on,
+    her room first (act_menu.ordered and pick). Plain reads only; the runner tests. Jobs
+    are None when the lot or her body cannot be read (no menu, rather than an empty one)."""
     zone = row.get("zone") or {}
     body_position = zone.get("position")
     body_room = zone.get("room")
@@ -1850,43 +1897,30 @@ def _menu_jobs(row):
             continue
         position = observers._position(obj)
         distance = observers._distance(position, body_position)
-        # The room lookup is only worth it for objects that could share her room.
-        room = observers._room(obj, position) if distance is not None and distance <= 20.0 else None
+        on_lot = _on_lot(obj)
+        # The room lookup is only worth it for objects of this lot or near her.
+        room = (observers._room(obj, position)
+                if on_lot is True or (distance is not None and distance <= 20.0) else None)
         items.append({
-            "object_id": object_id, "obj": obj,
-            "distance_m": distance,
+            "object_id": object_id, "obj": obj, "distance_m": distance, "on_lot": on_lot,
+            "room": room,
             "same_room": (room is not None and body_room is not None and room == body_room
                           and room != "0"),
         })
-    jobs = []
-    for item in act_menu.near(items):
-        obj = item["obj"]
+    ordered = act_menu.ordered(items)
+
+    def offers(item):
+        item["class"] = situation._name(type(item["obj"])) or ""
+        return _menu_offers(item, sim, context)
+
+    for item in ordered:
         try:
-            definition_id = situation._int_id(obj.definition.id)
+            item["definition_id"] = situation._int_id(item["obj"].definition.id)
         except Exception:
-            definition_id = None
-        klass = situation._name(type(obj)) or ""
-        count = 0
-        for affordance in _lot_affordances(obj, context):
-            if count >= act_menu.CANDIDATE_ACTS:
-                break
-            guid = tuned._class_plain(affordance, "guid64")
-            if type(guid) is not int:
-                continue
-            if e2_actuator.excluded(affordance) is not None or not e2_actuator.user_directed(affordance):
-                continue
-            try:
-                name = affordance.__name__
-            except Exception:
-                name = ""
-            jobs.append({
-                "object_id": item["object_id"], "definition_id": definition_id, "class": klass,
-                "distance_m": item["distance_m"], "same_room": item["same_room"],
-                "guid64": str(guid), "name": name if type(name) is str else "",
-                "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
-                "obj": obj, "affordance": affordance, "sim": sim, "context": context,
-            })
-            count += 1
+            item["definition_id"] = None
+    jobs = []
+    for _item, acts in act_menu.pick(ordered, offers):
+        jobs.extend(acts)
     return jobs, body_room
 
 
