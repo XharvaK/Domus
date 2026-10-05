@@ -1,17 +1,22 @@
 """D38: keep the probe's telemetry folder under its cap by archiving finished sessions.
 
-The probe stops recording when its telemetry folder reaches 200 MiB (CAP_REACHED);
-on 2026-10-04 it already held 126 MB. This moves older session files (the session
-JSONL and its rotations) into gzip files under the helper's data folder, verifies
-each copy byte for byte, and only then removes the original. It never touches the
-newest session, a session written to within --min-age-hours, the lineage ledger,
-the command folders, bootstrap files or the atlas folder.
+The probe stops recording when its telemetry folder reaches its cap (CAP_REACHED).
+This moves older session files (the session JSONL and its rotations) into gzip files
+under the helper's data folder, keeps each file's time, verifies each copy byte for
+byte, and only then removes the original. It never touches the newest session, a
+session written to within --min-age-hours, the lineage ledger, the command folders,
+bootstrap files or the atlas folder.
 
-    python -m domus_helper.telemetry_archive [--min-age-hours 24] [--dry-run]
+With --keep-days (the User's rule, 2026-10-05: 7), an archived session older than
+that is deleted, but only when its outcome records exist (`outcomes/<id>.jsonl`): the
+records are what her diary and lessons read; the raw rows go.
+
+    python -m domus_helper.telemetry_archive [--min-age-hours 24] [--keep-days 7] [--dry-run]
 """
 import argparse
 import gzip
 import hashlib
+import os
 import shutil
 import time
 
@@ -65,9 +70,42 @@ def archive_segment(path, target):
         partial.unlink()
         raise RuntimeError("archive verification failed for %s" % path.name)
     partial.replace(target)
-    size = path.stat().st_size
+    stat = path.stat()
+    os.utime(target, (stat.st_atime, stat.st_mtime))  # its age is the session's
     path.unlink()
-    return size
+    return stat.st_size
+
+
+def prune(*, paths, now, keep_days, dry_run=False, out=print):
+    """Delete archived sessions older than keep_days whose outcome records exist."""
+    archive_root = paths.data_dir / "telemetry-archive"
+    removed = freed = 0
+    if not archive_root.is_dir():
+        return removed, freed
+    for folder in sorted(archive_root.iterdir()):
+        if not folder.is_dir() or not folder.name.startswith("ashley_e1_"):
+            continue
+        parts = [path for path in folder.glob("*.gz") if path.is_file()]
+        if not parts:
+            continue
+        if now - max(path.stat().st_mtime for path in parts) < keep_days * 86400:
+            continue
+        session = folder.name[len("ashley_e1_"):]
+        if not (paths.data_dir / "outcomes" / ("%s.jsonl" % session)).is_file():
+            out("keep %s: no outcome records yet" % folder.name)
+            continue
+        for path in parts:
+            freed += path.stat().st_size
+            removed += 1
+            if dry_run:
+                out("would delete %s" % path.name)
+            else:
+                path.unlink()
+        if not dry_run and not any(folder.iterdir()):
+            folder.rmdir()
+    out("%s %d archived files, %.1f MB" % ("plan: delete" if dry_run else "deleted",
+                                           removed, freed / 1e6))
+    return removed, freed
 
 
 def run(*, paths, now, min_age_hours=24.0, dry_run=False, out=print):
@@ -90,10 +128,13 @@ def run(*, paths, now, min_age_hours=24.0, dry_run=False, out=print):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--min-age-hours", type=float, default=24.0)
+    parser.add_argument("--keep-days", type=float, default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
-    run(paths=Paths.from_env(), now=time.time(), min_age_hours=args.min_age_hours,
-        dry_run=args.dry_run)
+    paths, now = Paths.from_env(), time.time()
+    run(paths=paths, now=now, min_age_hours=args.min_age_hours, dry_run=args.dry_run)
+    if args.keep_days is not None:
+        prune(paths=paths, now=now, keep_days=args.keep_days, dry_run=args.dry_run)
     return 0
 
 

@@ -14,8 +14,11 @@ QUEUE_CAPACITY = 1024
 MAX_ACTIVE_FILE_BYTES = 8 * 1024 * 1024
 # D38 (2026-10-04): 4 rotations x 8 MiB stopped a session after about 2.6 h of play;
 # the directory cap is the real ceiling.
-MAX_ROTATED_SIBLINGS_PER_SESSION = 24
-MAX_TELEMETRY_DIR_BYTES = 200 * 1024 * 1024
+# D48 (2026-10-05, the User's sizing): rows run about 36 MB per hour of play, so the
+# folder holds 1 GiB and one session may reach it (127 rotations + the active file).
+# The helper archives finished sessions daily and deletes archives after 7 days.
+MAX_ROTATED_SIBLINGS_PER_SESSION = 127
+MAX_TELEMETRY_DIR_BYTES = 1024 * 1024 * 1024
 MAX_SAMPLING_FLUSH_INTERVAL_SECONDS = 5.0
 LEDGER_FILENAME = "ashley_e2_lineage_ledger.jsonl"
 MAX_LEDGER_BYTES = 2 * 1024 * 1024

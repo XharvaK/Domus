@@ -37,7 +37,9 @@ The inbox directories must already exist. Every tool checks `tasklist` for
 Read tools include status, verdicts, telemetry, lineage, `atlas_dump`,
 `atlas_progress`, `atlas_import`, `atlas_query` and `tuned_scan`. `atlas_dump`
 and `tuned_scan` are read-only and are not actuating commands. The atlas database is
-`%LOCALAPPDATA%\Domus\atlas.db` unless `DOMUS_DATA_DIR` is set.
+`E:\Domus\atlas.db` unless `DOMUS_DATA_DIR` is set. The data folder is
+not under AppData: a packaged app (the Claude desktop app) has its AppData writes
+redirected into its own package folder, which other processes do not see.
 `detected_build`
 reports the installed client version bound to the running `TS4_x64.exe`
 process (EXE file version, sims-root `GameVersion.txt`, `Default.ini`
@@ -103,7 +105,7 @@ fits. A shadow scorer (`thalamus/scorer.py`, `DOMUS_SHADOW_SCORER`) may
 annotate a fire in that line. Unknown names stay `NullScorer`. The scorer has
 a 2 second budget, and it never changes `decide`, the observation, or enqueueing.
 
-Credentials: `%LOCALAPPDATA%\Domus\ashley_url` and `ashley_token` (or
+Credentials: `E:\Domus\ashley_url` and `ashley_token` (or
 `DOMUS_DATA_DIR`). Overrides: `DOMUS_ASHLEY_URL` and `DOMUS_ASHLEY_TOKEN`.
 The token is at least 32 bytes. A missing URL, missing token, or short token
 disables transport. MCP `bridge_status` reports attachment, spool and outbox
@@ -116,7 +118,7 @@ Attachment states: `attached` (process up, latest row at most 30 seconds old),
 present), `crash_suspected` (process gone, no close), `sleep_resume` (one
 tick when wall time jumps more than 30 seconds ahead of the monotonic clock),
 `version_mismatch` (row `sims_build` differs from the detected build;
-`telemetry_only` is true). The spool is `%LOCALAPPDATA%\Domus\spool.db`.
+`telemetry_only` is true). The spool is `E:\Domus\spool.db`.
 
 ## Crawl (DA6)
 

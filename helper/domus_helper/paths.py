@@ -5,6 +5,7 @@ from pathlib import Path
 
 DEFAULT_SIMS_ROOT = r"C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4"
 DEFAULT_GAME_ROOT = r"E:\SteamLibrary\steamapps\common\The Sims 4"
+DEFAULT_DATA_DIR = r"E:\Domus"
 
 
 @dataclass(frozen=True)
@@ -44,10 +45,15 @@ class Paths:
 
     @property
     def data_dir(self):
+        """D49 (2026-10-05): not under AppData. A packaged app (the Claude desktop
+        app) has its writes to AppData redirected into its own package folder, so a
+        helper started from it and one started by the daily task or a terminal saw two
+        different data folders. On the User's machine it lives on E: (the User's
+        choice; C: is nearly full)."""
         configured = os.environ.get("DOMUS_DATA_DIR")
         if configured:
             return Path(configured)
-        return Path(os.environ["LOCALAPPDATA"]) / "Domus"
+        return Path(DEFAULT_DATA_DIR)
 
     @property
     def atlas_db(self):

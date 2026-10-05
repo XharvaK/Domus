@@ -270,8 +270,9 @@ def main(argv=None):
             return 0
 
 
-# D38: the probe stops recording at 200 MiB of telemetry; finished sessions older
-# than a day move to the helper's data folder (verified gzip) at start and every 6 h.
+# D38: the probe stops recording when its telemetry folder is full (1 GiB since
+# 2.15.2); finished sessions older than a day move to the helper's data folder
+# (verified gzip) at start and every 6 h.
 ARCHIVE_EVERY_S = 6 * 3600
 
 
