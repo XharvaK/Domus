@@ -102,7 +102,8 @@ class Extractor:
         if slot is not None and guid is not None and (str(slot), str(guid)) != (str(self.slot_id), str(self.guid)):
             self.slot_id, self.guid = slot, guid
             self.lineage_class = ""
-            self.lineage_id = f"{slot}:{guid}"
+            if self.lineage_id:  # a known lineage is left; a first one waits for its lineage event
+                self.lineage_id = f"{slot}:{guid}"
         self._prev = None
         self._open = {}
         self._presence = None
