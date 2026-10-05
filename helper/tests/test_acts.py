@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from domus_helper.acts import PROBE_REPLY_MS, ActCourier, humanize, options
+from domus_helper.acts import PROBE_REPLY_MS, ActCourier, humanize, options, people_names
 from domus_helper.contract import ContractError, validate_observation
 from domus_helper.spool import Spool
 from domus_helper.thalamus.percepts import Extractor
@@ -36,6 +36,19 @@ def test_options_drop_the_farthest_objects_to_fit_and_ignore_junk():
     assert options(None) == [] and options({"objects": "x"}) == []
     assert options({"objects": [{"acts": [{}]}, "x"]}) == []
     assert humanize("tv_WatchKids") == "tv Watch Kids" and humanize("") == "unnamed"
+
+
+def test_people_in_her_menu_are_named_as_her_senses_name_them():
+    menu = {"objects": [{"object_id": "300", "definition_id": None, "class": "sim", "distance_m": 6.8,
+                         "same_room": False, "acts": [{"guid64": "77", "name": "social_Greet_Neighbor", "text_key": None}]},
+                        {"object_id": "301", "definition_id": None, "class": "sim", "distance_m": 7.0,
+                         "same_room": False, "acts": [{"guid64": "78", "name": "sim_InviteIn", "text_key": None}]}]}
+    row = {"presence": [{"id": "300", "name": "Dennis Kim"}, {"id": 100, "is_body": True, "name": "Her"}, "x"]}
+    names = people_names(row)
+    assert names == {"300": "Dennis Kim", "100": "Her"}
+    result = options(menu, people=names)
+    assert [(o["object"], o["acts"][0]["text"]) for o in result] == [
+        ("Dennis Kim", "social Greet Neighbor"), ("someone", "sim Invite In")]
 
 
 def test_the_contract_carries_options_within_8_kib():

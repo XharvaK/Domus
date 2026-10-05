@@ -18,6 +18,10 @@ CANDIDATE_ACTS = 16
 # another room is how she moves around the house.
 HER_ROOM_OBJECTS = 4
 ROOM_OBJECTS = 3
+# 2.17.0: the people she can reach (on this lot, or within PEOPLE_NEAR_M) come right after
+# her room, nearest first: greeting the neighbours at the door, inviting them in.
+PEOPLE_OBJECTS = 3
+PEOPLE_NEAR_M = 15.0
 # Objects whose offers are read for one build: bounds the work of a single sampling tick.
 SCAN_OBJECTS = 120
 # Lights, candles, doors and windows come last within their room: they have offers in every
@@ -49,6 +53,8 @@ def ordered(objects):
 
 
 def _room_key(item):
+    if item.get("person") is True:
+        return "people"
     if item.get("same_room") is True:
         return "here"
     if item.get("on_lot") is not True:
@@ -74,7 +80,7 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
         by_key[key].append(item)
     for key in groups:
         by_key[key].sort(key=fixture)  # stable: nearest first within each kind
-    rooms = [key for key in groups if key not in ("here", "off")]
+    rooms = [key for key in groups if key not in ("here", "off", "people")]
     picked = []
     definitions = set()
     state = {"scanned": 0}
@@ -106,6 +112,14 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
             if full():
                 break
             found = take("here")
+            if found is None:
+                break
+            picked.append(found)
+    if "people" in by_key:
+        for _ in range(PEOPLE_OBJECTS):
+            if full():
+                break
+            found = take("people")
             if found is None:
                 break
             picked.append(found)

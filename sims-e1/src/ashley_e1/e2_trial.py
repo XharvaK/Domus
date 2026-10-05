@@ -29,6 +29,15 @@ DENY_NAME_PARTS = (
     "ask_to", "social",
 )
 
+# 2.17.0: her socials toward another Sim (greet, invite in, talk) are hers to choose. The
+# acts that change a life or a household in one click stay out, as do testers' acts.
+SOCIAL_DENY_PARTS = (
+    "debug", "cheat", "testing", "tutorial", "kill", "death", "grim", "fire", "burn",
+    "woohoo", "trybaby", "try_for_baby", "propose", "breakup", "divorce", "adopt",
+    "moveout", "move_out", "movein", "move_in", "travel", "vacation", "career", "job",
+    "quit", "retire", "buy", "purchase", "sell", "phone",
+)
+
 # D8 (live 2026-10-04): with energy in distress the guard refused bed and food too,
 # and with autonomy off nothing could help her. A trial that relieves a distressed
 # body motive is a cure, not a risk; after sleep she woke with hunger and bladder

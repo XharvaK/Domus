@@ -67,6 +67,7 @@ class Extractor:
         self._open = {}
         self._barrier = 0
         self._presence = None
+        self._on_lot = set()
         self._social = set()
 
     def step(self, row):
@@ -109,6 +110,7 @@ class Extractor:
         self._prev = None
         self._open = {}
         self._presence = None
+        self._on_lot = set()
         self._social = set()
 
     def _act(self, row):
@@ -352,6 +354,19 @@ class Extractor:
             percepts.append(Percept(
                 "presence", sim_id, "", "left", lineage=self.lineage_id, facts=_facts(ticks, ())))
         self._presence = set(current)
+        # 2.17.0 (live 2026-10-06: the welcome wagon waited at her door while she stood at the
+        # mirror): someone stepping onto the lot she is on wakes her, with the game situation
+        # they are in. Walkbys on the street stay ordinary presence.
+        here = {sim_id for sim_id, item in current.items() if item.get("on_lot") is True}
+        for sim_id in sorted(here - self._on_lot):
+            item = current[sim_id]
+            roles = [str(s.get("role")) for s in item.get("situations") or [] if isinstance(s, dict) and s.get("role")]
+            percepts.append(Percept(
+                "presence", sim_id, "", "on_lot", urgency="wake", lineage=self.lineage_id, facts=_facts(ticks, (
+                    ("name", item.get("name")), ("room", item.get("room")),
+                    ("distance_m", item.get("distance_m")),
+                    ("role", roles[0][:96] if roles else None)))))
+        self._on_lot = here
         return percepts
 
     def _social_percepts(self, items, sim_s, ticks):
@@ -394,6 +409,7 @@ class Extractor:
             "open": self._open,
             "barrier": self._barrier,
             "presence": None if self._presence is None else sorted(self._presence),
+            "on_lot": sorted(self._on_lot),
             "social": sorted(self._social),
         }
 
@@ -414,6 +430,7 @@ class Extractor:
         extractor._barrier = blob.get("barrier") or 0
         presence = blob.get("presence")
         extractor._presence = None if presence is None else set(presence)
+        extractor._on_lot = set(blob.get("on_lot") or [])
         extractor._social = set(blob.get("social") or [])
         return extractor
 

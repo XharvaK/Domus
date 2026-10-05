@@ -544,7 +544,11 @@ class E2Control:
         if not offers:
             return ("NOT_OFFERED", None), None
         affordance = offers[0]
-        excluded = e2_actuator.excluded(affordance)
+        try:
+            person = obj.is_sim is True and obj is not sim
+        except Exception:
+            person = False
+        excluded = e2_actuator.act_excluded(affordance, person)
         if excluded is not None:
             return ("EXCLUDED", excluded), None
         if not e2_actuator.user_directed(affordance):

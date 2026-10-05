@@ -26,6 +26,13 @@ class Greet(object):
     allow_user_directed = True
 
 
+class Propose(object):
+    __name__ = "social_Romance_Propose"
+    guid64 = 4345
+    is_social = True
+    allow_user_directed = True
+
+
 class PowerConsumption(object):
     guid64 = 4343
     allow_user_directed = True
@@ -148,6 +155,21 @@ class ActCommandTests(unittest.TestCase):
         self.assertEqual(connection.lines[-1], "ACT_REJECT GAME_REFUSED")
         self.assertEqual(self.base.pushes, [])
         self.assertNotIn("ACCEPTED", [e["phase"] for e in self.events()])
+
+    def test_a_social_toward_another_sim_is_hers_and_never_toward_a_thing(self):
+        # 2.17.0 (live 2026-10-06: the welcome wagon waited at her door, ungreeted).
+        self.ready()
+        neighbour = _Offer(CHAIR, [Greet])
+        neighbour.is_sim = True
+        self.base.objects[CHAIR] = neighbour
+        ok, connection = self.act(act_id="%032x" % 1)
+        self.assertTrue(ok, connection.lines)
+        neighbour._affordances = [Propose]
+        ok, connection = self.act(act_id="%032x" % 2, guid64="4345")
+        self.assertEqual(connection.lines[-1], "ACT_REJECT EXCLUDED")
+        self.base.objects[CHAIR] = _Offer(CHAIR, [Greet])
+        ok, connection = self.act(act_id="%032x" % 3)
+        self.assertEqual(connection.lines[-1], "ACT_REJECT EXCLUDED")
 
     def test_a_failed_push_is_rejected_after_acceptance(self):
         self.ready()
@@ -365,6 +387,22 @@ class MenuSenseTests(unittest.TestCase):
         self.things = [mailbox, lily, bed]
         jobs, _room = self.probe._menu_jobs(self.row)
         self.assertEqual([job["object_id"] for job in jobs], ["23", "22"])
+
+    def test_people_near_her_come_with_their_socials_after_her_room(self):
+        neighbour = _Thing(31, 6.0, [Greet, Propose, ReadBook])
+        neighbour.is_sim = True
+        neighbour.is_on_active_lot = lambda: True
+        passerby = _Thing(32, 60.0, [Greet])
+        passerby.is_sim = True
+        lamp = _Thing(33, 3.0, [ReadBook])
+        self.things = [neighbour, passerby, lamp]
+        self.allowed = {int(GUID), 4345}
+        jobs, _room = self.probe._menu_jobs(self.row)
+        # The neighbour comes first, as a person, greeting and all; the lamp after.
+        self.assertEqual((jobs[0]["object_id"], jobs[0]["class"], jobs[0]["guid64"]), ("31", "sim", GUID))
+        self.assertEqual(jobs[-1]["object_id"], "33")
+        self.assertNotIn("32", [job["object_id"] for job in jobs])
+        self.assertNotIn("4345", [job["guid64"] for job in jobs if job["object_id"] == "31"])
 
     def test_an_unreadable_lot_is_no_menu_not_an_empty_one(self):
         self.probe._lot_snapshot = lambda: (None, "TUNED_NO_LOT")
