@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.15.0 (travel-safe sampling, presence by distance, knowledge, self)
+## Current build: 2.15.1 (sampling kept alive across lots, the lot first in presence)
 
-The source is version `2.15.0` (`src/ashley_e1/__init__.py`,
+The source is version `2.15.1` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 8, schema 4 to 7 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.15.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.15.1 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -38,6 +38,21 @@ The crawl asks for a fresh preflight when it starts. After a relief trial it wai
 ## Live hardening (DA6F)
 
 The second session (2.11.1) added these. A motive's `value` is the game's current value: the probe applies the game's own rate formula to the cached value without writing it, so a reading is current at any game speed (`age_ticks` 0). Only if a rate cannot be read does it report the cache and its age. Sleep and work switch the game to speed 3, where rows are about 37000 ticks apart. A maintained interaction trial ends 30 s after it finishes, not at its 180 s window, and a relief trial's verdict carries the need's start, peak, and end (`relief=energy energy=24->100->100`). The crawl does not push a trial into a body distress it can already see, and its stop names the need. Preflight and the food scan tick four times a second at the same 5 ms budget and show progress on `status`. The food scan matches name words, not substrings ("eat" no longer matches cheat or death), reads menus only from classes that have one, and names recipes. `remove.ps1` without `-Version` removes every installed probe package.
+
+## Travel fixes (2.15.1, schema 8)
+
+The game's real-time timers outlive a lot change, so a timer from the last lot can still tick on the next one. At resume the probe cancels it. A tick from any timer that is not the current one only retires that timer and never stops sampling. No rows are written while the zone differs from the one sampling started in, because a lot that is still loading reports her off the lot and without some of her skills.
+
+The inbox tick runs in every zone and watches sampling while the User's start holds:
+- It retries a resume that could not start. The first failure writes `guard_exhausted` with `ZONE_RESUME_FAILED`.
+- It resumes after a zone change it has not seen yet.
+- It restarts a sampler that has not ticked for 10 s, after a `SAMPLER_RESTARTED` checkpoint, at most once every 30 s. A pause of the whole game is not counted as a stall.
+
+The writer flushes rows to disk while sampling is stopped too.
+
+Presence lists her body first, then every Sim on the lot, then the nearest of the rest. When the cap of 8 leaves out a Sim on the lot, the row is incomplete and `missingness.presence` says how many. Sims off the lot that were left out are counted in `missingness.presence_nearby`, and the row stays complete.
+
+Her traits leave out the game's own settings: walk style, hidden traits, tail style, gender options, phone case, locked robot modules and infant carrier.
 
 ## Travel, presence and self (2.15.0, schema 8)
 
@@ -97,8 +112,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.15.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.15.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.15.1
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.15.1
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

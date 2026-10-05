@@ -140,6 +140,15 @@ _RESUME_SAMPLING = False
 _ALARM_ZONE = None
 _ZERO_BODY_TICKS = 0
 ZONE_SETTLE_TICKS = 60
+# D43: the inbox tick watches sampling. A resume that could not start is retried; a
+# sampler that has not ticked for SAMPLER_STALL_SECONDS is restarted, at most once per
+# SAMPLER_RESTART_SPACING seconds.
+_RESUME_PENDING = False
+_LAST_TICK_S = None
+_LAST_SUPERVISE_S = None
+_LAST_RESTART_S = None
+SAMPLER_STALL_SECONDS = 10.0
+SAMPLER_RESTART_SPACING = 30.0
 _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
@@ -203,6 +212,7 @@ def _dispatch_disarm(*args, _session_id=0, **kwargs):
     if args or kwargs:
         return False
     _RESUME_SAMPLING = False
+    _clear_resume_pending()
     return _cmd_disarm(_connection=_session_id)
 
 
@@ -222,6 +232,7 @@ def _dispatch_stop(*args, _session_id=0, **kwargs):
         _emit_stop_failure("STOP_DISPATCH_INVALID_SHAPE")
         return False
     _RESUME_SAMPLING = False
+    _clear_resume_pending()
     return _cmd_stop(_connection=_session_id)
 
 
@@ -398,30 +409,111 @@ def _current_zone():
         return None
 
 
+def _now_s():
+    return time.monotonic()
+
+
+def _clear_resume_pending():
+    global _RESUME_PENDING
+    _RESUME_PENDING = False
+
+
+def _cancel_quietly(handle):
+    if handle is None:
+        return
+    try:
+        alarms.cancel_alarm(handle)
+    except Exception:
+        pass
+
+
 def _resume_sampling_in_zone():
     """D41 (live, 2.14.0): each trip to another lot stopped sampling until the User
     started it again. The sampling alarm is not cross-zone (it goes with the zone that
     unloads), and on the loading screen there is no selectable body
     (LAB_IDENTITY_AMBIGUOUS:0). While the User's start holds, sampling resumes when the
-    next zone is running, in the same session, after a ZONE_RESUMED checkpoint."""
-    global _STATE, _ALARM_HANDLE, _ZERO_BODY_TICKS
+    next zone is running, in the same session, after a ZONE_RESUMED checkpoint.
+
+    D43 (live, 2.15.0): coming home, sampling resumed and then stopped a second later
+    without a row. Real-time alarms outlive a lot change (TimeService.on_teardown
+    filters only the sim timeline; bytecode time_service, alarms), so the old zone's
+    timer kept ticking, and its next tick met the stale-handle guard, which stopped
+    sampling. The old timer is now cancelled here, a stale tick only retires itself,
+    a start that fails is reported and retried, and the inbox tick watches the rest."""
+    global _STATE, _ALARM_HANDLE, _ZERO_BODY_TICKS, _RESUME_PENDING
     if not _RESUME_SAMPLING:
         return False
     zone = _current_zone()
     if _STATE == "SAMPLING":
         if zone is not None and _ALARM_ZONE is zone:
             return True
+        old = _ALARM_HANDLE
         _ALARM_HANDLE = None  # it belonged to the zone that unloaded
+        _cancel_quietly(old)
         _STATE = "ARMED"
         _set_writer_sampling(False)
         _E2.on_stop("ZONE_CHANGE")
     if _STATE != "ARMED":
         return False
+    if zone is None:
+        _RESUME_PENDING = True  # no zone yet; the inbox tick tries again
+        return False
     _ZERO_BODY_TICKS = 0
+    if _cmd_start():
+        _RESUME_PENDING = False
+        _emit(schema.make_record("session_checkpoint",
+                                 telemetry_session_id=_TELEMETRY_SESSION_ID,
+                                 wall_timestamp_ms=int(time.time() * 1000),
+                                 monotonic_ns=time.perf_counter_ns(),
+                                 checkpoint_reason="ZONE_RESUMED"))
+        return True
+    if not _RESUME_PENDING:
+        _emit(schema.make_record("guard_exhausted", telemetry_session_id=_TELEMETRY_SESSION_ID,
+                                 wall_timestamp_ms=int(time.time() * 1000),
+                                 monotonic_ns=time.perf_counter_ns(),
+                                 reason="ZONE_RESUME_FAILED"))
+    _RESUME_PENDING = True
+    return False
+
+
+def _supervise_sampling():
+    """D43: run from the inbox tick, which the game restarts in every zone. While the
+    User's start holds, sampling is kept alive: a pending resume is retried, a zone
+    change not yet seen is resumed, and a sampler that stopped ticking is restarted
+    after a SAMPLER_RESTARTED checkpoint. A pause of the whole game (the inbox tick
+    was late too) is not a stall."""
+    global _STATE, _ALARM_HANDLE, _LAST_TICK_S, _LAST_SUPERVISE_S, _LAST_RESTART_S
+    now = _now_s()
+    game_stalled = (_LAST_SUPERVISE_S is not None and
+                    now - _LAST_SUPERVISE_S > SAMPLER_STALL_SECONDS / 2)
+    _LAST_SUPERVISE_S = now
+    if not _RESUME_SAMPLING:
+        return False
+    zone = _current_zone()
+    if zone is None:
+        return False
+    if _STATE == "ARMED":
+        return _resume_sampling_in_zone() if _RESUME_PENDING else False
+    if _STATE != "SAMPLING":
+        return False
+    if _ALARM_ZONE is not zone:
+        return _resume_sampling_in_zone()
+    if game_stalled or _LAST_TICK_S is None:
+        _LAST_TICK_S = now
+        return True
+    if now - _LAST_TICK_S < SAMPLER_STALL_SECONDS:
+        return True
+    if _LAST_RESTART_S is not None and now - _LAST_RESTART_S < SAMPLER_RESTART_SPACING:
+        return False
+    _LAST_RESTART_S = now
+    old = _ALARM_HANDLE
+    _ALARM_HANDLE = None
+    _cancel_quietly(old)
+    _STATE = "ARMED"
     _emit(schema.make_record("session_checkpoint", telemetry_session_id=_TELEMETRY_SESSION_ID,
                              wall_timestamp_ms=int(time.time() * 1000),
                              monotonic_ns=time.perf_counter_ns(),
-                             checkpoint_reason="ZONE_RESUMED"))
+                             checkpoint_reason="SAMPLER_RESTARTED"))
     return _cmd_start()
 
 
@@ -1137,6 +1229,10 @@ def _inbox_tick(alarm_handle=None):
         _inbox_tick_body()
     except Exception:
         _INBOX_ERRORS += 1
+    try:
+        _supervise_sampling()
+    except Exception:
+        _INBOX_ERRORS += 1
     finally:
         _INBOX_BUSY = False
 
@@ -1478,7 +1574,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
 
 
 def _cmd_start(_connection=None) -> bool:
-    global _STATE, _ALARM_HANDLE, _ALARM_ZONE
+    global _STATE, _ALARM_HANDLE, _ALARM_ZONE, _LAST_TICK_S
     if _STATE == "SAMPLING":
         _COUNTERS["redundant_starts"] += 1
         if _WRITER is not None:
@@ -1497,6 +1593,7 @@ def _cmd_start(_connection=None) -> bool:
         _ALARM_HANDLE = None
         return False
     _ALARM_ZONE = _current_zone()
+    _LAST_TICK_S = _now_s()
     _STATE = "SAMPLING"
     _set_writer_sampling(True)
     return True
@@ -1596,12 +1693,19 @@ def _session_open_from(row):
 
 
 def _poll_tick(alarm_handle=None):
-    global _POLL_BUSY
+    global _POLL_BUSY, _LAST_TICK_S
     if _STATE != "SAMPLING":
         return
     if alarm_handle is not None and alarm_handle is not _ALARM_HANDLE:
-        _cmd_stop()
+        # D43: a timer from an earlier start or lot. It retires itself; it never stops
+        # the sampling that is running.
+        _cancel_quietly(alarm_handle)
         return
+    if _ALARM_ZONE is not None and _current_zone() is not _ALARM_ZONE:
+        # D44 (live 2.15.0): rows read while the next lot loads showed her off the lot
+        # and without half her skills. No rows until the resume in the next zone.
+        return
+    _LAST_TICK_S = _now_s()
     if _POLL_BUSY:
         _COUNTERS["dropped_overrun"] += 1
         if _WRITER is not None:

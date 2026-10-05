@@ -9,8 +9,11 @@ names its chat (`part_of`). Each record carries its game time span, its origin
 needs before and after, moodlets gained and lost, the acts that followed it, and an
 experiment verdict when one is attributable. Objects, relationships and her self (skills,
 money, traits) stay UNKNOWN in rows that did not sense them. A relationship change says
-whether that Sim was the act's target or a bystander (whose drift the act did not
-cause). The records are facts for her diary; nothing here judges an act.
+whether that Sim was the act's target, reacted to her during it, or was a bystander
+(whose drift the act did not cause). `reactions` names who reacted while the act ran and
+how, in the game's words (2.15.1, live: cooking on a host's stove drew
+reaction_Inappropriate and then a send-away). The records are facts for her diary;
+nothing here judges an act.
 
 Origins: a click is the Owner's; the game's autonomy and reactions are the body's or
 the game's; an act the probe pushed is an experiment. A continuation the game runs with
@@ -51,6 +54,9 @@ DIARY_SPACING_MIN = 12 * 60
 # Standing idle is the absence of an act, not one ("nothing followed" is a fact).
 IDLE = frozenset(("sim-stand", "stand_Passive"))
 MIXER = re.compile(r"^mixer_", re.I)
+# A Sim's own reaction, as the game names it: reaction_Inappropriate,
+# nonTouching_Reaction_InappropriateBehavior_SendAway.
+REACTION = re.compile(r"(^|_)reaction_", re.I)
 MAX_SELF_SKILLS = 12
 SLEEP_CONFIRM_MIN = 30
 FOLLOW_WINDOW_MIN = 30
@@ -110,6 +116,16 @@ def _sample(row):
                     "careers": None if knows is None else knows.get("careers"),
                     "sentiments": None if "sentiments" not in relationship else
                     sorted(s.get("sentiment") for s in relationship.get("sentiments") or [])}
+    reacting = None
+    if (row.get("schema_version") or 0) >= 6 and isinstance(row.get("presence"), list):
+        reacting = {}
+        for item in row["presence"]:
+            if not isinstance(item, dict) or item.get("is_body"):
+                continue
+            doing = _affordance_name(item.get("doing"))
+            if doing and REACTION.search(doing):
+                reacting[str(item.get("id"))] = {
+                    "by": str(item.get("name") or item.get("id")), "reaction": doing}
     objects = row.get("objects") if (row.get("schema_version") or 0) >= 7 else None
     own = None
     if (row.get("schema_version") or 0) >= 8 and isinstance(row.get("self"), dict):
@@ -123,7 +139,7 @@ def _sample(row):
             "calendar": (row.get("game") or {}).get("calendar"),
             "minute": game_minute((row.get("game") or {}).get("calendar")),
             "motives": motives, "moodlets": moodlets, "company": company,
-            "relationships": relationships,
+            "relationships": relationships, "reacting": reacting,
             "objects": objects if isinstance(objects, dict) else None,
             "self": own}
 
@@ -133,9 +149,12 @@ def _live_acts(row):
     for entry in (row.get("interactions") or {}).get("observed") or []:
         if not isinstance(entry, dict):
             continue
-        # Socials (mixers) show only queued inside the chat that runs them.
+        # Socials (mixers) show only queued inside the chat that runs them. A reaction
+        # the game queues on her (2.15.1, live: a host's send-away) may never run
+        # before she is moved on, and still happened to her.
+        name = _affordance_name(entry.get("affordance_text")) or ""
         if entry.get("membership") not in LIVE and \
-                not MIXER.match(_affordance_name(entry.get("affordance_text")) or ""):
+                not MIXER.match(name) and not REACTION.search(name):
             continue
         source = entry.get("source_raw")
         if source == "InteractionSource.POSTURE_GRAPH" or entry.get("interaction_id") is None:
@@ -167,11 +186,24 @@ def _added(before, after):
     return sorted(set(after) - set(before))
 
 
-def _relationship_changes(before, after, target_id=None):
+def _reactions(samples):
+    """2.15.1: each Sim that reacted while the act ran, and how, in first-seen order."""
+    found = []
+    for sample in samples:
+        for key, item in sorted((sample.get("reacting") or {}).items()):
+            entry = dict(item, id=key)
+            if entry not in found:
+                found.append(entry)
+    return found
+
+
+def _relationship_changes(before, after, target_id=None, reactors=()):
     """S5: track changes and labels gained or lost with each Sim seen at both ends.
-    role: "target" when the act was aimed at that Sim, else "bystander" (live
-    2026-10-05: a Sim playing on the computer drifted +0.1 during her chat, and a
-    passer-by's conversation track faded, and both read as the chat's doing).
+    role: "target" when the act was aimed at that Sim, "reactor" when that Sim reacted
+    to her while it ran (2.15.1, live: cooking at a host's home is aimed at the stove,
+    and the host's reaction cost her 12 points), else "bystander" (live 2026-10-05: a
+    Sim playing on the computer drifted +0.1 during her chat, and a passer-by's
+    conversation track faded, and both read as the chat's doing).
     2.15.0: traits and a career she learned, sentiments gained or lost."""
     if before is None or after is None:
         return None
@@ -191,7 +223,7 @@ def _relationship_changes(before, after, target_id=None):
         if deltas or gained or lost or learned or career or felt or faded:
             change = {"with": b["name"],
                       "role": "target" if target_id is not None and key == str(target_id)
-                      else "bystander",
+                      else "reactor" if key in reactors else "bystander",
                       "tracks": deltas, "labels_gained": gained, "labels_lost": lost}
             if learned:
                 change["learned_traits"] = learned
@@ -298,6 +330,7 @@ def acts(rows, session=None):
         if shared:
             after_index = last
         after = samples[after_index]
+        reactions = _reactions(samples[first:after_index + 1])
         start, end = samples[first]["minute"], samples[last]["minute"]
         record = {
             "kind": "outcome", "v": OUTCOME_VERSION,
@@ -318,7 +351,9 @@ def acts(rows, session=None):
             "company": samples[first]["company"],
             "relationships": _relationship_changes(before["relationships"],
                                                    after["relationships"],
-                                                   entry.get("target_id")),
+                                                   entry.get("target_id"),
+                                                   {item["id"] for item in reactions}),
+            "reactions": reactions,
             "self": _self_changes(before["self"], after["self"]),
             # Events each sample reports happened since the one before it.
             "objects": None if samples[first]["objects"] is None else

@@ -95,7 +95,7 @@ def test_consequences_count_only_the_target():
     records = outcomes.acts(_session(), "s")
     effects = [line["effect"] for line in consequences.observed(records, CHAT)]
     relationship = [e for e in effects if e["type"] == "RELATIONSHIP"]
-    assert relationship == [{"type": "RELATIONSHIP", "track": "LTR_Friendship_Main",
+    assert relationship == [{"type": "RELATIONSHIP", "role": "target", "track": "LTR_Friendship_Main",
                              "change_median": 11.0, "seen_in": 1}]
     assert {"type": "SKILL", "skill": "statistic_Skill_AdultMajor_Charisma", "levels": 1,
             "seen_in": 1} in effects
