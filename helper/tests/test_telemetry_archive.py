@@ -69,3 +69,51 @@ def test_failed_verification_keeps_the_original(tmp_path, monkeypatch):
         raise AssertionError("verification failure must stop the run")
     assert files[OLD].exists()
     assert not list((tmp_path / "data").rglob("*.partial"))
+
+
+def _archived(tmp_path, monkeypatch, age_days, records):
+    paths, files = _setup(tmp_path, monkeypatch)
+    os.utime(files[OLD], (NOW - age_days * 86400, NOW - age_days * 86400))
+    os.utime(files[OLD + ".1"], (NOW - age_days * 86400, NOW - age_days * 86400))
+    telemetry_archive.run(paths=paths, now=NOW, out=lambda line: None)
+    if records:
+        outcomes = tmp_path / "data" / "outcomes"
+        outcomes.mkdir(parents=True)
+        (outcomes / (OLD[len("ashley_e1_"):-len(".jsonl")] + ".jsonl")).write_text("{}\n")
+    return paths, tmp_path / "data" / "telemetry-archive" / OLD[:-len(".jsonl")]
+
+
+def test_archives_keep_the_sessions_age(tmp_path, monkeypatch):
+    _, folder = _archived(tmp_path, monkeypatch, 3, records=False)
+    assert abs((folder / (OLD + ".gz")).stat().st_mtime - (NOW - 3 * 86400)) < 2
+
+
+def test_week_old_archives_with_records_are_deleted(tmp_path, monkeypatch):
+    """The User's rule (2026-10-05): raw telemetry goes after 7 days."""
+    paths, folder = _archived(tmp_path, monkeypatch, 8, records=True)
+    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7,
+                                         out=lambda line: None)
+    assert removed == 2 and not folder.exists()
+
+
+def test_younger_archives_stay(tmp_path, monkeypatch):
+    paths, folder = _archived(tmp_path, monkeypatch, 6, records=True)
+    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7,
+                                         out=lambda line: None)
+    assert removed == 0 and (folder / (OLD + ".gz")).exists()
+
+
+def test_no_records_no_delete(tmp_path, monkeypatch):
+    """Her outcome records are built from these rows; they must exist first."""
+    paths, folder = _archived(tmp_path, monkeypatch, 30, records=False)
+    lines = []
+    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7, out=lines.append)
+    assert removed == 0 and (folder / (OLD + ".gz")).exists()
+    assert lines[0].startswith("keep ")
+
+
+def test_dry_run_deletes_nothing(tmp_path, monkeypatch):
+    paths, folder = _archived(tmp_path, monkeypatch, 8, records=True)
+    removed, _ = telemetry_archive.prune(paths=paths, now=NOW, keep_days=7, dry_run=True,
+                                         out=lambda line: None)
+    assert removed == 2 and (folder / (OLD + ".gz")).exists()
