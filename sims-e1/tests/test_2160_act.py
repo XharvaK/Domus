@@ -336,3 +336,16 @@ class MenuSenseTests(unittest.TestCase):
         self.base.tick()
         self.assertEqual(self.probe._STATE, "SAMPLING")
         self.assertEqual(self.probe._MENU_FAILURES, 2)
+
+
+class BuildListTests(unittest.TestCase):
+    def test_every_probe_module_is_in_the_build(self):
+        """2.16.0: act_menu.py was missing from build.ps1's module list; the package would
+        have failed to import in the game. Every source module must be built."""
+        import os
+        import re
+        root = os.path.join(os.path.dirname(__file__), "..")
+        text = open(os.path.join(root, "tools", "build.ps1"), encoding="utf-8").read()
+        listed = set(re.findall(r'"([a-z0-9_]+)"', text[text.index("$moduleNames"):text.index("foreach ($moduleName")]))
+        sources = {name[:-3] for name in os.listdir(os.path.join(root, "src", "ashley_e1")) if name.endswith(".py")}
+        self.assertEqual(sources - listed, set())
