@@ -45,11 +45,12 @@ def test_an_act_carries_its_relationship_change_and_object_events():
             _v7(_row(2, 610, [(30, 7, chat, PIE)]), friendship=14.0, objects=spoiled),
             _v7(_row(3, 615, []), friendship=16.5, labels=["RelBit_Friends"])]
     record = outcomes.acts(rows, "s")[0]
-    assert record["relationships"] == [{"with": "Bella Goth",
+    # The fixture's chat has no target, so Bella reads as a bystander here.
+    assert record["relationships"] == [{"with": "Bella Goth", "role": "bystander",
                                         "tracks": {"LTR_Friendship_Main": 6.5},
                                         "labels_gained": ["RelBit_Friends"], "labels_lost": []}]
     assert record["objects"]["changed"][0]["to"] == "Freshness_Spoiled"
-    assert record["unknown"] == []
+    assert record["unknown"] == ["self"]
 
 
 def test_a_new_baseline_inside_an_act_makes_objects_unknown():
@@ -60,13 +61,13 @@ def test_a_new_baseline_inside_an_act_makes_objects_unknown():
                          "truncated": False}),
             _v7(_row(3, 615, []))]
     record = outcomes.acts(rows, "s")[0]
-    assert record["objects"] is None and record["unknown"] == ["objects"]
+    assert record["objects"] is None and record["unknown"] == ["objects", "self"]
 
 
 def test_schema_6_rows_stay_unknown():
     record = outcomes.acts([_row(0, 600, []), _row(1, 602, [(1, 1, EAT, INTENT)]),
                             _row(2, 610, [])], "s")[0]
-    assert record["unknown"] == ["objects", "relationships"]
+    assert record["unknown"] == ["objects", "relationships", "self"]
     assert AUTO and GRAB
 
 

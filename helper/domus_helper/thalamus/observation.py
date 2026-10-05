@@ -106,6 +106,8 @@ def _portrait(row, resolve=None):
         entry = {"id": str(item["id"]), "name": item.get("name"),
                  "room": item.get("room"), "distance_m": item.get("distance_m"),
                  "doing": _affordance_name(doing)}
+        if item.get("on_lot") is not None:
+            entry["on_lot"] = item["on_lot"]
         relationship = item.get("relationship")
         if isinstance(relationship, dict):
             # S5: what the game holds between them; labels in the game's words.
@@ -117,6 +119,21 @@ def _portrait(row, resolve=None):
                 "labels": [_resolve(resolve, label.get("text_key")) or label.get("label")
                            for label in relationship.get("labels") or []
                            if isinstance(label, dict)]}
+            knows = relationship.get("knows")
+            if isinstance(knows, dict):
+                # 2.15.0: what she has learned about them, in the game's words.
+                entry["relationship"]["knows"] = {
+                    "traits": [_resolve(resolve, trait.get("text_key")) or trait.get("trait")
+                               for trait in knows.get("traits") or []
+                               if isinstance(trait, dict)],
+                    "careers": knows.get("careers"),
+                    "relationship_status": knows.get("relationship_status"),
+                    "romantic_preference": knows.get("romantic_preference"),
+                    "net_worth": knows.get("net_worth")}
+            if relationship.get("sentiments"):
+                entry["relationship"]["feels"] = [
+                    _resolve(resolve, item.get("text_key")) or item.get("sentiment")
+                    for item in relationship["sentiments"] if isinstance(item, dict)]
         company.append(entry)
     moodlets = []
     for item in row.get("sim_signals") or []:
@@ -152,6 +169,20 @@ def _portrait(row, resolve=None):
         "company": company[:7],
         "addressed_by": addressed[:4],
     }
+    if "presence" in (row.get("missingness") or {}):
+        # D40: the company list missed someone this sample.
+        portrait["company_complete"] = False
+    own = row.get("self")
+    if isinstance(own, dict):
+        # 2.15.0: what she is like and has, in the game's words.
+        portrait["self"] = {
+            "traits": None if own.get("traits") is None else
+            [_resolve(resolve, item.get("text_key")) or item.get("trait")
+             for item in own["traits"] if isinstance(item, dict)],
+            "skills": None if own.get("skills") is None else
+            [{"skill": _resolve(resolve, item.get("text_key")) or item.get("skill"),
+              "level": item.get("level")} for item in own["skills"] if isinstance(item, dict)],
+            "funds": own.get("funds")}
     # Shed the least essential first: running list, then moodlets, then company.
     for key in ("running", "moodlets", "company"):
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:

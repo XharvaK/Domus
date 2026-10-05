@@ -6,6 +6,7 @@ import unittest
 
 from test_da6c import Hosted
 from test_ds3_senses import _Wrapper
+from test_ds1_senses import CreatingTrackers, stat_component_of
 
 
 class Freshness(object):
@@ -42,7 +43,7 @@ class _Tracker(object):
         return True
 
 
-class object_Food_PlateFork_Multi(object):
+class object_Food_PlateFork_Multi(CreatingTrackers):
     is_sim = False
 
     def __init__(self, object_id):
@@ -53,11 +54,10 @@ class object_Food_PlateFork_Multi(object):
         self.zone_id = 7
         self.state_component = types.SimpleNamespace(_states={
             Freshness: Freshness_Fresh, DishLocation: DishLocation_Counter})
-        self.statistic_tracker = types.SimpleNamespace(_statistics={
-            statistic_Servings: types.SimpleNamespace(_modified_value=7)})
-        self.commodity_tracker = types.SimpleNamespace(_statistics={
-            commodity_Spoilage: types.SimpleNamespace(_value=63.456, _last_update=10,
-                                                      _tracker=_Tracker())})
+        self.get_component = stat_component_of(
+            statistic={statistic_Servings: types.SimpleNamespace(_modified_value=7)},
+            commodity={commodity_Spoilage: types.SimpleNamespace(
+                _value=63.456, _last_update=10, _tracker=_Tracker())})
         process = types.SimpleNamespace(
             _recipe=recipe_Food_EggsAndToast, _crafter_sim_id=100,
             crafter=types.SimpleNamespace(first_name="E1", last_name="Proband"))

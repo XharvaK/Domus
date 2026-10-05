@@ -89,6 +89,9 @@ class Manager(object):
     def __init__(self, entries):
         self._entries = entries
 
+    def get_all(self):
+        return list(self._entries)
+
     def instanced_sims_on_active_lot_gen(self, allow_hidden_flags=None,
                                          include_spawn_point=None):
         """Like the game (SimInfoManager, bytecode 1.128): instanced Sim objects."""
@@ -101,8 +104,9 @@ class Manager(object):
 def presence_row(sim_id, active_household=False, level=None, is_body=False,
                  household_id=None, name=None, position=None, room=None,
                  posture=None, doing=None, doing_target=None, distance_m=None,
-                 relationship=None):
-    return {"id": sim_id, "active_household": active_household, "level": level,
+                 relationship=None, on_lot=True):
+    return {"id": sim_id, "on_lot": on_lot, "active_household": active_household,
+            "level": level,
             "is_body": is_body, "household_id": household_id, "name": name,
             "position": position, "room": room, "posture": posture, "doing": doing,
             "doing_target": doing_target, "distance_m": distance_m,
@@ -122,7 +126,8 @@ class PresenceTests(unittest.TestCase):
         sim = FakeSim("lab")
         entry = FakeSimInfoEntry("lab", sim=sim, household="hh1", household_id="hh1")
         probe = self.context([entry])
-        presence, truncated = probe.observers.read_presence("lab")
+        presence, truncated, skipped = probe.observers.read_presence("lab")
+        self.assertEqual(skipped, 0)
         self.assertEqual(presence, [presence_row(
             "lab", active_household=True, is_body=True, household_id="hh1",
             position={"x": 0.0, "y": 0.0, "z": 0.0, "level": None})])
@@ -134,7 +139,7 @@ class PresenceTests(unittest.TestCase):
                    for i in range(10)]
         entries.insert(3, FakeSimInfoEntry("ghost", sim=None))
         probe = self.context(entries)
-        presence, truncated = probe.observers.read_presence("lab")
+        presence, truncated, _ = probe.observers.read_presence("lab")
         self.assertEqual(len(presence), 8)
         self.assertTrue(truncated)
         self.assertNotIn("ghost", [row["id"] for row in presence])
@@ -143,10 +148,33 @@ class PresenceTests(unittest.TestCase):
         sim = FakeSim("s1", level=3)
         entry = FakeSimInfoEntry("s1", sim=sim, household="hh9", household_id="hh9")
         probe = self.context([entry], active_household="hh1")
-        presence, _ = probe.observers.read_presence("lab")
+        presence, _, _ = probe.observers.read_presence("lab")
         self.assertEqual(presence, [presence_row(
             "s1", level=3, household_id="hh9",
             position={"x": 0.0, "y": 0.0, "z": 0.0, "level": 3})])
+
+    def test_d40_one_unreadable_sim_hides_no_one_and_is_counted(self):
+        """Live 2.14.0: one Sim arriving made the game's lot generator raise and the
+        whole row went empty, her body included."""
+        class Arriving(FakeSim):
+            def is_on_active_lot(self, include_spawn_point=None):
+                raise RuntimeError("no location yet")
+
+        class Broken(FakeSimInfoEntry):
+            def get_sim_instance(self, allow_hidden_flags=None):
+                raise RuntimeError("mid-spawn")
+
+        entries = [Broken("broken", sim=FakeSim("broken")),
+                   FakeSimInfoEntry("new", sim=Arriving("new", at=(1.0, 0.0))),
+                   FakeSimInfoEntry("lab", sim=FakeSim("lab", on_lot=False)),
+                   FakeSimInfoEntry("friend", sim=FakeSim("friend", on_lot=False, at=(2.0, 0.0)))]
+        probe = self.context(entries)
+        presence, truncated, skipped = probe.observers.read_presence(
+            "lab", body_position={"x": 0.0, "y": 0.0, "z": 0.0, "level": None})
+        self.assertEqual([row["id"] for row in presence], ["lab", "new", "friend"])
+        self.assertEqual([row["on_lot"] for row in presence], [False, None, False])
+        self.assertEqual(skipped, 1)
+        self.assertFalse(truncated)
 
     def test_social_keeps_lab_targeted_drops_others(self):
         lab = LabSim("lab")
