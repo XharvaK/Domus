@@ -12,12 +12,22 @@ from . import schema
 REBUILD_S = 20.0
 CANDIDATE_OBJECTS = 30
 CANDIDATE_ACTS = 16
-# 2.16.2: one room never fills the menu, so choosing a thing in another room is how she
-# moves around the house.
-HER_ROOM_OBJECTS = 6
+# 2.16.3 (live 2026-10-06: tired and hungry, her 12-object menu was the piano room and the
+# bathroom; the bed and the kitchen never made the list): her room keeps a few slots, then
+# every other room gets one object before any room gets a second. Choosing a thing in
+# another room is how she moves around the house.
+HER_ROOM_OBJECTS = 4
 ROOM_OBJECTS = 3
 # Objects whose offers are read for one build: bounds the work of a single sampling tick.
 SCAN_OBJECTS = 120
+# Lights, candles, doors and windows come last within their room: they have offers in every
+# room and would take the one slot a room gets. Ordering only; nothing is hidden.
+FIXTURE_PARTS = ("light", "candle", "door", "window", "gate")
+
+
+def fixture(item):
+    klass = (item.get("class") or "").lower()
+    return any(part in klass for part in FIXTURE_PARTS)
 
 
 def ordered(objects):
@@ -38,39 +48,82 @@ def ordered(objects):
     return sorted(kept, key=order)
 
 
+def _room_key(item):
+    if item.get("same_room") is True:
+        return "here"
+    if item.get("on_lot") is not True:
+        return "off"
+    return item.get("room")
+
+
 def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
-    """[(item, acts)] for a build, in the given order. offers(item) lists the item's candidate
-    acts. An object that offers nothing is passed over before it counts toward limit; one
-    object per definition (four dining chairs are one choice); at most HER_ROOM_OBJECTS from
-    her room and ROOM_OBJECTS from any other room or from off the lot. An object whose room
-    is unknown has no room cap. At most scan objects have their offers read."""
+    """[(item, acts)] for a build. items come from ordered(). offers(item) lists the item's
+    candidate acts. Her room first (at most HER_ROOM_OBJECTS); then rounds over the other
+    rooms of the lot, nearest room first, one object per room per round (at most
+    ROOM_OBJECTS each); what is off the lot comes last. Within a room, fixtures come last.
+    An object that offers nothing is passed over before it counts toward limit; one object
+    per definition (four dining chairs are one choice). At most scan objects have their
+    offers read."""
+    groups = []
+    by_key = {}
+    for item in items:
+        key = _room_key(item)
+        if key not in by_key:
+            by_key[key] = []
+            groups.append(key)
+        by_key[key].append(item)
+    for key in groups:
+        by_key[key].sort(key=fixture)  # stable: nearest first within each kind
+    rooms = [key for key in groups if key not in ("here", "off")]
     picked = []
     definitions = set()
-    per_room = {}
-    scanned = 0
-    for item in items:
-        if len(picked) >= limit or scanned >= scan:
-            break
-        definition = item.get("definition_id")
-        if definition is not None and definition in definitions:
-            continue
-        if item.get("same_room") is True:
-            room, cap = "here", HER_ROOM_OBJECTS
-        elif item.get("on_lot") is not True:
-            room, cap = "off", ROOM_OBJECTS
-        else:
-            room, cap = item.get("room"), ROOM_OBJECTS
-        if room is not None and per_room.get(room, 0) >= cap:
-            continue
-        scanned += 1
-        acts = offers(item)
-        if not acts:
-            continue
-        picked.append((item, acts))
-        if definition is not None:
-            definitions.add(definition)
-        if room is not None:
-            per_room[room] = per_room.get(room, 0) + 1
+    state = {"scanned": 0}
+    cursor = {key: 0 for key in groups}
+
+    def take(key):
+        """The next object of this room with offers, or None when the room is spent."""
+        queue = by_key[key]
+        while cursor[key] < len(queue) and state["scanned"] < scan:
+            item = queue[cursor[key]]
+            cursor[key] += 1
+            definition = item.get("definition_id")
+            if definition is not None and definition in definitions:
+                continue
+            state["scanned"] += 1
+            acts = offers(item)
+            if not acts:
+                continue
+            if definition is not None:
+                definitions.add(definition)
+            return item, acts
+        return None
+
+    def full():
+        return len(picked) >= limit or state["scanned"] >= scan
+
+    if "here" in by_key:
+        for _ in range(HER_ROOM_OBJECTS):
+            if full():
+                break
+            found = take("here")
+            if found is None:
+                break
+            picked.append(found)
+    for _round in range(ROOM_OBJECTS):
+        for key in rooms:
+            if full():
+                return picked
+            found = take(key)
+            if found is not None:
+                picked.append(found)
+    if "off" in by_key:
+        for _ in range(ROOM_OBJECTS):
+            if full():
+                break
+            found = take("off")
+            if found is None:
+                break
+            picked.append(found)
     return picked
 
 

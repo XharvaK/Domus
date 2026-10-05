@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.16.2 (Ashley acts: her menu covers her home)
+## Current build: 2.16.3 (Ashley acts: her menu covers every room)
 
-The source is version `2.16.2` (`src/ashley_e1/__init__.py`,
+The source is version `2.16.3` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 9, schema 4 to 8 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.16.2 has not yet passed its E2 first-load gate or trials; those run on the
+2.16.3 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -41,7 +41,7 @@ The second session (2.11.1) added these. A motive's `value` is the game's curren
 
 ## Ashley acts (2.16.0, schema 10)
 
-Two new row kinds. `act_menu` is what she can do near her body: while sampling, every 20 s or when her room changes, the probe lists the objects of the lot she is on, her room first, then the rest of the lot, then what is off the lot, nearest first in each (2.16.2). An object that offers nothing never takes a slot; one object per definition; at most 6 from her room and 3 from any other room, so choosing a thing in another room is how she moves around the house. For each, the user-directed affordances the trial guard does not exclude (no pickers except dialog-free food routes, no socials, no deny names) and the game does not flag as cheat, debug or automation, and asks the game, a few at a time within 8 ms per sampling tick, whether it would refuse each one now (`test_super_affordance`, no push). At most 12 objects with 8 acts each; a row is written only when the menu changed. A menu failure never stops sampling.
+Two new row kinds. `act_menu` is what she can do near her body: while sampling, every 20 s or when her room changes, the probe lists the objects of the lot she is on, her room first, then the rest of the lot, then what is off the lot, nearest first in each (2.16.3). An object that offers nothing never takes a slot; one object per definition; at most 4 from her room, then one object from every other room before any room gets a second (2.16.3; lights, candles and doors last within a room), so choosing a thing in another room is how she moves around the house. For each, the user-directed affordances the trial guard does not exclude (no pickers except dialog-free food routes, no socials, no deny names) and the game does not flag as cheat, debug or automation, and asks the game, a few at a time within 8 ms per sampling tick, whether it would refuse each one now (`test_super_affordance`, no push). At most 12 objects with 8 acts each; a row is written only when the menu changed. A menu failure never stops sampling.
 
 `act` (helper inbox only: `act_id`, `object_id`, `guid64`) pushes exactly the action Ashley chose, once per act id. It works in HOME and the lab saves, never during calibrate. It re-checks on the game thread right before the push: sampling, the same body, the object, the offer, not excluded, user-directed, and the game's own test. There is no lab, busy or distress gate: it queues like a player's click, and her body's reflexes still act. `act_event` rows record ACCEPTED (written before the push), then PUSHED with the interaction id and FINISHED with the game's finishing type, or REJECTED with a code, or UNKNOWN when something failed after acceptance. The probe never cancels her action.
 
@@ -135,8 +135,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.16.2
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.16.2
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.16.3
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.16.3
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

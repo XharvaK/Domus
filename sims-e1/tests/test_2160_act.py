@@ -235,8 +235,10 @@ class MenuBuildTests(unittest.TestCase):
                   "same_room": False, "distance_m": float(i)} for i in range(100)]
         offers = lambda item: ["act"] if int(item["object_id"]) % 3 == 0 else []
         picked = self.menu.pick(items, offers, limit=5)
-        self.assertEqual([item["object_id"] for item, _acts in picked], ["0", "3", "6", "9", "12"])
-        self.assertEqual(len(self.menu.pick(items, offers, limit=50, scan=9)), 3)
+        # One object per room per round: room r1's first offer is object 21, and so on.
+        self.assertEqual([item["object_id"] for item, _acts in picked], ["0", "21", "42", "3", "24"])
+        self.assertTrue(all(int(item["object_id"]) % 3 == 0 for item, _acts in self.menu.pick(items, offers)))
+        self.assertEqual(len(self.menu.pick(items, offers, limit=50, scan=4)), 2)
 
     def test_one_of_each_kind_and_no_room_fills_the_menu(self):
         here = [{"object_id": "h%d" % i, "definition_id": "d%d" % i, "same_room": True, "on_lot": True,
@@ -251,8 +253,23 @@ class MenuBuildTests(unittest.TestCase):
                    "room": None, "distance_m": 1.0 + i} for i in range(5)]
         items = self.menu.ordered(here + chairs + kitchen + unknown + street)
         ids = [item["object_id"] for item, _acts in self.menu.pick(items, lambda item: ["act"])]
-        self.assertEqual(ids, ["h0", "h1", "h2", "h3", "h4", "h5", "c0", "k0", "k1", "k2",
-                               "u0", "u1", "u2", "u3", "s0", "s1", "s2"])
+        # Her room keeps 4; then each room gets one before any gets a second; the street last.
+        self.assertEqual(ids, ["h0", "h1", "h2", "h3", "c0", "k0", "u0", "k1", "u1", "k2", "u2",
+                               "s0", "s1", "s2"])
+
+    def test_the_far_bedroom_makes_the_menu_and_fixtures_come_last(self):
+        # Live 2026-10-06: tired and hungry, her menu was the piano room and the bathroom.
+        def thing(oid, room, distance, klass="object_x", same=False):
+            return {"object_id": oid, "definition_id": oid, "class": klass, "room": room, "on_lot": True,
+                    "same_room": same, "distance_m": distance}
+        items = self.menu.ordered(
+            [thing("piano%d" % i, "1", 1.0 + i, same=True) for i in range(6)]
+            + [thing("bath%d" % i, "2", 3.0 + i) for i in range(6)]
+            + [thing("kitchen_light", "3", 9.0, "object_light_wall"), thing("fridge", "3", 11.0, "object_fridge")]
+            + [thing("bed", "4", 15.0, "object_bed_double")])
+        ids = [item["object_id"] for item, _acts in self.menu.pick(items, lambda item: ["act"])][:12]
+        self.assertIn("bed", ids)
+        self.assertLess(ids.index("fridge"), ids.index("kitchen_light"))
 
     def test_a_build_runs_in_small_steps_and_keeps_what_the_game_allows(self):
         clock = {"t": 0.0}
