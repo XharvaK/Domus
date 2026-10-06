@@ -1,5 +1,6 @@
 """Helper bridge: spool telemetry, heartbeat, and flush the observation outbox."""
 import argparse
+import dataclasses
 import json
 import time
 import uuid
@@ -209,22 +210,32 @@ class Bridge:
             elif kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
             percepts = self._extractor.step(record)
+            if self._acts is not None and self._acts.planned > 0:
+                # H0.5: between the steps of her plan she is idle for a moment; that is not a
+                # decision point (Ashley sends the next step in the same round trip).
+                percepts = [dataclasses.replace(p, urgency="normal") if p.bucket == "idle" else p
+                            for p in percepts]
             written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
             clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
             self._thalamus, decision = decide(
-                self._thalamus, percepts, clock_ms, self._params, self._context)
+                self._thalamus, percepts, clock_ms, self._params, self._points())
             self._theta = decision.theta
             self._last_row = record
             self._last_rowid = rowid
             seq = record.get("written_sequence") if isinstance(record, dict) else None
             self._on_decision(decision, percepts, wall_ms, clock_ms, seq if type(seq) is int else None)
         self._thalamus, decision = decide(
-            self._thalamus, [], wall_ms, self._params, self._context)
+            self._thalamus, [], wall_ms, self._params, self._points())
         self._theta = decision.theta
         self._on_decision(decision, [], wall_ms, wall_ms, None)
         lineage = self._extractor.lineage_id
         self._thalamus = prune(self._thalamus, wall_ms, self._params, lineage)
         self._persist_thalamus()
+
+    def _points(self):
+        """H0.5: the live bridge wakes her at decision points. Before the first snapshot her body
+        counts as idle."""
+        return dataclasses.replace(self._context, busy=self._extractor.busy is True)
 
     def _on_decision(self, decision, percepts, wall_ms, clock_ms, row_seq):
         if not percepts and not decision.fired:

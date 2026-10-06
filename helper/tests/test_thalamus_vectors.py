@@ -97,7 +97,9 @@ def test_peripheral_vectors_and_manifest():
         assert hashlib.sha256(blob).hexdigest() == manifest[name]
         doc = json.loads(blob)
         assert doc["schemaVersion"] == 1
-        assert doc["parameterRevision"] == PARAMETER_REVISION
+        # H0.5 (dt2.v2) only adds slow_check_ms and the decision-point mode; with busy None the
+        # dt2.v1 vectors still hold exactly.
+        assert doc["parameterRevision"] in ("dt2.v1", PARAMETER_REVISION)
         _play(doc)
     sit = json.loads((ROOT / "sit-habituation.json").read_text(encoding="utf-8"))
     final = sit["steps"][-1]["expect"]["keys"]["interaction:sim:14244:running"]["h"]

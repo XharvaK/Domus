@@ -3,7 +3,7 @@
 import math
 
 from domus_helper.thalamus.parameters import validate
-from domus_helper.thalamus.types import Decision, KeyState, ThalamusState, Trace
+from domus_helper.thalamus.types import Decision, KeyState, Percept, ThalamusState, Trace
 
 _PENDING_CAP = 32
 
@@ -126,12 +126,34 @@ def decide(state, percepts, now_ms, params, context):
     reason = None
     delivered = ()
     through = any(percept.urgency == "always_through" for percept in percepts)
+    wake = any(percept.urgency == "wake" for percept in percepts)
+    points = context.busy is not None
     if through:
         fired = True
         reason = "always_through"
     elif deadline is not None and now >= deadline:
         fired = True
         reason = pending_reason
+    elif points:
+        # H0.5: a decision point wakes her (after the refractory period); nothing else does,
+        # except the slow check while busy and boredom while idle.
+        if wake:
+            start = now + params.debounce_ms
+            if refractory_until is not None and refractory_until > start:
+                start = refractory_until
+            deadline = start if deadline is None else min(deadline, start)
+            pending_reason = "wake"
+        elif deadline is not None or (refractory_until is not None and now < refractory_until):
+            pass
+        else:
+            origin = idle_since if last_fire is None else last_fire
+            if context.busy:
+                if now - origin >= params.slow_check_ms:
+                    deadline = now + params.debounce_ms
+                    pending_reason = "check"
+            elif boredom_pressure(now - origin, params, context) >= th:
+                deadline = now + params.debounce_ms
+                pending_reason = "boredom"
     elif refractory_until is not None and now < refractory_until:
         pass
     elif deadline is not None:
@@ -146,6 +168,10 @@ def decide(state, percepts, now_ms, params, context):
             pending_reason = "boredom"
 
     if fired:
+        if points and reason in ("check", "boredom"):
+            # A look with nothing new still says what it is (the observation needs a percept).
+            pending.append((Percept("env", "check", "check", "busy" if context.busy else "idle",
+                                    lineage=pending[-1][0].lineage if pending else ""), 0.0))
         delivered = _cap(_dedup(pending))
         arousal *= params.arousal_reset_fraction
         refractory_until = now + params.refractory_ms

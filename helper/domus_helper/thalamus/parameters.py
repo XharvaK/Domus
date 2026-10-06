@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-PARAMETER_REVISION = "dt2.v1"
+PARAMETER_REVISION = "dt2.v2"
 
 # Owner-adjustable. Decision JSONL under data_dir/thalamus is kept until this many bytes.
 DECISION_LOG_QUOTA_BYTES = 50 * 1024 * 1024
@@ -30,6 +30,7 @@ bounds = {
     "boredom_rise_ms": (900_000, 900_000),
     "resting_rise_multiplier": (2.0, 2.0),
     "w_kind": (0.25, 4.0),
+    "slow_check_ms": (60_000, 1_800_000),
 }
 
 
@@ -56,6 +57,8 @@ class Parameters:
     boredom_rise_ms: int = 900_000
     resting_rise_multiplier: float = 2.0
     w_kind: dict = field(default_factory=_weights)
+    # H0.5: while her body is busy, one look every this long (a few game hours at speed 1).
+    slow_check_ms: int = 180_000
 
 
 def validate(params):

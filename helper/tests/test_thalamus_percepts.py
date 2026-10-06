@@ -147,8 +147,9 @@ def test_interaction_start_end_cancel_and_user_intent():
         ("started", "14244", None)]
     assert ("affordance_text", "sit down") in started[0].facts
     ended = ext.step(_row(2, ticks=160, observed=[]))
-    end = [p for p in ended if p.kind == "interaction"]
+    end = [p for p in ended if p.kind == "interaction" and p.bucket != "idle"]
     assert len(end) == 1
+    assert [p.urgency for p in ended if p.bucket == "idle"] == ["wake"]
     assert end[0].bucket == "ended"
     assert end[0].pressure is None
     assert end[0].surprise == 0.0
@@ -281,7 +282,7 @@ def test_interaction_origin_marks_the_bodys_own_actions():
     assert origins == {"13993": "native_autonomy", "13949": "script", "1": "pie_menu",
                        "2": "game", "3": "native_reaction"}
     ended = ext.step(_row(2, ticks=5, observed=[]))
-    assert {p.object: dict(p.facts)["origin"] for p in ended if p.kind == "interaction"} == origins
+    assert {p.object: dict(p.facts)["origin"] for p in ended if p.kind == "interaction" and p.bucket != "idle"} == origins
 
 
 def test_ds3_presence_facts_skip_her_body_and_room_moves():
