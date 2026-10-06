@@ -38,13 +38,9 @@ def test_arm_postcheck_and_invalid_save(paths, monkeypatch):
 
 
 def test_tasklist(monkeypatch):
-    from subprocess import CompletedProcess
-    def process(args, **kwargs):
-        assert args == ["tasklist", "/FI", "IMAGENAME eq TS4_x64.exe", "/FO", "CSV", "/NH"]
-        return CompletedProcess(args, 0, '"TS4_x64.exe","123"\n')
-    monkeypatch.setattr(mcp.subprocess, "run", process)
+    monkeypatch.setattr(mcp.fingerprint_reader, "_process", lambda: (123, None))
     assert mcp.game_running()
-    monkeypatch.setattr(mcp.subprocess, "run", lambda *a, **k: CompletedProcess([], 0, 'INFO: No tasks'))
+    monkeypatch.setattr(mcp.fingerprint_reader, "_process", lambda: None)
     assert not mcp.game_running()
 
 

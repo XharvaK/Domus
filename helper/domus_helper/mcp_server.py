@@ -1,8 +1,5 @@
 """Domus tools, served exclusively over the SDK's stdio transport."""
-import csv
-import io
 import os
-import subprocess
 from dataclasses import asdict
 
 from mcp.server.mcpserver import MCPServer
@@ -32,14 +29,7 @@ class CommandFailed(RuntimeError):
 
 
 def game_running():
-    try:
-        result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq TS4_x64.exe", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, timeout=5, check=True)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return any(row and row[0].casefold() == "ts4_x64.exe"
-               for row in csv.reader(io.StringIO(result.stdout)))
+    return fingerprint_reader._process() is not None
 
 
 class DomusTools:

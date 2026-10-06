@@ -8,6 +8,7 @@ import uuid
 
 from . import commands
 from . import fingerprints as fingerprint_reader
+from .vendor import schema
 from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
@@ -30,6 +31,16 @@ from .transport import AshleyClient, load_credentials
 
 _AUTO = object()
 HEARTBEAT_EVERY_MS = 60_000
+_CAMERA_PROBE = (2, 21, 0)
+
+
+def _probe_ok(probe):
+    if not isinstance(probe, str):
+        return False
+    try:
+        return tuple(int(part) for part in probe.split(".")) >= _CAMERA_PROBE
+    except (TypeError, ValueError):
+        return False
 
 
 def _trace(item):
@@ -110,11 +121,16 @@ class Bridge:
         self.notebook = notebook.Notebook(self.paths.data_dir / notebook.DB_NAME)
         self._outcomes_mtime = None
         self._outcomes_checked_ms = None
+        self._probe_warned = None
 
     def tick(self, now):
         self._maybe_rebuild_procedures(now)
         self.cursor.read_new()
         latest = self.spool.latest_record()
+        probe = latest.get("probe_version") if isinstance(latest, dict) else None
+        if isinstance(probe, str) and probe != schema.PROBE_VERSION and probe != self._probe_warned:
+            print("probe %s is installed; this helper expects %s" % (probe, schema.PROBE_VERSION))
+            self._probe_warned = probe
         observed = self.monitor.observe(now, self._mono(), self._process(), latest)
         self._state = observed["state"]
         self._telemetry_only = observed["telemetry_only"]
@@ -133,7 +149,6 @@ class Bridge:
             }
             if inputs == game_inputs.GAME_ONLY:
                 body["inputs"] = inputs
-            probe = latest.get("probe_version") if isinstance(latest, dict) else None
             if isinstance(probe, str) and len(probe) <= 16:
                 body["probe_version"] = probe
             result = self.client.post_heartbeat(body)
@@ -148,7 +163,8 @@ class Bridge:
         self.overlay.poll(self.client, self.helper_session, now)
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
-            self.director.tick(now, self.overlay.published.get("mode") == "live")
+            live = self.overlay.published.get("mode") == "live" and _probe_ok(probe)
+            self.director.tick(now, live)
 
     def _options(self, row):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
@@ -186,7 +202,16 @@ class Bridge:
             "inputs": game_inputs.current(self.spool),
             "transport": transport,
             "thalamus": self.thalamus_status(),
+            "probe": self._probe_status(),
         }
+
+    def _probe_status(self):
+        latest = self.spool.latest_record()
+        probe = latest.get("probe_version") if isinstance(latest, dict) else None
+        if not isinstance(probe, str):
+            probe = None
+        return {"installed": probe, "expected": schema.PROBE_VERSION,
+                "match": probe == schema.PROBE_VERSION}
 
     def thalamus_status(self):
         self._load_thalamus()

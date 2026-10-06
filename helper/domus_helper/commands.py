@@ -23,10 +23,12 @@ class Reply:
     issuer: str | None
 
 
-def envelope(command, args, issuer):
+def envelope(command, args, issuer, ttl_ms=30_000):
+    if not 1_000 <= ttl_ms <= 60_000:
+        raise ValueError("ttl_ms must be from 1000 to 60000")
     now = time.time_ns() // 1_000_000
     row = dict(v=1, id=uuid.uuid4().hex, issued_at_ms=now,
-               expires_at_ms=now + 30_000, issuer=issuer, command=command, args=args)
+               expires_at_ms=now + ttl_ms, issuer=issuer, command=command, args=args)
     raw = json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     _, error = cmdbox.parse(raw, now, ())
     if error:
@@ -66,7 +68,8 @@ def _write(row, raw, paths):
 def send(command, args, issuer, timeout_s=15, *, paths=None):
     if not math.isfinite(timeout_s) or timeout_s <= 0:
         raise ValueError("timeout_s must be positive and finite")
-    row, raw = envelope(command, args, issuer)
+    ttl_ms = min(60_000, max(1_000, int(timeout_s * 1000)))
+    row, raw = envelope(command, args, issuer, ttl_ms=ttl_ms)
     paths = paths or Paths.from_env()
     _write(row, raw, paths)
     deadline = time.monotonic() + timeout_s

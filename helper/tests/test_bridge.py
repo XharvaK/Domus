@@ -299,6 +299,45 @@ def test_bridge_heartbeat_cadence_and_status_has_no_secret(paths, tmp_path, monk
     assert status["outbox"]["pending"] == 0
 
 
+def test_probe_version_warns_once_and_withholds_camera(paths, tmp_path, monkeypatch, capsys):
+    from domus_helper.vendor import schema as probe_schema
+
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+
+    class Fake:
+        def post_heartbeat(self, body):
+            return type("R", (), {"kind": "admitted", "status": 200})()
+
+        def post_observation(self, body, now_ms=None):
+            return type("R", (), {"kind": "admitted", "status": 200})()
+
+    def bridge_for(version):
+        session = _session(paths)
+        _append(session, _row(1, wall=NOW, probe_version=version))
+        bridge = Bridge(paths, client=Fake(), process=(1, "t"), detected_build="1.128.90.1030",
+                        mono=lambda: 0)
+        seen = []
+        bridge.overlay.publish = lambda now, attached: bridge.overlay.__dict__.__setitem__(
+            "published", {"mode": "live"})
+        bridge.director.tick = lambda now, live: seen.append(live)
+        return bridge, seen
+
+    older, older_live = bridge_for("2.20.1")
+    older.tick(NOW)
+    older.tick(NOW + 1)
+    warning = "probe 2.20.1 is installed; this helper expects %s" % probe_schema.PROBE_VERSION
+    assert capsys.readouterr().out.strip().splitlines() == [warning]
+    assert older.status()["probe"] == {
+        "installed": "2.20.1", "expected": probe_schema.PROBE_VERSION, "match": False}
+    assert older_live == [False, False]
+
+    current, current_live = bridge_for("2.21.0")
+    current.tick(NOW)
+    assert capsys.readouterr().out == ""
+    assert current.status()["probe"]["match"] is True
+    assert current_live == [True]
+
+
 def test_cli_once_and_interval(paths, tmp_path, monkeypatch):
     monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DOMUS_SIMS_ROOT", str(paths.sims_root))
