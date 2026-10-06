@@ -11,7 +11,7 @@ OBSERVATION_KEYS = frozenset({
     "v", "observation_id", "world", "branch", "session", "attachment", "body", "snapshot",
     "seq", "source_time_ms", "expires_at_ms", "lineage_class", "percepts", "portrait", "options",
 })
-HEARTBEAT_KEYS = frozenset({"v", "helper_session", "sent_at_ms", "attached", "world", "probe_version"})
+HEARTBEAT_KEYS = frozenset({"v", "helper_session", "sent_at_ms", "attached", "world", "probe_version", "inputs"})
 PERCEPT_KEYS = frozenset({"kind", "salience", "facts"})
 
 
@@ -133,4 +133,8 @@ def validate_heartbeat(body):
         normalized["world"] = _text(body.get("world"), 0, 64)
     if "probe_version" in body:
         normalized["probe_version"] = _text(body.get("probe_version"), 0, 16)
+    if "inputs" in body:
+        if body.get("inputs") not in ("full", "game_only"):
+            raise ContractError("invalid_body")
+        normalized["inputs"] = body["inputs"]
     return normalized
