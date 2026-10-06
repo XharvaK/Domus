@@ -690,6 +690,61 @@ class E2Control:
             self._say(connection, "ACT_%s %s" % (phase, code))
             return False
 
+    def cmd_cancel(self, act_id, interaction_id, connection):
+        """2.20.0 (live 2026-10-06: her meal waited behind an open-ended piano song she had no
+        way to stop): she stops one of her own actions, running or queued, the way the client's
+        X does (interactions.cancel_si: find it on her Sim, or its continuation, then
+        cancel_user). The game may refuse. Once per act id."""
+        if act_id in self.act_ids:
+            self._say(connection, "ACT_REJECT DUPLICATE")
+            return False
+        self.act_ids.add(act_id)
+        base = {"object_id": interaction_id, "guid64": None}
+        if not self.available():
+            self._act_event(act_id, "REJECTED", code="E2_UNAVAILABLE", **base)
+            self._say(connection, "ACT_REJECT E2_UNAVAILABLE")
+            return False
+        accepted = False
+        try:
+            refusal = None
+            sim = None
+            if self._state() != "SAMPLING":
+                refusal = "NOT_SAMPLING"
+            elif self.lineage_class == e2_lineage.BODY_MISMATCH:
+                refusal = "BODY_MISMATCH"
+            else:
+                _sim_info, sim = observers.select_lab_body(
+                    services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+                if sim is None:
+                    refusal = "BODY_UNAVAILABLE"
+            interaction = None
+            if refusal is None:
+                interaction = sim.find_interaction_by_id(int(interaction_id))
+                if interaction is None:
+                    interaction = sim.find_continuation_by_id(int(interaction_id))
+                if interaction is None:
+                    refusal = "NO_INTERACTION"
+            if refusal is not None:
+                self._act_event(act_id, "REJECTED", code=refusal, **base)
+                self._say(connection, "ACT_REJECT %s" % refusal)
+                return False
+            tuning_name = _tuning_name(interaction)
+            self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, **base)
+            accepted = True
+            if not interaction.cancel_user(cancel_reason_msg="Ashley stopped it."):
+                self._act_event(act_id, "REJECTED", code="GAME_REFUSED", tuning_name=tuning_name, **base)
+                self._say(connection, "ACT_REJECT GAME_REFUSED")
+                return False
+            self._act_event(act_id, "FINISHED", tuning_name=tuning_name, finishing_type="STOPPED", **base)
+            self._say(connection, "ACT_STOPPED %s" % act_id)
+            return True
+        except Exception as error:
+            code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
+            phase = "UNKNOWN" if accepted else "REJECTED"
+            self._act_event(act_id, phase, code=code, **base)
+            self._say(connection, "ACT_%s %s" % (phase, code))
+            return False
+
     def _reconcile_pushed(self, row):
         """2.19.1 (live 2026-10-06: a quick meal pushed while she was in the bath never
         appeared in her queue and never finished, so she believed it was still waiting):

@@ -88,13 +88,15 @@ def _portrait(row, resolve=None):
         needs[str(item["id"])] = {"value": item.get("value"), "band": item.get("band")}
     posture = ((row.get("body") or {}).get("posture") or {}).get("posture_name")
     running = []
+    queued = []
     for entry in ((row.get("interactions") or {}).get("observed")) or []:
-        if not isinstance(entry, dict) or entry.get("membership") not in ("RUNNING", "QUEUED_AND_RUNNING"):
+        if not isinstance(entry, dict) or entry.get("affordance_text") is None:
             continue
-        text = entry.get("affordance_text")
-        if text is None:
-            continue
-        running.append(_affordance_name(text))
+        if entry.get("membership") in ("RUNNING", "QUEUED_AND_RUNNING"):
+            running.append(_affordance_name(entry["affordance_text"]))
+        elif entry.get("membership") == "QUEUED":
+            # Live 2026-10-06: her answered recipe sat queued behind a piano song she could not see.
+            queued.append(_affordance_name(entry["affordance_text"]))
     zone = row.get("zone") or {}
     game = row.get("game") or {}
     # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
@@ -163,6 +165,7 @@ def _portrait(row, resolve=None):
         "needs": needs,
         "posture": posture,
         "running": running[:8],
+        "queued": queued[:8],
         "zone": {"zone_id": zone.get("zone_id"), "lot_id": zone.get("lot_id"),
                  "room": zone.get("room")},
         "time": game_time(game.get("calendar")),
@@ -226,8 +229,8 @@ def _portrait(row, resolve=None):
                  "title": _resolve(resolve, item.get("title_key")),
                  "level": item.get("level"), "at_work": item.get("at_work") is True}
                 for item in own["careers"] if isinstance(item, dict)]
-    # Shed the least essential first: running list, then moodlets, then company.
-    for key in ("running", "moodlets", "company"):
+    # Shed the least essential first: queued and running lists, then moodlets, then company.
+    for key in ("queued", "running", "moodlets", "company"):
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:
             portrait[key].pop()
     return portrait

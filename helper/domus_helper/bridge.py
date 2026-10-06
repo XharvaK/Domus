@@ -7,7 +7,7 @@ import uuid
 
 from . import commands
 from . import fingerprints as fingerprint_reader
-from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names
+from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -127,6 +127,7 @@ class Bridge:
         if not isinstance(row, dict):
             return []
         asked = dialog_options(row, self._resolve_text)
+        asked += queue_options(row, start=sum(len(item["acts"]) for item in asked))
         menu = self._menu
         if not isinstance(menu, dict) or menu.get("session") != row.get("telemetry_session_id"):
             return asked
@@ -209,6 +210,8 @@ class Bridge:
                 self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"]}
             elif kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
+            if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
+                self._acts.on_sample(record)
             percepts = self._extractor.step(record)
             if self._acts is not None and self._acts.planned > 0:
                 # H0.5: between the steps of her plan she is idle for a moment; that is not a

@@ -10,6 +10,9 @@ OPTIONS_LIMIT = 7800
 PROBE_REPLY_MS = 90_000
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
+ASKED_LIMIT = 8
+# A dialog that opened this soon before her pushed act was first seen is not its doing.
+ASKED_SLACK_MS = 1_000
 _PHASES = {"ACCEPTED": "accepted", "REJECTED": "rejected", "PUSHED": "pushed",
            "FINISHED": "finished", "UNKNOWN": "unknown"}
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
@@ -53,6 +56,37 @@ def _object_name(item, resolve, catalog, people=None):
 
 DIALOG_PREFIX = "dialog:"
 DIALOG_ROWS_SHOWN = 12
+QUEUE_OBJECT_ID = "queue:her"
+QUEUE_SHOWN = 6
+# Posture plumbing is not something she chose or the client shows to stop.
+_NOT_HERS_TO_STOP = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_CANCEL_AOP")
+_CLASS_REPR = re.compile(r"^<class '([^']+)'>$")
+
+
+def queue_options(row, start=0):
+    """2.20.0 (live 2026-10-06: her meal waited behind an open-ended piano song she had no
+    way to stop): what her body is doing and has queued, each one hers to stop, the way the
+    client's X on her queue is. Refs continue from start."""
+    acts = []
+    count = start
+    for entry in ((row or {}).get("interactions") or {}).get("observed") or []:
+        if not isinstance(entry, dict) or entry.get("source_raw") in _NOT_HERS_TO_STOP:
+            continue
+        iid = entry.get("interaction_id")
+        membership = entry.get("membership")
+        if not (isinstance(iid, str) and iid.isdigit()) or membership not in ("RUNNING", "QUEUED_AND_RUNNING", "QUEUED"):
+            continue
+        text = str(entry.get("affordance_text") or "")
+        match = _CLASS_REPR.match(text)
+        name = humanize(match.group(1).rsplit(".", 1)[-1] if match else text)
+        count += 1
+        acts.append({"ref": "a%d" % count, "guid64": iid,
+                     "text": ("Cancel (queued): %s" if membership == "QUEUED" else "Stop: %s") % name})
+        if len(acts) >= QUEUE_SHOWN:
+            break
+    if not acts:
+        return []
+    return [{"object": "What you are doing", "object_id": QUEUE_OBJECT_ID, "where": "your queue", "acts": acts}]
 
 
 def dialog_options(row, resolve=None, start=0):
@@ -145,6 +179,10 @@ class ActCourier(object):
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
         self._events = json.loads(raw) if raw else []
+        # Live 2026-10-06: Cook opens the recipe question instead of entering her queue, so the
+        # probe called it gone (LEFT_QUEUE) and she cooked again and again. Dialogs seen open.
+        raw = spool.get_kv("acts_asked")
+        self._asked = json.loads(raw) if raw else []
         # H0.5: steps of her plan Ashley still holds; while any wait, her idle is not a decision point.
         self.planned = int(spool.get_kv("acts_planned") or 0)
 
@@ -153,8 +191,10 @@ class ActCourier(object):
             for act_id in sorted(self._known, key=lambda key: self._known[key]["written_ms"])[:-KNOWN_LIMIT]:
                 del self._known[act_id]
         del self._events[:-EVENTS_LIMIT]
+        del self._asked[:-ASKED_LIMIT]
         self._spool.put_many_kv({"acts_known": json.dumps(self._known, sort_keys=True),
                                  "acts_events": json.dumps(self._events),
+                                 "acts_asked": json.dumps(self._asked),
                                  "acts_planned": str(self.planned)})
 
     def _event(self, act_id, phase, at_ms, detail=None):
@@ -162,6 +202,29 @@ class ActCourier(object):
         if detail:
             event["detail"] = detail
         self._events.append(event)
+
+    def on_sample(self, row):
+        """Any probe row: remember when each game dialog was first seen open."""
+        dialogs = row.get("dialogs") if isinstance(row, dict) else None
+        if not isinstance(dialogs, dict):
+            return
+        at = row.get("wall_timestamp_ms")
+        seen = {item["dialog_id"] for item in self._asked}
+        added = False
+        for item in dialogs.get("open") or []:
+            dialog_id = item.get("dialog_id") if isinstance(item, dict) else None
+            if dialog_id is None or str(dialog_id) in seen or type(at) is not int:
+                continue
+            self._asked.append({"dialog_id": str(dialog_id), "kind": str(item.get("kind") or "a question"), "at_ms": at})
+            added = True
+        if added:
+            self._save()
+
+    def _asked_after(self, pushed_ms, until_ms):
+        for item in self._asked:
+            if pushed_ms - ASKED_SLACK_MS <= item["at_ms"] <= until_ms:
+                return item
+        return None
 
     def on_row(self, row):
         """An act_event row from the probe's telemetry."""
@@ -175,9 +238,22 @@ class ActCourier(object):
         detail = {key: e2[key] for key in ("code", "detail", "tuning_name", "finishing_type", "interaction_id")
                   if isinstance(e2.get(key), str) and e2[key]}
         at = row.get("wall_timestamp_ms")
-        self._event(act_id, phase, at if type(at) is int and at >= 0 else 0, detail)
-        if act_id in self._known:
-            self._known[act_id]["answered"] = True
+        at = at if type(at) is int and at >= 0 else 0
+        known = self._known.get(act_id)
+        if phase == "pushed" and known is not None:
+            known["pushed_ms"] = at
+        if phase == "unknown" and detail.get("code") == "LEFT_QUEUE" and known is not None and "pushed_ms" in known:
+            asked = self._asked_after(known["pushed_ms"], at)
+            if asked is not None:
+                # It did not vanish: the game turned it into a question to her.
+                phase = "finished"
+                detail = {key: value for key, value in detail.items() if key in ("tuning_name", "interaction_id")}
+                detail["finishing_type"] = "ASKED"
+                detail["detail"] = ("it opened the game's question (%s); answering it is what queues the action"
+                                    % asked["kind"])[:200]
+        self._event(act_id, phase, at, detail)
+        if known is not None:
+            known["answered"] = True
         self._save()
 
     def tick(self, client, helper_session, now_ms, attached):
@@ -205,7 +281,10 @@ class ActCourier(object):
                 continue
             try:
                 object_id = str(act.get("object_id"))
-                if object_id.startswith(DIALOG_PREFIX):
+                if object_id == QUEUE_OBJECT_ID:
+                    # 2.20.0: she stops one of her own actions.
+                    self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
+                elif object_id.startswith(DIALOG_PREFIX):
                     # 2.18.0: her answer to a game dialog (a picker row or a button).
                     self._publish("answer", {"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
                                              "pick": str(act.get("guid64"))})
