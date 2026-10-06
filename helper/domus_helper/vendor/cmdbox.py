@@ -3,7 +3,8 @@ import json
 
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
-            'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer')
+            'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
+            'cancel')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -93,6 +94,10 @@ def parse(raw_bytes, now_ms, used_ids):
                 _digits(args.get('dialog_id')) and (_digits(pick) or (
                     type(pick) is str and 1 <= len(pick) <= 16 and
                     all(ch in 'abcdefghijklmnopqrstuvwxyz_0123456789' for ch in pick))))
+    elif good and name == 'cancel':
+        # 2.20.0: she stops one of her own actions, as the client's X on her queue does.
+        good = (set(args) == {'act_id', 'interaction_id'} and valid_hex(args.get('act_id'), 32) and
+                _digits(args.get('interaction_id')))
     elif good:
         good = not args
     if not good:

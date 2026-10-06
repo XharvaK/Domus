@@ -83,3 +83,29 @@ def test_her_portrait_shows_what_waits_in_her_queue():
     portrait = observation._portrait(row)
     assert portrait["running"] == ["piano_Play_Song", "seating_Sit_single"]
     assert portrait["queued"] == ["fridge_CreateTray", "fridge_CreateTray"]
+
+
+def test_what_she_is_doing_is_hers_to_stop_and_posture_is_not():
+    from domus_helper.acts import QUEUE_OBJECT_ID, queue_options
+    row = {"interactions": {"observed": [
+        {"interaction_id": "313", "affordance_text": "<class 'sims4.tuning.instances.piano_Play_Song'>",
+         "membership": "QUEUED_AND_RUNNING", "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT"},
+        {"interaction_id": "609", "affordance_text": "<class 'sims4.tuning.instances.fridge_CreateTray'>",
+         "membership": "QUEUED", "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT"},
+        {"interaction_id": "339", "affordance_text": "<class 'sims4.tuning.instances.seating_Sit_single'>",
+         "membership": "RUNNING", "source_raw": "InteractionSource.POSTURE_GRAPH"},
+    ]}}
+    [group] = queue_options(row, start=2)
+    assert group["object_id"] == QUEUE_OBJECT_ID
+    assert group["acts"] == [{"ref": "a3", "guid64": "313", "text": "Stop: piano Play Song"},
+                             {"ref": "a4", "guid64": "609", "text": "Cancel (queued): fridge Create Tray"}]
+    assert queue_options({"interactions": {"observed": []}}) == []
+
+
+def test_choosing_to_stop_goes_to_the_probe_as_a_cancel(tmp_path):
+    from domus_helper.acts import QUEUE_OBJECT_ID
+    published = []
+    stop = {"act_id": "d" * 32, "object_id": QUEUE_OBJECT_ID, "guid64": "313", "expires_at_ms": 99_000}
+    ActCourier(Spool(tmp_path / "spool.db"), lambda command, args: published.append((command, args))).tick(
+        _Client([stop]), "h", 1000, True)
+    assert published == [("cancel", {"act_id": "d" * 32, "interaction_id": "313"})]

@@ -7,7 +7,7 @@ import uuid
 
 from . import commands
 from . import fingerprints as fingerprint_reader
-from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names
+from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -127,6 +127,7 @@ class Bridge:
         if not isinstance(row, dict):
             return []
         asked = dialog_options(row, self._resolve_text)
+        asked += queue_options(row, start=sum(len(item["acts"]) for item in asked))
         menu = self._menu
         if not isinstance(menu, dict) or menu.get("session") != row.get("telemetry_session_id"):
             return asked

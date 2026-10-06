@@ -56,6 +56,37 @@ def _object_name(item, resolve, catalog, people=None):
 
 DIALOG_PREFIX = "dialog:"
 DIALOG_ROWS_SHOWN = 12
+QUEUE_OBJECT_ID = "queue:her"
+QUEUE_SHOWN = 6
+# Posture plumbing is not something she chose or the client shows to stop.
+_NOT_HERS_TO_STOP = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_CANCEL_AOP")
+_CLASS_REPR = re.compile(r"^<class '([^']+)'>$")
+
+
+def queue_options(row, start=0):
+    """2.20.0 (live 2026-10-06: her meal waited behind an open-ended piano song she had no
+    way to stop): what her body is doing and has queued, each one hers to stop, the way the
+    client's X on her queue is. Refs continue from start."""
+    acts = []
+    count = start
+    for entry in ((row or {}).get("interactions") or {}).get("observed") or []:
+        if not isinstance(entry, dict) or entry.get("source_raw") in _NOT_HERS_TO_STOP:
+            continue
+        iid = entry.get("interaction_id")
+        membership = entry.get("membership")
+        if not (isinstance(iid, str) and iid.isdigit()) or membership not in ("RUNNING", "QUEUED_AND_RUNNING", "QUEUED"):
+            continue
+        text = str(entry.get("affordance_text") or "")
+        match = _CLASS_REPR.match(text)
+        name = humanize(match.group(1).rsplit(".", 1)[-1] if match else text)
+        count += 1
+        acts.append({"ref": "a%d" % count, "guid64": iid,
+                     "text": ("Cancel (queued): %s" if membership == "QUEUED" else "Stop: %s") % name})
+        if len(acts) >= QUEUE_SHOWN:
+            break
+    if not acts:
+        return []
+    return [{"object": "What you are doing", "object_id": QUEUE_OBJECT_ID, "where": "your queue", "acts": acts}]
 
 
 def dialog_options(row, resolve=None, start=0):
@@ -250,7 +281,10 @@ class ActCourier(object):
                 continue
             try:
                 object_id = str(act.get("object_id"))
-                if object_id.startswith(DIALOG_PREFIX):
+                if object_id == QUEUE_OBJECT_ID:
+                    # 2.20.0: she stops one of her own actions.
+                    self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
+                elif object_id.startswith(DIALOG_PREFIX):
                     # 2.18.0: her answer to a game dialog (a picker row or a button).
                     self._publish("answer", {"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
                                              "pick": str(act.get("guid64"))})
