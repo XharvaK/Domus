@@ -209,6 +209,8 @@ class Bridge:
                 self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"]}
             elif kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
+            if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
+                self._acts.on_sample(record)
             percepts = self._extractor.step(record)
             if self._acts is not None and self._acts.planned > 0:
                 # H0.5: between the steps of her plan she is idle for a moment; that is not a

@@ -10,6 +10,9 @@ OPTIONS_LIMIT = 7800
 PROBE_REPLY_MS = 90_000
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
+ASKED_LIMIT = 8
+# A dialog that opened this soon before her pushed act was first seen is not its doing.
+ASKED_SLACK_MS = 1_000
 _PHASES = {"ACCEPTED": "accepted", "REJECTED": "rejected", "PUSHED": "pushed",
            "FINISHED": "finished", "UNKNOWN": "unknown"}
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
@@ -145,6 +148,10 @@ class ActCourier(object):
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
         self._events = json.loads(raw) if raw else []
+        # Live 2026-10-06: Cook opens the recipe question instead of entering her queue, so the
+        # probe called it gone (LEFT_QUEUE) and she cooked again and again. Dialogs seen open.
+        raw = spool.get_kv("acts_asked")
+        self._asked = json.loads(raw) if raw else []
         # H0.5: steps of her plan Ashley still holds; while any wait, her idle is not a decision point.
         self.planned = int(spool.get_kv("acts_planned") or 0)
 
@@ -153,8 +160,10 @@ class ActCourier(object):
             for act_id in sorted(self._known, key=lambda key: self._known[key]["written_ms"])[:-KNOWN_LIMIT]:
                 del self._known[act_id]
         del self._events[:-EVENTS_LIMIT]
+        del self._asked[:-ASKED_LIMIT]
         self._spool.put_many_kv({"acts_known": json.dumps(self._known, sort_keys=True),
                                  "acts_events": json.dumps(self._events),
+                                 "acts_asked": json.dumps(self._asked),
                                  "acts_planned": str(self.planned)})
 
     def _event(self, act_id, phase, at_ms, detail=None):
@@ -162,6 +171,29 @@ class ActCourier(object):
         if detail:
             event["detail"] = detail
         self._events.append(event)
+
+    def on_sample(self, row):
+        """Any probe row: remember when each game dialog was first seen open."""
+        dialogs = row.get("dialogs") if isinstance(row, dict) else None
+        if not isinstance(dialogs, dict):
+            return
+        at = row.get("wall_timestamp_ms")
+        seen = {item["dialog_id"] for item in self._asked}
+        added = False
+        for item in dialogs.get("open") or []:
+            dialog_id = item.get("dialog_id") if isinstance(item, dict) else None
+            if dialog_id is None or str(dialog_id) in seen or type(at) is not int:
+                continue
+            self._asked.append({"dialog_id": str(dialog_id), "kind": str(item.get("kind") or "a question"), "at_ms": at})
+            added = True
+        if added:
+            self._save()
+
+    def _asked_after(self, pushed_ms, until_ms):
+        for item in self._asked:
+            if pushed_ms - ASKED_SLACK_MS <= item["at_ms"] <= until_ms:
+                return item
+        return None
 
     def on_row(self, row):
         """An act_event row from the probe's telemetry."""
@@ -175,9 +207,22 @@ class ActCourier(object):
         detail = {key: e2[key] for key in ("code", "detail", "tuning_name", "finishing_type", "interaction_id")
                   if isinstance(e2.get(key), str) and e2[key]}
         at = row.get("wall_timestamp_ms")
-        self._event(act_id, phase, at if type(at) is int and at >= 0 else 0, detail)
-        if act_id in self._known:
-            self._known[act_id]["answered"] = True
+        at = at if type(at) is int and at >= 0 else 0
+        known = self._known.get(act_id)
+        if phase == "pushed" and known is not None:
+            known["pushed_ms"] = at
+        if phase == "unknown" and detail.get("code") == "LEFT_QUEUE" and known is not None and "pushed_ms" in known:
+            asked = self._asked_after(known["pushed_ms"], at)
+            if asked is not None:
+                # It did not vanish: the game turned it into a question to her.
+                phase = "finished"
+                detail = {key: value for key, value in detail.items() if key in ("tuning_name", "interaction_id")}
+                detail["finishing_type"] = "ASKED"
+                detail["detail"] = ("it opened the game's question (%s); answering it is what queues the action"
+                                    % asked["kind"])[:200]
+        self._event(act_id, phase, at, detail)
+        if known is not None:
+            known["answered"] = True
         self._save()
 
     def tick(self, client, helper_session, now_ms, attached):
