@@ -69,6 +69,7 @@ class Extractor:
         self._presence = None
         self._on_lot = set()
         self._social = set()
+        self._asked = set()
 
     def step(self, row):
         percepts = []
@@ -112,6 +113,7 @@ class Extractor:
         self._presence = None
         self._on_lot = set()
         self._social = set()
+        self._asked = set()
 
     def _act(self, row):
         """8f: her chosen act was refused, or nobody can tell what became of it. Wakes her;
@@ -192,6 +194,8 @@ class Extractor:
             percepts.extend(self._presence_percepts(row.get("presence") or [], ticks))
         if "social" in row:
             percepts.extend(self._social_percepts(row.get("social") or [], sim_s, ticks))
+        if "dialogs" in row:
+            percepts.extend(self._dialog_percepts(row.get("dialogs") or {}, sim_s, ticks))
         self._prev = {
             "sim": sim,
             "ticks": ticks,
@@ -369,6 +373,28 @@ class Extractor:
         self._on_lot = here
         return percepts
 
+    def _dialog_percepts(self, dialogs, sim_s, ticks):
+        """2.19.0 (live 2026-10-06: a work event asked her to nuke or remake a dish, the game
+        paused for her answer, and nothing woke her): a question the game puts to her (a
+        dialog that is hers or nobody's) wakes her once, when it opens."""
+        open_now = set()
+        percepts = []
+        for item in (dialogs.get("open") if isinstance(dialogs, dict) else None) or []:
+            if not isinstance(item, dict) or item.get("dialog_id") is None or item.get("auto_respond") is True:
+                continue
+            owner = item.get("owner_id")
+            if owner is not None and sim_s and str(owner) != sim_s:
+                continue
+            dialog_id = str(item["dialog_id"])
+            open_now.add(dialog_id)
+            if dialog_id in self._asked:
+                continue
+            percepts.append(Percept(
+                "env", "dialog", dialog_id, "asked", urgency="wake", lineage=self.lineage_id,
+                facts=_facts(ticks, (("title_key", item.get("title_key")),))))
+        self._asked = open_now
+        return percepts
+
     def _social_percepts(self, items, sim_s, ticks):
         percepts = []
         seen = set()
@@ -411,6 +437,7 @@ class Extractor:
             "presence": None if self._presence is None else sorted(self._presence),
             "on_lot": sorted(self._on_lot),
             "social": sorted(self._social),
+            "asked": sorted(self._asked),
         }
 
     @classmethod
@@ -432,6 +459,7 @@ class Extractor:
         extractor._presence = None if presence is None else set(presence)
         extractor._on_lot = set(blob.get("on_lot") or [])
         extractor._social = set(blob.get("social") or [])
+        extractor._asked = set(blob.get("asked") or [])
         return extractor
 
 

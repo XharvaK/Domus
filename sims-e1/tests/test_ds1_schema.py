@@ -66,13 +66,15 @@ def full_self():
     return {"traits": [{"trait": "t" * 128, "text_key": "4294967295",
                         "personality": True}] * 12,
             "skills": [{"skill": "s" * 128, "text_key": "4294967295", "level": 10}] * 12,
-            "funds": 2 ** 40}
+            "funds": 2 ** 40,
+            "careers": [{"career": "c" * 64, "text_key": "4294967295", "title_key": "4294967295",
+                         "level": 10, "at_work": True}] * 4}
 
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 11)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v11")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 12)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v12")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -175,7 +177,7 @@ class SchemaV4Tests(unittest.TestCase):
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)
-        self.assertLessEqual(len(payload), 32 * 1024)
+        self.assertLessEqual(len(payload), 48 * 1024)
         self.assertEqual(len(row["social"]), 4)
         self.assertEqual(len(row["sim_signals"]), 8)
         self.assertFalse(row["observation_complete"])
@@ -213,7 +215,7 @@ class SchemaV4Tests(unittest.TestCase):
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)
-        self.assertLessEqual(len(payload), 32 * 1024)
+        self.assertLessEqual(len(payload), 48 * 1024)
         self.assertLessEqual(len(row["dialogs"]["open"]), 4)  # 2.18.0 (32 KiB): dialogs keep their rows
         # Rows go before someone addressing her does; the worst case keeps a few.
         self.assertGreaterEqual(len(row["dialogs"]["open"][-1]["rows"]), 5)

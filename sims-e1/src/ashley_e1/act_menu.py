@@ -62,13 +62,19 @@ def _room_key(item):
     return item.get("room")
 
 
+def _choice(acts):
+    """The set of act ids an object offers, None when the acts carry none."""
+    guids = [act.get("guid64") if isinstance(act, dict) else None for act in acts]
+    return None if None in guids else frozenset(guids)
+
+
 def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
     """[(item, acts)] for a build. items come from ordered(). offers(item) lists the item's
     candidate acts. Her room first (at most HER_ROOM_OBJECTS); then rounds over the other
     rooms of the lot, nearest room first, one object per room per round (at most
     ROOM_OBJECTS each); what is off the lot comes last. Within a room, fixtures come last.
     An object that offers nothing is passed over before it counts toward limit; one object
-    per definition (four dining chairs are one choice). At most scan objects have their
+    per definition (four dining chairs are one choice), one per set of acts. At most scan objects have their
     offers read."""
     groups = []
     by_key = {}
@@ -83,6 +89,7 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
     rooms = [key for key in groups if key not in ("here", "off", "people")]
     picked = []
     definitions = set()
+    choices = set()
     state = {"scanned": 0}
     cursor = {key: 0 for key in groups}
 
@@ -99,8 +106,16 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
             acts = offers(item)
             if not acts:
                 continue
+            # 2.19.0 (live 2026-10-06: three mirrors with the same five acts, and the
+            # kitchen never listed): an object offering exactly the acts of one already
+            # picked is the same choice again. People are never folded.
+            same = None if item.get("person") is True else _choice(acts)
+            if same is not None and same in choices:
+                continue
             if definition is not None:
                 definitions.add(definition)
+            if same is not None:
+                choices.add(same)
             return item, acts
         return None
 

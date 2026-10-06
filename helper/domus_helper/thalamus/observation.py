@@ -219,6 +219,13 @@ def _portrait(row, resolve=None):
             [{"skill": _resolve(resolve, item.get("text_key")) or item.get("skill"),
               "level": item.get("level")} for item in own["skills"] if isinstance(item, dict)],
             "funds": own.get("funds")}
+        if isinstance(own.get("careers"), list):
+            # 2.19.0: her jobs, in the game's words; at_work while her shift runs.
+            portrait["self"]["jobs"] = [
+                {"job": _resolve(resolve, item.get("text_key")) or item.get("career"),
+                 "title": _resolve(resolve, item.get("title_key")),
+                 "level": item.get("level"), "at_work": item.get("at_work") is True}
+                for item in own["careers"] if isinstance(item, dict)]
     # Shed the least essential first: running list, then moodlets, then company.
     for key in ("running", "moodlets", "company"):
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:

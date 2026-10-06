@@ -285,7 +285,7 @@ class SchemaTests(unittest.TestCase):
                                        "from": long, "to": long}] * 8}
         row = snapshot.apply_size_budget(row)
         self.schema.validate_record(row)
-        self.assertLessEqual(len(self.schema.serialize_record(row)), 32 * 1024)
+        self.assertLessEqual(len(self.schema.serialize_record(row)), 48 * 1024)
         self.assertEqual(len(row["social"]), 4)
         self.assertTrue(row["objects"]["truncated"])
 

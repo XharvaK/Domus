@@ -348,3 +348,23 @@ def test_a_new_save_is_its_own_world_and_nothing_is_compared_across_sessions():
     ex.step(_row(1, kind="lineage_event", session="home", e2={"slot_id": 8, "guid": 222, "lineage_class": "Y"}))
     ex.step(_row(0, kind="session_open", session="home2", extra={"save": {"slot_id": "8", "save_slot_guid": "222"}}))
     assert ex.lineage_class == "Y"
+
+
+def test_a_question_the_game_asks_her_wakes_her_once():
+    """2.19.0 (live 2026-10-06): a work event asked her to nuke or remake a dish; the game
+    paused for her answer and nothing woke her."""
+    ext = Extractor()
+    asked = {"dialogs": {"open": [
+        {"dialog_id": "3", "owner_id": "ASH", "title_key": "1474017446", "auto_respond": False},
+        {"dialog_id": "4", "owner_id": "OTHER", "title_key": "1", "auto_respond": False},
+        {"dialog_id": "5", "owner_id": None, "title_key": "2", "auto_respond": True}]}}
+    ext.step(_row(1))
+    first = [p for p in ext.step(_row(2, extra=asked)) if p.subject == "dialog"]
+    assert [(p.kind, p.object, p.bucket, p.urgency) for p in first] == [("env", "3", "asked", "wake")]
+    assert dict(first[0].facts)["title_key"] == "1474017446"
+    assert [p for p in ext.step(_row(3, extra=asked)) if p.subject == "dialog"] == []
+    restored = Extractor.from_dict(json.loads(json.dumps(ext.to_dict())))
+    assert [p for p in restored.step(_row(4, extra=asked)) if p.subject == "dialog"] == []
+    ext.step(_row(5, extra={"dialogs": {"open": []}}))
+    again = [p for p in ext.step(_row(6, extra=asked)) if p.subject == "dialog"]
+    assert [p.object for p in again] == ["3"]
