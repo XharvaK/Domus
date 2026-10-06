@@ -86,6 +86,20 @@ state. The switch travels in the heartbeat (`inputs: game_only`, sent at once on
 flip), each pass Ashley admits while it is on is stamped game-only, and every flip
 is appended to `inputs_log.jsonl` in the data folder.
 
+Overlay pages: while the bridge runs (`--interval`), it serves local pages on
+`http://127.0.0.1:47213/` (16:9), `/vertical` (9:16), `/curtain` and `/work`, for a
+capture tool's browser source, and their state on `/state.json`. They answer this PC
+only (the Host header must be `127.0.0.1` or `localhost`). They show her body (needs,
+mood, moodlets, the game clock, what her body is doing and whose hand started it: her
+choice, her body, the game, or a human) and her settled game passes from Ashley's
+`POST /domus/feed`, polled every 8 s. A pass without the game-only stamp is refused;
+with the switch off the pages show only the curtain. Lines matching
+`overlay_privacy.txt` in the data folder (one name or place per line, `#` for
+comments) are held and shown as "…". A human at the controls (a click from the
+game's menu, a pop-up answered by hand, a helper restart) is labelled for 2 minutes.
+`python -m domus_helper.overlay curtain on|off|show` draws the curtain by hand;
+it also falls whenever the game is not attached.
+
 After `read_new`, each new spool row (SQLite `rowid` after `last_rowid`) goes
 through `Extractor.step` and `decide`, using the row's `monotonic_ns // 1_000_000`
 as `now_ms`. One empty `decide` then advances deadlines and boredom on the

@@ -1,0 +1,352 @@
+"""E3: the overlay. Local pages for a capture tool, served on this PC only (127.0.0.1).
+
+What the pages show is put together here from two sources:
+- her body as the probe reports it: needs, mood, moodlets, the game clock, and what her body is
+  doing, each marked by whose hand started it (her choice, her body's reflex, the game, or a
+  human at the controls);
+- her settled game passes from Ashley's overlay feed: her journal line, the act she chose, and
+  what became of it and of her plan.
+
+A pass without the game-only stamp is refused, and nothing of hers is shown while the switch is
+off. A line that matches the User's privacy list (`overlay_privacy.txt` in the data folder, one
+name or place per line) is held: "..." is shown instead. Ashley holds her own lines too; this is
+the second, local line.
+
+Run: python -m domus_helper.overlay curtain on | off | show
+"""
+import argparse
+import json
+import re
+import threading
+import time
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from . import inputs as game_inputs
+from .acts import humanize
+from .overlay_page import PAGE
+from .paths import Paths
+from .spool import Spool
+from .thalamus.observation import _affordance_name, game_time
+
+PORT = 47213
+FEED_EVERY_MS = 8_000
+# A human touch (a click that queued something, a pop-up answered by hand, a helper restart)
+# keeps the label up this long.
+HUMAN_HAND_MS = 120_000
+PRIVACY_FILE = "overlay_privacy.txt"
+CURTAIN_KEY = "overlay_curtain"
+PASSES_SHOWN = 6
+DOING_SHOWN = 4
+MOODLETS_SHOWN = 4
+HELD = "…"
+NEEDS = ("hunger", "energy", "bladder", "hygiene", "fun", "social")
+# Whose hand started an interaction, from the game's own InteractionSource.
+_BY = {
+    "InteractionSource.PIE_MENU": "human",
+    "InteractionSource.AUTONOMY": "body",
+    "InteractionSource.BODY_CANCEL_AOP": "body",
+    "InteractionSource.SCRIPT": "game",
+    "InteractionSource.REACTION": "game",
+}
+_NOT_SHOWN = ("InteractionSource.POSTURE_GRAPH",)
+_IDLE = ("sim-stand", "stand_Passive")
+_NO_ANSWER = (None, "closed", "no_response")
+_MECHANICAL = (re.compile(r"<[@#][!&]?\d+>"), re.compile(r"(^|[^\w])@[A-Za-z0-9_.]{2,}"),
+               re.compile(r"\d{15,}"), re.compile(r"https?://", re.I),
+               re.compile(r"discord(app)?\.(com|gg)", re.I))
+_LIMIT = 64
+
+
+class PrivacyList:
+    """The User's own list of names and places that never appear, reread when the file changes."""
+
+    def __init__(self, path):
+        self._path = path
+        self._stamp = None
+        self._terms = []
+
+    def _load(self):
+        try:
+            stamp = self._path.stat().st_mtime_ns
+        except OSError:
+            self._stamp, self._terms = None, []
+            return
+        if stamp == self._stamp:
+            return
+        self._stamp = stamp
+        terms = []
+        for line in self._path.read_text(encoding="utf-8").splitlines():
+            term = line.strip()
+            if len(term) >= 2 and not term.startswith("#"):
+                terms.append(re.compile(r"(?<!\w)%s(?!\w)" % re.escape(term), re.I))
+        self._terms = terms
+
+    def held(self, text):
+        if not isinstance(text, str):
+            return False
+        self._load()
+        return any(pattern.search(text) for pattern in _MECHANICAL + tuple(self._terms))
+
+
+def curtain(spool):
+    return spool.get_kv(CURTAIN_KEY) == "on"
+
+
+def _day(data_dir, inputs_now, today):
+    """Day N: the days the switch was game-only, counted from the session log (today included
+    while it is on)."""
+    days = set()
+    try:
+        lines = (data_dir / game_inputs.LOG).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if item.get("inputs") == game_inputs.GAME_ONLY and type(item.get("at_ms")) is int:
+            days.add(datetime.fromtimestamp(item["at_ms"] / 1000).date())
+    if inputs_now == game_inputs.GAME_ONLY:
+        days.add(today)
+    return len(days) or None
+
+
+def _clock(calendar):
+    time_ = game_time(calendar)
+    if time_ is None:
+        return None
+    return "%s %02d:%02d" % (time_["weekday"], time_["hour"], time_["minute"])
+
+
+class Overlay:
+    def __init__(self, spool, data_dir, now_ms, resolve=None):
+        self._spool = spool
+        self._data_dir = data_dir
+        self._resolve = resolve
+        self._privacy = PrivacyList(data_dir / PRIVACY_FILE)
+        self._row = None
+        self._open = {}
+        self._hers = []
+        self._items = []
+        self._polled_ms = None
+        self._feed_ok = None
+        self._refused = 0
+        # The helper just started: someone at this PC started it.
+        self._human_ms = now_ms
+        self.published = {"v": 1, "mode": "off"}
+
+    def on_row(self, record, now_ms):
+        if not isinstance(record, dict):
+            return
+        if record.get("event_kind") == "act_event":
+            iid = (record.get("e2") or {}).get("interaction_id")
+            if isinstance(iid, str) and iid not in self._hers:
+                self._hers = (self._hers + [iid])[-_LIMIT:]
+            return
+        if record.get("event_kind") != "presence_snapshot":
+            return
+        self._row = record
+        dialogs = record.get("dialogs")
+        if isinstance(dialogs, dict):
+            for item in dialogs.get("open") or []:
+                if isinstance(item, dict) and item.get("dialog_id") is not None:
+                    self._open[str(item["dialog_id"])] = item.get("auto_respond") is True
+            for item in dialogs.get("closed") or []:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("dialog_id"))
+                auto = self._open.pop(key, False)
+                if item.get("response") not in _NO_ANSWER and not auto and key not in self.answered:
+                    self._human_ms = now_ms
+            while len(self._open) > _LIMIT:
+                self._open.pop(next(iter(self._open)))
+        for entry in ((record.get("interactions") or {}).get("observed")) or []:
+            if isinstance(entry, dict) and _BY.get(entry.get("source_raw")) == "human":
+                self._human_ms = now_ms
+
+    # Dialog ids she answered herself (the act courier fills it when it sends her answer).
+    answered = ()
+
+    def poll(self, client, helper_session, now_ms):
+        if game_inputs.current(self._spool) != game_inputs.GAME_ONLY:
+            self._items, self._polled_ms = [], None
+            return
+        if client is None or not hasattr(client, "post_feed"):
+            return
+        if self._polled_ms is not None and now_ms - self._polled_ms < FEED_EVERY_MS:
+            return
+        self._polled_ms = now_ms
+        response = client.post_feed({"v": 1, "helper_session": helper_session})
+        self._feed_ok = response is not None
+        if response is not None:
+            self._items = self._accept(response.get("items"))
+
+    def _accept(self, items):
+        accepted = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict) or item.get("inputs") != game_inputs.GAME_ONLY:
+                self._refused += 1
+                continue
+            shown = {"at_ms": item.get("at_ms")}
+            line = item.get("line")
+            if item.get("quiet"):
+                shown["quiet"] = True
+            elif item.get("held") or not isinstance(line, str) or self._privacy.held(line):
+                shown["held"] = True
+            else:
+                shown["line"] = line[:400]
+            act = item.get("act")
+            if isinstance(act, dict):
+                shown["act"] = {"label": self._label(act.get("label")), "state": str(act.get("state")),
+                                "how": act.get("how") if isinstance(act.get("how"), str) else None}
+            plan = item.get("plan")
+            if isinstance(plan, list):
+                shown["plan"] = [{"label": self._label(step.get("label")), "state": str(step.get("state"))}
+                                 for step in plan if isinstance(step, dict)]
+            accepted.append(shown)
+        return accepted[-PASSES_SHOWN:]
+
+    def _label(self, label):
+        if not isinstance(label, str) or not label or self._privacy.held(label):
+            return HELD
+        return label[:120]
+
+    def _doing(self, row):
+        doing = []
+        for entry in ((row.get("interactions") or {}).get("observed")) or []:
+            if not isinstance(entry, dict) or entry.get("source_raw") in _NOT_SHOWN:
+                continue
+            name = _affordance_name(entry.get("affordance_text"))
+            if not name or name in _IDLE:
+                continue
+            by = "her" if entry.get("interaction_id") in self._hers else _BY.get(entry.get("source_raw"))
+            text = humanize(name)
+            doing.append({"text": HELD if self._privacy.held(text) else text, "by": by,
+                          "queued": entry.get("membership") == "QUEUED"})
+        return doing[:DOING_SHOWN]
+
+    def publish(self, now_ms, attached):
+        inputs_now = game_inputs.current(self._spool)
+        row = self._row or {}
+        game = row.get("game") or {}
+        today = datetime.fromtimestamp(now_ms / 1000).date()
+        card = {"day": _day(self._data_dir, inputs_now, today), "time": _clock(game.get("calendar")),
+                "label": "AI-controlled"}
+        jobs = ((row.get("self") or {}).get("careers")) or []
+        work = next((item for item in jobs if isinstance(item, dict) and item.get("at_work") is True), None)
+        if inputs_now != game_inputs.GAME_ONLY:
+            mode = "off"
+        elif curtain(self._spool) or not attached:
+            mode = "curtain"
+        elif work is not None:
+            mode = "work"
+        else:
+            mode = "live"
+        state = {"v": 1, "mode": mode, "card": card}
+        if mode == "off":
+            # Nothing of hers while her passes may read the User's conversations.
+            self.published = state
+            return state
+        needs = {str(item.get("id")): item for item in row.get("motives") or [] if isinstance(item, dict)}
+        mood = row.get("mood") if isinstance(row.get("mood"), dict) else {}
+        moodlets = []
+        for item in row.get("sim_signals") or []:
+            if not isinstance(item, dict) or item.get("kind") != "MOODLET" or item.get("visible") is False:
+                continue
+            text = None
+            if self._resolve is not None and item.get("text_key") is not None:
+                try:
+                    text = self._resolve(item["text_key"])
+                except Exception:
+                    text = None
+            if isinstance(text, str) and text and not self._privacy.held(text):
+                moodlets.append({"text": text[:60], "mood": item.get("mood_type")})
+        mood_name = mood.get("name") if isinstance(mood.get("name"), str) else None
+        state.update({
+            "paused": game.get("paused") is True,
+            "needs": [{"need": key, "value": needs[key].get("value"), "band": needs[key].get("band")}
+                      for key in NEEDS if key in needs],
+            "mood": humanize(re.sub(r"^Mood_", "", mood_name)) if mood_name else None,
+            "moodlets": moodlets[:MOODLETS_SHOWN],
+            "doing": self._doing(row),
+            "human_at_controls": now_ms - self._human_ms < HUMAN_HAND_MS,
+            "passes": self._items,
+            "feed": {"ok": self._feed_ok, "refused": self._refused},
+        })
+        if work is not None:
+            title = None
+            if self._resolve is not None and work.get("title_key") is not None:
+                try:
+                    title = self._resolve(work["title_key"])
+                except Exception:
+                    title = None
+            state["work"] = {"title": title if isinstance(title, str) and not self._privacy.held(title) else None}
+        self.published = state
+        return state
+
+
+class _Handler(BaseHTTPRequestHandler):
+    overlay = None
+    port = PORT
+    pages = {"/": "main", "/vertical": "vertical", "/curtain": "curtain", "/work": "work"}
+
+    def do_GET(self):
+        # Only this PC, by its own name: a page elsewhere can't reach it through DNS rebinding.
+        if self.headers.get("Host") not in ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port):
+            self._send(403, "text/plain", b"forbidden")
+            return
+        path = self.path.split("?", 1)[0]
+        if path == "/state.json":
+            self._send(200, "application/json", json.dumps(self.overlay.published).encode("utf-8"))
+        elif path in self.pages:
+            self._send(200, "text/html; charset=utf-8", PAGE.replace("__LAYOUT__", self.pages[path]).encode("utf-8"))
+        else:
+            self._send(404, "text/plain", b"not found")
+
+    def _send(self, status, kind, body):
+        self.send_response(status)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def serve(overlay, port=PORT):
+    """Serve the pages on 127.0.0.1 in a daemon thread. Returns the server, or None if the port
+    is taken (another helper already serves them)."""
+    handler = type("Handler", (_Handler,), {"overlay": overlay, "port": port})
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    except OSError:
+        return None
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, name="overlay", daemon=True).start()
+    return server
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="python -m domus_helper.overlay")
+    parser.add_argument("what", choices=["curtain"])
+    parser.add_argument("state", choices=["on", "off", "show"])
+    args = parser.parse_args(argv)
+    paths = Paths.from_env()
+    paths.data_dir.mkdir(parents=True, exist_ok=True)
+    spool = Spool(paths.data_dir / "spool.db")
+    try:
+        if args.state != "show":
+            spool.put_kv(CURTAIN_KEY, args.state)
+        print(json.dumps({"curtain": "on" if curtain(spool) else "off", "port": PORT,
+                          "at_ms": int(time.time() * 1000)}))
+        return 0
+    finally:
+        spool.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

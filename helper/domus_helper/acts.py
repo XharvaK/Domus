@@ -185,6 +185,8 @@ class ActCourier(object):
         self._asked = json.loads(raw) if raw else []
         # H0.5: steps of her plan Ashley still holds; while any wait, her idle is not a decision point.
         self.planned = int(spool.get_kv("acts_planned") or 0)
+        # E3: the game dialogs she answered herself in this run (the overlay tells her hand from a human's).
+        self.answered_dialogs = []
 
     def _save(self):
         if len(self._known) > KNOWN_LIMIT:
@@ -288,6 +290,7 @@ class ActCourier(object):
                     # 2.18.0: her answer to a game dialog (a picker row or a button).
                     self._publish("answer", {"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
                                              "pick": str(act.get("guid64"))})
+                    self.answered_dialogs = (self.answered_dialogs + [object_id[len(DIALOG_PREFIX):]])[-ASKED_LIMIT:]
                 else:
                     self._publish("act", {"act_id": act_id, "object_id": object_id,
                                           "guid64": str(act.get("guid64"))})

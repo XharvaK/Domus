@@ -10,6 +10,7 @@ from . import fingerprints as fingerprint_reader
 from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
+from . import overlay as overlay_pages
 from .contract import ContractError
 from .cursor import TelemetryCursor
 from .paths import Paths
@@ -90,6 +91,10 @@ class Bridge:
         self._catalog = None
         self._acts = None if self.client is None else ActCourier(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
+        # E3: the overlay pages' state (served by main() on this PC only).
+        self.overlay = overlay_pages.Overlay(self.spool, self.paths.data_dir, int(time.time() * 1000), self._resolve_text)
+        if self._acts is not None:
+            self.overlay.answered = self._acts.answered_dialogs
         if scorer is _AUTO:
             self.scorer, self._scorer_note = load_scorer()
         else:
@@ -128,6 +133,9 @@ class Bridge:
             self.spool.flush(self.client, now)
         if self.client is not None and self._acts is not None and hasattr(self.client, "sync_acts"):
             self._acts.tick(self.client, self.helper_session, now, self._state == "attached")
+            self.overlay.answered = self._acts.answered_dialogs
+        self.overlay.poll(self.client, self.helper_session, now)
+        self.overlay.publish(now, self._state == "attached")
 
     def _options(self, row):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
@@ -221,6 +229,7 @@ class Bridge:
                 self._acts.on_row(record)
             if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
                 self._acts.on_sample(record)
+            self.overlay.on_row(record, wall_ms)
             percepts = self._extractor.step(record)
             if self._acts is not None and self._acts.planned > 0:
                 # H0.5: between the steps of her plan she is idle for a moment; that is not a
@@ -325,6 +334,8 @@ def main(argv=None):
         return 0
     if args.interval is None:
         parser.error("pass --once or --interval")
+    if overlay_pages.serve(bridge.overlay) is None:
+        print("overlay pages not served: port %d is taken" % overlay_pages.PORT)
     archived_at = None
     game_seen_at = None
     while True:
