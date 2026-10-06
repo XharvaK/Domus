@@ -125,3 +125,13 @@ def test_a_full_skill_list_does_not_invent_new_skills():
     rows[5]["self"]["skills"] = full[1:] + [{"skill": "s99", "text_key": None, "level": 1}]
     chat = _by_name(outcomes.acts(rows, "s"))[CHAT]
     assert "skills_new" not in (chat["self"] or {})
+
+
+def test_portrait_names_her_job():
+    """2.19.0 (live 2026-10-06): the save gave her a culinary job she did not know about."""
+    row = _v8(3, 606, [])
+    row["self"]["careers"] = [{"career": "career_Adult_Culinary", "text_key": "71",
+                               "title_key": "72", "level": 2, "at_work": True}]
+    portrait = observation._portrait(row, dict(TEXT, **{"71": "Culinary", "72": "Dishwasher"}).get)
+    assert portrait["self"]["jobs"] == [{"job": "Culinary", "title": "Dishwasher", "level": 2,
+                                         "at_work": True}]

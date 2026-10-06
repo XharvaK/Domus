@@ -2,13 +2,13 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.18.0 (Ashley acts: her home, its people, and the game's questions)
+## Current build: 2.19.0 (Ashley acts: her home, its people, the game's questions, her job)
 
-The source is version `2.18.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 9, schema 4 to 8 rows still validate). It is no longer read-only:
+The source is version `2.19.0` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 12, schema 4 to 11 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
-2.18.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.19.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -41,7 +41,7 @@ The second session (2.11.1) added these. A motive's `value` is the game's curren
 
 ## Ashley acts (2.16.0, schema 10)
 
-Two new row kinds. `act_menu` is what she can do near her body: while sampling, every 20 s or when her room changes, the probe lists the objects of the lot she is on, her room first, then the rest of the lot, then what is off the lot, nearest first in each (2.18.0). An object that offers nothing never takes a slot; one object per definition; at most 4 from her room, then one object from every other room before any room gets a second (2.18.0; lights, candles and doors last within a room), so choosing a thing in another room is how she moves around the house. The people she can reach (on this lot, or within 15 m) come right after her room, at most 3, nearest first, with their socials toward her: greeting, inviting in, talking (2.18.0); socials that change a life or a household in one click (propose, break up, woohoo, try for baby, move in or out, adopt) stay excluded. A picker act (cook, grab a snack) opens the game's dialog, and the dialog is hers to answer (2.18.0): schema 11 adds each open dialog's rows (option id, name, enabled, price; at most 40, enabled first), and the inbox `answer` command picks a row and presses OK, or presses a button, exactly as the client does (`dialog_pick_result`, then `dialog_respond`); only a dialog that is hers or nobody's, and only an enabled row it offers. Records go up to 32 KiB (was 16) so the rows fit. For each, the user-directed affordances the trial guard does not exclude (no pickers except dialog-free food routes, no socials, no deny names) and the game does not flag as cheat, debug or automation, and asks the game, a few at a time within 8 ms per sampling tick, whether it would refuse each one now (`test_super_affordance`, no push). At most 12 objects with 8 acts each; a row is written only when the menu changed. A menu failure never stops sampling.
+Two new row kinds. `act_menu` is what she can do near her body: while sampling, every 20 s or when her room changes, the probe lists the objects of the lot she is on, her room first, then the rest of the lot, then what is off the lot, nearest first in each (2.18.0). An object that offers nothing never takes a slot; one object per definition; at most 4 from her room, then one object from every other room before any room gets a second (2.18.0; lights, candles and doors last within a room), so choosing a thing in another room is how she moves around the house. The people she can reach (on this lot, or within 15 m) come right after her room, at most 3, nearest first, with their socials toward her: greeting, inviting in, talking (2.18.0); socials that change a life or a household in one click (propose, break up, woohoo, try for baby, move in or out, adopt) stay excluded. A picker act (cook, grab a snack) opens the game's dialog, and the dialog is hers to answer (2.18.0): schema 11 adds each open dialog's rows (option id, name, enabled, price; at most 40, enabled first), and the inbox `answer` command picks a row and presses OK, or presses a button, exactly as the client does (`dialog_pick_result`, then `dialog_respond`); only a dialog that is hers or nobody's, and only an enabled row it offers. Records go up to 32 KiB (was 16) so the rows fit. For each, the user-directed affordances the trial guard does not exclude (no pickers except dialog-free food routes, no socials, no deny names) and the game does not flag as cheat, debug or automation, and asks the game, a few at a time within 8 ms per sampling tick, whether it would refuse each one now (`test_super_affordance`, no push). At most 24 objects with 8 acts each (2.19.0, was 12: a nine-room house left the kitchen and the bedroom out); an object offering exactly the acts of one already listed is the same choice and is skipped (people never are). A row is written only when the menu changed. Records go up to 48 KiB (2.19.0). Schema 12 adds her jobs to `self.careers` (career, name and title keys, level, at work), and a work event's buttons, which the game builds as small functions, carry the text key read from the function's closure. A menu failure never stops sampling.
 
 `act` (helper inbox only: `act_id`, `object_id`, `guid64`) pushes exactly the action Ashley chose, once per act id. It works in HOME and the lab saves, never during calibrate. It re-checks on the game thread right before the push: sampling, the same body, the object, the offer, not excluded, user-directed, and the game's own test. There is no lab, busy or distress gate: it queues like a player's click, and her body's reflexes still act. `act_event` rows record ACCEPTED (written before the push), then PUSHED with the interaction id and FINISHED with the game's finishing type, or REJECTED with a code, or UNKNOWN when something failed after acceptance. The probe never cancels her action.
 
@@ -135,7 +135,7 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.18.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.19.0
 powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.18.0
 ```
 

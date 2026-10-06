@@ -293,6 +293,21 @@ class MenuBuildTests(unittest.TestCase):
         self.assertIn("bed", ids)
         self.assertLess(ids.index("fridge"), ids.index("kitchen_light"))
 
+    def test_the_same_choice_twice_is_one_choice_and_people_never_fold(self):
+        # 2.19.0 (live 2026-10-06): three mirrors with the same five acts took three slots.
+        def thing(oid, room, distance, person=False):
+            return {"object_id": oid, "definition_id": oid, "room": room, "on_lot": True,
+                    "same_room": False, "distance_m": distance, "person": person}
+        acts = {"mirror1": ["a", "b"], "mirror2": ["b", "a"], "mirror3": ["a", "b"], "sink": ["a"],
+                "fridge": ["c"], "anna": ["g"], "ben": ["g"]}
+        offers = lambda item: [{"guid64": guid} for guid in acts[item["object_id"]]]
+        items = self.menu.ordered([thing("mirror1", "1", 1.0), thing("mirror2", "2", 2.0),
+                                   thing("mirror3", "3", 3.0), thing("sink", "1", 4.0),
+                                   thing("fridge", "3", 5.0), thing("anna", None, 6.0, True),
+                                   thing("ben", None, 7.0, True)])
+        ids = [item["object_id"] for item, _acts in self.menu.pick(items, offers)]
+        self.assertEqual(sorted(ids), ["anna", "ben", "fridge", "mirror1", "sink"])
+
     def test_a_build_runs_in_small_steps_and_keeps_what_the_game_allows(self):
         clock = {"t": 0.0}
         def runner(job):
@@ -315,7 +330,7 @@ class MenuBuildTests(unittest.TestCase):
         self.schema.validate_record(row)
 
     def test_caps_and_sameness(self):
-        jobs = [self.job(str(o), str(a), float(o)) for o in range(20) for a in range(12)]
+        jobs = [self.job(str(o), str(a), float(o)) for o in range(30) for a in range(12)]
         build = self.menu.MenuBuild(jobs, lambda job: True, budget_ms=1e9, max_per_chunk=10_000)
         build.step()
         payload = build.payload(1, None)
@@ -370,7 +385,7 @@ class MenuSenseTests(unittest.TestCase):
         jobs, room = self.probe._menu_jobs(self.row)
         self.assertEqual(room, "4")
         self.assertEqual([(job["object_id"], job["guid64"], job["name"]) for job in jobs],
-                         [("11", GUID, "ReadBook"), ("12", GUID, "ReadBook")])
+                         [("11", GUID, "ReadBook")])  # 2.19.0: 12 offers the same choice
         self.assertEqual((jobs[0]["distance_m"], jobs[0]["definition_id"]), (2.0, "511"))
 
     def test_cheat_and_debug_acts_are_hidden(self):
@@ -386,7 +401,7 @@ class MenuSenseTests(unittest.TestCase):
         lily.is_on_active_lot = lambda: False
         self.things = [mailbox, lily, bed]
         jobs, _room = self.probe._menu_jobs(self.row)
-        self.assertEqual([job["object_id"] for job in jobs], ["23", "22"])
+        self.assertEqual([job["object_id"] for job in jobs], ["23"])  # the street's same choice folds
 
     def test_people_near_her_come_with_their_socials_after_her_room(self):
         neighbour = _Thing(31, 6.0, [Greet, Propose, ReadBook])

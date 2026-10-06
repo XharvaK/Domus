@@ -3,17 +3,18 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 11
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v11"
-PROBE_VERSION = "2.18.0"
+OBSERVATION_SCHEMA_VERSION = 12
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
+PROBE_VERSION = "2.19.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
 # 2.18.0: 32 KiB (was 16): picker rows of an open dialog fit beside everything else.
-MAX_SERIALIZED_RECORD_BYTES = 32 * 1024
+# 2.19.0: 48 KiB: a 24-object act menu (48 MiB worst-case queue).
+MAX_SERIALIZED_RECORD_BYTES = 48 * 1024
 MAX_ID_LENGTH = 64
 MAX_DISPLAY_TEXT_LENGTH = 160
 MAX_REASON_LENGTH = 128
@@ -75,7 +76,8 @@ E2_PAYLOAD_KEYS = {
     "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
-MENU_MAX_OBJECTS = 12
+# 2.19.0: 12 left the kitchen and the bedroom out of a nine-room house.
+MENU_MAX_OBJECTS = 24
 MENU_MAX_ACTS = 8
 MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "acts")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
@@ -157,6 +159,7 @@ MAX_KNOWN_TRAITS = 6
 MAX_SENTIMENTS = 3
 MAX_SELF_TRAITS = 12
 MAX_SELF_SKILLS = 12
+MAX_SELF_CAREERS = 4
 MAX_SITUATIONS = 3
 MAX_DIALOGS = 4
 MAX_DIALOG_RESPONSES = 6
@@ -701,8 +704,8 @@ def _validate_self(row):
     value = row["self"]
     if value is None:
         return
-    _require(isinstance(value, dict) and set(value) == {"traits", "skills", "funds"},
-             "self shape")
+    keys = {"traits", "skills", "funds"} | ({"careers"} if row["schema_version"] >= 12 else set())
+    _require(isinstance(value, dict) and set(value) == keys, "self shape")
     if value["traits"] is not None:
         _validate_named(value["traits"], "trait", MAX_SELF_TRAITS, "self.traits")
         for item in value["traits"]:
@@ -715,6 +718,14 @@ def _validate_self(row):
                      type(item["level"]) is int, "self.skills entry")
     if value["funds"] is not None:
         _require(type(value["funds"]) is int, "self.funds")
+    if value.get("careers") is not None:
+        _validate_named(value["careers"], "career", MAX_SELF_CAREERS, "self.careers")
+        for item in value["careers"]:
+            _require(set(item) == {"career", "text_key", "title_key", "level", "at_work"} and
+                     type(item["at_work"]) is bool and
+                     (item["level"] is None or type(item["level"]) is int), "self.careers entry")
+            if item["title_key"] is not None:
+                string_id(item["title_key"], "self.careers.title_key")
 
 
 def _validate_situations(value):
@@ -1204,7 +1215,7 @@ def validate_record(row):
     _validate_dialogs(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
-    _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds 16 KiB")
+    _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds the record limit")
     kind = row["event_kind"]
     if kind in ("session_open", "presence_snapshot", "save_observation"):
         _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)

@@ -1070,6 +1070,26 @@ def _response_name(value):
     return name if len(name) <= 16 else None
 
 
+def _closure_key(text):
+    """2.19.0 (live 2026-10-06, a work event at her culinary job: buttons 0 and 1 with no
+    text): AdventureMoment._get_dialog (bytecode interactions/utils/adventure) gives each
+    button `text=lambda *_, **__: display_name`, the LocalizedString it built from the
+    tuned choice. The key is read from the lambda's closure cells, fixed attribute reads
+    (`__closure__`, `cell_contents`), nothing called; the first cell holding a string key."""
+    try:
+        cells = tuple(text.__closure__ or ())
+    except Exception:
+        return None
+    for cell in cells[:4]:
+        try:
+            key = _string_key(cell.cell_contents)
+        except Exception:
+            key = None
+        if key is not None:
+            return key
+    return None
+
+
 def _dialog_responses(dialog):
     """The choices the game offers: ok/cancel texts on an ok-cancel dialog, else the
     tuned and added UiDialogResponse entries. The `responses` property is not used
@@ -1105,6 +1125,8 @@ def _dialog_responses(dialog):
             text_key = _string_key(item.text)
         except Exception:
             text_key = None
+        if text_key is None:
+            text_key = _closure_key(item.text)
         found.append({"response": name, "text_key": text_key})
     return found
 
@@ -1553,7 +1575,41 @@ def read_self(sim_info):
         funds = money
     return {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
             "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
-            "funds": funds}
+            "funds": funds, "careers": _own_careers(sim_info)}
+
+
+def _own_careers(sim_info):
+    """2.19.0 (live 2026-10-06: the save gave her a culinary job she did not know she had):
+    her jobs. Plain reads (bytecode careers/career_base, career_tuning): career_tracker
+    `_careers`, each career's `_current_track.career_name` and the title of
+    `_current_track.career_levels[_level]` (string factories), `_user_level`, `_at_work`."""
+    try:
+        values = list(sim_info.career_tracker._careers.values())
+    except Exception:
+        return None
+    careers = []
+    for career in values[:schema.MAX_SELF_CAREERS]:
+        name = _bounded_name(_type_name(type(career)), "career")
+        if name is None:
+            continue
+        name_key = title_key = None
+        try:
+            track = career._current_track
+            name_key = _string_key(track.career_name)
+            title_key = _string_key(track.career_levels[career._level].title)
+        except Exception:
+            pass
+        try:
+            level = career._user_level
+        except Exception:
+            level = None
+        try:
+            at_work = career._at_work is True
+        except Exception:
+            at_work = False
+        careers.append({"career": name, "text_key": name_key, "title_key": title_key,
+                        "level": level if type(level) is int else None, "at_work": at_work})
+    return sorted(careers, key=lambda item: item["career"])
 
 
 # S5: object events. The previous sample's object ids (with class names) and the
