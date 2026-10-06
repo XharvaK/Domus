@@ -55,9 +55,16 @@ class AshleyClient:
 
     def sync_acts(self, body):
         """8f: one act round trip. The parsed 200 response, or None (nothing applied)."""
+        return self._round_trip("/domus/acts/sync", body)
+
+    def post_feed(self, body):
+        """E3: her settled game passes for the overlay. The parsed 200 response, or None."""
+        return self._round_trip("/domus/feed", body)
+
+    def _round_trip(self, path, body):
         raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(
-            self._url + "/domus/acts/sync", data=raw, method="POST",
+            self._url + path, data=raw, method="POST",
             headers={"Content-Type": "application/json", "X-Domus-Token": self._token})
         try:
             with urllib.request.urlopen(request, timeout=self._timeout_s) as response:
