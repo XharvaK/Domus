@@ -130,6 +130,15 @@ def act_excluded(affordance, person):
     """2.17.0: excluded() for her own acts. Toward another Sim (person), a social is how she
     greets, invites in or talks; pickers and deny names stay excluded. Toward an object,
     exactly excluded()."""
+    try:
+        low = str(affordance.__name__).lower()
+    except Exception:
+        low = ""
+    if "piemenu" in low:
+        # 2.19.1 (live 2026-10-06: fridge_GrabSnack_PieMenu was pushed and silently vanished):
+        # a pie-menu picker lists its choices as pie entries the client sends back; a push
+        # carries no choice and no dialog opens, so it is not an act she can complete.
+        return "pie_picker"
     reason = excluded(affordance)
     if person and reason == "social":
         return None
