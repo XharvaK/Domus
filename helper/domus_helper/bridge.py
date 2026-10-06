@@ -407,6 +407,14 @@ def _archive_quietly(now):
         telemetry_archive.run(paths=Paths.from_env(), now=now, out=lambda line: None)
     except Exception as error:
         print("telemetry archive skipped: %s" % type(error).__name__)
+    # E4: finished days of the proof trace get their OpenTimestamps proof.
+    from datetime import datetime
+    from . import proof
+    try:
+        for result in proof.stamp_finished_days(Paths.from_env().data_dir, datetime.now().strftime("%Y%m%d")):
+            print("proof stamp %s: %s" % (result["day"], ", ".join(result["stamped"]) or "no calendar answered"))
+    except Exception as error:
+        print("proof stamp skipped: %s" % type(error).__name__)
 
 
 if __name__ == "__main__":

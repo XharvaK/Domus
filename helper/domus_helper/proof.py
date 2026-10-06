@@ -7,13 +7,19 @@
 - ledger.jsonl: every arranged opportunity, unarranged tip, viewer-chosen change or flagged line,
   chained the same way.
 - roots.jsonl: a day's root (the last hash of its trace), for timestamping.
+- trace-YYYYMMDD.jsonl.ots: once a day is over, its trace file is timestamped with OpenTimestamps:
+  only the file's sha256 goes to public calendar servers, and the standard `.ots` proof written
+  beside it lets anyone check later, with the official client, that the file existed then and has
+  not changed since.
 
-Run: python -m domus_helper.proof root [YYYYMMDD] | verify FILE | ledger KIND NOTE [--link URL]
+Run: python -m domus_helper.proof root [YYYYMMDD] | verify FILE | ledger KIND NOTE [--link URL] | stamp [YYYYMMDD]
 """
 import argparse
 import hashlib
 import json
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -90,6 +96,59 @@ class Trace:
         return line
 
 
+# OpenTimestamps: public calendar servers, and the detached-proof header (magic, version 1, sha256).
+CALENDARS = ("https://a.pool.opentimestamps.org", "https://b.pool.opentimestamps.org")
+OTS_MAGIC = b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94"
+OTS_VERSION = b"\x01"
+OTS_SHA256 = b"\x08"
+_CALENDAR_LIMIT = 10_000
+
+
+def _submit(calendar, digest):
+    """POST the 32-byte digest to a calendar; its pending timestamp (serialized ops) or None."""
+    request = urllib.request.Request(calendar + "/digest", data=digest, method="POST", headers={
+        "Accept": "application/vnd.opentimestamps.v1", "User-Agent": "domus-helper"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read(_CALENDAR_LIMIT + 1)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+    return body if 0 < len(body) <= _CALENDAR_LIMIT else None
+
+
+def stamp(data_dir, day, submit=None):
+    """Timestamp a finished day's trace: one `.ots` proof per answering calendar, written beside it
+    (`trace-DAY.jsonl.ots`, then `.ots2` for the second calendar). Returns what was written."""
+    folder = Path(data_dir) / DIR
+    path = folder / ("trace-%s.jsonl" % day)
+    if not path.is_file():
+        return {"day": day, "stamped": [], "reason": "no_trace"}
+    digest = hashlib.sha256(path.read_bytes()).digest()
+    written = []
+    for index, calendar in enumerate(CALENDARS):
+        target = path.with_name(path.name + (".ots" if index == 0 else ".ots%d" % (index + 1)))
+        if target.exists():
+            written.append(target.name)
+            continue
+        pending = (submit or _submit)(calendar, digest)
+        if pending is None:
+            continue
+        target.write_bytes(OTS_MAGIC + OTS_VERSION + OTS_SHA256 + digest + pending)
+        written.append(target.name)
+    return {"day": day, "sha256": digest.hex(), "stamped": written}
+
+
+def stamp_finished_days(data_dir, today, submit=None):
+    """Every past day with a trace and no proof yet (today is still being written)."""
+    folder = Path(data_dir) / DIR
+    results = []
+    for path in sorted(folder.glob("trace-*.jsonl")) if folder.is_dir() else []:
+        day = path.stem.split("-", 1)[1]
+        if day < today and not path.with_name(path.name + ".ots").exists():
+            results.append(stamp(data_dir, day, submit))
+    return results
+
+
 def ledger(spool, data_dir, kind, note, link=None, now_ms=None):
     if kind not in LEDGER_KINDS:
         raise ValueError("kind must be one of %s" % ", ".join(LEDGER_KINDS))
@@ -131,8 +190,17 @@ def main(argv=None):
     ledger_cmd.add_argument("kind", choices=LEDGER_KINDS)
     ledger_cmd.add_argument("note")
     ledger_cmd.add_argument("--link")
+    stamp_cmd = sub.add_parser("stamp")
+    stamp_cmd.add_argument("day", nargs="?")
     args = parser.parse_args(argv)
     paths = Paths.from_env()
+    if args.command == "stamp":
+        if args.day:
+            results = [stamp(paths.data_dir, args.day)]
+        else:
+            results = stamp_finished_days(paths.data_dir, datetime.now().strftime("%Y%m%d"))
+        print(json.dumps(results))
+        return 0
     if args.command == "verify":
         ok, count, last, bad = verify_lines(Path(args.file).read_text(encoding="utf-8").splitlines())
         print(json.dumps({"ok": ok, "lines": count, "last": last,
