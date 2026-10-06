@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 import uuid
+from types import SimpleNamespace
 
 from . import commands
 from . import fingerprints as fingerprint_reader
@@ -15,6 +16,7 @@ from . import inputs as game_inputs
 from . import overlay as overlay_pages
 from .director import Director
 from . import notebook
+from .diary import DiaryWatch
 from .proof import Trace
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -119,6 +121,7 @@ class Bridge:
             self.scorer = scorer
             self._scorer_note = None
         self.notebook = notebook.Notebook(self.paths.data_dir / notebook.DB_NAME)
+        self.diary = DiaryWatch(self.spool, self.paths) if self.client is not None else None
         self._outcomes_mtime = None
         self._outcomes_checked_ms = None
         self._probe_warned = None
@@ -270,6 +273,9 @@ class Bridge:
             elif kind == "presence_snapshot":
                 self._notebook_quietly(
                     lambda: self.notebook.observe_presence(self._world(), record, clock_ms))
+                if self.diary is not None:
+                    self._notebook_quietly(
+                        lambda: self.diary.tick(clock_ms, record, self._world()))
             if kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
             if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
@@ -290,6 +296,7 @@ class Bridge:
             self._last_rowid = rowid
             seq = record.get("written_sequence") if isinstance(record, dict) else None
             self._on_decision(decision, percepts, wall_ms, clock_ms, seq if type(seq) is int else None)
+        self._send_diary(wall_ms)
         self._thalamus, decision = decide(
             self._thalamus, [], wall_ms, self._params, self._points())
         self._theta = decision.theta
@@ -350,6 +357,38 @@ class Bridge:
             "scorer": scorer,
         })
 
+    def _send_diary(self, wall_ms):
+        if self.diary is None or self.client is None or self._telemetry_only or self._last_row is None:
+            return
+        pending = self.diary.pending()
+        if not pending:
+            return
+        # build() only reads attributes. Percept rejects kinds outside the thalamus set,
+        # and sleep_onset is a diary percept, not one of those.
+        percept = SimpleNamespace(
+            kind="sleep_onset", subject="self", object=None, bucket="body",
+            urgency="always_through", facts={"onset_minute": pending.get("onset_minute")})
+        decision = SimpleNamespace(percepts=[(percept, 1.0)], reason="sleep_onset", fired=True)
+        try:
+            obs = build(decision, {
+                "helper_session": self.helper_session,
+                "obs_seq": self._obs_seq,
+                "slot_id": self._extractor.slot_id,
+                "guid": self._extractor.guid,
+                "lineage_class": self._extractor.lineage_class,
+                "row": self._last_row,
+                "resolve_text": self._resolve_text,
+                "options": self._options(self._last_row),
+                "notebook": self._notebook_slice(wall_ms),
+            })
+            obs["day"] = pending["day"]
+            self.spool.enqueue_observation(obs, wall_ms)
+        except (ContractError, OutboxConflict):
+            return
+        self._obs_seq += 1
+        self._enqueued += 1
+        self.diary.clear()
+
     def _world(self):
         slot = self._extractor.slot_id
         return "unknown" if slot is None else "slot%s" % slot
@@ -357,7 +396,7 @@ class Bridge:
     def _notebook_quietly(self, fn):
         try:
             fn()
-        except (sqlite3.Error, ValueError, TypeError, KeyError):
+        except (sqlite3.Error, ValueError, TypeError, KeyError, OSError):
             pass
 
     def _notebook_slice(self, wall_ms):

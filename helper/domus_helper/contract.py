@@ -9,7 +9,7 @@ BODY_LIMIT = 64 * 1024
 
 OBSERVATION_KEYS = frozenset({
     "v", "observation_id", "world", "branch", "session", "attachment", "body", "snapshot",
-    "seq", "source_time_ms", "expires_at_ms", "lineage_class", "percepts", "portrait", "options",
+    "seq", "source_time_ms", "expires_at_ms", "lineage_class", "percepts", "portrait", "options", "day",
 })
 HEARTBEAT_KEYS = frozenset({"v", "helper_session", "sent_at_ms", "attached", "world", "probe_version", "inputs"})
 PERCEPT_KEYS = frozenset({"kind", "salience", "facts"})
@@ -107,6 +107,8 @@ def validate_observation(body, now_ms):
                 or len(json.dumps(options, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 8192):
             raise ContractError("invalid_body")
         normalized["options"] = options
+    if "day" in body:
+        normalized["day"] = _json_object(body.get("day"), 16384)
     if expires_at_ms <= source_time_ms or expires_at_ms - source_time_ms > MAX_WINDOW_MS:
         raise ContractError("invalid_body")
     if source_time_ms > now_ms + MAX_SKEW_MS:
