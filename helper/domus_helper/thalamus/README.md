@@ -1,4 +1,4 @@
-# Peripheral thalamus (dt2.v1)
+# Peripheral thalamus (dt2.v2)
 
 Ashley's central thalamus arbitrates across nuclei and the budget. This package decides which game percepts reach Ashley at all. It is a pure function of `(state, percepts, now_ms, params, context)`. The caller owns the clock. Probe parsing and the bridge are outside this package.
 
@@ -47,6 +47,16 @@ After the batch:
 6. Else boredom pressure at or above `θ` opens a boredom window. Idle time starts at the first `now` seen (`idle_since_ms`) and restarts on each fire (`last_fire_ms`).
 
 On fire: percepts are deduplicated by key (highest salience, first-seen order), arousal is multiplied by `arousal_reset_fraction`, refractory runs `refractory_ms`, and pending is cleared. Pending is capped at 32 by highest salience, ties by first-seen. An empty `decide` only leaks, then checks the deadline and boredom.
+
+## Decision points (dt2.v2, H0.5, 2026-10-06)
+
+`Context.busy` switches the mode. `None` (replays, the scorer, the dt2.v1 vectors) keeps the order above exactly. The live bridge passes `True` or `False` from `Extractor.busy`: her body is busy when anything runs or waits in her queue other than what holds her in place (`POSTURE_GRAPH`, the `BODY_CANCEL_AOP` stand).
+
+In this mode, after steps 1–2, a `wake` percept opens a window at `max(now + debounce_ms, refractory_until_ms)` (reason `wake`); nothing else does. Drift, walk-bys and posture fold into the next window. While busy, `slow_check_ms` (180 s) after the last fire opens a `check` window; while idle, boredom does as before. A `check` or `boredom` fire adds the percept `env:check:check:busy|idle`, so it always says what it is.
+
+New wake percepts: `interaction::idle` when she goes from busy to idle (an act ended and nothing follows), and `moodlet:mood:<from>:<to>` when her mood changes. Her plans live in Ashley (`domusAct.then`); while Ashley still holds a plan step (`planned` in the act sync answer), the bridge turns her `idle` into an ordinary percept, because Ashley sends the next step in the same round trip.
+
+Replay of three 2026-10-06 sessions (11–14 min each): 25→14, 11→7, 28→15 fires.
 
 ## Open
 

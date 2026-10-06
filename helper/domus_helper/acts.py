@@ -145,6 +145,8 @@ class ActCourier(object):
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
         self._events = json.loads(raw) if raw else []
+        # H0.5: steps of her plan Ashley still holds; while any wait, her idle is not a decision point.
+        self.planned = int(spool.get_kv("acts_planned") or 0)
 
     def _save(self):
         if len(self._known) > KNOWN_LIMIT:
@@ -152,7 +154,8 @@ class ActCourier(object):
                 del self._known[act_id]
         del self._events[:-EVENTS_LIMIT]
         self._spool.put_many_kv({"acts_known": json.dumps(self._known, sort_keys=True),
-                                 "acts_events": json.dumps(self._events)})
+                                 "acts_events": json.dumps(self._events),
+                                 "acts_planned": str(self.planned)})
 
     def _event(self, act_id, phase, at_ms, detail=None):
         event = {"act_id": act_id, "phase": phase, "at_ms": int(at_ms)}
@@ -189,6 +192,8 @@ class ActCourier(object):
             self._save()
             return []
         self._events = self._events[len(sending):]
+        planned = response.get("planned")
+        self.planned = planned if type(planned) is int and planned >= 0 else 0
         written = []
         for act in response.get("acts") or []:
             act_id = act.get("act_id") if isinstance(act, dict) else None

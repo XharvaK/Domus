@@ -290,7 +290,7 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     assert obs["seq"] == 0 and obs["observation_id"].endswith(".0")
     assert obs["world"] == "slot3" and obs["snapshot"] == "3"
     assert obs["portrait"]["needs"]["hunger"]["band"] == "low"
-    assert need["facts"]["bucket"] == "low" and need["facts"]["reason"] == "threshold"
+    assert need["facts"]["bucket"] == "low" and need["facts"]["reason"] == "wake"
     _append(paths, [_snap(4, "distress", WALL + 4000, 30)])
     mono["ms"] = WALL + 4000
     bridge.tick(WALL + 4000)
@@ -298,7 +298,7 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     assert [item["seq"] for item in payloads] == [0, 1]
     assert payloads[1]["observation_id"].endswith(".1")
     fired = [line for line in _log_lines(data) if line["fired"]]
-    assert fired[0]["enqueued"] is True and fired[0]["reason"] == "threshold"
+    assert fired[0]["enqueued"] is True and fired[0]["reason"] == "wake"
     traced = [line for line in _log_lines(data) if line["traces"]]
     assert traced and "key" in traced[0]["traces"][0]
     status = bridge.status()
@@ -343,7 +343,7 @@ def test_restart_resumes_rowid_seq_and_does_not_duplicate(paths, tmp_path, monke
     second.tick(WALL + 1500)
     assert len(_payloads(second)) == 1
     assert second.spool.get_kv("obs_seq") == "1"
-    assert second.status()["thalamus"]["last_fire_reason"] == "threshold"
+    assert second.status()["thalamus"]["last_fire_reason"] == "wake"
 
 
 def test_scorer_result_and_error_land_in_the_log(paths, tmp_path, monkeypatch):
@@ -480,3 +480,32 @@ def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_sessi
                                "acts": [{"ref": "a1", "guid64": "4242", "text": "bookshelf Read Book"}]}]
     bridge._menu = dict(bridge._menu, session="another")
     assert bridge._options(bridge._last_row) == []
+
+
+def _activity(seq, wall, source):
+    row = _snap(seq, "ok", wall, seq * 10)
+    row["interactions"]["observed"] = [] if source is None else [{
+        "entry_key": "a", "interaction_id": "a", "affordance_id": 5, "affordance_text": "play",
+        "membership": "RUNNING", "source_raw": source}]
+    return row
+
+
+def test_h05_her_idle_wakes_her_unless_a_plan_step_is_still_to_follow(paths, tmp_path, monkeypatch):
+    """H0.5: an act ending into idle is a decision point; mid-plan Ashley sends the next step itself."""
+    mine = "InteractionSource.SCRIPT_WITH_USER_INTENT"
+    for planned, expected in ((0, 1), (2, 0)):
+        _data(paths, tmp_path / str(planned), monkeypatch)
+        (paths.telemetry / SESSION).unlink(missing_ok=True)
+        _append(paths, [_lineage(1, WALL), _activity(2, WALL, mine)])
+        mono = {"ms": WALL}
+        bridge = _bridge(paths, mono)
+        bridge.tick(WALL)
+        bridge.tick(WALL + 2_000)
+        before = len(_payloads(bridge))
+        bridge._acts.planned = planned
+        _append(paths, [_activity(3, WALL + 60_000, None)])
+        bridge.tick(WALL + 60_000)
+        bridge.tick(WALL + 62_000)
+        woke = [item for item in _payloads(bridge)[before:]
+                if any(p["facts"].get("bucket") == "idle" for p in item["percepts"])]
+        assert len(woke) == expected, planned

@@ -6,6 +6,8 @@ from domus_helper.thalamus.types import Percept
 
 _USER = "InteractionSource.SCRIPT_WITH_USER_INTENT"
 _CANCEL = "InteractionSource.BODY_CANCEL_AOP"
+# H0.5: what the game runs to hold a body in place (stand, sit): not doing anything.
+_IDLE_SOURCES = ("InteractionSource.POSTURE_GRAPH", _CANCEL)
 _TEXT_CAP = 120
 # Who started an interaction. The game acts on her body's distress even with autonomy
 # off (live DA6F: sim_BladderDistress, then toilet). That is her body's own action
@@ -70,6 +72,13 @@ class Extractor:
         self._on_lot = set()
         self._social = set()
         self._asked = set()
+        self._busy = None
+        self._mood = None
+
+    @property
+    def busy(self):
+        """H0.5: her body is doing something (not just standing or sitting); None before the first snapshot."""
+        return self._busy
 
     def step(self, row):
         percepts = []
@@ -114,6 +123,8 @@ class Extractor:
         self._on_lot = set()
         self._social = set()
         self._asked = set()
+        self._busy = None
+        self._mood = None
 
     def _act(self, row):
         """8f: her chosen act was refused, or nobody can tell what became of it. Wakes her;
@@ -196,6 +207,7 @@ class Extractor:
             percepts.extend(self._social_percepts(row.get("social") or [], sim_s, ticks))
         if "dialogs" in row:
             percepts.extend(self._dialog_percepts(row.get("dialogs") or {}, sim_s, ticks))
+        percepts.extend(self._decision_points(observed, row.get("mood"), sim_s, ticks))
         self._prev = {
             "sim": sim,
             "ticks": ticks,
@@ -373,6 +385,27 @@ class Extractor:
         self._on_lot = here
         return percepts
 
+    def _decision_points(self, observed, mood, sim_s, ticks):
+        """H0.5: she becomes idle (nothing she or her body is doing; the posture the game keeps
+        her in does not count), or her mood changes. Both wake her; drift does not."""
+        busy = any(
+            entry.get("membership") in RUNNING + ("QUEUED",)
+            and entry.get("source_raw") not in _IDLE_SOURCES
+            for entry in observed if isinstance(entry, dict))
+        percepts = []
+        if self._busy is True and not busy:
+            percepts.append(Percept("interaction", sim_s, "", "idle", urgency="wake",
+                                    lineage=self.lineage_id, facts=_facts(ticks, ())))
+        self._busy = busy
+        name = mood.get("name") if isinstance(mood, dict) else None
+        if isinstance(name, str) and name:
+            if self._mood is not None and name != self._mood:
+                percepts.append(Percept("moodlet", "mood", self._mood[:64], name[:64], urgency="wake",
+                                        lineage=self.lineage_id,
+                                        facts=_facts(ticks, (("from", self._mood[:64]), ("to", name[:64])))))
+            self._mood = name
+        return percepts
+
     def _dialog_percepts(self, dialogs, sim_s, ticks):
         """2.19.0 (live 2026-10-06: a work event asked her to nuke or remake a dish, the game
         paused for her answer, and nothing woke her): a question the game puts to her (a
@@ -438,6 +471,8 @@ class Extractor:
             "on_lot": sorted(self._on_lot),
             "social": sorted(self._social),
             "asked": sorted(self._asked),
+            "busy": self._busy,
+            "mood": self._mood,
         }
 
     @classmethod
@@ -460,6 +495,8 @@ class Extractor:
         extractor._on_lot = set(blob.get("on_lot") or [])
         extractor._social = set(blob.get("social") or [])
         extractor._asked = set(blob.get("asked") or [])
+        extractor._busy = blob.get("busy")
+        extractor._mood = blob.get("mood")
         return extractor
 
 

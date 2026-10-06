@@ -39,7 +39,7 @@ def test_closed_forms():
 
 
 def test_parameter_and_percept_validation():
-    assert PARAMETER_REVISION == "dt2.v1"
+    assert PARAMETER_REVISION == "dt2.v2"
     validate(Parameters())
     assert bounds["alpha_always_through"] == (0.0, 0.0)
     assert bounds["recovery_tau_ms"] == (600_000, 600_000)

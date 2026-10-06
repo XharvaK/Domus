@@ -154,6 +154,10 @@ class Decision:
 class Context:
     theta_scale: float = 1.0
     resting: bool = False
+    # H0.5 decision points. None keeps the dt2.v1 threshold behaviour (replays, the scorer). True
+    # or False: she is woken at decision points (wake percepts), drift and walk-bys fold into the
+    # next wake, and while busy only a slow check looks in; while idle, boredom still does.
+    busy: bool | None = None
 
     def __post_init__(self):
         if not 0.5 <= self.theta_scale <= 3.0:
