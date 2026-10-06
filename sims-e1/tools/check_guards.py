@@ -21,7 +21,9 @@ PRODUCTION_MODULES = (
 )
 # DS3: build_buy also holds world mutators; only its read-only room lookup may be
 # imported, and only by name (never `import build_buy`).
-NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"}}
+NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
+                       # 2.20.1: only the Distributor, to send the game's queued events now.
+                       "distributor.system": {"Distributor"}}
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
 }

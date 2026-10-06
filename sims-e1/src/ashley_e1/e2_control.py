@@ -27,6 +27,25 @@ try:
     import services  # PRIOR_ART|TARGET_BYTECODE: sim_info_manager read surface.
 except ImportError:
     services = None
+try:
+    # TARGET_BYTECODE: Distributor.add_event(immediate=True) is append + process_events().
+    from distributor.system import Distributor
+except ImportError:
+    Distributor = None
+
+def _send_queued_events():
+    """2.20.1 (live 2026-10-06: after her answer the recipe picker stayed on screen and the game
+    stayed paused): dialog_respond queues the client's close (MSG_UI_DIALOG_CLOSE) for the next
+    distributor pass; send it now, as the game's own add_event(immediate=True) does. Never
+    changes the answer's outcome."""
+    if Distributor is None:
+        return False
+    try:
+        Distributor.instance().process_events()
+        return True
+    except Exception:
+        return False
+
 
 # E1 LAB sofa (target of the E1 Owner-sit witness): never an E2 experiment target.
 EXCLUDED_OBJECT_IDS = frozenset(("118245043789434044",))
@@ -680,6 +699,7 @@ class E2Control:
             if row is not None:
                 service.dialog_pick_result(int(dialog_id), [row])
             service.dialog_respond(int(dialog_id), response)
+            _send_queued_events()
             self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED", **base)
             self._say(connection, "ACT_ANSWERED %s" % act_id)
             return True
