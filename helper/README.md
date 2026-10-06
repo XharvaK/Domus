@@ -100,6 +100,18 @@ game's menu, a pop-up answered by hand, a helper restart) is labelled for 2 minu
 `python -m domus_helper.overlay curtain on|off|show` draws the curtain by hand;
 it also falls whenever the game is not attached.
 
+Proof kit (`proof/` in the data folder, all append-only and hash-chained, each line
+carrying the previous hash): `trace-YYYYMMDD.jsonl` records every pass of hers the
+overlay showed, once, as it was shown, with what produced it (agent build, model,
+provider, provider request id, tokens, helper build, probe version, the switch).
+`python -m domus_helper.proof root [YYYYMMDD]` verifies a day and appends its root to
+`roots.jsonl` for timestamping; `proof verify FILE` checks any chain; `proof ledger
+arranged|unarranged|viewer_change|flagged|note "NOTE" [--link URL]` records an
+opportunity, tip or change. A word-watch flag from Ashley (`marks` in her feed) is
+ledgered as `flagged`, and, when `obs_ws.json` (`{"port": 4455, "password": ...}`, a
+secret) is present, the capture tool is asked over its local control socket to save
+its replay buffer and mark the recording.
+
 After `read_new`, each new spool row (SQLite `rowid` after `last_rowid`) goes
 through `Extractor.step` and `decide`, using the row's `monotonic_ns // 1_000_000`
 as `now_ms`. One empty `decide` then advances deadlines and boredom on the

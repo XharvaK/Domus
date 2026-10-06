@@ -23,6 +23,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import inputs as game_inputs
+from . import obs, proof
 from .acts import humanize
 from .overlay_page import PAGE
 from .paths import Paths
@@ -121,8 +122,11 @@ def _clock(calendar):
 
 
 class Overlay:
-    def __init__(self, spool, data_dir, now_ms, resolve=None):
+    def __init__(self, spool, data_dir, now_ms, resolve=None, trace=None, helper_build=None):
         self._spool = spool
+        # E4: the private proof trace of what was shown, and this helper's own build.
+        self._trace = trace
+        self._helper_build = helper_build
         self._data_dir = data_dir
         self._resolve = resolve
         self._privacy = PrivacyList(data_dir / PRIVACY_FILE)
@@ -168,6 +172,8 @@ class Overlay:
 
     # Dialog ids she answered herself (the act courier fills it when it sends her answer).
     answered = ()
+    # E4: whether the capture tool was last asked to keep the recording (False: no settings file).
+    kept = None
 
     def poll(self, client, helper_session, now_ms):
         if game_inputs.current(self._spool) != game_inputs.GAME_ONLY:
@@ -182,6 +188,22 @@ class Overlay:
         self._feed_ok = response is not None
         if response is not None:
             self._items = self._accept(response.get("items"))
+            self._marks(response.get("marks"), now_ms)
+
+    def _marks(self, marks, now_ms):
+        """E4: a word-watch flag on Ashley's side: logged in the proof ledger once, and the capture
+        tool keeps its replay buffer and marks the recording."""
+        raw = self._spool.get_kv("overlay_marks_seen")
+        seen = json.loads(raw) if raw else []
+        new = [item["id"] for item in marks if isinstance(item, dict) and type(item.get("id")) is int
+               and item["id"] not in seen] if isinstance(marks, list) else []
+        if not new:
+            return
+        for mark in new:
+            proof.ledger(self._spool, self._data_dir, "flagged", "word watch flag %d (review on the host)" % mark,
+                         now_ms=now_ms)
+        self._spool.put_kv("overlay_marks_seen", json.dumps((seen + new)[-_LIMIT:]))
+        self.kept = obs.keep_recording(self._data_dir)
 
     def _accept(self, items):
         accepted = []
@@ -189,7 +211,8 @@ class Overlay:
             if not isinstance(item, dict) or item.get("inputs") != game_inputs.GAME_ONLY:
                 self._refused += 1
                 continue
-            shown = {"at_ms": item.get("at_ms")}
+            shown = {"at_ms": item.get("at_ms"), "_pass": item.get("pass"),
+                     "_regime": item.get("regime") if isinstance(item.get("regime"), dict) else {}}
             line = item.get("line")
             if item.get("quiet"):
                 shown["quiet"] = True
@@ -272,9 +295,11 @@ class Overlay:
             "moodlets": moodlets[:MOODLETS_SHOWN],
             "doing": self._doing(row),
             "human_at_controls": now_ms - self._human_ms < HUMAN_HAND_MS,
-            "passes": self._items,
+            "passes": [{key: value for key, value in item.items() if not key.startswith("_")} for item in self._items],
             "feed": {"ok": self._feed_ok, "refused": self._refused},
         })
+        if mode == "live" and self._trace is not None:
+            self._seal(state["passes"], row, inputs_now, now_ms)
         if work is not None:
             title = None
             if self._resolve is not None and work.get("title_key") is not None:
@@ -285,6 +310,18 @@ class Overlay:
             state["work"] = {"title": title if isinstance(title, str) and not self._privacy.held(title) else None}
         self.published = state
         return state
+
+
+    def _seal(self, shown, row, inputs_now, now_ms):
+        """E4: a pass goes into the trace the first time it is on screen, as it was shown."""
+        probe = row.get("probe_version")
+        for item, public in zip(self._items, shown):
+            regime = dict(item["_regime"], inputs=inputs_now, helper_build=self._helper_build,
+                          probe_version=probe if isinstance(probe, str) else None)
+            try:
+                self._trace.shown(item["_pass"], public, regime, now_ms)
+            except OSError:
+                return
 
 
 class _Handler(BaseHTTPRequestHandler):
