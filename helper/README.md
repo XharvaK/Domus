@@ -110,7 +110,7 @@ arranged|unarranged|viewer_change|flagged|note "NOTE" [--link URL]` records an
 opportunity, tip or change. A word-watch flag from Ashley (`marks` in her feed) is
 ledgered as `flagged`, and, when `obs_ws.json` (`{"port": 4455, "password": ...}`, a
 secret) is present, the capture tool is asked over its local control socket to save
-its replay buffer and mark the recording.
+its replay buffer and mark the recording. Once a day is over, its trace is timestamped with OpenTimestamps (every 6 h while the bridge runs, or `proof stamp [YYYYMMDD]`): only the file's sha256 goes to two public calendars, and a standard `.ots` proof is written beside it (`.ots2` for the second calendar), checkable later with the official client.
 
 After `read_new`, each new spool row (SQLite `rowid` after `last_rowid`) goes
 through `Extractor.step` and `decide`, using the row's `monotonic_ns // 1_000_000`
