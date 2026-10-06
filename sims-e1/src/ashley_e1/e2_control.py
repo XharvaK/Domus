@@ -30,6 +30,9 @@ except ImportError:
 
 # E1 LAB sofa (target of the E1 Owner-sit witness): never an E2 experiment target.
 EXCLUDED_OBJECT_IDS = frozenset(("118245043789434044",))
+# 2.19.1: samples (about one a second) a pushed act may be missing from her queue before it
+# is recorded as gone (UNKNOWN, LEFT_QUEUE).
+LEFT_QUEUE_SAMPLES = 5
 
 
 def _now():
@@ -162,6 +165,9 @@ class E2Control:
         self.storm = e2_trial.StormCounter()
         self.presence = []
         self.act_ids = set()
+        # 2.19.1: her pushed acts not yet finished, by interaction id: {act_id, base,
+        # tuning_name, seen, misses}.
+        self.pushed = {}
 
     def available(self):
         return (e2_actuator is not None and observers is not None and
@@ -234,6 +240,7 @@ class E2Control:
             self.presence.append(row)
             if len(self.presence) > 120:
                 del self.presence[:-120]
+            self._reconcile_pushed(row)
         if self.lineage_class is None:
             self._try_classify(row)
         learned = self.learner.observe(row, self.open_ids)
@@ -683,8 +690,37 @@ class E2Control:
             self._say(connection, "ACT_%s %s" % (phase, code))
             return False
 
+    def _reconcile_pushed(self, row):
+        """2.19.1 (live 2026-10-06: a quick meal pushed while she was in the bath never
+        appeared in her queue and never finished, so she believed it was still waiting):
+        a pushed act whose interaction is missing from her queue for LEFT_QUEUE_SAMPLES
+        samples in a row, with no finish from the game, is UNKNOWN (LEFT_QUEUE): it is gone
+        and nobody can tell how it ended."""
+        if not self.pushed:
+            return
+        observed = ((row.get("interactions") or {}).get("observed")) or []
+        present = set(str(entry.get("interaction_id")) for entry in observed if isinstance(entry, dict))
+        for interaction_id in list(self.pushed):
+            item = self.pushed[interaction_id]
+            if interaction_id in present:
+                item["seen"], item["misses"] = True, 0
+                continue
+            item["misses"] += 1
+            if item["misses"] < LEFT_QUEUE_SAMPLES:
+                continue
+            del self.pushed[interaction_id]
+            self._act_event(item["act_id"], "UNKNOWN", code="LEFT_QUEUE", interaction_id=interaction_id,
+                            tuning_name=item["tuning_name"],
+                            detail="ran, then left" if item["seen"] else "never seen in her queue",
+                            **item["base"])
+
     def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction):
+        self.pushed[interaction_id] = {"act_id": act_id, "base": base, "tuning_name": tuning_name,
+                                       "seen": False, "misses": 0}
+
         def _finished(finished_interaction, _act_id=act_id):
+            if self.pushed.pop(interaction_id, None) is None:
+                return  # already recorded as gone
             try:
                 finishing = str(finished_interaction.finishing_type)
             except Exception:
