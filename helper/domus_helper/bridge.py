@@ -2,6 +2,7 @@
 import argparse
 import dataclasses
 import json
+import sqlite3
 import time
 import uuid
 
@@ -12,6 +13,7 @@ from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
 from .director import Director
+from . import notebook
 from .proof import Trace
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -105,8 +107,12 @@ class Bridge:
         else:
             self.scorer = scorer
             self._scorer_note = None
+        self.notebook = notebook.Notebook(self.paths.data_dir / notebook.DB_NAME)
+        self._outcomes_mtime = None
+        self._outcomes_checked_ms = None
 
     def tick(self, now):
+        self._maybe_rebuild_procedures(now)
         self.cursor.read_new()
         latest = self.spool.latest_record()
         observed = self.monitor.observe(now, self._mono(), self._process(), latest)
@@ -230,9 +236,16 @@ class Bridge:
         self._load_thalamus()
         for rowid, record in self.spool.rows_after(self._last_rowid):
             kind = record.get("event_kind") if isinstance(record, dict) else None
+            written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
+            clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
             if kind == "act_menu" and isinstance(record.get("e2"), dict):
                 self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"]}
-            elif kind == "act_event" and self._acts is not None:
+                self._notebook_quietly(
+                    lambda: self.notebook.observe_menu(self._world(), record["e2"], clock_ms))
+            elif kind == "presence_snapshot":
+                self._notebook_quietly(
+                    lambda: self.notebook.observe_presence(self._world(), record, clock_ms))
+            if kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
             if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
                 self._acts.on_sample(record)
@@ -245,8 +258,6 @@ class Bridge:
                 # decision point (Ashley sends the next step in the same round trip).
                 percepts = [dataclasses.replace(p, urgency="normal") if p.bucket == "idle" else p
                             for p in percepts]
-            written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
-            clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
             self._thalamus, decision = decide(
                 self._thalamus, percepts, clock_ms, self._params, self._points())
             self._theta = decision.theta
@@ -287,6 +298,7 @@ class Bridge:
                     "row": self._last_row,
                     "resolve_text": self._resolve_text,
                     "options": self._options(self._last_row),
+                    "notebook": self._notebook_slice(wall_ms),
                 })
                 scorer = run_scorer(self.scorer, json.loads(json.dumps(obs)))
                 if self.client is not None and not self._telemetry_only:
@@ -312,6 +324,36 @@ class Bridge:
             "observation_id": observation_id,
             "scorer": scorer,
         })
+
+    def _world(self):
+        slot = self._extractor.slot_id
+        return "unknown" if slot is None else "slot%s" % slot
+
+    def _notebook_quietly(self, fn):
+        try:
+            fn()
+        except (sqlite3.Error, ValueError, TypeError, KeyError):
+            pass
+
+    def _notebook_slice(self, wall_ms):
+        try:
+            return self.notebook.slice(self._world(), (self._menu or {}).get("payload"), wall_ms)
+        except (sqlite3.Error, ValueError, TypeError, KeyError):
+            return None
+
+    def _maybe_rebuild_procedures(self, now):
+        checked = self._outcomes_checked_ms
+        if checked is not None and now - checked < 600_000:
+            return
+        self._outcomes_checked_ms = now
+        folder = self.paths.data_dir / "outcomes"
+        mtimes = [path.stat().st_mtime for path in folder.glob("*.jsonl")] if folder.is_dir() else []
+        newest = max(mtimes) if mtimes else None
+        if newest is None or newest == self._outcomes_mtime:
+            return
+        self._outcomes_mtime = newest
+        self._notebook_quietly(lambda: self.notebook.rebuild_procedures(
+            notebook.load_outcome_records(self.paths), now))
 
     def _persist_thalamus(self):
         self.spool.put_many_kv({

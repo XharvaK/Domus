@@ -387,6 +387,33 @@ def test_status_thalamus_block_without_secrets(paths, tmp_path, monkeypatch):
     assert "super-secret-token-value" not in blob and "127.0.0.1" not in blob
 
 
+def test_act_menu_then_fire_puts_notebook_on_portrait(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+
+    def menu(room, seq, wall):
+        return {
+            "event_kind": "act_menu", "written_sequence": seq, "wall_timestamp_ms": wall,
+            "telemetry_session_id": "sess-1",
+            "e2": {"menu_rev": 1, "room": room, "objects": [{
+                "object_id": "501", "class": "object_fridge_X", "same_room": True, "acts": []}]},
+        }
+
+    _append(paths, [
+        _lineage(1, WALL),
+        menu("7", 2, WALL),
+        menu("9", 3, WALL + 1),
+        _snap(4, "ok", WALL + 2, 10),
+        _snap(5, "low", WALL + 3, 20),
+    ])
+    mono = {"ms": WALL + 3}
+    bridge = _bridge(paths, mono)
+    bridge.tick(WALL + 3)
+    mono["ms"] = WALL + 1500
+    bridge.tick(WALL + 1500)
+    moved = _payloads(bridge)[-1]["portrait"]["notebook"]["moved"]
+    assert moved[0]["was_in"] == "7" and moved[0]["now_in"] == "9"
+
+
 def test_ds3_portrait_has_time_room_company_moodlets():
     """DS3: she could not know the game time, the room, or who else is here."""
     from domus_helper.thalamus import observation

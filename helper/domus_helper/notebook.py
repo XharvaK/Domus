@@ -1,0 +1,289 @@
+"""The helper's notebook of her world. It is never deleted and it grows with play.
+
+Facts are what she sees for herself, each with valid-from and valid-until. A changed
+fact is closed (valid-until set) and a new one opened; nothing is deleted. v1 kinds:
+object_room (which room an object is in, from her act menu) and lives_here (who lives
+in the home she is in, from presence rows). Procedures are interactions that held up,
+learned from S6 outcome records: for an interaction seen at least twice, each need
+that moved the same way every time. One observation is never a procedure. Procedures
+are about her body and the game's interactions, so they are not per world. Facts are
+per world (the save slot).
+
+Run: python -m domus_helper.notebook show [--world W] | rebuild
+"""
+import argparse
+import json
+import sqlite3
+import statistics
+import time
+
+from .consequences import load_records
+from .paths import Paths
+from .scene import family
+
+DB_NAME = "notebook.db"
+SLICE_LIMIT = 1024
+SLICE_PROCEDURES = 6
+SLICE_MOVED = 3
+MOVED_RECENT_MS = 24 * 3_600_000
+MIN_N = 2
+MIN_CHANGE = 5
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  world TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('object_room', 'lives_here')),
+  subject TEXT NOT NULL,
+  value TEXT NOT NULL,
+  label TEXT,
+  valid_from_ms INTEGER NOT NULL,
+  valid_until_ms INTEGER,
+  seen_ms INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS facts_open ON facts (world, kind, subject) WHERE valid_until_ms IS NULL;
+CREATE TABLE IF NOT EXISTS procedures (
+  interaction TEXT PRIMARY KEY,
+  n INTEGER NOT NULL,
+  needs TEXT NOT NULL,
+  conditions TEXT NOT NULL,
+  act_ids TEXT NOT NULL,
+  updated_ms INTEGER NOT NULL
+);
+"""
+
+
+class Notebook:
+    def __init__(self, path):
+        self._con = sqlite3.connect(str(path), check_same_thread=False)
+        self._con.row_factory = sqlite3.Row
+        self._con.execute("PRAGMA journal_mode=WAL")
+        self._con.executescript(_SCHEMA)
+
+    def close(self):
+        self._con.close()
+
+    def _assert(self, world, kind, subject, value, label, now_ms):
+        with self._con:
+            row = self._con.execute(
+                "SELECT id, value FROM facts WHERE world = ? AND kind = ? AND subject = ?"
+                " AND valid_until_ms IS NULL",
+                (world, kind, subject)).fetchone()
+            if row is None:
+                self._con.execute(
+                    "INSERT INTO facts (world, kind, subject, value, label, valid_from_ms,"
+                    " valid_until_ms, seen_ms) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                    (world, kind, subject, value, label, now_ms, now_ms))
+                return "new"
+            if row["value"] == value:
+                self._con.execute("UPDATE facts SET seen_ms = ? WHERE id = ?", (now_ms, row["id"]))
+                return "same"
+            self._con.execute(
+                "UPDATE facts SET valid_until_ms = ? WHERE id = ?", (now_ms, row["id"]))
+            self._con.execute(
+                "INSERT INTO facts (world, kind, subject, value, label, valid_from_ms,"
+                " valid_until_ms, seen_ms) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                (world, kind, subject, value, label, now_ms, now_ms))
+            return "changed"
+
+    def observe_menu(self, world, payload, now_ms):
+        if not isinstance(payload, dict) or payload.get("room") is None:
+            return
+        room = str(payload.get("room"))
+        for obj in payload.get("objects") or []:
+            if not isinstance(obj, dict) or obj.get("same_room") is not True:
+                continue
+            object_id = obj.get("object_id")
+            if not isinstance(object_id, str) or not object_id.isdigit():
+                continue
+            self._assert(world, "object_room", object_id, room, family(obj.get("class")), now_ms)
+
+    def observe_presence(self, world, row, now_ms):
+        if not isinstance(row, dict):
+            return
+        place = row.get("place")
+        if not isinstance(place, dict) or place.get("her_home") is not True:
+            return
+        owner = place.get("owner_household_id")
+        if owner is None:
+            return
+        for item in row.get("presence") or []:
+            if not isinstance(item, dict) or item.get("id") is None:
+                continue
+            if item.get("household_id") != owner:
+                continue
+            self._assert(world, "lives_here", str(item["id"]), str(owner), item.get("name"), now_ms)
+
+    def rebuild_procedures(self, records, now_ms):
+        groups = {}
+        for record in records or []:
+            if not isinstance(record, dict):
+                continue
+            name = (record.get("interaction") or {}).get("name")
+            if name:
+                groups.setdefault(name, []).append(record)
+        rows = []
+        for name, group in groups.items():
+            if len(group) < MIN_N:
+                continue
+            deltas = {}
+            for record in group:
+                for stat, value in ((record.get("needs") or {}).get("delta") or {}).items():
+                    deltas.setdefault(stat, []).append(value)
+            needs = {}
+            for stat, values in deltas.items():
+                if len(values) < MIN_N:
+                    continue
+                if not (all(value > 0 for value in values) or all(value < 0 for value in values)):
+                    continue
+                median = statistics.median(values)
+                if abs(median) < MIN_CHANGE:
+                    continue
+                needs[stat] = int(round(median))
+            if not needs:
+                continue
+            origins = sorted({record["origin"] for record in group if record.get("origin")})
+            company = sorted({
+                "with company" if record.get("company") else "solo"
+                for record in group if record.get("company") is not None
+            }) or ["unknown"]
+            act_ids = sorted(record["act_id"] for record in group if record.get("act_id"))[:5]
+            rows.append((name, len(group), json.dumps(needs, sort_keys=True),
+                         json.dumps({"origins": origins, "company": company}),
+                         json.dumps(act_ids), now_ms))
+        with self._con:
+            self._con.execute("DELETE FROM procedures")
+            self._con.executemany(
+                "INSERT OR REPLACE INTO procedures"
+                " (interaction, n, needs, conditions, act_ids, updated_ms)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                rows)
+        return len(rows)
+
+    def slice(self, world, payload, now_ms):
+        offered = set()
+        if isinstance(payload, dict):
+            for obj in payload.get("objects") or []:
+                if not isinstance(obj, dict):
+                    continue
+                for act in obj.get("acts") or []:
+                    name = act.get("name") if isinstance(act, dict) else None
+                    if name:
+                        offered.add(name)
+        procedures = []
+        if offered:
+            found = self._con.execute(
+                "SELECT interaction, n, needs, conditions FROM procedures"
+            ).fetchall()
+            found = [row for row in found if row["interaction"] in offered]
+            found.sort(key=lambda row: (-row["n"], row["interaction"]))
+            for row in found[:SLICE_PROCEDURES]:
+                conditions = json.loads(row["conditions"])
+                procedures.append({
+                    "interaction": row["interaction"],
+                    "n": row["n"],
+                    "needs": json.loads(row["needs"]),
+                    "by": conditions.get("origins") or [],
+                })
+        moved_rows = self._con.execute(
+            "SELECT closed.subject AS subject, closed.label AS label,"
+            " closed.value AS was_in, open.value AS now_in"
+            " FROM facts AS closed"
+            " JOIN facts AS open ON open.world = closed.world AND open.kind = closed.kind"
+            " AND open.subject = closed.subject AND open.valid_until_ms IS NULL"
+            " WHERE closed.world = ? AND closed.kind = 'object_room'"
+            " AND closed.valid_until_ms IS NOT NULL AND closed.valid_until_ms >= ?"
+            " ORDER BY closed.valid_until_ms DESC",
+            (world, now_ms - MOVED_RECENT_MS)).fetchall()
+        moved = [
+            {"object_id": row["subject"], "what": row["label"],
+             "was_in": row["was_in"], "now_in": row["now_in"]}
+            for row in moved_rows[:SLICE_MOVED]
+        ]
+        result = {}
+        if procedures:
+            result["procedures"] = procedures
+        if moved:
+            result["moved"] = moved
+        while result and len(json.dumps(result, separators=(",", ":")).encode()) > SLICE_LIMIT:
+            if result.get("moved"):
+                result["moved"].pop()
+                if not result["moved"]:
+                    del result["moved"]
+            elif result.get("procedures"):
+                result["procedures"].pop()
+                if not result["procedures"]:
+                    del result["procedures"]
+            else:
+                break
+        return result or None
+
+    def show(self, world=None):
+        where = ""
+        args = ()
+        if world is not None:
+            where = " WHERE world = ?"
+            args = (world,)
+        facts_open = self._con.execute(
+            "SELECT COUNT(*) FROM facts%s%s" % (where, " AND" if where else " WHERE")
+            + " valid_until_ms IS NULL", args).fetchone()[0]
+        facts_closed = self._con.execute(
+            "SELECT COUNT(*) FROM facts%s%s" % (where, " AND" if where else " WHERE")
+            + " valid_until_ms IS NOT NULL", args).fetchone()[0]
+        procedures = []
+        for row in self._con.execute(
+                "SELECT interaction, n, needs, conditions, act_ids, updated_ms"
+                " FROM procedures ORDER BY n DESC, interaction"):
+            procedures.append({
+                "interaction": row["interaction"],
+                "n": row["n"],
+                "needs": json.loads(row["needs"]),
+                "conditions": json.loads(row["conditions"]),
+                "act_ids": json.loads(row["act_ids"]),
+                "updated_ms": row["updated_ms"],
+            })
+        open_where = "WHERE valid_until_ms IS NULL"
+        open_args = ()
+        if world is not None:
+            open_where += " AND world = ?"
+            open_args = (world,)
+        open_facts = []
+        for row in self._con.execute(
+                "SELECT world, kind, subject, value, label, valid_from_ms, seen_ms"
+                " FROM facts %s ORDER BY seen_ms DESC LIMIT 50" % open_where, open_args):
+            open_facts.append(dict(row))
+        return {
+            "facts_open": facts_open,
+            "facts_closed": facts_closed,
+            "procedures": procedures,
+            "open": open_facts,
+        }
+
+
+def load_outcome_records(paths):
+    return load_records(paths)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="python -m domus_helper.notebook")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    show = sub.add_parser("show")
+    show.add_argument("--world")
+    sub.add_parser("rebuild")
+    args = parser.parse_args(argv)
+    paths = Paths.from_env()
+    paths.data_dir.mkdir(parents=True, exist_ok=True)
+    book = Notebook(paths.data_dir / DB_NAME)
+    try:
+        if args.cmd == "show":
+            print(json.dumps(book.show(args.world)))
+        else:
+            count = book.rebuild_procedures(load_outcome_records(paths), int(time.time() * 1000))
+            print(json.dumps({"procedures": count}))
+        return 0
+    finally:
+        book.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

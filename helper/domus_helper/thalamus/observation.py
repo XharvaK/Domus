@@ -78,7 +78,7 @@ def _affordance_name(text):
     return text[:80]
 
 
-def _portrait(row, resolve=None):
+def _portrait(row, resolve=None, notebook=None):
     """resolve: string key -> the game's own text (S0), or None when unknown."""
     row = row or {}
     needs = {}
@@ -229,7 +229,12 @@ def _portrait(row, resolve=None):
                  "title": _resolve(resolve, item.get("title_key")),
                  "level": item.get("level"), "at_work": item.get("at_work") is True}
                 for item in own["careers"] if isinstance(item, dict)]
-    # Shed the least essential first: queued and running lists, then moodlets, then company.
+    if notebook:
+        portrait["notebook"] = notebook
+    # Shed the least essential first: the notebook, then queued and running lists,
+    # then moodlets, then company.
+    if "notebook" in portrait and _bytes(portrait) > _PORTRAIT_LIMIT:
+        del portrait["notebook"]
     for key in ("queued", "running", "moodlets", "company"):
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:
             portrait[key].pop()
@@ -278,6 +283,6 @@ def build(decision, ctx):
         "expires_at_ms": source + _WINDOW_MS,
         "lineage_class": lineage,
         "percepts": percepts,
-        "portrait": _portrait(row, ctx.get("resolve_text")),
+        "portrait": _portrait(row, ctx.get("resolve_text"), notebook=ctx.get("notebook")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
     }
