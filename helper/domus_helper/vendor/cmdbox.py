@@ -4,7 +4,7 @@ import json
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
             'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
-            'cancel')
+            'cancel', 'camera')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -98,6 +98,10 @@ def parse(raw_bytes, now_ms, used_ids):
         # 2.20.0: she stops one of her own actions, as the client's X on her queue does.
         good = (set(args) == {'act_id', 'interaction_id'} and valid_hex(args.get('act_id'), 32) and
                 _digits(args.get('interaction_id')))
+    elif good and name == 'camera':
+        # 2.21.0: the overlay's camera follows her Sim or looks at one object; never the world.
+        good = (set(args) == {'op', 'target_id'} and args.get('op') in ('follow_sim', 'focus_object') and
+                _digits(args.get('target_id')))
     elif good:
         good = not args
     if not good:

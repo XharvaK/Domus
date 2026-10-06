@@ -23,7 +23,9 @@ PRODUCTION_MODULES = (
 # imported, and only by name (never `import build_buy`).
 NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
                        # 2.20.1: only the Distributor, to send the game's queued events now.
-                       "distributor.system": {"Distributor"}}
+                       "distributor.system": {"Distributor"},
+                       # 2.21.0: only the two view calls; they move the camera, never the world.
+                       "camera": {"focus_on_sim", "focus_on_object"}}
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
 }

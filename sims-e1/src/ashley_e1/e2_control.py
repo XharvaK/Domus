@@ -32,6 +32,13 @@ try:
     from distributor.system import Distributor
 except ImportError:
     Distributor = None
+try:
+    # TARGET_BYTECODE: camera.focus_on_sim(sim, follow, client) / focus_on_object(object, follow)
+    # send FocusCamera(id, follow_mode) to the client; they move only the view.
+    from camera import focus_on_sim, focus_on_object
+except ImportError:
+    focus_on_sim = focus_on_object = None
+CAMERA_MIN_GAP_S = 1.5
 
 def _send_queued_events():
     """2.20.1 (live 2026-10-06: after her answer the recipe picker stayed on screen and the game
@@ -165,6 +172,7 @@ class E2Control:
         self._writer = get_writer
         self._output = output
         self._armed_name = get_armed_name or (lambda: None)
+        self._camera_at = None
         self._reset_state()
 
     # ------------------------------------------------------------------ state
@@ -763,6 +771,45 @@ class E2Control:
             phase = "UNKNOWN" if accepted else "REJECTED"
             self._act_event(act_id, phase, code=code, **base)
             self._say(connection, "ACT_%s %s" % (phase, code))
+            return False
+
+    def cmd_camera(self, op, target_id, connection):
+        """2.21.0 (E5): the overlay's camera director looks at her Sim (following) or at one
+        object. It moves only the view: no act id, no act_event, nothing in her ledger. Refused
+        unless sampling her own body, and at most one op per CAMERA_MIN_GAP_S."""
+        if not self.available() or focus_on_sim is None or focus_on_object is None:
+            self._say(connection, "CAMERA_REJECT UNAVAILABLE")
+            return False
+        if self._state() != "SAMPLING":
+            self._say(connection, "CAMERA_REJECT NOT_SAMPLING")
+            return False
+        if self.lineage_class == e2_lineage.BODY_MISMATCH:
+            self._say(connection, "CAMERA_REJECT BODY_MISMATCH")
+            return False
+        now = time.monotonic()
+        if self._camera_at is not None and now - self._camera_at < CAMERA_MIN_GAP_S:
+            self._say(connection, "CAMERA_REJECT TOO_SOON")
+            return False
+        try:
+            if op == "follow_sim":
+                sim_info = services.sim_info_manager().get(int(target_id))
+                sim = sim_info.get_sim_instance() if sim_info is not None else None
+                if sim is None:
+                    self._say(connection, "CAMERA_REJECT NO_TARGET")
+                    return False
+                focus_on_sim(sim=sim, follow=True)
+            else:
+                obj = services.object_manager().get(int(target_id))
+                if obj is None:
+                    self._say(connection, "CAMERA_REJECT NO_TARGET")
+                    return False
+                focus_on_object(object=obj, follow=False)
+            _send_queued_events()
+            self._camera_at = now
+            self._say(connection, "CAMERA_OK %s %s" % (op, target_id))
+            return True
+        except Exception as error:
+            self._say(connection, ("CAMERA_REJECT E2_EXCEPTION:%s" % type(error).__name__)[:64])
             return False
 
     def _reconcile_pushed(self, row):
