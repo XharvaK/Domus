@@ -11,6 +11,7 @@ from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_opti
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
+from .director import Director
 from .proof import Trace
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -95,6 +96,8 @@ class Bridge:
         # E3: the overlay pages' state (served by main() on this PC only).
         self.overlay = overlay_pages.Overlay(self.spool, self.paths.data_dir, int(time.time() * 1000), self._resolve_text,
                                              trace=Trace(self.spool, self.paths.data_dir), helper_build=_helper_build())
+        self.director = None if self.client is None else Director(
+            self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
         if self._acts is not None:
             self.overlay.answered = self._acts.answered_dialogs
         if scorer is _AUTO:
@@ -138,6 +141,8 @@ class Bridge:
             self.overlay.answered = self._acts.answered_dialogs
         self.overlay.poll(self.client, self.helper_session, now)
         self.overlay.publish(now, self._state == "attached")
+        if self.director is not None:
+            self.director.tick(now, self.overlay.published.get("mode") == "live")
 
     def _options(self, row):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
@@ -232,6 +237,8 @@ class Bridge:
             if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
                 self._acts.on_sample(record)
             self.overlay.on_row(record, wall_ms)
+            if self.director is not None:
+                self.director.on_row(record, wall_ms)
             percepts = self._extractor.step(record)
             if self._acts is not None and self._acts.planned > 0:
                 # H0.5: between the steps of her plan she is idle for a moment; that is not a
