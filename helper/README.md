@@ -80,6 +80,12 @@ runs the peripheral thalamus, sends one heartbeat when Ashley is configured,
 and flushes the observation outbox. `python -m domus_helper.bridge --interval 5`
 repeats until Ctrl+C.
 
+Game-only inputs: `python -m domus_helper.inputs game-only` keeps the User's
+conversations out of Ashley's game passes; `full` lifts it and `show` prints the
+state. The switch travels in the heartbeat (`inputs: game_only`, sent at once on a
+flip), each pass Ashley admits while it is on is stamped game-only, and every flip
+is appended to `inputs_log.jsonl` in the data folder.
+
 After `read_new`, each new spool row (SQLite `rowid` after `last_rowid`) goes
 through `Extractor.step` and `decide`, using the row's `monotonic_ns // 1_000_000`
 as `now_ms`. One empty `decide` then advances deadlines and boredom on the

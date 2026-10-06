@@ -9,6 +9,7 @@ from . import commands
 from . import fingerprints as fingerprint_reader
 from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
+from . import inputs as game_inputs
 from .contract import ContractError
 from .cursor import TelemetryCursor
 from .paths import Paths
@@ -68,6 +69,7 @@ class Bridge:
         self._telemetry_only = False
         self._last_heartbeat = None
         self._last_heartbeat_ms = None
+        self._tried_inputs = None
         self._params = Parameters()
         self._context = Context()
         self._log = DecisionLog(self.paths.data_dir)
@@ -101,8 +103,11 @@ class Bridge:
         self._state = observed["state"]
         self._telemetry_only = observed["telemetry_only"]
         self._advance_thalamus(now)
+        # E1b: a flipped game-only switch goes out at once, not with the next minute's heartbeat.
+        inputs = game_inputs.current(self.spool)
         if self.client is not None and (
             self._last_heartbeat_ms is None or now - self._last_heartbeat_ms >= HEARTBEAT_EVERY_MS
+            or inputs != self._tried_inputs
         ):
             body = {
                 "v": 1,
@@ -110,12 +115,15 @@ class Bridge:
                 "sent_at_ms": now,
                 "attached": self._state == "attached",
             }
+            if inputs == game_inputs.GAME_ONLY:
+                body["inputs"] = inputs
             probe = latest.get("probe_version") if isinstance(latest, dict) else None
             if isinstance(probe, str) and len(probe) <= 16:
                 body["probe_version"] = probe
             result = self.client.post_heartbeat(body)
             self._last_heartbeat = {"kind": result.kind, "status": result.status}
             self._last_heartbeat_ms = now
+            self._tried_inputs = inputs
         if self.client is not None:
             self.spool.flush(self.client, now)
         if self.client is not None and self._acts is not None and hasattr(self.client, "sync_acts"):
@@ -154,6 +162,7 @@ class Bridge:
             "spool": {"rows": self.spool.row_count(), "gaps": len(self.spool.gaps())},
             "outbox": self.spool.outbox_counts(),
             "last_heartbeat": self._last_heartbeat,
+            "inputs": game_inputs.current(self.spool),
             "transport": transport,
             "thalamus": self.thalamus_status(),
         }
