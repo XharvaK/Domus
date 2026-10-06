@@ -11,6 +11,7 @@ from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_opti
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
+from .proof import Trace
 from .contract import ContractError
 from .cursor import TelemetryCursor
 from .paths import Paths
@@ -92,7 +93,8 @@ class Bridge:
         self._acts = None if self.client is None else ActCourier(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
         # E3: the overlay pages' state (served by main() on this PC only).
-        self.overlay = overlay_pages.Overlay(self.spool, self.paths.data_dir, int(time.time() * 1000), self._resolve_text)
+        self.overlay = overlay_pages.Overlay(self.spool, self.paths.data_dir, int(time.time() * 1000), self._resolve_text,
+                                             trace=Trace(self.spool, self.paths.data_dir), helper_build=_helper_build())
         if self._acts is not None:
             self.overlay.answered = self._acts.answered_dialogs
         if scorer is _AUTO:
@@ -318,6 +320,19 @@ class Bridge:
             "thalamus_last_wall_ms": "" if self._last_fire_wall_ms is None else str(self._last_fire_wall_ms),
             "thalamus_theta": str(self._theta),
         })
+
+
+def _helper_build():
+    """E4: the commit this helper runs from, for the proof trace (None outside a checkout)."""
+    import subprocess
+    from pathlib import Path
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = result.stdout.strip()
+    return sha[:40] if result.returncode == 0 and sha else None
 
 
 def main(argv=None):
