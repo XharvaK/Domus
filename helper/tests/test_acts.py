@@ -193,6 +193,35 @@ def test_an_act_the_probe_never_answers_about_becomes_unknown_once(tmp_path):
                         "detail": {"code": "NO_PROBE_REPLY"}}]
 
 
+def test_a_refusal_carries_the_resolved_sentence_not_the_key(tmp_path):
+    spool = Spool(tmp_path / "spool.db")
+    client = _Client()
+    texts = {"88001": "Not possible right now."}
+    courier = ActCourier(spool, lambda command, args: None, resolve=texts.get)
+    courier.on_row(_row("REJECTED", code="PUSH_REFUSED", detail="debug text", reason_key="88001"))
+    courier.tick(client, "h", 2000, True)
+    event = client.bodies[-1]["events"][0]
+    assert event["detail"]["detail"] == "debug text"
+    assert event["detail"]["reason"] == "Not possible right now."
+    assert "reason_key" not in event["detail"]
+    assert "88001" not in json.dumps(event)
+    courier._resolve = lambda key: "n" * 250
+    courier.on_row(_row("REJECTED", code="PUSH_REFUSED", detail="debug text", reason_key="88001"))
+    courier.tick(client, "h", 3000, True)
+    assert client.bodies[-1]["events"][0]["detail"]["reason"] == "n" * 200
+
+
+def test_an_unknown_reason_key_adds_no_sentence(tmp_path):
+    spool = Spool(tmp_path / "spool.db")
+    client = _Client()
+    courier = ActCourier(spool, lambda command, args: None, resolve=lambda key: None)
+    courier.on_row(_row("REJECTED", code="PUSH_REFUSED", detail="debug text", reason_key="88001"))
+    courier.tick(client, "h", 2000, True)
+    detail = client.bodies[-1]["events"][0]["detail"]
+    assert detail == {"code": "PUSH_REFUSED", "detail": "debug text", "tuning_name": "bookshelf_ReadBook"}
+    assert "reason" not in detail
+
+
 def test_a_refused_or_unknown_act_wakes_her():
     extractor = Extractor()
     assert extractor.step(_row("PUSHED")) == []

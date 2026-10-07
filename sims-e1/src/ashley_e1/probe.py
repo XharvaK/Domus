@@ -928,14 +928,14 @@ def _dispatch_preflight(connection):
     def _run(job, _sim=sim, _context=context):
         excluded = job["excluded"]
         if excluded is not None:
-            ok, reason = False, excluded
+            ok, reason, reason_key = False, excluded, None
         else:
-            ok, reason = e2_actuator.preflight_test(
+            ok, reason, reason_key = e2_actuator.preflight_test(
                 _sim, job["obj"], job["affordance"], _context)
         return {
             "kind": "preflight", "object_id": job["object_id"],
             "guid64": job["guid64"], "name": job["name"],
-            "ok": bool(ok), "reason": reason,
+            "ok": bool(ok), "reason": reason, "reason_key": reason_key,
         }
 
     folder = os.path.join(_TELEMETRY_ROOT, "atlas")
@@ -1940,7 +1940,8 @@ def _menu_jobs(row):
 
 
 def _menu_test(job):
-    ok, _reason = e2_actuator.preflight_test(job["sim"], job["obj"], job["affordance"], job["context"])
+    ok, _reason, _reason_key = e2_actuator.preflight_test(
+        job["sim"], job["obj"], job["affordance"], job["context"])
     return bool(ok)
 
 

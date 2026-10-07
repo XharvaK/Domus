@@ -48,6 +48,16 @@ def test_layers_near_far_available():
     assert result["available"]["sinkPedC"] == 1
 
 
+def test_a_refused_offer_uses_the_resolved_sentence():
+    rows = [{"kind": "preflight", "object_id": "1", "name": "generic_food_Grab", "ok": False,
+             "reason": "debug text", "reason_key": "88001"}]
+    known = scene.offers_for("1", rows, resolve=lambda key: "Not possible right now." if key == "88001" else None)
+    assert known["refused"] == [{"name": "generic_food_Grab", "game_reason": "Not possible right now."}]
+    unknown = scene.offers_for("1", rows, resolve=lambda key: None)
+    assert unknown["refused"] == [{"name": "generic_food_Grab", "game_reason": "debug text"}]
+    assert "88001" not in json.dumps(known)
+
+
 def test_far_lines_and_name_fallback():
     spoiled = _obj("9", "object_Food_GrilledCheese_Single", 15.0, "6",
                    states={"Freshness": "Freshness_Spoiled"},

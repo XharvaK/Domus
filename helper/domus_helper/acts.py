@@ -39,6 +39,22 @@ def _text(resolve, key):
     return text.strip()[:80] if isinstance(text, str) and text.strip() else None
 
 
+def _sentence(resolve, key):
+    """Resolved sentence for a string key, at most 200 characters. Unknown is None."""
+    if resolve is None or not isinstance(key, str) or not key:
+        return None
+    try:
+        text = resolve(key)
+    except Exception:
+        return None
+    if not isinstance(text, str):
+        return None
+    text = text.strip()
+    if not text:
+        return None
+    return text[:200]
+
+
 def _object_name(item, resolve, catalog, people=None):
     if item.get("class") == "sim":
         # 2.17.0: a person in her menu is named as her senses name them.
@@ -172,9 +188,10 @@ class ActCourier(object):
     One push per act id: an id written once is never written again, across restarts
     (the spool keeps them). Events to Mint are kept until Mint answered the round trip."""
 
-    def __init__(self, spool, publish):
+    def __init__(self, spool, publish, resolve=None):
         self._spool = spool
         self._publish = publish
+        self._resolve = resolve
         raw = spool.get_kv("acts_known")
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
@@ -253,6 +270,10 @@ class ActCourier(object):
                 detail["finishing_type"] = "ASKED"
                 detail["detail"] = ("it opened the game's question (%s); answering it is what queues the action"
                                     % asked["kind"])[:200]
+        else:
+            sentence = _sentence(self._resolve, e2.get("reason_key"))
+            if sentence:
+                detail["reason"] = sentence
         self._event(act_id, phase, at, detail)
         if known is not None:
             known["answered"] = True

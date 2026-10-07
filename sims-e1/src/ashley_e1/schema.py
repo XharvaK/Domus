@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 12
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.21.0"
+PROBE_VERSION = "2.22.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -71,8 +71,12 @@ E2_PAYLOAD_KEYS = {
     "lineage_event": ("record", "guid", "slot_id", "sim_id", "ticks",
                       "loaded_from_slot_id", "lineage_class", "session_uuid"),
     # 2.16.0 (schema 10): Ashley's own acts (8f) and what she can do near her body.
+    # 2.22.0: reason_key is optional (None when the tooltip has no string key).
+    # Earlier act rows omit it. Filled in below, so schema stays 12, as 2.9.2
+    # added experiment fields without a version bump. Schema 11 and 12 bumped
+    # because a closed observation shape gained a key old rows must not carry.
     "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
-                  "tuning_name", "finishing_type", "detail"),
+                  "tuning_name", "finishing_type", "detail", "reason_key"),
     "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
@@ -517,6 +521,8 @@ def _validate_e2(row):
         for key in ("guid64", "card_class", "tuning_name", "ambiguous"):
             if key not in payload:
                 payload[key] = None
+    elif kind == "act_event" and isinstance(payload, dict) and "reason_key" not in payload:
+        payload["reason_key"] = None
     _require(isinstance(payload, dict) and
              set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
@@ -569,6 +575,9 @@ def _validate_e2(row):
                            "act finishing_type", False)
         if payload["detail"] is not None:
             bounded_string(payload["detail"], MAX_DETAIL_LENGTH, "act detail", False)
+        if payload["reason_key"] is not None:
+            _require(isinstance(payload["reason_key"], str), "act reason_key must be a string")
+            string_id(payload["reason_key"], "act reason_key")
     elif kind == "act_menu":
         _validate_menu(payload)
     elif kind == "speed_event":

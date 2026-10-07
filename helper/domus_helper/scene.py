@@ -170,7 +170,7 @@ def _has_condition(row):
                 or row.get("craft"))
 
 
-def offers_for(object_id, preflight_rows):
+def offers_for(object_id, preflight_rows, resolve=None):
     """The game's own options for one object: allowed by name, refused with reason."""
     if preflight_rows is None:
         return None
@@ -185,7 +185,12 @@ def offers_for(object_id, preflight_rows):
         if row.get("ok"):
             allowed.append(row.get("name"))
         else:
-            refused.append({"name": row.get("name"), "game_reason": str(reason)[:100]})
+            sentence = _text(resolve, row.get("reason_key"))
+            if isinstance(sentence, str) and sentence.strip():
+                game_reason = sentence.strip()[:200]
+            else:
+                game_reason = str(reason)[:100]
+            refused.append({"name": row.get("name"), "game_reason": game_reason})
     if not seen:
         return None  # not checked (e.g. the object is newer than the preflight), not "no options"
     return {"allowed": sorted(set(allowed)), "refused": refused[:6]}
@@ -218,7 +223,7 @@ def layers(header, objects, *, resolve=None, preflight_rows=None, catalog=None):
              + [i for i, row in enumerate(kept) if not _has_condition(row)])
     for index in order:
         row = kept[index]
-        fact = near_fact(row, body, resolve, offers_for(row["object_id"], preflight_rows),
+        fact = near_fact(row, body, resolve, offers_for(row["object_id"], preflight_rows, resolve),
                          catalog)
         trial = list(scene["near"])
         trial[index] = fact

@@ -15,6 +15,7 @@ from interactions.interaction_finisher import FinishingType  # TARGET_BYTECODE 1
 from interactions.priority import Priority  # TARGET_BYTECODE 1.128.
 
 from . import e2_trial
+from . import observers
 
 SIT_AFFORDANCE_GUID = 31564
 PAUSE_REASON = "ashley_e2_pause"
@@ -155,24 +156,37 @@ def push_affordance(sim, obj, affordance, context):
     game's test_result failed (A28); that is not a broken push. A passed test
     with no interaction, or a result that has no test_result, stays a failure.
     """
+    interaction, detail, kind, _reason_key = push_affordance_ex(sim, obj, affordance, context)
+    return interaction, detail, kind
+
+
+def push_affordance_ex(sim, obj, affordance, context):
+    """push_affordance plus the refusal tooltip's string key, or None.
+
+    The tooltip is never called. Callers that only need the triple use push_affordance.
+    """
     result = sim.push_super_affordance(affordance, obj, context)
     refusal = _refusal(result)
     if refusal is not None:
-        return None, refusal, "refused"
+        try:
+            test_result = result.test_result
+        except Exception:
+            test_result = None
+        return None, refusal, "refused", refusal_key(test_result)
     try:
         execute_result = result.execute_result
     except AttributeError:
         execute_result = None
     if not result or execute_result is None:
         # EnqueueResult.interaction would raise here (TARGET_BYTECODE); never touch it.
-        return None, _bounded(repr(result)), "failed"
+        return None, _bounded(repr(result)), "failed", None
     try:
         interaction = execute_result.interaction
     except AttributeError:
         interaction = None
     if interaction is None:
-        return None, _bounded(repr(execute_result)), "failed"
-    return interaction, None, None
+        return None, _bounded(repr(execute_result)), "failed", None
+    return interaction, None, None, None
 
 
 def user_directed(affordance):
@@ -194,12 +208,13 @@ def preflight_test(sim, obj, affordance, context):
     """Read: would push_super_affordance's test refuse this pair (A28).
 
     Same arguments as the push. The game method calls AffordanceObjectPair.test
-    and does not execute. Returns (ok, reason).
+    and does not execute. Returns (ok, reason, reason_key). reason_key is the
+    tooltip's string key when the test refuses, else None. The tooltip is never called.
     """
     result = sim.test_super_affordance(affordance, obj, context)
     if not result:
-        return False, _bounded(str(result))
-    return True, None
+        return False, _bounded(str(result)), refusal_key(result)
+    return True, None, None
 
 
 def cancel_own(interaction):
@@ -240,6 +255,28 @@ def cancel_ids(sim, interaction_ids):
         entry.cancel(FinishingType.USER_CANCEL, cancel_reason_msg=TRIAL_END_REASON)
         count += 1
     return count
+
+
+def refusal_key(test_result):
+    """Decimal string key of a refusal tooltip, or None.
+
+    A tuned factory carries `_string_id`. A lambda that closes over a factory or a
+    key is read from its closure cells. The tooltip is never called. Any failure
+    is no key.
+    """
+    try:
+        tooltip = test_result.tooltip
+    except Exception:
+        return None
+    if tooltip is None:
+        return None
+    try:
+        key = observers._string_key(tooltip)
+        if key is None:
+            key = observers._closure_key(tooltip)
+    except Exception:
+        return None
+    return key
 
 
 def _refusal(result):

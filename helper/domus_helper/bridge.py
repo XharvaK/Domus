@@ -107,7 +107,8 @@ class Bridge:
         self._menu = None
         self._catalog = None
         self._acts = None if self.client is None else ActCourier(
-            self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
+            self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
+            resolve=self._resolve_text)
         # E3: the overlay pages' state (served by main() on this PC only).
         self.overlay = overlay_pages.Overlay(self.spool, self.paths.data_dir, int(time.time() * 1000), self._resolve_text,
                                              trace=Trace(self.spool, self.paths.data_dir), helper_build=_helper_build())
