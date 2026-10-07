@@ -19,6 +19,7 @@ _START = re.compile(
 _IGNORED = re.compile(r"ignored\s*:\s*true\b")
 _PRE_OPEN = re.compile(r"pre_actions\s*:\s*\[")
 _ACTOR = re.compile(r"\{actor\.(\d+)\}")
+_LEFTOVER = re.compile(r"\{[^}]*\}")
 _SPACE = re.compile(r"\s+")
 _SENTENCE_CAP = 200
 _RELOAD_S = 60
@@ -142,6 +143,8 @@ def _fill(template, actors):
                 return name
         return "someone"
     text = _SPACE.sub(" ", _ACTOR.sub(repl, template)).strip()
+    if _LEFTOVER.search(text):
+        return None
     return text[:_SENTENCE_CAP]
 
 
@@ -178,7 +181,7 @@ def phrases():
     now = time.monotonic()
     if _cached is not None and _checked_at is not None and now - _checked_at < _RELOAD_S:
         return _cached
-    path = Paths.from_env().data_dir / "lang" / "social.json"
+    path = _social_path()
     _checked_at = now
     try:
         mtime = path.stat().st_mtime_ns

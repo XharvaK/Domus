@@ -84,6 +84,17 @@ def test_sentence_fills_actors_and_stops_at_200_chars(tmp_path):
     assert len(filled) == 200 and filled.startswith("Ada ")
 
 
+def test_sentence_drops_unresolved_placeholders():
+    book = lang.SocialPhrases({
+        "mixer_participants": {"pre": ["{actor.0} greets {participants}."]},
+        "mixer_pronoun": {"pre": ["{actor.0.he/she} waves."]},
+        "mixer_index": {"pre": ["{0.String} tells {1.SimFirstName}."]},
+    })
+    assert book.sentence("mixer_participants", ["Ada"]) is None
+    assert book.sentence("mixer_pronoun", ["Ada"]) is None
+    assert book.sentence("mixer_index", ["Ada", "Bea"]) is None
+
+
 def test_load_missing_or_broken_is_empty(tmp_path):
     assert lang.SocialPhrases.load(tmp_path / "missing.json").entries == {}
     broken = tmp_path / "broken.json"
@@ -129,10 +140,15 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
     portrait = observation._portrait(_row())
     assert portrait["addressed_by"] == [{
         "by": "2", "interaction": "invented_address", "sentence": "PLAIN invented_address Bea Ada"}]
-    assert portrait["running"] == [{
-        "interaction": "invented_running", "sentence": "PLAIN invented_running Ada Bea"}]
-    assert portrait["queued"][0]["sentence"] == "PLAIN invented_queued Ada Bea"
-    assert portrait["queued"][1]["sentence"] == "PLAIN invented_solo Ada"
+    assert portrait["running"] == ["invented_running"]
+    assert portrait["queued"] == ["invented_queued", "invented_solo"]
+    assert portrait["doing_said"] == [
+        {"interaction": "invented_running", "sentence": "PLAIN invented_running Ada Bea",
+         "state": "running"},
+        {"interaction": "invented_queued", "sentence": "PLAIN invented_queued Ada Bea",
+         "state": "queued"},
+        {"interaction": "invented_solo", "sentence": "PLAIN invented_solo Ada", "state": "queued"},
+    ]
     assert book.calls[0] == ("invented_running", ["Ada", "Bea"])
 
     monkeypatch.setattr(lang, "phrases", lambda: _Book(lambda tuning, actors: None))
@@ -140,6 +156,7 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
     assert quiet["running"] == ["invented_running"]
     assert quiet["queued"] == ["invented_queued", "invented_solo"]
     assert quiet["addressed_by"] == [{"by": "2", "interaction": "invented_address"}]
+    assert "doing_said" not in quiet
     assert not _has_sentence(quiet)
 
     class _Down:
@@ -161,5 +178,45 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
     assert shed["notebook"]["pad"] == note["pad"]
     assert shed["running"] == ["invented_running"]
     assert shed["queued"] == ["invented_queued", "invented_solo"]
+    assert all(isinstance(item, str) for item in shed["running"] + shed["queued"])
+    assert "doing_said" not in shed
     assert "sentence" not in shed["addressed_by"][0]
     assert not _has_sentence(shed)
+
+
+def test_over_budget_sheds_doing_said_then_addressed_before_notebook(monkeypatch):
+    monkeypatch.setattr(lang, "phrases", lambda: _Book(lambda tuning, actors: "S" * 60))
+    note = {"pad": ""}
+    full = observation._portrait(_row(), notebook=note)
+    assert full["running"] == ["invented_running"]
+    assert full["queued"] == ["invented_queued", "invented_solo"]
+    assert all(isinstance(item, str) for item in full["running"] + full["queued"])
+    full_bytes = observation._bytes(full)
+    without_last = json.loads(json.dumps(full))
+    without_last["doing_said"].pop()
+    without_said = json.loads(json.dumps(full))
+    del without_said["doing_said"]
+    assert full_bytes <= observation._PORTRAIT_LIMIT
+    assert observation._bytes(without_last) < full_bytes
+
+    note["pad"] = "p" * (observation._PORTRAIT_LIMIT - full_bytes + 1)
+    one = observation._portrait(_row(), notebook=note)
+    assert [item["interaction"] for item in one["doing_said"]] == [
+        "invented_running", "invented_queued"]
+    assert one["doing_said"][0]["state"] == "running"
+    assert one["doing_said"][1]["state"] == "queued"
+    assert "sentence" in one["addressed_by"][0]
+    assert one["notebook"]["pad"] == note["pad"]
+    assert one["running"] == ["invented_running"]
+    assert one["queued"] == ["invented_queued", "invented_solo"]
+    assert observation._bytes(one) <= observation._PORTRAIT_LIMIT
+
+    note_b = {"pad": "p" * (observation._PORTRAIT_LIMIT - observation._bytes(without_said) + 1)}
+    second = observation._portrait(_row(), notebook=note_b)
+    assert "doing_said" not in second
+    assert "sentence" not in second["addressed_by"][0]
+    assert second["notebook"]["pad"] == note_b["pad"]
+    assert second["running"] == ["invented_running"]
+    assert second["queued"] == ["invented_queued", "invented_solo"]
+    assert all(isinstance(item, str) for item in second["running"] + second["queued"])
+    assert observation._bytes(second) <= observation._PORTRAIT_LIMIT

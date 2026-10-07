@@ -1,4 +1,4 @@
-"""Pure v1 observation builder. No clock. A phrase lookup that fails omits the sentence."""
+"""Pure v1 observation builder. No clock. The only I/O is the phrase lookup, which never fails the portrait."""
 import json
 import re
 
@@ -108,33 +108,40 @@ def _action_actors(entry, names, her):
     return [her]
 
 
-def _with_sentence(value, tuning, actors):
-    """value is the portrait item. A sentence is added only when the dictionary has one."""
+def _sentence(tuning, actors):
+    """A dictionary sentence, or None. A failed lookup never fails the portrait."""
     try:
         text = lang.phrases().sentence(tuning, actors)
     except Exception:
-        return value
+        return None
     if not isinstance(text, str) or not text:
+        return None
+    return text
+
+
+def _with_sentence(value, tuning, actors):
+    """An addressed_by item. A sentence is added only when the dictionary has one."""
+    text = _sentence(tuning, actors)
+    if text is None:
         return value
-    if isinstance(value, dict):
-        value["sentence"] = text
-        return value
-    return {"interaction": tuning, "sentence": text}
+    value["sentence"] = text
+    return value
 
 
 def _shed_sentence(portrait):
-    """Drop one sentence. Running and queued items return to the plain tuning name."""
-    for key in ("queued", "running", "addressed_by"):
-        items = portrait.get(key)
-        if not isinstance(items, list):
-            continue
+    """Drop one sentence: her own (last first), then one addressed to her."""
+    said = portrait.get("doing_said")
+    if isinstance(said, list) and said:
+        said.pop()
+        if not said:
+            del portrait["doing_said"]
+        return True
+    items = portrait.get("addressed_by")
+    if isinstance(items, list):
         for index in range(len(items) - 1, -1, -1):
             item = items[index]
             if isinstance(item, dict) and "sentence" in item:
-                if key == "addressed_by":
-                    del item["sentence"]
-                else:
-                    items[index] = item.get("interaction")
+                del item["sentence"]
                 return True
     return False
 
@@ -151,16 +158,25 @@ def _portrait(row, resolve=None, notebook=None):
     posture = ((row.get("body") or {}).get("posture") or {}).get("posture_name")
     running = []
     queued = []
+    doing_said = []
     for entry in ((row.get("interactions") or {}).get("observed")) or []:
         if not isinstance(entry, dict) or entry.get("affordance_text") is None:
             continue
         tuning = _affordance_name(entry["affordance_text"])
         actors = _action_actors(entry, names, her)
         if entry.get("membership") in ("RUNNING", "QUEUED_AND_RUNNING"):
-            running.append(_with_sentence(tuning, tuning, actors))
+            bucket, state = running, "running"
         elif entry.get("membership") == "QUEUED":
             # Live 2026-10-06: her answered recipe sat queued behind a piano song she could not see.
-            queued.append(_with_sentence(tuning, tuning, actors))
+            bucket, state = queued, "queued"
+        else:
+            continue
+        if len(bucket) >= 8:
+            continue
+        bucket.append(tuning)
+        text = _sentence(tuning, actors)
+        if text is not None:
+            doing_said.append({"interaction": tuning, "sentence": text, "state": state})
     zone = row.get("zone") or {}
     game = row.get("game") or {}
     # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
@@ -232,6 +248,7 @@ def _portrait(row, resolve=None, notebook=None):
         "posture": posture,
         "running": running[:8],
         "queued": queued[:8],
+        **({"doing_said": doing_said} if doing_said else {}),
         "zone": {"zone_id": zone.get("zone_id"), "lot_id": zone.get("lot_id"),
                  "room": zone.get("room")},
         "time": game_time(game.get("calendar")),
@@ -297,7 +314,8 @@ def _portrait(row, resolve=None, notebook=None):
                 for item in own["careers"] if isinstance(item, dict)]
     if notebook:
         portrait["notebook"] = notebook
-    # Sentences are extra: drop them before anything that was already in the portrait.
+    # Sentences are extra: her own (doing_said, last first), then addressed_by,
+    # before anything that was already in the portrait.
     # Then the least essential: the notebook, then queued and running lists,
     # then moodlets, then company.
     while _bytes(portrait) > _PORTRAIT_LIMIT and _shed_sentence(portrait):
