@@ -4,7 +4,7 @@ import json
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
             'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
-            'cancel', 'camera')
+            'cancel', 'camera', 'talk')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -104,6 +104,13 @@ def parse(raw_bytes, now_ms, used_ids):
         # 2.21.0: the overlay's camera follows her Sim or looks at one object; never the world.
         good = (set(args) == {'op', 'target_id'} and args.get('op') in ('follow_sim', 'focus_object') and
                 _digits(args.get('target_id')))
+    elif good and name == 'talk':
+        # 2.26.0: one line of social talk for the User's screen; text only, never an act.
+        text = args.get('text')
+        good = (set(args) in ({'text'}, {'text', 'sim_id'}) and type(text) is str and
+                1 <= len(text) <= 240 and text.strip() == text and
+                all(ch >= ' ' and ch != '\x7f' for ch in text) and
+                ('sim_id' not in args or _digits(args['sim_id'])))
     elif good:
         good = not args
     if not good:

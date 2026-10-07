@@ -39,6 +39,12 @@ try:
 except ImportError:
     focus_on_sim = focus_on_object = None
 try:
+    # 2.26.0: the game's own notification, for one line of plain text on the User's screen.
+    from ui.ui_dialog_notification import UiDialogNotification
+    from sims4.localization import LocalizationHelperTuning
+except ImportError:
+    UiDialogNotification = LocalizationHelperTuning = None
+try:
     # 2.23.0: the close message ui/ui_dialog_service._dialog_cancel_internal builds.
     from protocolbuffers import Consts_pb2, Dialog_pb2
 except ImportError:
@@ -49,6 +55,8 @@ try:
 except ImportError:
     ClockSpeedMode = GameSpeedChangeSource = None
 CAMERA_MIN_GAP_S = 1.5
+# 2.26.0: social talk on the User's screen, at most one line each TALK_MIN_GAP_S.
+TALK_MIN_GAP_S = 2.0
 
 def _send_queued_events():
     """2.20.1 (live 2026-10-06: after her answer the recipe picker stayed on screen and the game
@@ -183,6 +191,7 @@ class E2Control:
         self._output = output
         self._armed_name = get_armed_name or (lambda: None)
         self._camera_at = None
+        self._talk_at = None
         self._reset_state()
 
     # ------------------------------------------------------------------ state
@@ -881,6 +890,36 @@ class E2Control:
             return True
         except Exception as error:
             self._say(connection, ("CAMERA_REJECT E2_EXCEPTION:%s" % type(error).__name__)[:64])
+            return False
+
+    def cmd_talk(self, text, sim_id, connection):
+        """2.26.0: one line of social talk, the plain sentence the helper made from the phrase data,
+        shown to the User as the game's own notification (owner: the Sim it is about, when known).
+        It only shows text: no act id, no act_event, nothing in her ledger. Refused unless sampling
+        her own body, and at most one line each TALK_MIN_GAP_S."""
+        if not self.available() or UiDialogNotification is None or LocalizationHelperTuning is None:
+            self._say(connection, "TALK_REJECT UNAVAILABLE")
+            return False
+        if self._state() != "SAMPLING":
+            self._say(connection, "TALK_REJECT NOT_SAMPLING")
+            return False
+        if self.lineage_class == e2_lineage.BODY_MISMATCH:
+            self._say(connection, "TALK_REJECT BODY_MISMATCH")
+            return False
+        now = time.monotonic()
+        if self._talk_at is not None and now - self._talk_at < TALK_MIN_GAP_S:
+            self._say(connection, "TALK_REJECT TOO_SOON")
+            return False
+        try:
+            owner = services.sim_info_manager().get(int(sim_id)) if sim_id is not None else None
+            line = LocalizationHelperTuning.get_raw_text(text)
+            notification = UiDialogNotification.TunableFactory().default(owner, text=lambda *_, **__: line)
+            notification.show_dialog()
+            self._talk_at = now
+            self._say(connection, "TALK_OK")
+            return True
+        except Exception as error:
+            self._say(connection, ("TALK_REJECT E2_EXCEPTION:%s" % type(error).__name__)[:64])
             return False
 
     def _reconcile_pushed(self, row):

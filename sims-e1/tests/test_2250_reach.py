@@ -38,7 +38,7 @@ class ReachTests(unittest.TestCase):
         return build.payload(1, room)
 
     def test_version(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.25.0")
+        self.assertGreaterEqual(tuple(int(x) for x in self.probe.schema.PROBE_VERSION.split(".")), (2, 25, 0))
 
     def test_reach_is_asked_once_per_object_and_an_unreachable_one_stays_listed(self):
         class BrowseBooks(ReadBook):

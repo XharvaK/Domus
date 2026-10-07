@@ -26,6 +26,8 @@ NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
                        "distributor.system": {"Distributor"},
                        # 2.21.0: only the two view calls; they move the camera, never the world.
                        "camera": {"focus_on_sim", "focus_on_object"},
+                       # 2.26.0: only the game's notification, to show one line of text. e2_control only.
+                       "ui.ui_dialog_notification": {"UiDialogNotification"},
                        # 2.23.0: the close message _dialog_cancel_internal builds. e2_control only.
                        "protocolbuffers": {"Consts_pb2", "Dialog_pb2"}}
 # 2.23.0, cmd_answer only. Reviewed path: ui/ui_dialog_service._dialog_cancel_internal
@@ -97,7 +99,7 @@ def scan_text(source, filename):
             narrow = NARROW_GAME_IMPORTS.get(module)
             if narrow is not None:
                 names = {item.name for item in node.names}
-                wrong_file = (module == "protocolbuffers" and
+                wrong_file = (module in ("protocolbuffers", "ui.ui_dialog_notification") and
                               os.path.basename(filename).lower() != ANSWER_ONLY_FILE)
                 if (not names <= narrow or wrong_file or
                         os.path.basename(filename).lower() in PURE_FILES):

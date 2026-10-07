@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 12
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.25.0"
+PROBE_VERSION = "2.26.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -101,7 +101,7 @@ EXPERIMENT_PHASES = (
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
-            "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act", "camera")
+            "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act", "camera", "talk")
 
 
 def _command_id(value):

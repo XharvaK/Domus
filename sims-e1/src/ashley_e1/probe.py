@@ -175,7 +175,7 @@ _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
-                     "preflight", "food_scan", "act", "answer", "cancel", "camera")
+                     "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -696,6 +696,8 @@ def _inbox_dispatch(cmd, connection):
         return _E2.cmd_cancel(args['act_id'], args['interaction_id'], connection)
     if name == 'camera':
         return _E2.cmd_camera(args['op'], args['target_id'], connection)
+    if name == 'talk':
+        return _E2.cmd_talk(args['text'], args.get('sim_id'), connection)
     if name == 'atlas_dump':
         return _dispatch_atlas_dump(connection)
     if name == 'tuned_scan':
