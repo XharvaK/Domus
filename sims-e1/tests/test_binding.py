@@ -161,7 +161,7 @@ def install_stubs():
     context.QueueInsertStrategy = types.SimpleNamespace(NEXT="NEXT")
     sys.modules["interactions.context"] = context
     priority = types.ModuleType("interactions.priority")
-    priority.Priority = types.SimpleNamespace(High="High")
+    priority.Priority = types.SimpleNamespace(High="High", Critical="Critical")
     sys.modules["interactions.priority"] = priority
     finisher = types.ModuleType("interactions.interaction_finisher")
     finisher.FinishingType = types.SimpleNamespace(USER_CANCEL="FinishingType.USER_CANCEL")

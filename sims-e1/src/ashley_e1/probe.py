@@ -305,9 +305,9 @@ def _dispatch_e2_trial(*args, _session_id=0, **kwargs):
     return _E2.cmd_trial(object_id, guid64, _session_id)
 
 
-def _dispatch_e2_act(act_id, object_id, guid64, _session_id=0):
+def _dispatch_e2_act(act_id, object_id, guid64, _session_id=0, owner=False):
     """8f: Ashley's chosen action (helper inbox only; cmdbox checked the shapes)."""
-    return _E2.cmd_act(act_id, object_id, guid64, _session_id)
+    return _E2.cmd_act(act_id, object_id, guid64, _session_id, owner=owner)
 
 
 class _InboxReply:
@@ -689,7 +689,7 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_e2_trial(args['object_id'], args['guid64'], _session_id=connection)
     if name == 'act':
         return _dispatch_e2_act(args['act_id'], args['object_id'], args['guid64'],
-                                _session_id=connection)
+                                _session_id=connection, owner=args.get('owner') is True)
     if name == 'answer':
         return _E2.cmd_answer(args['act_id'], args['dialog_id'], args['pick'], connection)
     if name == 'cancel':

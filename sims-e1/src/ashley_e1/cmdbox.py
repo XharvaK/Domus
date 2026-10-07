@@ -85,8 +85,10 @@ def parse(raw_bytes, now_ms, used_ids):
         good = (set(args) == {'object_id', 'guid64'} and
                 _digits(args.get('object_id')) and _digits(args.get('guid64')))
     elif good and name == 'act':
-        good = (set(args) == {'act_id', 'object_id', 'guid64'} and valid_hex(args.get('act_id'), 32) and
-                _digits(args.get('object_id')) and _digits(args.get('guid64')))
+        # 2.24.0: owner is present (and true) only when her Thought said the User asked for it.
+        good = (set(args) in ({'act_id', 'object_id', 'guid64'}, {'act_id', 'object_id', 'guid64', 'owner'}) and
+                valid_hex(args.get('act_id'), 32) and _digits(args.get('object_id')) and
+                _digits(args.get('guid64')) and ('owner' not in args or args['owner'] is True))
     elif good and name == 'answer':
         # 2.18.0: her answer to a game dialog: a picker row (digits) or a button by name.
         pick = args.get('pick')

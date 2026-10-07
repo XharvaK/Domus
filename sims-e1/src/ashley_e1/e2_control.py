@@ -562,7 +562,7 @@ class E2Control:
         payload["phase"] = phase
         return self._event("act_event", payload)
 
-    def _act_check(self, object_id, guid64):
+    def _act_check(self, object_id, guid64, owner=False):
         """None when her chosen action may be pushed now, else (code, detail).
 
         Unlike a trial there is no lab-only gate, no busy gate (it queues like a
@@ -583,7 +583,7 @@ class E2Control:
         obj = e2_actuator.find_object(object_id)
         if obj is None:
             return ("NO_OBJECT", None), None
-        context = e2_actuator.build_context(sim)
+        context = e2_actuator.build_context(sim, owner=owner)
         offers = e2_actuator.offers_for(obj, context, guid64)
         if not offers:
             return ("NOT_OFFERED", None), None
@@ -602,7 +602,7 @@ class E2Control:
             return ("GAME_REFUSED", reason, reason_key), None
         return None, (sim, obj, affordance, context)
 
-    def cmd_act(self, act_id, object_id, guid64, connection):
+    def cmd_act(self, act_id, object_id, guid64, connection, owner=False):
         """8f: push exactly the game action Ashley chose; never another, never twice.
 
         ACCEPTED is written before the push, so a failure in between leaves
@@ -618,7 +618,7 @@ class E2Control:
             return False
         accepted = False
         try:
-            refusal, bound = self._act_check(object_id, guid64)
+            refusal, bound = self._act_check(object_id, guid64, owner=owner)
             if refusal is not None:
                 code, detail = refusal[0], refusal[1]
                 reason_key = refusal[2] if len(refusal) > 2 else None
@@ -629,7 +629,7 @@ class E2Control:
                 return False
             sim, obj, affordance, context = bound
             tuning_name = _tuning_name(affordance)
-            self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, **base)
+            self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
             accepted = True
             interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
                 sim, obj, affordance, context)
@@ -920,7 +920,8 @@ class E2Control:
                 finishing = "UNREADABLE"
             self._act_event(_act_id, "FINISHED", interaction_id=interaction_id,
                             tuning_name=tuning_name,
-                            finishing_type=finishing[:schema.MAX_DISPLAY_TEXT_LENGTH], **base)
+                            finishing_type=finishing[:schema.MAX_DISPLAY_TEXT_LENGTH],
+                            started=e2_actuator.started(finished_interaction), **base)
 
         try:
             e2_actuator.watch_finish(interaction, _finished)

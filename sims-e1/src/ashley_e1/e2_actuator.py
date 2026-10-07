@@ -23,9 +23,12 @@ RELEASE_REASON = "ashley_e2_release"
 TRIAL_END_REASON = "ashley_e2_trial_end"
 
 
-def build_context(sim):
+def build_context(sim, owner=False):
+    """2.24.0: an act her Thought marked as asked for by the User goes in at Critical, so a
+    reflex at High queues behind it instead of displacing it; every other act stays High."""
     return InteractionContext(sim, InteractionContext.SOURCE_SCRIPT_WITH_USER_INTENT,
-                              Priority.High, insert_strategy=QueueInsertStrategy.NEXT)
+                              Priority.Critical if owner else Priority.High,
+                              insert_strategy=QueueInsertStrategy.NEXT)
 
 
 def find_object(object_id):
@@ -288,6 +291,15 @@ def _refusal(result):
     if test_result:
         return None
     return _bounded(str(test_result))
+
+
+def started(interaction):
+    """Read: True when the game began performing the interaction (its start time is set only
+    then), False when it ended before it ever started, None when unreadable."""
+    try:
+        return interaction.start_time is not None
+    except Exception:
+        return None
 
 
 def watch_finish(interaction, callback):

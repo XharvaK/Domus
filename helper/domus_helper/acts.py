@@ -256,6 +256,9 @@ class ActCourier(object):
             return
         detail = {key: e2[key] for key in ("code", "detail", "tuning_name", "finishing_type", "interaction_id")
                   if isinstance(e2.get(key), str) and e2[key]}
+        if type(e2.get("started")) is bool:
+            # 2.24.0: did the game ever begin the pushed act.
+            detail["started"] = e2["started"]
         at = row.get("wall_timestamp_ms")
         at = at if type(at) is int and at >= 0 else 0
         known = self._known.get(act_id)
@@ -313,8 +316,11 @@ class ActCourier(object):
                                              "pick": str(act.get("guid64"))})
                     self.answered_dialogs = (self.answered_dialogs + [object_id[len(DIALOG_PREFIX):]])[-ASKED_LIMIT:]
                 else:
-                    self._publish("act", {"act_id": act_id, "object_id": object_id,
-                                          "guid64": str(act.get("guid64"))})
+                    args = {"act_id": act_id, "object_id": object_id, "guid64": str(act.get("guid64"))}
+                    if act.get("owner") is True:
+                        # 2.24.0: her Thought said the User asked for it; the probe pushes it first.
+                        args["owner"] = True
+                    self._publish("act", args)
             except Exception as error:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
                 self._event(act_id, "rejected", now_ms, {"code": "INBOX_" + type(error).__name__[:40]})

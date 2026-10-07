@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 12
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.23.0"
+PROBE_VERSION = "2.24.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -76,9 +76,11 @@ E2_PAYLOAD_KEYS = {
     # and on every other phase). Filled in below, so schema stays 12, as 2.9.2
     # added experiment fields without a version bump. Schema 11 and 12 bumped
     # because a closed observation shape gained a key old rows must not carry.
+    # 2.24.0: owner (ACCEPTED: pushed at Critical because the User asked) and started
+    # (FINISHED of a pushed act: did the game ever begin it) are optional the same way.
     "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
                   "tuning_name", "finishing_type", "detail", "reason_key",
-                  "closed", "resumed"),
+                  "closed", "resumed", "owner", "started"),
     "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
@@ -534,6 +536,10 @@ def _validate_e2(row):
             payload["closed"] = None
         if "resumed" not in payload:
             payload["resumed"] = None
+        if "owner" not in payload:
+            payload["owner"] = None
+        if "started" not in payload:
+            payload["started"] = None
     _require(isinstance(payload, dict) and
              set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
@@ -593,6 +599,9 @@ def _validate_e2(row):
             _require(type(payload["closed"]) is bool, "act closed")
         if payload["resumed"] is not None:
             _require(payload["resumed"] in RESUME_RESULTS, "act resumed")
+        for key in ("owner", "started"):
+            if payload[key] is not None:
+                _require(type(payload[key]) is bool, "act %s" % key)
     elif kind == "act_menu":
         _validate_menu(payload)
     elif kind == "speed_event":

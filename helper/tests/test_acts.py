@@ -230,3 +230,35 @@ def test_a_refused_or_unknown_act_wakes_her():
     assert [(p.kind, p.bucket, p.urgency) for p in rejected] == [("interaction", "act_rejected", "wake")]
     assert dict(rejected[0].facts)["code"] == "GAME_REFUSED"
     assert [p.bucket for p in extractor.step(_row("UNKNOWN"))] == ["act_unknown"]
+
+
+def test_an_act_the_user_asked_for_goes_to_the_probe_marked(tmp_path):
+    """2.24.0: owner travels only when Mint marked the act; her own acts carry nothing new."""
+    spool = Spool(tmp_path / "spool.db")
+    published = []
+    client = _Client([dict(ACT, owner=True), dict(ACT, act_id="b" * 32, owner="yes")])
+    ActCourier(spool, lambda command, args: published.append((command, args))).tick(client, "h", 1000, True)
+    assert published == [("act", {"act_id": "a" * 32, "object_id": "11", "guid64": "4242", "owner": True}),
+                         ("act", {"act_id": "b" * 32, "object_id": "11", "guid64": "4242"})]
+
+
+def test_whether_the_game_began_the_act_goes_back_to_mint(tmp_path):
+    spool = Spool(tmp_path / "spool.db")
+    client = _Client([ACT])
+    courier = ActCourier(spool, lambda command, args: None)
+    courier.tick(client, "h", 1000, True)
+    client.acts = []
+    courier.on_row(_row("FINISHED", interaction_id="777", finishing_type="FinishingType.INTERACTION_INCOMPATIBILITY",
+                        started=False))
+    courier.tick(client, "h", 2000, True)
+    assert client.bodies[-1]["events"][-1]["detail"] == {
+        "tuning_name": "bookshelf_ReadBook", "finishing_type": "FinishingType.INTERACTION_INCOMPATIBILITY",
+        "interaction_id": "777", "started": False}
+
+
+def test_an_act_the_game_ended_before_it_began_wakes_her():
+    extractor = Extractor()
+    assert extractor.step(_row("FINISHED", started=True)) == []
+    never = extractor.step(_row("FINISHED", started=False, finishing_type="FinishingType.INTERACTION_INCOMPATIBILITY"))
+    assert [(p.kind, p.bucket, p.urgency) for p in never] == [("interaction", "act_never_started", "wake")]
+    assert dict(never[0].facts)["finishing_type"] == "FinishingType.INTERACTION_INCOMPATIBILITY"

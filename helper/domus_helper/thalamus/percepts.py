@@ -128,15 +128,22 @@ class Extractor:
 
     def _act(self, row):
         """8f: her chosen act was refused, or nobody can tell what became of it. Wakes her;
-        a pushed act's start and end are already seen as her interactions."""
+        a pushed act's start and end are already seen as her interactions. 2.24.0: a pushed
+        act the game ended before it ever began was never one of her interactions, so its end
+        wakes her too."""
         e2 = row.get("e2") or {}
         phase = e2.get("phase")
-        if phase not in ("REJECTED", "UNKNOWN"):
+        if phase == "FINISHED" and e2.get("started") is False:
+            name = "act_never_started"
+        elif phase in ("REJECTED", "UNKNOWN"):
+            name = "act_" + phase.lower()
+        else:
             return []
         return [Percept("interaction", str(e2.get("act_id") or ""), str(e2.get("guid64") or ""),
-                        "act_" + phase.lower(), urgency="wake", lineage=self.lineage_id,
+                        name, urgency="wake", lineage=self.lineage_id,
                         facts=_facts(None, (("code", e2.get("code")), ("detail", e2.get("detail")),
-                                            ("tuning_name", e2.get("tuning_name")), ("origin", "her_choice"))))]
+                                            ("tuning_name", e2.get("tuning_name")),
+                                            ("finishing_type", e2.get("finishing_type")), ("origin", "her_choice"))))]
 
     def _gap(self, session):
         self.needs.reset()
