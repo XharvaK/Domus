@@ -28,6 +28,8 @@ NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
                        "camera": {"focus_on_sim", "focus_on_object"},
                        # 2.26.0: only the game's notification, to show one line of text. e2_control only.
                        "ui.ui_dialog_notification": {"UiDialogNotification"},
+                       # 2.27.0: only the picker class, to hold back her own pickers' windows. e2_control only.
+                       "ui.ui_dialog_picker": {"UiDialogObjectPicker"},
                        # 2.23.0: the close message _dialog_cancel_internal builds. e2_control only.
                        "protocolbuffers": {"Consts_pb2", "Dialog_pb2"}}
 # 2.23.0, cmd_answer only. Reviewed path: ui/ui_dialog_service._dialog_cancel_internal
@@ -39,6 +41,8 @@ NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
 ANSWER_ONLY_CALLS = {"UiDialogCloseRequest", "add_event", "pop_speed", "set_clock_speed"}
 ANSWER_ONLY_FILE = "e2_control.py"
 ANSWER_ONLY_FUNC = "cmd_answer"
+# 2.27.0: the one game attribute the probe may replace (e2_control._install_picker_hold).
+PICKER_HOLD_TARGET = "ui.ui_dialog_picker.UiDialogObjectPicker.distribute_dialog"
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
 }
@@ -99,7 +103,7 @@ def scan_text(source, filename):
             narrow = NARROW_GAME_IMPORTS.get(module)
             if narrow is not None:
                 names = {item.name for item in node.names}
-                wrong_file = (module in ("protocolbuffers", "ui.ui_dialog_notification") and
+                wrong_file = (module in ("protocolbuffers", "ui.ui_dialog_notification", "ui.ui_dialog_picker") and
                               os.path.basename(filename).lower() != ANSWER_ONLY_FILE)
                 if (not names <= narrow or wrong_file or
                         os.path.basename(filename).lower() in PURE_FILES):
@@ -115,6 +119,22 @@ def scan_text(source, filename):
                                  module))
             for item in node.names:
                 aliases[item.asname or item.name] = (module + "." + item.name).strip(".")
+    # 2.27.0: nothing shipped may replace a game attribute, except the one reviewed hold:
+    # UiDialogObjectPicker.distribute_dialog in e2_control.py.
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            continue
+        for target_node in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+            if not isinstance(target_node, ast.Attribute):
+                continue
+            resolved = _resolve_expr(target_node, aliases)
+            if resolved is None:
+                continue
+            game = (_root(resolved) in APPROVED_GAME_ROOTS or
+                    any(resolved.startswith(module + ".") for module in NARROW_GAME_IMPORTS))
+            if game and not (resolved == PICKER_HOLD_TARGET and
+                             os.path.basename(filename).lower() == ANSWER_ONLY_FILE):
+                findings.append("%s:%d game attribute assigned %s" % (filename, node.lineno, resolved))
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             targets = node.targets

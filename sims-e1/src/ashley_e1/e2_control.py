@@ -45,6 +45,11 @@ try:
 except ImportError:
     UiDialogNotification = LocalizationHelperTuning = None
 try:
+    # 2.27.0: the picker class, only to hold back the window of a picker her own act opened.
+    from ui.ui_dialog_picker import UiDialogObjectPicker
+except ImportError:
+    UiDialogObjectPicker = None
+try:
     # 2.23.0: the close message ui/ui_dialog_service._dialog_cancel_internal builds.
     from protocolbuffers import Consts_pb2, Dialog_pb2
 except ImportError:
@@ -57,6 +62,39 @@ except ImportError:
 CAMERA_MIN_GAP_S = 1.5
 # 2.26.0: social talk on the User's screen, at most one line each TALK_MIN_GAP_S.
 TALK_MIN_GAP_S = 2.0
+# 2.27.0: a picker opened by an act she pushed is hers to answer, so its window is held back from
+# the User's screen. Unanswered after PICKER_HOLD_S, it is shown to the User (the fallback).
+PICKER_HOLD_S = 180.0
+_HOLD = {"controller": None, "original": None}
+
+
+def _held_distribute(dialog, dialog_type, dialog_msg, immediate=False):
+    """Stands in for UiDialogObjectPicker.distribute_dialog, which UiDialogService.dialog_show
+    calls after the dialog is already in _active_dialogs (bytecode ui/ui_dialog_service). The
+    game's own (ui/ui_dialog.UiDialogBase) only sends the window to the client:
+    Distributor.instance().add_event(dialog_type, dialog_msg, immediate=immediate). Holding it
+    changes nothing on the server: the dialog stays open and answerable. Any doubt shows it."""
+    controller = _HOLD["controller"]
+    try:
+        if controller is not None and controller.hold_picker(dialog, dialog_type, dialog_msg, immediate):
+            return None
+    except Exception:
+        pass
+    return _HOLD["original"](dialog, dialog_type, dialog_msg, immediate=immediate)
+
+
+def _install_picker_hold(controller):
+    """Once per game process: UiDialogObjectPicker.distribute_dialog -> _held_distribute. Its
+    subclasses that do not override it (UiRecipePicker, UiObjectPicker, ...) follow."""
+    _HOLD["controller"] = controller
+    if _HOLD["original"] is not None:
+        return True
+    if UiDialogObjectPicker is None:
+        return False
+    _HOLD["original"] = UiDialogObjectPicker.distribute_dialog
+    UiDialogObjectPicker.distribute_dialog = _held_distribute
+    return True
+
 
 def _send_queued_events():
     """2.20.1 (live 2026-10-06: after her answer the recipe picker stayed on screen and the game
@@ -192,6 +230,8 @@ class E2Control:
         self._armed_name = get_armed_name or (lambda: None)
         self._camera_at = None
         self._talk_at = None
+        # 2.27.0: picker windows held back, by dialog id: {act_id, at, send}.
+        self.held = {}
         self._reset_state()
 
     # ------------------------------------------------------------------ state
@@ -253,9 +293,14 @@ class E2Control:
 
     # ------------------------------------------------------------- lifecycle
     def on_arm(self):
+        self._release_held(everything=True, code="ARM")
         self._reset_state()
         if not self.available():
             return
+        try:
+            _install_picker_hold(self)
+        except Exception:
+            pass
         try:
             e2_actuator.subscribe_saves(self.on_manual_save)
             self.save_subscribed = True
@@ -264,6 +309,7 @@ class E2Control:
 
     def on_stop(self, reason):
         """Called after a successful STOP (and by DISARM). Fail-safe cleanup."""
+        self._release_held(everything=True, code="STOP")
         self._release_pause(reason)
         for experiment in list(self.experiments.values()):
             if not experiment.closed:
@@ -287,6 +333,7 @@ class E2Control:
             if len(self.presence) > 120:
                 del self.presence[:-120]
             self._reconcile_pushed(row)
+            self._release_held()
         if self.lineage_class is None:
             self._try_classify(row)
         learned = self.learner.observe(row, self.open_ids)
@@ -724,6 +771,8 @@ class E2Control:
                 return False
             service, dialog, row, response = bound
             kind = _tuning_name(dialog)
+            # 2.27.0: a held window was never on the User's screen; it is hers alone now.
+            held = self.held.pop(str(int(dialog_id)), None) is not None
             self._act_event(act_id, "ACCEPTED", tuning_name=kind, **base)
             accepted = True
             if row is not None:
@@ -788,7 +837,7 @@ class E2Control:
                 resumed = "failed"
             _send_queued_events()
             self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED",
-                            closed=closed, resumed=resumed, **base)
+                            closed=closed, resumed=resumed, detail="held" if held else None, **base)
             self._say(connection, "ACT_ANSWERED %s" % act_id)
             return True
         except Exception as error:
@@ -921,6 +970,57 @@ class E2Control:
         except Exception as error:
             self._say(connection, ("TALK_REJECT E2_EXCEPTION:%s" % type(error).__name__)[:64])
             return False
+
+    def hold_picker(self, dialog, dialog_type, dialog_msg, immediate):
+        """2.27.0: True when this picker's window is held back: she is sampling her own body and
+        the interaction that opened it (its resolver's interaction or super interaction,
+        event_testing/resolver.InteractionResolver) is one of her pushed acts."""
+        if self._state() != "SAMPLING" or self.lineage_class == e2_lineage.BODY_MISMATCH:
+            return False
+        resolver = dialog._resolver
+        found = None
+        for read in (lambda: resolver._interaction, lambda: resolver.super_interaction):
+            try:
+                interaction = read()
+            except AttributeError:
+                continue
+            if interaction is not None and str(interaction.id) in self.pushed:
+                found = self.pushed[str(interaction.id)]["act_id"]
+                break
+        if found is None:
+            return False
+        key = str(dialog.dialog_id)
+        self.held[key] = {"act_id": found, "at": time.monotonic(),
+                          "send": (dialog, dialog_type, dialog_msg, immediate)}
+        self._speed_event("DIALOG_HELD", detail=("dialog %s act %s" % (key, found))[:schema.MAX_DETAIL_LENGTH])
+        return True
+
+    def _release_held(self, everything=False, code="TIMEOUT"):
+        """2.27.0: a held window whose dialog is gone (answered, cancelled) is dropped; one still
+        open after PICKER_HOLD_S, or at a stop, is shown to the User as the game would have."""
+        if not self.held:
+            return
+        try:
+            active = services.ui_dialog_service()._active_dialogs
+        except Exception:
+            active = None
+        now = time.monotonic()
+        for key in list(self.held):
+            item = self.held[key]
+            if active is not None and int(key) not in active:
+                del self.held[key]
+                continue
+            if not everything and now - item["at"] < PICKER_HOLD_S:
+                continue
+            del self.held[key]
+            dialog, dialog_type, dialog_msg, immediate = item["send"]
+            try:
+                _HOLD["original"](dialog, dialog_type, dialog_msg, immediate=immediate)
+                shown = code
+            except Exception as error:
+                shown = ("FAILED:%s" % type(error).__name__)[:64]
+            self._speed_event("DIALOG_SHOWN", code=shown,
+                              detail=("dialog %s act %s" % (key, item["act_id"]))[:schema.MAX_DETAIL_LENGTH])
 
     def _reconcile_pushed(self, row):
         """2.19.1 (live 2026-10-06: a quick meal pushed while she was in the bath never

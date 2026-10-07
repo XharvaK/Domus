@@ -183,8 +183,8 @@ if __name__ == '__main__':
 class AutostartValuesTests(unittest.TestCase):
     def test_versions_are_250(self):
         package, probe, _ = load_probe()
-        self.assertEqual(package.E1_PROBE_VERSION, "2.26.0")
-        self.assertEqual(probe.schema.PROBE_VERSION, "2.26.0")
+        self.assertEqual(package.E1_PROBE_VERSION, "2.27.0")
+        self.assertEqual(probe.schema.PROBE_VERSION, "2.27.0")
 
     def test_closed_values_include_legacy_and_reject_unknown(self):
         _, probe, _ = load_probe()
