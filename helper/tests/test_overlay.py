@@ -77,6 +77,83 @@ def test_a_pass_without_the_stamp_is_refused_and_the_feed_is_paced(tmp_path):
         spool.close()
 
 
+def _named_row(*others, her="Ada"):
+    presence = [{"id": "1", "is_body": True, "name": her}]
+    for index, item in enumerate(others, start=2):
+        entry = {"id": str(index), "is_body": False}
+        entry.update(item)
+        presence.append(entry)
+    return snapshot(presence=presence)
+
+
+def test_a_learned_save_name_is_held_and_her_own_name_is_shown(tmp_path):
+    spool, view = made(tmp_path)
+    try:
+        view.on_row(_named_row({"name": "Testa Zubrin"}, {"name": "Ann"}, her="Ada"), NOW)
+        feed = Feed([
+            {"inputs": "game_only", "line": "Testa came by the lot."},
+            {"inputs": "game_only", "line": "Ada cooked.", "act": {"label": "Chat (Testa)", "state": "done"}},
+            {"inputs": "game_only", "line": "Annual report is ready."},
+            {"inputs": "game_only", "line": "Ann left."},
+        ])
+        view.poll(feed, "h1", NOW)
+        view.on_row(snapshot(
+            presence=[{"id": "1", "is_body": True, "name": "Ada"},
+                      {"id": "2", "is_body": False, "name": "Testa Zubrin"}],
+            interactions={"observed": [{
+                "affordance_text": "Testa_Zubrin", "source_raw": "InteractionSource.AUTONOMY",
+                "membership": "RUNNING"}]},
+            sim_signals=[{"kind": "MOODLET", "visible": True, "text_key": "k", "mood_type": "Mood_Happy"}],
+        ), NOW)
+        view._resolve = lambda key: "Testa is nearby" if key == "k" else None
+        state = view.publish(NOW, attached=True)
+        lines = [item.get("line") if "line" in item else "held" for item in state["passes"]]
+        assert lines == ["held", "Ada cooked.", "Annual report is ready.", "held"]
+        assert state["passes"][1]["act"]["label"] == overlay.HELD
+        assert state["doing"] == [{"text": overlay.HELD, "by": "body", "queued": False}]
+        assert state["moodlets"] == []
+        assert "ada" not in json.loads((tmp_path / overlay.SAVE_NAMES_FILE).read_text(encoding="utf-8"))
+    finally:
+        spool.close()
+
+
+def test_save_names_persist_and_a_broken_file_is_empty(tmp_path, monkeypatch, capsys):
+    spool, view = made(tmp_path)
+    try:
+        view.on_row(_named_row({"name": "Testa Zubrin"}), NOW)
+        view.on_row(_named_row({"name": "Quin Lorne"}), NOW + 1_000)
+        stored = json.loads((tmp_path / overlay.SAVE_NAMES_FILE).read_text(encoding="utf-8"))
+        assert "quin" not in " ".join(stored) and "testa zubrin" in stored
+        view.on_row(snapshot(presence=[{"id": "1", "is_body": True, "name": "Ada"}]), NOW + 60_000)
+        stored = json.loads((tmp_path / overlay.SAVE_NAMES_FILE).read_text(encoding="utf-8"))
+        assert view._save_names.count == 6 and "quin lorne" in stored
+    finally:
+        spool.close()
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+    assert overlay.main(["show"]) == 0
+    text = capsys.readouterr().out
+    assert json.loads(text) == {"save_names": 6}
+    assert "testa" not in text.lower() and "quin" not in text.lower()
+
+    spool, again = made(tmp_path)
+    try:
+        feed = Feed([{"inputs": "game_only", "line": "Quin waved."}])
+        again.poll(feed, "h1", NOW)
+        assert again.publish(NOW, attached=True)["passes"] == [{"at_ms": None, "held": True}]
+    finally:
+        spool.close()
+
+    (tmp_path / overlay.SAVE_NAMES_FILE).write_text("{", encoding="utf-8")
+    spool, broken = made(tmp_path)
+    try:
+        assert broken._save_names.count == 0
+        feed = Feed([{"inputs": "game_only", "line": "Quin waved."}])
+        broken.poll(feed, "h1", NOW)
+        assert broken.publish(NOW, attached=True)["passes"] == [{"at_ms": None, "line": "Quin waved."}]
+    finally:
+        spool.close()
+
+
 def test_the_privacy_list_holds_lines_and_labels(tmp_path):
     spool, view = made(tmp_path)
     try:

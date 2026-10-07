@@ -9,10 +9,12 @@ What the pages show is put together here from two sources:
 
 A pass without the game-only stamp is refused, and nothing of hers is shown while the switch is
 off. A line that matches the User's privacy list (`overlay_privacy.txt` in the data folder, one
-name or place per line) is held: "..." is shown instead. Ashley holds her own lines too; this is
-the second, local line.
+name or place per line) is held: "..." is shown instead. Names of other Sims in the save are
+learned from telemetry and held the same way (`overlay_save_names.json`); her own Sim is exempt.
+Ashley holds her own lines too; this is the second, local line.
 
 Run: python -m domus_helper.overlay curtain on | off | show
+Run: python -m domus_helper.overlay show
 """
 import argparse
 import json
@@ -36,6 +38,8 @@ FEED_EVERY_MS = 8_000
 # keeps the label up this long.
 HUMAN_HAND_MS = 120_000
 PRIVACY_FILE = "overlay_privacy.txt"
+SAVE_NAMES_FILE = "overlay_save_names.json"
+SAVE_NAMES_EVERY_MS = 60_000
 CURTAIN_KEY = "overlay_curtain"
 PASSES_SHOWN = 6
 DOING_SHOWN = 4
@@ -90,6 +94,101 @@ class PrivacyList:
         return any(pattern.search(text) for pattern in _MECHANICAL + tuple(self._terms))
 
 
+def _name_pieces(text):
+    """Full name, then each word, when the piece is at least 3 characters."""
+    if not isinstance(text, str):
+        return []
+    text = " ".join(text.split())
+    if len(text) < 3:
+        return []
+    pieces = [text]
+    for word in text.split(" "):
+        if len(word) >= 3 and word != text:
+            pieces.append(word)
+    return pieces
+
+
+def _row_save_names(row):
+    """Sim names on a telemetry row. Her own body is public and is not learned.
+
+    The probe sends one presence `name` ('First Last'). That full name, and each
+    word of it, is stored when it is at least 3 characters. A separate first name,
+    last name, or household name is taken too when the row carries that field."""
+    found = []
+    for item in (row or {}).get("presence") or []:
+        if not isinstance(item, dict) or item.get("is_body"):
+            continue
+        for key in ("name", "first_name", "last_name", "household_name"):
+            found.extend(_name_pieces(item.get(key)))
+        household = item.get("household")
+        if isinstance(household, dict):
+            found.extend(_name_pieces(household.get("name")))
+        elif isinstance(household, str):
+            found.extend(_name_pieces(household))
+    return found
+
+
+class SaveNames:
+    """Names of Sims in the save. Learned from rows, kept in memory, written at most once a minute."""
+
+    def __init__(self, path):
+        self._path = path
+        self._names = set()
+        self._terms = []
+        self._dirty = False
+        self._written_ms = None
+        self._load()
+
+    def _load(self):
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            return
+        if not isinstance(raw, list):
+            return
+        for item in raw:
+            if isinstance(item, str) and len(item.strip()) >= 3:
+                self._names.add(item.strip().casefold())
+        self._compile()
+
+    def _compile(self):
+        self._terms = [re.compile(r"(?<!\w)%s(?!\w)" % re.escape(name), re.I)
+                       for name in self._names]
+
+    def learn(self, row, now_ms):
+        grew = False
+        for name in _row_save_names(row):
+            key = name.casefold()
+            if key not in self._names:
+                self._names.add(key)
+                grew = True
+        if grew:
+            self._compile()
+            self._dirty = True
+        self._flush(now_ms)
+
+    def _flush(self, now_ms):
+        if not self._dirty or type(now_ms) is not int:
+            return
+        if self._written_ms is not None and now_ms - self._written_ms < SAVE_NAMES_EVERY_MS:
+            return
+        try:
+            self._path.write_text(json.dumps(sorted(self._names)), encoding="utf-8")
+        except OSError:
+            return
+        self._written_ms = now_ms
+        self._dirty = False
+
+    def held(self, text):
+        if not isinstance(text, str):
+            return False
+        return any(pattern.search(text) for pattern in self._terms)
+
+    @property
+    def count(self):
+        return len(self._names)
+
+
 def curtain(spool):
     return spool.get_kv(CURTAIN_KEY) == "on"
 
@@ -130,6 +229,7 @@ class Overlay:
         self._data_dir = data_dir
         self._resolve = resolve
         self._privacy = PrivacyList(data_dir / PRIVACY_FILE)
+        self._save_names = SaveNames(data_dir / SAVE_NAMES_FILE)
         self._row = None
         self._open = {}
         self._hers = []
@@ -152,6 +252,7 @@ class Overlay:
         if record.get("event_kind") != "presence_snapshot":
             return
         self._row = record
+        self._save_names.learn(record, now_ms)
         dialogs = record.get("dialogs")
         if isinstance(dialogs, dict):
             for item in dialogs.get("open") or []:
@@ -216,7 +317,7 @@ class Overlay:
             line = item.get("line")
             if item.get("quiet"):
                 shown["quiet"] = True
-            elif item.get("held") or not isinstance(line, str) or self._privacy.held(line):
+            elif item.get("held") or not isinstance(line, str) or self._held(line):
                 shown["held"] = True
             else:
                 shown["line"] = line[:400]
@@ -232,7 +333,7 @@ class Overlay:
         return accepted[-PASSES_SHOWN:]
 
     def _label(self, label):
-        if not isinstance(label, str) or not label or self._privacy.held(label):
+        if not isinstance(label, str) or not label or self._held(label):
             return HELD
         return label[:120]
 
@@ -246,7 +347,7 @@ class Overlay:
                 continue
             by = "her" if entry.get("interaction_id") in self._hers else _BY.get(entry.get("source_raw"))
             text = humanize(name)
-            doing.append({"text": HELD if self._privacy.held(text) else text, "by": by,
+            doing.append({"text": HELD if self._held(text) else text, "by": by,
                           "queued": entry.get("membership") == "QUEUED"})
         return doing[:DOING_SHOWN]
 
@@ -284,7 +385,7 @@ class Overlay:
                     text = self._resolve(item["text_key"])
                 except Exception:
                     text = None
-            if isinstance(text, str) and text and not self._privacy.held(text):
+            if isinstance(text, str) and text and not self._held(text):
                 moodlets.append({"text": text[:60], "mood": item.get("mood_type")})
         mood_name = mood.get("name") if isinstance(mood.get("name"), str) else None
         state.update({
@@ -307,10 +408,12 @@ class Overlay:
                     title = self._resolve(work["title_key"])
                 except Exception:
                     title = None
-            state["work"] = {"title": title if isinstance(title, str) and not self._privacy.held(title) else None}
+            state["work"] = {"title": title if isinstance(title, str) and not self._held(title) else None}
         self.published = state
         return state
 
+    def _held(self, text):
+        return self._privacy.held(text) or self._save_names.held(text)
 
     def _seal(self, shown, row, inputs_now, now_ms):
         """E4: a pass goes into the trace the first time it is on screen, as it was shown."""
@@ -367,19 +470,31 @@ def serve(overlay, port=PORT):
     return server
 
 
+def _save_name_count(data_dir):
+    return SaveNames(data_dir / SAVE_NAMES_FILE).count
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m domus_helper.overlay")
-    parser.add_argument("what", choices=["curtain"])
-    parser.add_argument("state", choices=["on", "off", "show"])
+    parser.add_argument("what", choices=["curtain", "show"])
+    parser.add_argument("state", nargs="?", choices=["on", "off", "show"])
     args = parser.parse_args(argv)
     paths = Paths.from_env()
     paths.data_dir.mkdir(parents=True, exist_ok=True)
+    if args.what == "show":
+        print(json.dumps({"save_names": _save_name_count(paths.data_dir)}))
+        return 0
+    if args.state is None:
+        parser.error("curtain needs on, off, or show")
     spool = Spool(paths.data_dir / "spool.db")
     try:
         if args.state != "show":
             spool.put_kv(CURTAIN_KEY, args.state)
-        print(json.dumps({"curtain": "on" if curtain(spool) else "off", "port": PORT,
-                          "at_ms": int(time.time() * 1000)}))
+        shown = {"curtain": "on" if curtain(spool) else "off", "port": PORT,
+                 "at_ms": int(time.time() * 1000)}
+        if args.state == "show":
+            shown["save_names"] = _save_name_count(paths.data_dir)
+        print(json.dumps(shown))
         return 0
     finally:
         spool.close()

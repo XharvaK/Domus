@@ -1,8 +1,9 @@
-"""Pure v1 observation builder. No clock. The only I/O is the phrase lookup, which never fails the portrait."""
+"""She knows who is in her room or close by; others on the lot are someone she hears."""
 import json
 import re
 
 from .. import lang
+from ..scene import NEAR_METERS as SEEN_DISTANCE_M
 
 _LINEAGE = re.compile(r"[A-Z_]{1,32}")
 _FACTS_LIMIT = 2048
@@ -80,12 +81,15 @@ def _affordance_name(text):
     return text[:80]
 
 
-def _sim_names(row):
-    """Presence id -> display name. Her name is the body Sim (is_body); unknown -> someone."""
+def _sim_names(row, seen_ids=None):
+    """Presence id -> display name for Sims she can see, plus her own body.
+    Anyone else is left out, so a sentence calls them someone. Unknown -> someone."""
     names = {}
     her = None
     for item in row.get("presence") or []:
         if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        if seen_ids is not None and not item.get("is_body") and str(item["id"]) not in seen_ids:
             continue
         raw = item.get("name")
         shown = raw if isinstance(raw, str) and raw else "someone"
@@ -95,16 +99,47 @@ def _sim_names(row):
     return names, her or "someone"
 
 
+def _meters(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _addressing_ids(row):
+    found = set()
+    for item in row.get("social") or []:
+        if isinstance(item, dict) and item.get("actor_id") is not None:
+            found.add(str(item["actor_id"]))
+    return found
+
+
+def _seen(item, zone_room, addressing):
+    """Same room as her body, within the near radius, or addressing her right now."""
+    room = item.get("room")
+    if room is not None and zone_room is not None and room == zone_room:
+        return True
+    distance = _meters(item.get("distance_m"))
+    if distance is not None and distance <= SEEN_DISTANCE_M:
+        return True
+    return str(item.get("id")) in addressing
+
+
 def _named(who, names):
     if who is None:
         return "someone"
     return names.get(str(who), "someone")
 
 
-def _action_actors(entry, names, her):
+def _action_actors(entry, names, her, unseen=()):
     target = entry.get("target_id")
-    if target is not None and str(target) in names:
-        return [her, names[str(target)]]
+    if target is None:
+        return [her]
+    key = str(target)
+    if key in names:
+        return [her, names[key]]
+    # A Sim on the row she cannot see. An object id is not in `unseen`, so it stays out.
+    if key in unseen:
+        return [her, "someone"]
     return [her]
 
 
@@ -128,6 +163,55 @@ def _with_sentence(value, tuning, actors):
     return value
 
 
+def _company_seen(item, resolve):
+    """A Sim she can see: the same entry the portrait has always carried."""
+    doing = item.get("doing")
+    entry = {"id": str(item["id"]), "name": item.get("name"),
+             "room": item.get("room"), "distance_m": item.get("distance_m"),
+             "doing": _affordance_name(doing)}
+    if item.get("on_lot") is not None:
+        entry["on_lot"] = item["on_lot"]
+    if item.get("situations"):
+        # 2.15.2: the game situations they are in (a visit, a party) and their role.
+        entry["situations"] = [dict(situation) for situation in item["situations"]
+                               if isinstance(situation, dict)]
+    relationship = item.get("relationship")
+    if isinstance(relationship, dict):
+        # S5: what the game holds between them; labels in the game's words.
+        entry["relationship"] = {
+            "met": relationship.get("known"),
+            "tracks": {track.get("track"): track.get("value")
+                       for track in relationship.get("tracks") or []
+                       if isinstance(track, dict)},
+            "labels": [_resolve(resolve, label.get("text_key")) or label.get("label")
+                       for label in relationship.get("labels") or []
+                       if isinstance(label, dict)]}
+        knows = relationship.get("knows")
+        if isinstance(knows, dict):
+            # 2.15.0: what she has learned about them, in the game's words.
+            entry["relationship"]["knows"] = {
+                "traits": [_resolve(resolve, trait.get("text_key")) or trait.get("trait")
+                           for trait in knows.get("traits") or []
+                           if isinstance(trait, dict)],
+                "careers": knows.get("careers"),
+                "relationship_status": knows.get("relationship_status"),
+                "romantic_preference": knows.get("romantic_preference"),
+                "net_worth": knows.get("net_worth")}
+        if relationship.get("sentiments"):
+            entry["relationship"]["feels"] = [
+                _resolve(resolve, item.get("text_key")) or item.get("sentiment")
+                for item in relationship["sentiments"] if isinstance(item, dict)]
+    return entry
+
+
+def _company_heard(item):
+    """On the lot, but not seen: a sound, not a person she can name."""
+    entry = {"heard": True, "room": item.get("room"), "distance_m": item.get("distance_m")}
+    if item.get("on_lot") is not None:
+        entry["on_lot"] = item["on_lot"]
+    return entry
+
+
 def _shed_sentence(portrait):
     """Drop one sentence: her own (last first), then one addressed to her."""
     said = portrait.get("doing_said")
@@ -146,10 +230,34 @@ def _shed_sentence(portrait):
     return False
 
 
+def _drop_one(items, key):
+    """Company sheds a heard entry before any Sim she can see. Other lists lose the last item."""
+    if key == "company":
+        for index in range(len(items) - 1, -1, -1):
+            item = items[index]
+            if isinstance(item, dict) and item.get("heard") is True:
+                del items[index]
+                return
+    items.pop()
+
+
 def _portrait(row, resolve=None, notebook=None):
     """resolve: string key -> the game's own text (S0), or None when unknown."""
     row = row or {}
-    names, her = _sim_names(row)
+    zone = row.get("zone") or {}
+    addressing = _addressing_ids(row)
+    zone_room = zone.get("room")
+    seen_ids = set()
+    unseen_ids = set()
+    for item in row.get("presence") or []:
+        if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
+            continue
+        key = str(item["id"])
+        if _seen(item, zone_room, addressing):
+            seen_ids.add(key)
+        else:
+            unseen_ids.add(key)
+    names, her = _sim_names(row, seen_ids)
     needs = {}
     for item in row.get("motives") or []:
         if not isinstance(item, dict) or item.get("id") is None:
@@ -163,7 +271,7 @@ def _portrait(row, resolve=None, notebook=None):
         if not isinstance(entry, dict) or entry.get("affordance_text") is None:
             continue
         tuning = _affordance_name(entry["affordance_text"])
-        actors = _action_actors(entry, names, her)
+        actors = _action_actors(entry, names, her, unseen_ids)
         if entry.get("membership") in ("RUNNING", "QUEUED_AND_RUNNING"):
             bucket, state = running, "running"
         elif entry.get("membership") == "QUEUED":
@@ -177,50 +285,22 @@ def _portrait(row, resolve=None, notebook=None):
         text = _sentence(tuning, actors)
         if text is not None:
             doing_said.append({"interaction": tuning, "sentence": text, "state": state})
-    zone = row.get("zone") or {}
     game = row.get("game") or {}
     # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
-    company = []
+    # Seen first, in row order. Heard after that, nearest first. Off the lot and unseen: gone.
+    seen, heard = [], []
     for item in row.get("presence") or []:
         if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
             continue
-        doing = item.get("doing")
-        entry = {"id": str(item["id"]), "name": item.get("name"),
-                 "room": item.get("room"), "distance_m": item.get("distance_m"),
-                 "doing": _affordance_name(doing)}
-        if item.get("on_lot") is not None:
-            entry["on_lot"] = item["on_lot"]
-        if item.get("situations"):
-            # 2.15.2: the game situations they are in (a visit, a party) and their role.
-            entry["situations"] = [dict(situation) for situation in item["situations"]
-                                   if isinstance(situation, dict)]
-        relationship = item.get("relationship")
-        if isinstance(relationship, dict):
-            # S5: what the game holds between them; labels in the game's words.
-            entry["relationship"] = {
-                "met": relationship.get("known"),
-                "tracks": {track.get("track"): track.get("value")
-                           for track in relationship.get("tracks") or []
-                           if isinstance(track, dict)},
-                "labels": [_resolve(resolve, label.get("text_key")) or label.get("label")
-                           for label in relationship.get("labels") or []
-                           if isinstance(label, dict)]}
-            knows = relationship.get("knows")
-            if isinstance(knows, dict):
-                # 2.15.0: what she has learned about them, in the game's words.
-                entry["relationship"]["knows"] = {
-                    "traits": [_resolve(resolve, trait.get("text_key")) or trait.get("trait")
-                               for trait in knows.get("traits") or []
-                               if isinstance(trait, dict)],
-                    "careers": knows.get("careers"),
-                    "relationship_status": knows.get("relationship_status"),
-                    "romantic_preference": knows.get("romantic_preference"),
-                    "net_worth": knows.get("net_worth")}
-            if relationship.get("sentiments"):
-                entry["relationship"]["feels"] = [
-                    _resolve(resolve, item.get("text_key")) or item.get("sentiment")
-                    for item in relationship["sentiments"] if isinstance(item, dict)]
-        company.append(entry)
+        if str(item["id"]) in seen_ids:
+            seen.append(_company_seen(item, resolve))
+        elif item.get("on_lot") is False:
+            continue
+        else:
+            heard.append(_company_heard(item))
+    heard.sort(key=lambda entry: (_meters(entry.get("distance_m")) is None,
+                                  _meters(entry.get("distance_m")) or 0))
+    company = (seen + heard)[:7]
     moodlets = []
     for item in row.get("sim_signals") or []:
         if not isinstance(item, dict) or item.get("kind") != "MOODLET" or item.get("visible") is False:
@@ -324,7 +404,7 @@ def _portrait(row, resolve=None, notebook=None):
         del portrait["notebook"]
     for key in ("queued", "running", "moodlets", "company"):
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:
-            portrait[key].pop()
+            _drop_one(portrait[key], key)
     return portrait
 
 
