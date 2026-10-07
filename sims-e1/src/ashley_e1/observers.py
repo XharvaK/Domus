@@ -1057,6 +1057,40 @@ DIALOG_RESPONSES = {-1: "closed", 10000: "no_response", 10001: "ok", 10002: "can
                     10003: "ok_alt", 10004: "custom_1", 10005: "custom_2", 10006: "custom_3"}
 RESPONSE_IDS = {name: number for number, name in DIALOG_RESPONSES.items()}
 _DIALOGS_OPEN = {}
+# 2.23.0: speed before each dialog. The sample that first lists a dialog is already
+# inside the pause that dialog made, so the stored speed is the previous sample's
+# clock_speed (the same read as _game_snapshot). A session's first sample uses the
+# current read. Closed dialogs are dropped.
+_DIALOG_SPEED = {}
+_SPEED_SEEN = None
+
+
+def _remember_dialog_speeds(open_ids):
+    global _SPEED_SEEN
+    current = None
+    try:
+        current = _game_snapshot().get("clock_speed")
+    except Exception:
+        current = None
+    if not isinstance(current, str):
+        current = None
+    prior = _SPEED_SEEN if _SPEED_SEEN is not None else current
+    for key in open_ids:
+        if key not in _DIALOG_SPEED:
+            _DIALOG_SPEED[key] = prior
+    for key in list(_DIALOG_SPEED):
+        if key not in open_ids:
+            del _DIALOG_SPEED[key]
+    if current is not None:
+        _SPEED_SEEN = current
+
+
+def dialog_prior_speed(dialog_id):
+    """The speed recorded when this dialog was first seen, else the last sample's."""
+    key = str(dialog_id)
+    if key in _DIALOG_SPEED:
+        return _DIALOG_SPEED[key]
+    return _SPEED_SEEN
 
 
 def _response_name(value):
@@ -1233,6 +1267,7 @@ def read_dialogs():
                        "title_key": entry["title_key"], "text_key": entry["text_key"],
                        "response": response})
     _DIALOGS_OPEN = current
+    _remember_dialog_speeds(set(current))
     opened = [entry for _, entry in current.values()]
     truncated = (len(opened) > schema.MAX_DIALOGS or len(closed) > schema.MAX_DIALOGS)
     return {"open": opened[-schema.MAX_DIALOGS:], "closed": closed[-schema.MAX_DIALOGS:],

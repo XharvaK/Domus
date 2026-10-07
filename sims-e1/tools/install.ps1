@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$artifact = Join-Path $repo ("sims-e1\build\ashley_e1_" + $Version + ".ts4script")
+$artifact = Join-Path $repo ("sims-e1\build\Domus_" + $Version + ".ts4script")
 $sidecar = $artifact + ".sha256"
 if (Get-Process -Name "TS4_x64" -ErrorAction SilentlyContinue) { throw "The Sims 4 must be closed" }
 if (-not (Test-Path -LiteralPath $SimsRoot -PathType Container)) { throw "SimsRoot does not exist" }
@@ -32,8 +32,15 @@ foreach ($name in @("Mods", "saves", "Tray")) {
         Copy-Item -LiteralPath $source -Destination (Join-Path $backupRoot $name) -Recurse -Force
     }
 }
+# 2.23.0: the file is Domus_<version>. An older ashley_e1_* or Domus_* in this folder
+# is removed after the backup, so the copy leaves one script. A package anywhere else still aborts.
+if (Test-Path -LiteralPath $destination -PathType Container) {
+    Get-ChildItem -LiteralPath $destination -File |
+        Where-Object { $_.Name -match '(?i)^(ashley_e1_.*|Domus_.*)\.(ts4script|zip)$' } |
+        Remove-Item -Force
+}
 $duplicates = Get-ChildItem -LiteralPath $mods -Recurse -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match '(?i)ashley_e1.*\.(ts4script|zip)$' }
+    Where-Object { $_.Name -match '(?i)^(ashley_e1.*|Domus_.*)\.(ts4script|zip)$' }
 if ($duplicates.Count -gt 0) { throw "Duplicate Ashley E1 packages found under Mods" }
 Copy-Item -LiteralPath $artifact -Destination (Join-Path $destination (Split-Path -Leaf $artifact)) -Force
 $installed = Join-Path $destination (Split-Path -Leaf $artifact)

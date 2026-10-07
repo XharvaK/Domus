@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 12
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.22.0"
+PROBE_VERSION = "2.23.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -72,14 +72,19 @@ E2_PAYLOAD_KEYS = {
                       "loaded_from_slot_id", "lineage_class", "session_uuid"),
     # 2.16.0 (schema 10): Ashley's own acts (8f) and what she can do near her body.
     # 2.22.0: reason_key is optional (None when the tooltip has no string key).
-    # Earlier act rows omit it. Filled in below, so schema stays 12, as 2.9.2
+    # 2.23.0: closed and resumed are optional on FINISHED (None on earlier rows
+    # and on every other phase). Filled in below, so schema stays 12, as 2.9.2
     # added experiment fields without a version bump. Schema 11 and 12 bumped
     # because a closed observation shape gained a key old rows must not carry.
     "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
-                  "tuning_name", "finishing_type", "detail", "reason_key"),
+                  "tuning_name", "finishing_type", "detail", "reason_key",
+                  "closed", "resumed"),
     "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
+# 2.23.0: what her answer did to the pause the dialog made.
+RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
+                  "other_dialog_open", "failed")
 # 2.19.0: 12 left the kitchen and the bedroom out of a nine-room house.
 MENU_MAX_OBJECTS = 24
 MENU_MAX_ACTS = 8
@@ -521,8 +526,14 @@ def _validate_e2(row):
         for key in ("guid64", "card_class", "tuning_name", "ambiguous"):
             if key not in payload:
                 payload[key] = None
-    elif kind == "act_event" and isinstance(payload, dict) and "reason_key" not in payload:
-        payload["reason_key"] = None
+    elif kind == "act_event" and isinstance(payload, dict):
+        # 2.22.0 / 2.23.0: optional. Older act rows omit them.
+        if "reason_key" not in payload:
+            payload["reason_key"] = None
+        if "closed" not in payload:
+            payload["closed"] = None
+        if "resumed" not in payload:
+            payload["resumed"] = None
     _require(isinstance(payload, dict) and
              set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
@@ -578,6 +589,10 @@ def _validate_e2(row):
         if payload["reason_key"] is not None:
             _require(isinstance(payload["reason_key"], str), "act reason_key must be a string")
             string_id(payload["reason_key"], "act reason_key")
+        if payload["closed"] is not None:
+            _require(type(payload["closed"]) is bool, "act closed")
+        if payload["resumed"] is not None:
+            _require(payload["resumed"] in RESUME_RESULTS, "act resumed")
     elif kind == "act_menu":
         _validate_menu(payload)
     elif kind == "speed_event":

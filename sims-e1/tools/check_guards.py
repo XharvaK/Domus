@@ -25,7 +25,18 @@ NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
                        # 2.20.1: only the Distributor, to send the game's queued events now.
                        "distributor.system": {"Distributor"},
                        # 2.21.0: only the two view calls; they move the camera, never the world.
-                       "camera": {"focus_on_sim", "focus_on_object"}}
+                       "camera": {"focus_on_sim", "focus_on_object"},
+                       # 2.23.0: the close message _dialog_cancel_internal builds. e2_control only.
+                       "protocolbuffers": {"Consts_pb2", "Dialog_pb2"}}
+# 2.23.0, cmd_answer only. Reviewed path: ui/ui_dialog_service._dialog_cancel_internal
+# (Dialog_pb2.UiDialogCloseRequest, Consts_pb2.MSG_UI_DIALOG_CLOSE, Distributor.add_event
+# with immediate=True). The dialog pause is released by clock.GameClock.pop_speed of the
+# UI_MODAL PAUSED request, the same release as server_commands/clock_commands.unrequest_pause.
+# If that request is absent, clock.GameClock.set_clock_speed, which is what
+# server_commands/clock_commands.set_speed calls.
+ANSWER_ONLY_CALLS = {"UiDialogCloseRequest", "add_event", "pop_speed", "set_clock_speed"}
+ANSWER_ONLY_FILE = "e2_control.py"
+ANSWER_ONLY_FUNC = "cmd_answer"
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
 }
@@ -86,7 +97,10 @@ def scan_text(source, filename):
             narrow = NARROW_GAME_IMPORTS.get(module)
             if narrow is not None:
                 names = {item.name for item in node.names}
-                if not names <= narrow or os.path.basename(filename).lower() in PURE_FILES:
+                wrong_file = (module == "protocolbuffers" and
+                              os.path.basename(filename).lower() != ANSWER_ONLY_FILE)
+                if (not names <= narrow or wrong_file or
+                        os.path.basename(filename).lower() in PURE_FILES):
                     findings.append("%s:%d %s allows only %s" % (
                         filename, node.lineno, module, ", ".join(sorted(narrow))))
             elif root not in APPROVED_STDLIB_IMPORTS and root not in APPROVED_GAME_ROOTS:
@@ -116,23 +130,34 @@ def scan_text(source, filename):
                 for child in target_node.elts:
                     if isinstance(child, ast.Name):
                         aliases[child.id] = resolved
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        target = _call_target(node.func)
-        resolved_target = _resolve_expr(node.func, aliases) or target
-        leaf = resolved_target.rsplit(".", 1)[-1] if resolved_target else ""
-        is_actuator = os.path.basename(filename).lower() == ACTUATOR_FILE
-        if leaf in ACTUATOR_ONLY_CALLS and is_actuator:
-            pass
-        elif leaf in FORBIDDEN_CALL_NAMES:
-            findings.append("%s:%d forbidden call %s" % (filename, node.lineno, resolved_target or leaf))
-        if resolved_target in ("eval", "exec", "compile", "__import__"):
-            findings.append("%s:%d dynamic execution %s" % (filename, node.lineno, resolved_target))
-        if leaf == "getattr" or leaf == "__import__":
-            findings.append("%s:%d reflective dispatch" % (filename, node.lineno))
-        if leaf == "open" and os.path.basename(filename).lower() != "writer.py":
-            findings.append("%s:%d open outside writer" % (filename, node.lineno))
+    def _scan_calls(node, stack):
+        here = stack
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            here = stack + (node.name,)
+        elif isinstance(node, ast.Lambda):
+            here = stack + ("<lambda>",)
+        if isinstance(node, ast.Call):
+            target = _call_target(node.func)
+            resolved_target = _resolve_expr(node.func, aliases) or target
+            leaf = resolved_target.rsplit(".", 1)[-1] if resolved_target else ""
+            is_actuator = os.path.basename(filename).lower() == ACTUATOR_FILE
+            in_answer = (os.path.basename(filename).lower() == ANSWER_ONLY_FILE and
+                         ANSWER_ONLY_FUNC in here and leaf in ANSWER_ONLY_CALLS)
+            if in_answer or (leaf in ACTUATOR_ONLY_CALLS and is_actuator):
+                pass
+            elif leaf in FORBIDDEN_CALL_NAMES or leaf in ANSWER_ONLY_CALLS:
+                findings.append("%s:%d forbidden call %s" % (
+                    filename, node.lineno, resolved_target or leaf))
+            if resolved_target in ("eval", "exec", "compile", "__import__"):
+                findings.append("%s:%d dynamic execution %s" % (filename, node.lineno, resolved_target))
+            if leaf == "getattr" or leaf == "__import__":
+                findings.append("%s:%d reflective dispatch" % (filename, node.lineno))
+            if leaf == "open" and os.path.basename(filename).lower() != "writer.py":
+                findings.append("%s:%d open outside writer" % (filename, node.lineno))
+        for child in ast.iter_child_nodes(node):
+            _scan_calls(child, here)
+
+    _scan_calls(tree, ())
     return findings
 
 

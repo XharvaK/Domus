@@ -331,7 +331,7 @@ def test_probe_version_warns_once_and_withholds_camera(paths, tmp_path, monkeypa
         "installed": "2.20.1", "expected": probe_schema.PROBE_VERSION, "match": False}
     assert older_live == [False, False]
 
-    current, current_live = bridge_for("2.22.0")
+    current, current_live = bridge_for("2.23.0")
     current.tick(NOW)
     assert capsys.readouterr().out == ""
     assert current.status()["probe"]["match"] is True

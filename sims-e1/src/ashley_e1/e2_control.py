@@ -38,6 +38,16 @@ try:
     from camera import focus_on_sim, focus_on_object
 except ImportError:
     focus_on_sim = focus_on_object = None
+try:
+    # 2.23.0: the close message ui/ui_dialog_service._dialog_cancel_internal builds.
+    from protocolbuffers import Consts_pb2, Dialog_pb2
+except ImportError:
+    Consts_pb2 = Dialog_pb2 = None
+try:
+    # 2.23.0: ClockSpeedMode / GameSpeedChangeSource. The dialog pause is a UI_MODAL request.
+    from clock import ClockSpeedMode, GameSpeedChangeSource
+except ImportError:
+    ClockSpeedMode = GameSpeedChangeSource = None
 CAMERA_MIN_GAP_S = 1.5
 
 def _send_queued_events():
@@ -710,8 +720,66 @@ class E2Control:
             if row is not None:
                 service.dialog_pick_result(int(dialog_id), [row])
             service.dialog_respond(int(dialog_id), response)
+            # 2.23.0: dialog_respond already accepted. Closing the window and lifting the
+            # pause are separate; a failure of either never turns the answer into a rejection.
+            # Reviewed path: ui/ui_dialog_service._dialog_cancel_internal builds
+            # Dialog_pb2.UiDialogCloseRequest and Distributor.add_event(
+            # Consts_pb2.MSG_UI_DIALOG_CLOSE). immediate=True is add_event's own send.
+            closed = False
+            try:
+                if Dialog_pb2 is not None and Consts_pb2 is not None and Distributor is not None:
+                    message = Dialog_pb2.UiDialogCloseRequest()
+                    message.dialog_id = dialog.dialog_id
+                    distributor = Distributor.instance()
+                    distributor.add_event(Consts_pb2.MSG_UI_DIALOG_CLOSE, message, immediate=True)
+                    closed = True
+            except Exception:
+                closed = False
+            resumed = "failed"
+            try:
+                prior = observers.dialog_prior_speed(dialog_id)
+                others = [key for key in service._active_dialogs if int(key) != int(dialog_id)]
+                current = observers._game_snapshot().get("clock_speed")
+                if prior == "PAUSED":
+                    resumed = "player_paused"
+                elif others:
+                    resumed = "other_dialog_open"
+                elif current != "PAUSED":
+                    resumed = "not_paused"
+                elif ClockSpeedMode is None or GameSpeedChangeSource is None:
+                    resumed = "failed"
+                else:
+                    # server_commands/clock_commands.unrequest_pause: pop the newest
+                    # PAUSED request on UI_MODAL. A player pause is a different source.
+                    clock = services.game_clock_service()
+                    request = clock.pop_speed(
+                        ClockSpeedMode.PAUSED, source=GameSpeedChangeSource.UI_MODAL, immediate=True)
+                    if request is not None:
+                        resumed = "released"
+                    else:
+                        # No dialog request. clock_commands.set_speed uses set_clock_speed.
+                        mode = None
+                        if prior == "NORMAL":
+                            mode = ClockSpeedMode.NORMAL
+                        elif prior == "SPEED2":
+                            mode = ClockSpeedMode.SPEED2
+                        elif prior == "SPEED3":
+                            mode = ClockSpeedMode.SPEED3
+                        elif prior == "SUPER_SPEED3":
+                            mode = ClockSpeedMode.SUPER_SPEED3
+                        elif prior == "INTERACTION_STARTUP_SPEED":
+                            mode = ClockSpeedMode.INTERACTION_STARTUP_SPEED
+                        if mode is None:
+                            resumed = "failed"
+                        else:
+                            clock.set_clock_speed(
+                                mode, source=GameSpeedChangeSource.GAMEPLAY, immediate=True)
+                            resumed = "restored"
+            except Exception:
+                resumed = "failed"
             _send_queued_events()
-            self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED", **base)
+            self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED",
+                            closed=closed, resumed=resumed, **base)
             self._say(connection, "ACT_ANSWERED %s" % act_id)
             return True
         except Exception as error:

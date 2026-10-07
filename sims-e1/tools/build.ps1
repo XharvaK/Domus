@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.22.0",
+    [string]$Version = "2.23.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$ImplementedCommit = "WORKTREE_UNCOMMITTED",
     [string]$BaselineCommit = ""
@@ -10,7 +10,7 @@ $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $sourceRoot = Join-Path $repo "sims-e1\src"
 $buildRoot = Join-Path $repo "sims-e1\build"
 $stageRoot = Join-Path $buildRoot (".stage_" + $Version)
-$artifact = Join-Path $buildRoot ("ashley_e1_" + $Version + ".ts4script")
+$artifact = Join-Path $buildRoot ("Domus_" + $Version + ".ts4script")
 $sidecar = $artifact + ".sha256"
 $manifestPath = Join-Path $buildRoot "manifest.json"
 

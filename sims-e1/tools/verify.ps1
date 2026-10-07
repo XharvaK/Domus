@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.22.0",
+    [string]$Version = "2.23.0",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$HostPythonPath = "",
     [switch]$SkipReproducible
@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Continue"
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $buildRoot = Join-Path $repo "sims-e1\build"
-$artifact = Join-Path $buildRoot ("ashley_e1_" + $Version + ".ts4script")
+$artifact = Join-Path $buildRoot ("Domus_" + $Version + ".ts4script")
 $sidecar = $artifact + ".sha256"
 $manifestPath = Join-Path $buildRoot "manifest.json"
 $logPath = Join-Path $buildRoot "verify.log"
@@ -35,6 +35,12 @@ function Record-Skip([string]$Message) {
 $artifactReady = Test-Path -LiteralPath $artifact -PathType Leaf
 $manifestReady = Test-Path -LiteralPath $manifestPath -PathType Leaf
 $sidecarReady = Test-Path -LiteralPath $sidecar -PathType Leaf
+$leaf = Split-Path -Leaf $artifact
+if ($leaf -eq ("Domus_" + $Version + ".ts4script")) {
+    Record-Pass ("artifact=" + $leaf)
+} else {
+    Record-Fail ("artifact name " + $leaf)
+}
 if (-not $artifactReady) { Record-Fail "artifact missing" }
 if (-not $manifestReady) { Record-Fail "manifest missing" }
 if (-not $sidecarReady) { Record-Fail "artifact sidecar missing" }
