@@ -414,8 +414,10 @@ def _portrait(row, resolve=None, notebook=None):
 
 
 def build(decision, ctx):
+    # row draws the portrait. event_row, when present, is the row this decision is about.
     row = ctx.get("row") or {}
-    source = row.get("wall_timestamp_ms")
+    event = ctx.get("event_row") or row
+    source = event.get("wall_timestamp_ms")
     if type(source) is not int or source < 0:
         source = 0
     lineage = ctx.get("lineage_class")
@@ -446,10 +448,10 @@ def build(decision, ctx):
         "observation_id": "%s.%s" % (ctx["helper_session"], seq),
         "world": _text(None if ctx.get("slot_id") is None else "slot%s" % ctx.get("slot_id"), "unknown"),
         "branch": _text(ctx.get("guid"), "unknown"),
-        "session": _text(row.get("telemetry_session_id"), "unknown"),
+        "session": _text(event.get("telemetry_session_id"), "unknown"),
         "attachment": _text(ctx["helper_session"], "unknown"),
         "body": _text((row.get("body") or {}).get("sim_id"), "unknown"),
-        "snapshot": _text(None if row.get("written_sequence") is None else str(row.get("written_sequence")), "unknown"),
+        "snapshot": _text(None if event.get("written_sequence") is None else str(event.get("written_sequence")), "unknown"),
         "seq": seq,
         "source_time_ms": source,
         "expires_at_ms": source + _WINDOW_MS,

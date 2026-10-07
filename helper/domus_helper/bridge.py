@@ -36,6 +36,13 @@ HEARTBEAT_EVERY_MS = 60_000
 _CAMERA_PROBE = (2, 21, 0)
 
 
+def _body_sample(record):
+    # Motives is the field every body sample carries. E2 event rows are not samples.
+    return (isinstance(record, dict)
+            and record.get("event_kind") not in schema.E2_EVENT_KINDS
+            and "motives" in record)
+
+
 def _probe_ok(probe):
     if not isinstance(probe, str):
         return False
@@ -97,6 +104,7 @@ class Bridge:
         self._last_rowid = 0
         self._obs_seq = 0
         self._last_row = None
+        self._last_body_row = None
         self._fires = 0
         self._enqueued = 0
         self._last_fire_reason = None
@@ -245,6 +253,8 @@ class Bridge:
         self._obs_seq = int(self.spool.get_kv("obs_seq") or 0)
         raw = self.spool.get_kv("last_row")
         self._last_row = json.loads(raw) if raw else None
+        raw = self.spool.get_kv("last_body_row")
+        self._last_body_row = json.loads(raw) if raw else None
         raw = self.spool.get_kv("act_menu")
         self._menu = json.loads(raw) if raw else None
         self._fires = int(self.spool.get_kv("thalamus_fires") or 0)
@@ -294,6 +304,8 @@ class Bridge:
                 self._thalamus, percepts, clock_ms, self._params, self._points())
             self._theta = decision.theta
             self._last_row = record
+            if _body_sample(record):
+                self._last_body_row = record
             self._last_rowid = rowid
             seq = record.get("written_sequence") if isinstance(record, dict) else None
             self._on_decision(decision, percepts, wall_ms, clock_ms, seq if type(seq) is int else None)
@@ -322,17 +334,7 @@ class Bridge:
             self._last_fire_reason = decision.reason
             self._last_fire_wall_ms = wall_ms
             if decision.percepts and self._last_row is not None:
-                obs = build(decision, {
-                    "helper_session": self.helper_session,
-                    "obs_seq": self._obs_seq,
-                    "slot_id": self._extractor.slot_id,
-                    "guid": self._extractor.guid,
-                    "lineage_class": self._extractor.lineage_class,
-                    "row": self._last_row,
-                    "resolve_text": self._resolve_text,
-                    "options": self._options(self._last_row),
-                    "notebook": self._notebook_slice(wall_ms),
-                })
+                obs = build(decision, self._obs_ctx(wall_ms))
                 scorer = run_scorer(self.scorer, json.loads(json.dumps(obs)))
                 if self.client is not None and not self._telemetry_only:
                     try:
@@ -371,17 +373,7 @@ class Bridge:
             urgency="always_through", facts={"onset_minute": pending.get("onset_minute")})
         decision = SimpleNamespace(percepts=[(percept, 1.0)], reason="sleep_onset", fired=True)
         try:
-            obs = build(decision, {
-                "helper_session": self.helper_session,
-                "obs_seq": self._obs_seq,
-                "slot_id": self._extractor.slot_id,
-                "guid": self._extractor.guid,
-                "lineage_class": self._extractor.lineage_class,
-                "row": self._last_row,
-                "resolve_text": self._resolve_text,
-                "options": self._options(self._last_row),
-                "notebook": self._notebook_slice(wall_ms),
-            })
+            obs = build(decision, self._obs_ctx(wall_ms))
             obs["day"] = pending["day"]
             self.spool.enqueue_observation(obs, wall_ms)
         except (ContractError, OutboxConflict):
@@ -389,6 +381,23 @@ class Bridge:
         self._obs_seq += 1
         self._enqueued += 1
         self.diary.clear()
+
+    def _obs_ctx(self, wall_ms):
+        # Portrait, dialogs and presence come from the latest body sample. Timing and
+        # identity of this decision stay on the newest row, which may be an event.
+        body = self._last_body_row or self._last_row
+        return {
+            "helper_session": self.helper_session,
+            "obs_seq": self._obs_seq,
+            "slot_id": self._extractor.slot_id,
+            "guid": self._extractor.guid,
+            "lineage_class": self._extractor.lineage_class,
+            "row": body,
+            "event_row": self._last_row,
+            "resolve_text": self._resolve_text,
+            "options": self._options(body),
+            "notebook": self._notebook_slice(wall_ms),
+        }
 
     def _world(self):
         slot = self._extractor.slot_id
@@ -427,6 +436,7 @@ class Bridge:
             "last_rowid": str(self._last_rowid),
             "obs_seq": str(self._obs_seq),
             "last_row": json.dumps(self._last_row),
+            "last_body_row": json.dumps(self._last_body_row),
             "act_menu": json.dumps(self._menu),
             "thalamus_fires": str(self._fires),
             "thalamus_enqueued": str(self._enqueued),

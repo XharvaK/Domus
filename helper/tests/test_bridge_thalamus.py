@@ -536,3 +536,90 @@ def test_h05_her_idle_wakes_her_unless_a_plan_step_is_still_to_follow(paths, tmp
         woke = [item for item in _payloads(bridge)[before:]
                 if any(p["facts"].get("bucket") == "idle" for p in item["percepts"])]
         assert len(woke) == expected, planned
+
+
+def _act(seq, wall):
+    return {
+        "event_kind": "act_event", "written_sequence": seq, "wall_timestamp_ms": wall,
+        "monotonic_ns": wall * 1_000_000, "telemetry_session_id": "sess-1",
+        "sims_build": BUILD, "probe_version": "2.5.1",
+        "e2": {"act_id": "act-9", "phase": "FINISHED", "object_id": "11"},
+    }
+
+
+def _body(seq, band, wall, ticks):
+    row = _snap(seq, band, wall, ticks)
+    row["mood"] = {"name": "Mood_Bright"}
+    row["zone"] = {"zone_id": 7, "lot_id": 9, "room": "4"}
+    row["body"]["posture"] = {"posture_name": "sit", "target_id": "stool"}
+    row["presence"] = [
+        {"id": "1", "is_body": True, "name": "Ada Quill"},
+        {"id": "2", "is_body": False, "name": "Nia Cole", "room": "4"},
+    ]
+    return row
+
+
+def test_portrait_comes_from_the_body_sample_not_the_act_event(paths, tmp_path, monkeypatch):
+    """Answering a dialog writes an act row. Her portrait stays the latest sample."""
+    _data(paths, tmp_path, monkeypatch)
+    acted = WALL + 400
+    _append(paths, [
+        _lineage(1, WALL),
+        _body(2, "ok", WALL, 10),
+        _body(3, "low", WALL, 20),
+        _act(4, acted),
+    ])
+    mono = {"ms": acted}
+    bridge = _bridge(paths, mono)
+    bridge.tick(acted)
+    assert _payloads(bridge) == []
+    bridge.tick(acted + 1_500)
+    obs = _payloads(bridge)[-1]
+    portrait = obs["portrait"]
+    assert portrait["needs"]["hunger"] == {"value": 40, "band": "low"}
+    assert portrait["mood"] == "Mood_Bright"
+    assert portrait["posture"] == "sit"
+    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room": "4"}
+    assert [item["name"] for item in portrait["company"]] == ["Nia Cole"]
+    assert obs["source_time_ms"] == acted
+    assert obs["snapshot"] == "4"
+    assert obs["body"] == "ASH"
+
+
+def test_only_event_rows_still_build_a_portrait(paths, tmp_path, monkeypatch):
+    """No sample yet: the portrait is the event row's, and nothing raises."""
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL), _act(2, WALL + 10)])
+    mono = {"ms": WALL + 10}
+    bridge = _bridge(paths, mono)
+    bridge.tick(WALL + 10)
+    bridge.tick(WALL + 10 + 1_500)
+    obs = _payloads(bridge)[-1]
+    portrait = obs["portrait"]
+    assert portrait["needs"] == {}
+    assert portrait["mood"] is None
+    assert portrait["posture"] is None
+    assert portrait["company"] == []
+    assert portrait["zone"]["lot_id"] is None
+    assert bridge._last_body_row is None
+
+
+def test_last_body_row_survives_a_restart(paths, tmp_path, monkeypatch):
+    """Old spools have no last_body_row. Once saved, a new bridge loads it."""
+    from domus_helper.bridge import Bridge
+    _data(paths, tmp_path, monkeypatch)
+    fresh = _bridge(paths, {"ms": WALL})
+    fresh.spool.put_kv("last_row", json.dumps(_act(1, WALL)))
+    fresh.thalamus_status()
+    assert fresh.spool.get_kv("last_body_row") is None
+    assert fresh._last_body_row is None
+    sample = _body(2, "low", WALL, 10)
+    _append(paths, [_lineage(1, WALL), sample])
+    fresh.tick(WALL)
+    saved = json.loads(fresh.spool.get_kv("last_body_row"))
+    assert saved["mood"]["name"] == "Mood_Bright"
+    assert saved["motives"][0]["band"] == "low"
+    second = Bridge(
+        paths, client=_Client(), process=(1, "t"), detected_build=BUILD, mono=lambda: WALL)
+    second.thalamus_status()
+    assert second._last_body_row == saved
