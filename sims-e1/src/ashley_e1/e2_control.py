@@ -587,9 +587,9 @@ class E2Control:
             return ("EXCLUDED", excluded), None
         if not e2_actuator.user_directed(affordance):
             return ("NOT_USER_DIRECTED", None), None
-        ok, reason = e2_actuator.preflight_test(sim, obj, affordance, context)
+        ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context)
         if not ok:
-            return ("GAME_REFUSED", reason), None
+            return ("GAME_REFUSED", reason, reason_key), None
         return None, (sim, obj, affordance, context)
 
     def cmd_act(self, act_id, object_id, guid64, connection):
@@ -610,21 +610,24 @@ class E2Control:
         try:
             refusal, bound = self._act_check(object_id, guid64)
             if refusal is not None:
-                code, detail = refusal
+                code, detail = refusal[0], refusal[1]
+                reason_key = refusal[2] if len(refusal) > 2 else None
                 self._act_event(act_id, "REJECTED", code=code,
                                 detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH],
-                                **base)
+                                reason_key=reason_key, **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
             sim, obj, affordance, context = bound
             tuning_name = _tuning_name(affordance)
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, **base)
             accepted = True
-            interaction, detail, kind = e2_actuator.push_affordance(sim, obj, affordance, context)
+            interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
+                sim, obj, affordance, context)
             if interaction is None:
                 code = "PUSH_REFUSED" if kind == "refused" else "PUSH_FAILED"
                 self._act_event(act_id, "REJECTED", code=code, tuning_name=tuning_name,
-                                detail=(detail or "")[:schema.MAX_DETAIL_LENGTH] or None, **base)
+                                detail=(detail or "")[:schema.MAX_DETAIL_LENGTH] or None,
+                                reason_key=reason_key if kind == "refused" else None, **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
             interaction_id = str(interaction.id)
