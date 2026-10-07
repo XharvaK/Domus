@@ -100,6 +100,13 @@ game's menu, a pop-up answered by hand, a helper restart) is labelled for 2 minu
 `python -m domus_helper.overlay curtain on|off|show` draws the curtain by hand;
 it also falls whenever the game is not attached.
 
+Social talk (probe 2.26.0 or later): each new social sentence in her portrait, what
+she is doing now and what someone does to her, in the local phrase dictionary's words,
+goes to the probe as one `talk` line, shown on the User's screen as the game's own
+notification. A sentence shows once while it lasts and again only after a minute gone;
+at most one line each 2.1 s and three waiting (the newest kept). It needs no Ashley
+connection and changes nothing in the game. `python -m domus_helper.talk on|off|show`.
+
 Proof kit (`proof/` in the data folder, all append-only and hash-chained, each line
 carrying the previous hash): `trace-YYYYMMDD.jsonl` records every pass of hers the
 overlay showed, once, as it was shown, with what produced it (agent build, model,

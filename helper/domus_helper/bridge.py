@@ -15,6 +15,7 @@ from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
 from .director import Director
+from .talk import Talk
 from . import notebook
 from .diary import DiaryWatch
 from .proof import Trace
@@ -34,6 +35,7 @@ from .transport import AshleyClient, load_credentials
 _AUTO = object()
 HEARTBEAT_EVERY_MS = 60_000
 _CAMERA_PROBE = (2, 21, 0)
+_TALK_PROBE = (2, 26, 0)
 
 
 def _body_sample(record):
@@ -43,11 +45,11 @@ def _body_sample(record):
             and "motives" in record)
 
 
-def _probe_ok(probe):
+def _probe_ok(probe, least=_CAMERA_PROBE):
     if not isinstance(probe, str):
         return False
     try:
-        return tuple(int(part) for part in probe.split(".")) >= _CAMERA_PROBE
+        return tuple(int(part) for part in probe.split(".")) >= least
     except (TypeError, ValueError):
         return False
 
@@ -122,6 +124,8 @@ class Bridge:
                                              trace=Trace(self.spool, self.paths.data_dir), helper_build=_helper_build())
         self.director = None if self.client is None else Director(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
+        # 2.26.0: social talk on the User's screen; local only, so it works without Ashley too.
+        self.talk = Talk(self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
         if self._acts is not None:
             self.overlay.answered = self._acts.answered_dialogs
         if scorer is _AUTO:
@@ -177,6 +181,7 @@ class Bridge:
         if self.director is not None:
             live = self.overlay.published.get("mode") == "live" and _probe_ok(probe)
             self.director.tick(now, live)
+        self.talk.tick(now, self._state == "attached" and _probe_ok(probe, _TALK_PROBE))
 
     def _options(self, row):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
@@ -294,6 +299,7 @@ class Bridge:
             self.overlay.on_row(record, wall_ms)
             if self.director is not None:
                 self.director.on_row(record, wall_ms)
+            self.talk.on_row(record, wall_ms, _body_sample(record))
             percepts = self._extractor.step(record)
             if self._acts is not None and self._acts.planned > 0:
                 # H0.5: between the steps of her plan she is idle for a moment; that is not a
