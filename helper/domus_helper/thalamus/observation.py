@@ -350,12 +350,17 @@ def _portrait(row, resolve=None, notebook=None):
         # 2.15.2: whose home this is (live 2026-10-05: a guest cooking on a host's stove
         # drew reaction_Inappropriate), and who here belongs to it.
         owner = place.get("owner_household_id")
+        members = [item for item in row.get("presence") or []
+                   if isinstance(item, dict) and not item.get("is_body")
+                   and item.get("household_id") == owner and item.get("id") is not None]
         portrait["place"] = {
             "her_home": place.get("her_home"), "venue": place.get("venue"),
+            # SS4: only the members she can see are named; the others are counted.
             "household_here": None if owner is None else sorted(
-                str(item.get("name")) for item in row.get("presence") or []
-                if isinstance(item, dict) and not item.get("is_body")
-                and item.get("household_id") == owner)}
+                str(item.get("name")) for item in members if str(item["id"]) in seen_ids)}
+        unseen_members = sum(1 for item in members if str(item["id"]) not in seen_ids)
+        if owner is not None and unseen_members:
+            portrait["place"]["household_heard"] = unseen_members
     for item in row.get("presence") or []:
         if isinstance(item, dict) and item.get("is_body") and item.get("situations"):
             portrait["situations"] = [dict(situation) for situation in item["situations"]

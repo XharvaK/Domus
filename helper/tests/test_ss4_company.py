@@ -121,3 +121,15 @@ def test_shedding_drops_heard_before_a_sim_she_can_see():
     assert [item.get("name") for item in portrait["company"] if "name" in item] == ["Testa Zubrin"]
     heard_left = [item["distance_m"] for item in portrait["company"] if item.get("heard")]
     assert heard_left == [10.0, 11.0, 12.0]
+
+
+def test_household_here_names_only_the_members_she_sees():
+    row = {"zone": {"room": "hall"}, "place": {"owner_household_id": "h1", "her_home": False},
+           "presence": [_body(),
+                        _sim("2", "Testa Zubrin", "hall", 12.0, household_id="h1"),
+                        _sim("3", "Quin Lorne", "attic", 12.0, household_id="h1"),
+                        _sim("4", "Mor Vell", "attic", 12.0, household_id="h2")]}
+    place = observation._portrait(row)["place"]
+    assert place["household_here"] == ["Testa Zubrin"]
+    assert place["household_heard"] == 1
+    assert "Quin Lorne" not in str(observation._portrait(row))
