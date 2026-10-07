@@ -262,3 +262,12 @@ def test_an_act_the_game_ended_before_it_began_wakes_her():
     never = extractor.step(_row("FINISHED", started=False, finishing_type="FinishingType.INTERACTION_INCOMPATIBILITY"))
     assert [(p.kind, p.bucket, p.urgency) for p in never] == [("interaction", "act_never_started", "wake")]
     assert dict(never[0].facts)["finishing_type"] == "FinishingType.INTERACTION_INCOMPATIBILITY"
+
+
+def test_an_object_the_game_sees_no_way_to_says_so_and_stays_listed():
+    """2.25.0: reach false travels as noWay; true or unread adds nothing."""
+    menu = {"objects": [dict(MENU["objects"][0], reach=False), dict(MENU["objects"][1], reach=None)]}
+    listed = options(menu)
+    assert [item["object_id"] for item in listed] == ["11", "12"]
+    assert listed[0]["noWay"] == "the game sees no way for her to get there from where she is now"
+    assert "noWay" not in listed[1]

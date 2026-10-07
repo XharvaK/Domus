@@ -152,6 +152,9 @@ def people_names(row):
     return names
 
 
+NO_WAY = "the game sees no way for her to get there from where she is now"
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0):
     """The observation's options: nearest objects first, each act with a short ref (a1, a2,
     ...) unique in this observation, its guid64 and its text. Farthest objects are left out
@@ -175,8 +178,12 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             acts.append({"ref": "a%d" % count, "guid64": str(act["guid64"]),
                          "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))})
         if acts:
-            result.append({"object": _object_name(item, resolve, catalog, people),
-                           "object_id": str(item.get("object_id")), "where": where, "acts": acts})
+            entry = {"object": _object_name(item, resolve, catalog, people),
+                     "object_id": str(item.get("object_id")), "where": where, "acts": acts}
+            if item.get("reach") is False:
+                # 2.25.0: the game's own connectivity check sees no way from her to it now.
+                entry["noWay"] = NO_WAY
+            result.append(entry)
     while result and _bytes(result) > limit:
         result.pop()
     return result

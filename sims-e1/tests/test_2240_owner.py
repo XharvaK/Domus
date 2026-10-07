@@ -41,7 +41,7 @@ class OwnerActTests(unittest.TestCase):
         return captured
 
     def test_version(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.24.0")
+        self.assertTrue(self.probe.schema.PROBE_VERSION >= "2.24.0")
 
     def test_an_owner_act_goes_in_at_critical_and_says_so(self):
         self.case.ready()

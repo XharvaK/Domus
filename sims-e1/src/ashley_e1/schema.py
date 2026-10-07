@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 12
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.24.0"
+PROBE_VERSION = "2.25.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -90,7 +90,8 @@ RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
 # 2.19.0: 12 left the kitchen and the bedroom out of a nine-room house.
 MENU_MAX_OBJECTS = 24
 MENU_MAX_ACTS = 8
-MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "acts")
+# 2.25.0: reach (the game's own connectivity check from her to the object; None when unread).
+MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "reach", "acts")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
@@ -528,6 +529,11 @@ def _validate_e2(row):
         for key in ("guid64", "card_class", "tuning_name", "ambiguous"):
             if key not in payload:
                 payload[key] = None
+    elif kind == "act_menu" and isinstance(payload, dict):
+        # 2.25.0: reach is optional; older menu rows omit it.
+        for item in payload.get("objects") or ():
+            if isinstance(item, dict) and "reach" not in item:
+                item["reach"] = None
     elif kind == "act_event" and isinstance(payload, dict):
         # 2.22.0 / 2.23.0: optional. Older act rows omit them.
         if "reason_key" not in payload:
@@ -640,6 +646,7 @@ def _validate_menu(payload):
         bounded_string(item["class"], 96, "menu class", False)
         _number_or_none(item["distance_m"], "menu distance_m")
         _require(item["same_room"] in (True, False, None), "menu same_room")
+        _require(item["reach"] in (True, False, None), "menu reach")
         acts = item["acts"]
         _require(isinstance(acts, list) and 1 <= len(acts) <= MENU_MAX_ACTS, "menu acts")
         for act in acts:

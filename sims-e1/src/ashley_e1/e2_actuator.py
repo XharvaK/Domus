@@ -302,6 +302,17 @@ def started(interaction):
         return None
 
 
+def reachable(sim, obj):
+    """Read: whether the game sees a way from her to the object, by the check its own autonomy
+    makes before it picks one (autonomy_request._check_object_connectivity_and_rules calls
+    ScriptObject.is_connected). True, False, or None when unreadable."""
+    try:
+        value = obj.is_connected(sim)
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
 def watch_finish(interaction, callback):
     """Act (callback registration on our own interaction only)."""
     interaction.register_on_finishing_callback(callback)

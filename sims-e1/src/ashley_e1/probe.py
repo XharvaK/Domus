@@ -1934,12 +1934,23 @@ def _menu_jobs(row):
             item["definition_id"] = None
         item["class"] = situation._name(type(item["obj"])) or ""
     jobs = []
+    reach = {}
     for _item, acts in act_menu.pick(ordered, offers):
+        for job in acts:
+            job["reach_seen"] = reach
         jobs.extend(acts)
     return jobs, body_room
 
 
 def _menu_test(job):
+    """One candidate act: the game's own test of the push. 2.25.0: the first act of each
+    object also asks, once per build, whether the game sees a way from her to it; the
+    answer travels with the object (shown, never hidden)."""
+    seen = job.get("reach_seen")
+    if seen is not None:
+        if job["object_id"] not in seen:
+            seen[job["object_id"]] = e2_actuator.reachable(job["sim"], job["obj"])
+        job["reach"] = seen[job["object_id"]]
     ok, _reason, _reason_key = e2_actuator.preflight_test(
         job["sim"], job["obj"], job["affordance"], job["context"])
     return bool(ok)

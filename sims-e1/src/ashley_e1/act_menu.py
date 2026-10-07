@@ -205,7 +205,7 @@ class MenuBuild(object):
                 by_object[key] = {
                     "object_id": job["object_id"], "definition_id": job.get("definition_id"),
                     "class": (job.get("class") or "")[:96], "distance_m": job.get("distance_m"),
-                    "same_room": job.get("same_room"), "acts": []}
+                    "same_room": job.get("same_room"), "reach": job.get("reach"), "acts": []}
                 order.append(key)
             acts = by_object[key]["acts"]
             if len(acts) < schema.MENU_MAX_ACTS and all(a["guid64"] != job["guid64"] for a in acts):
@@ -222,6 +222,6 @@ def same_menu(left, right):
     if left is None or right is None:
         return False
     def shape(payload):
-        return [(item["object_id"], tuple(act["guid64"] for act in item["acts"]))
+        return [(item["object_id"], item.get("reach"), tuple(act["guid64"] for act in item["acts"]))
                 for item in payload["objects"]]
     return shape(left) == shape(right) and left.get("room") == right.get("room")
