@@ -369,10 +369,12 @@ def test_cli_with_game_lives_as_long_as_the_game(paths, tmp_path, monkeypatch):
     monkeypatch.setattr(bridge_module, "_strings_quietly", lambda: None)
     ticks = []
     monkeypatch.setattr(Bridge, "tick", lambda self, now: ticks.append(now))
-    # The game is closed: nothing to do, the process exits at once.
+    # The watcher saw the game, but the bridge's own check can't find it (still launching, or
+    # already closed): the bridge keeps ticking for the drain, then exits.
     monkeypatch.setattr(fingerprints, "_process", lambda: None)
     assert main(["--interval", "5", "--with-game"]) == 0
-    assert ticks == []
+    assert len(ticks) == bridge_module.GAME_DRAIN_S // 5
+    ticks.clear()
     # The game runs for 30 s, then closes: the bridge keeps ticking for the drain, then exits.
     closes_at = clock["s"] + 30
     monkeypatch.setattr(fingerprints, "_process", lambda: (4242, "0:00:01") if clock["s"] < closes_at else None)

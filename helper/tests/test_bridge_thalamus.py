@@ -623,3 +623,20 @@ def test_last_body_row_survives_a_restart(paths, tmp_path, monkeypatch):
         paths, client=_Client(), process=(1, "t"), detected_build=BUILD, mono=lambda: WALL)
     second.thalamus_status()
     assert second._last_body_row == saved
+
+
+def test_a_crash_leaves_its_traceback_in_the_data_folder(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import pytest
+    from domus_helper import bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.Paths, "from_env", staticmethod(lambda: SimpleNamespace(data_dir=tmp_path)))
+
+    def boom(argv=None):
+        raise RuntimeError("invented failure")
+
+    monkeypatch.setattr(bridge_module, "main", boom)
+    with pytest.raises(RuntimeError):
+        bridge_module._crash_logged([])
+    text = (tmp_path / "bridge_crash.log").read_text(encoding="utf-8")
+    assert "invented failure" in text and "Traceback" in text

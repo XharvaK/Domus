@@ -476,7 +476,9 @@ def main(argv=None):
     if overlay_pages.serve(bridge.overlay) is None:
         print("overlay pages not served: port %d is taken" % overlay_pages.PORT)
     archived_at = None
-    game_seen_at = None
+    # The watcher starts the bridge only once it has seen the game; a check that fails while the
+    # game is still launching must not end the bridge before the usual drain.
+    game_seen_at = time.time() if args.with_game else None
     while True:
         try:
             now = time.time()
@@ -541,5 +543,22 @@ def _archive_quietly(now):
         print("proof stamp skipped: %s" % type(error).__name__)
 
 
+def _crash_logged(argv=None):
+    """Run main; a crash leaves its traceback in <data>/bridge_crash.log (the watcher's console may not show it)."""
+    try:
+        return main(argv)
+    except Exception:
+        import traceback
+        try:
+            from datetime import datetime, timezone
+            path = Paths.from_env().data_dir / "bridge_crash.log"
+            with open(path, "a", encoding="utf-8") as handle:
+                stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                handle.write("== %s\n%s\n" % (stamp, traceback.format_exc()))
+        except Exception:
+            pass
+        raise
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_crash_logged())
