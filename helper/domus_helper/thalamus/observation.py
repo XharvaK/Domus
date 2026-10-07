@@ -1,6 +1,8 @@
-"""Pure v1 observation builder. No clock and no I/O."""
+"""Pure v1 observation builder. No clock. A phrase lookup that fails omits the sentence."""
 import json
 import re
+
+from .. import lang
 
 _LINEAGE = re.compile(r"[A-Z_]{1,32}")
 _FACTS_LIMIT = 2048
@@ -78,9 +80,69 @@ def _affordance_name(text):
     return text[:80]
 
 
+def _sim_names(row):
+    """Presence id -> display name. Her name is the body Sim (is_body); unknown -> someone."""
+    names = {}
+    her = None
+    for item in row.get("presence") or []:
+        if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        raw = item.get("name")
+        shown = raw if isinstance(raw, str) and raw else "someone"
+        names[str(item["id"])] = shown
+        if item.get("is_body") and her is None:
+            her = shown
+    return names, her or "someone"
+
+
+def _named(who, names):
+    if who is None:
+        return "someone"
+    return names.get(str(who), "someone")
+
+
+def _action_actors(entry, names, her):
+    target = entry.get("target_id")
+    if target is not None and str(target) in names:
+        return [her, names[str(target)]]
+    return [her]
+
+
+def _with_sentence(value, tuning, actors):
+    """value is the portrait item. A sentence is added only when the dictionary has one."""
+    try:
+        text = lang.phrases().sentence(tuning, actors)
+    except Exception:
+        return value
+    if not isinstance(text, str) or not text:
+        return value
+    if isinstance(value, dict):
+        value["sentence"] = text
+        return value
+    return {"interaction": tuning, "sentence": text}
+
+
+def _shed_sentence(portrait):
+    """Drop one sentence. Running and queued items return to the plain tuning name."""
+    for key in ("queued", "running", "addressed_by"):
+        items = portrait.get(key)
+        if not isinstance(items, list):
+            continue
+        for index in range(len(items) - 1, -1, -1):
+            item = items[index]
+            if isinstance(item, dict) and "sentence" in item:
+                if key == "addressed_by":
+                    del item["sentence"]
+                else:
+                    items[index] = item.get("interaction")
+                return True
+    return False
+
+
 def _portrait(row, resolve=None, notebook=None):
     """resolve: string key -> the game's own text (S0), or None when unknown."""
     row = row or {}
+    names, her = _sim_names(row)
     needs = {}
     for item in row.get("motives") or []:
         if not isinstance(item, dict) or item.get("id") is None:
@@ -92,11 +154,13 @@ def _portrait(row, resolve=None, notebook=None):
     for entry in ((row.get("interactions") or {}).get("observed")) or []:
         if not isinstance(entry, dict) or entry.get("affordance_text") is None:
             continue
+        tuning = _affordance_name(entry["affordance_text"])
+        actors = _action_actors(entry, names, her)
         if entry.get("membership") in ("RUNNING", "QUEUED_AND_RUNNING"):
-            running.append(_affordance_name(entry["affordance_text"]))
+            running.append(_with_sentence(tuning, tuning, actors))
         elif entry.get("membership") == "QUEUED":
             # Live 2026-10-06: her answered recipe sat queued behind a piano song she could not see.
-            queued.append(_affordance_name(entry["affordance_text"]))
+            queued.append(_with_sentence(tuning, tuning, actors))
     zone = row.get("zone") or {}
     game = row.get("game") or {}
     # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
@@ -158,8 +222,10 @@ def _portrait(row, resolve=None, notebook=None):
     for item in row.get("social") or []:
         if isinstance(item, dict):
             text = item.get("affordance_text")
-            addressed.append({"by": item.get("actor_id"),
-                              "interaction": _affordance_name(text)})
+            tuning = _affordance_name(text)
+            addressed.append(_with_sentence(
+                {"by": item.get("actor_id"), "interaction": tuning},
+                tuning, [_named(item.get("actor_id"), names), her]))
     mood = row.get("mood") or {}
     portrait = {
         "needs": needs,
@@ -231,8 +297,11 @@ def _portrait(row, resolve=None, notebook=None):
                 for item in own["careers"] if isinstance(item, dict)]
     if notebook:
         portrait["notebook"] = notebook
-    # Shed the least essential first: the notebook, then queued and running lists,
+    # Sentences are extra: drop them before anything that was already in the portrait.
+    # Then the least essential: the notebook, then queued and running lists,
     # then moodlets, then company.
+    while _bytes(portrait) > _PORTRAIT_LIMIT and _shed_sentence(portrait):
+        pass
     if "notebook" in portrait and _bytes(portrait) > _PORTRAIT_LIMIT:
         del portrait["notebook"]
     for key in ("queued", "running", "moodlets", "company"):
