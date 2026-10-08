@@ -13,6 +13,7 @@ import base64
 import json
 import logging
 import struct
+import threading
 import types
 import zlib
 
@@ -32,6 +33,7 @@ MAX_ID_LENGTH = 64
 
 # Ids this process has already captured and posted (or tried to post). Process-local by design.
 _HANDLED = set()
+_LOCK = threading.Lock()
 _WIN = None
 
 
@@ -101,13 +103,39 @@ def capture_game_window(pid=None):
 def handle_requests(snapshot_ids, client, capture=capture_game_window, *, helper_session):
     """Capture and post each requested picture once. Never raises: the acts loop goes on.
     snapshot_ids is what Mint returned: rows with a snapshot_id, or bare ids."""
-    if not isinstance(snapshot_ids, list):
+    _post_all(_claim_new(snapshot_ids), client, capture, helper_session)
+
+
+def handle_requests_in_background(snapshot_ids, client, *, helper_session, start=None):
+    """handle_requests off the acts loop: the ids are claimed here, so a later round trip never
+    claims them again, and the capture and the post run on a daemon thread, so a slow post never
+    holds up her acts."""
+    fresh = _claim_new(snapshot_ids)
+    if not fresh:
         return
-    for item in snapshot_ids:
-        snapshot_id = _snapshot_id(item)
-        if snapshot_id is None or snapshot_id in _HANDLED:
-            continue
-        _HANDLED.add(snapshot_id)
+    run = lambda: _post_all(fresh, client, capture_game_window, helper_session)
+    if start is not None:
+        start(run)
+        return
+    threading.Thread(target=run, name="domus-snapshot", daemon=True).start()
+
+
+def _claim_new(snapshot_ids):
+    if not isinstance(snapshot_ids, list):
+        return []
+    fresh = []
+    with _LOCK:
+        for item in snapshot_ids:
+            snapshot_id = _snapshot_id(item)
+            if snapshot_id is None or snapshot_id in _HANDLED:
+                continue
+            _HANDLED.add(snapshot_id)
+            fresh.append(snapshot_id)
+    return fresh
+
+
+def _post_all(snapshot_ids, client, capture, helper_session):
+    for snapshot_id in snapshot_ids:
         try:
             client.post_snapshot(_body(snapshot_id, helper_session, capture))
         except Exception as error:

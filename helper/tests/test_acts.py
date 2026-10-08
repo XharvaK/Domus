@@ -284,7 +284,7 @@ class _SnapClient(_Client):
 
 def test_requested_pictures_go_to_the_snapshot_module_after_the_acts(tmp_path, monkeypatch):
     handed = []
-    monkeypatch.setattr(snapshot, "handle_requests", lambda ids, client, **kwargs: handed.append((ids, kwargs)))
+    monkeypatch.setattr(snapshot, "handle_requests_in_background", lambda ids, client, **kwargs: handed.append((ids, kwargs)))
     published = []
     courier = ActCourier(Spool(tmp_path / "spool.db"), lambda command, args: published.append(command))
     assert courier.tick(_SnapClient([ACT]), "h", 1000, True) == ["a" * 32]
@@ -294,7 +294,7 @@ def test_requested_pictures_go_to_the_snapshot_module_after_the_acts(tmp_path, m
 
 def test_no_round_trip_means_no_picture_is_handed_on(tmp_path, monkeypatch):
     handed = []
-    monkeypatch.setattr(snapshot, "handle_requests", lambda ids, client, **kwargs: handed.append(ids))
+    monkeypatch.setattr(snapshot, "handle_requests_in_background", lambda ids, client, **kwargs: handed.append(ids))
     client = _SnapClient([ACT])
     client.down = True
     assert ActCourier(Spool(tmp_path / "spool.db"), lambda command, args: None).tick(client, "h", 1000, True) == []

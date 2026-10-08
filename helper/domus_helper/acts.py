@@ -338,6 +338,7 @@ class ActCourier(object):
             self._event(act_id, "received", now_ms)
             written.append(act_id)
         self._save()
-        # SNAPSHOT: after the acts, so a picture never delays one. Never raises.
-        snapshot.handle_requests(response.get("snapshots") or [], client, helper_session=helper_session)
+        # SNAPSHOT: after the acts, on its own thread, so a picture never delays one. Never raises.
+        snapshot.handle_requests_in_background(response.get("snapshots") or [], client,
+                                               helper_session=helper_session)
         return written

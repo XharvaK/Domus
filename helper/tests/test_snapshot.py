@@ -3,6 +3,7 @@ reasons, the CLI and the transport path. No window is captured here."""
 import base64
 import json
 import struct
+import types
 import urllib.error
 import urllib.request
 import zlib
@@ -238,3 +239,15 @@ def test_post_snapshot_is_none_when_the_round_trip_fails(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", down)
     client = AshleyClient("http://ashley.invalid", "t" * 40, timeout_s=10)
     assert client.post_snapshot({"v": 1, "helper_session": "s", "snapshot_id": "s-1", "failed": "x"}) is None
+
+
+def test_background_claims_here_and_posts_on_the_runner(monkeypatch):
+    snapshot._HANDLED.clear()
+    monkeypatch.setattr(snapshot, "capture_game_window", lambda: (_ for _ in ()).throw(SnapshotFailed("no_game_window")))
+    client = types.SimpleNamespace(posted=[], post_snapshot=lambda body: client.posted.append(body))
+    runs = []
+    snapshot.handle_requests_in_background([{"snapshot_id": "bg-1"}], client, helper_session="s", start=runs.append)
+    snapshot.handle_requests_in_background([{"snapshot_id": "bg-1"}], client, helper_session="s", start=runs.append)
+    assert len(runs) == 1 and client.posted == []
+    runs[0]()
+    assert [(body["snapshot_id"], body["failed"]) for body in client.posted] == [("bg-1", "no_game_window")]
