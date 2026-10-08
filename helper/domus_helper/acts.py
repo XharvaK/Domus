@@ -251,6 +251,38 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     return result
 
 
+class AnswerInvalid(ValueError):
+    """Her answer to a dialog is not the shape the contract allows (never its values)."""
+
+
+_OPTION_ID = re.compile(r"[0-9]{1,20}")
+
+
+def _answer_args(answer):
+    """W2h: the extra probe arguments of her answer: rows (option id, count) and text fields. Only
+    the shape is checked here; the probe checks the values against the live dialog and the held
+    message. Nothing it carries is ever logged, not even in the rejection."""
+    if answer is None:
+        return {}
+    if not isinstance(answer, dict):
+        raise AnswerInvalid("answer")
+    extra = {}
+    rows = answer.get("rows")
+    if rows:
+        if type(rows) is not list or not all(
+                isinstance(row, dict) and type(row.get("option_id")) is str
+                and _OPTION_ID.fullmatch(row["option_id"]) and type(row.get("count")) is int and row["count"] >= 1
+                for row in rows):
+            raise AnswerInvalid("rows")
+        extra["rows"] = [{"option_id": row["option_id"], "count": row["count"]} for row in rows]
+    text = answer.get("text")
+    if text:
+        if type(text) is not dict or not all(type(key) is str and type(value) is str for key, value in text.items()):
+            raise AnswerInvalid("text")
+        extra["text"] = dict(text)
+    return extra
+
+
 class ActCourier(object):
     """Carries her requested acts to the probe and the probe's record of them back.
 
@@ -380,9 +412,11 @@ class ActCourier(object):
                     # 2.20.0: she stops one of her own actions.
                     self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
                 elif object_id.startswith(DIALOG_PREFIX):
-                    # 2.18.0: her answer to a game dialog (a picker row or a button).
-                    self._publish("answer", {"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
-                                             "pick": str(act.get("guid64"))})
+                    # 2.18.0: her answer to a game dialog (a picker row or a button). W2h: with
+                    # her rows or text, the answer is the dialog's ok carrying them.
+                    extra = _answer_args(act.get("answer"))
+                    self._publish("answer", dict({"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
+                                                  "pick": "ok" if extra else str(act.get("guid64"))}, **extra))
                     self.answered_dialogs = (self.answered_dialogs + [object_id[len(DIALOG_PREFIX):]])[-ASKED_LIMIT:]
                 else:
                     args = {"act_id": act_id, "object_id": object_id, "guid64": str(act.get("guid64"))}
@@ -392,7 +426,8 @@ class ActCourier(object):
                     self._publish("act", args)
             except Exception as error:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
-                self._event(act_id, "rejected", now_ms, {"code": "INBOX_" + type(error).__name__[:40]})
+                code = "ANSWER_INVALID" if isinstance(error, AnswerInvalid) else "INBOX_" + type(error).__name__[:40]
+                self._event(act_id, "rejected", now_ms, {"code": code})
                 continue
             self._known[act_id] = {"written_ms": now_ms}
             self._event(act_id, "received", now_ms)

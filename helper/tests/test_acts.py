@@ -395,3 +395,38 @@ def test_an_older_probe_without_cause_keeps_the_owner_rule():
     result = dialog_options(_asked(mine, nobody, someone), TEXTS.get)
     assert [entry["object_id"] for entry in result] == ["dialog:620", "dialog:621"]
 
+
+
+def test_a_dialog_she_can_answer_goes_to_the_probe_with_her_rows_and_text(tmp_path):
+    spool = Spool(tmp_path / "spool.db")
+    published = []
+    answer = {"rows": [{"option_id": "11", "count": 2}], "text": {"tip": "12"}}
+    client = _Client([dict(ACT, object_id="dialog:600", guid64="ok", answer=answer)])
+    ActCourier(spool, lambda command, args: published.append((command, args))).tick(client, "h", 1000, True)
+    assert published == [("answer", {"act_id": "a" * 32, "dialog_id": "600", "pick": "ok",
+                                     "rows": [{"option_id": "11", "count": 2}], "text": {"tip": "12"}})]
+
+
+def test_an_answer_with_only_text_or_only_rows_is_an_ok(tmp_path):
+    spool = Spool(tmp_path / "spool.db")
+    published = []
+    client = _Client([dict(ACT, object_id="dialog:600", guid64="ok", answer={"text": {"tip": "12"}}),
+                      dict(ACT, act_id="b" * 32, object_id="dialog:600", guid64="11",
+                           answer={"rows": [{"option_id": "11", "count": 1}]})])
+    ActCourier(spool, lambda command, args: published.append((command, args))).tick(client, "h", 1000, True)
+    assert published[0][1] == {"act_id": "a" * 32, "dialog_id": "600", "pick": "ok", "text": {"tip": "12"}}
+    assert published[1][1] == {"act_id": "b" * 32, "dialog_id": "600", "pick": "ok",
+                               "rows": [{"option_id": "11", "count": 1}]}
+
+
+def test_an_answer_that_is_not_well_formed_is_rejected_without_its_text(tmp_path):
+    spool = Spool(tmp_path / "spool.db")
+    published = []
+    bad = {"rows": [{"option_id": "x1", "count": 1}], "text": {"tip": "secret words"}}
+    client = _Client([dict(ACT, object_id="dialog:600", guid64="ok", answer=bad)])
+    courier = ActCourier(spool, lambda command, args: published.append((command, args)))
+    assert courier.tick(client, "h", 1000, True) == []
+    assert courier.tick(client, "h", 2000, True) == []
+    assert published == []
+    sent = json.dumps(client.bodies)
+    assert "ANSWER_INVALID" in sent and "secret words" not in sent
