@@ -158,6 +158,7 @@ class DiaryWatch:
             lambda session: outcomes.acts(
                 outcomes.read_rows(outcomes.sessions(paths).get(session, [])), session))
         self._checked_ms = None
+        self._sleeping = False
 
     def _json_kv(self, key):
         raw = self.spool.get_kv(key)
@@ -169,9 +170,18 @@ class DiaryWatch:
             return None
 
     def tick(self, now_ms, row, world):
-        if not isinstance(row, dict) or row.get("event_kind") != "presence_snapshot" or not asleep(row):
+        if not isinstance(row, dict) or row.get("event_kind") != "presence_snapshot":
             return None
-        if self._checked_ms is not None and now_ms - self._checked_ms < CHECK_EVERY_MS:
+        if asleep(row):
+            # HE9: the onset is confirmed only once the sleep has run 30 game minutes, and the game can
+            # reach that between two rows of one wall-clock throttle window; the check stays open.
+            self._sleeping = True
+            if self._checked_ms is not None and now_ms - self._checked_ms < CHECK_EVERY_MS:
+                return None
+        elif self._sleeping:
+            # HE9: the first row after the sleep checks at once, not on the throttle.
+            self._sleeping = False
+        else:
             return None
         self._checked_ms = now_ms
         session = row.get("telemetry_session_id")

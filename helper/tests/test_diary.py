@@ -114,10 +114,34 @@ def test_watch_writes_pending_once_per_onset():
     awake = _row("cook")
     awake["telemetry_session_id"] = "sess"
     before = calls["n"]
+    # HE9: the first row after the sleep re-checks once; it finds nothing new, and later rows do not read.
     assert watch.tick(1_000 + CHECK_EVERY_MS * 3, awake, "slot1") is None
-    assert calls["n"] == before
+    assert calls["n"] == before + 1
+    assert watch.tick(1_000 + CHECK_EVERY_MS * 3 + 1, awake, "slot1") is None
+    assert calls["n"] == before + 1
     watch.clear()
     assert watch.pending() is None
+
+
+def test_onset_confirmed_only_after_the_sleep_is_sent_on_the_first_row_after_it():
+    # HE9, in step with the game: the sleep act is 10 game minutes while the rows are asleep, inside
+    # one throttle window; it reaches 40 only when the sleep has ended.
+    spool = _Kv()
+    records = [_act("cook", 100, minutes=15), _act("bed_sleep", 400, minutes=10, origin="body")]
+    watch = DiaryWatch(spool, None, lambda session: list(records))
+    asleep_row = _row("bed_sleep")
+    asleep_row["telemetry_session_id"] = "sess"
+    assert watch.tick(1_000, asleep_row, "slot1") is None
+    assert watch.tick(2_000, asleep_row, "slot1") is None
+    assert watch.tick(3_000, asleep_row, "slot1") is None
+    assert watch.pending() is None
+    records[1] = _act("bed_sleep", 400, minutes=40, origin="body")
+    awake = _row("cook")
+    awake["telemetry_session_id"] = "sess"
+    pending = watch.tick(4_000, awake, "slot1")
+    assert pending["onset_minute"] == 400
+    assert pending["day"]["to_minute"] == 400
+    assert watch.pending()["onset_minute"] == 400
 
 
 def _observation(**extra):
