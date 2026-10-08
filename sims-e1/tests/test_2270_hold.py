@@ -42,7 +42,7 @@ class HoldTests(unittest.TestCase):
 
     def mine(self):
         self.control.pushed[str(OPENER)] = {"act_id": ACT, "base": {}, "tuning_name": "cook",
-                                            "seen": True, "misses": 0}
+                                            "interaction_id": str(OPENER), "seen": True, "misses": 0}
 
     def distribute(self):
         return self.module._held_distribute(self.picker, "MSG_PICKER", "msg", immediate=True)
