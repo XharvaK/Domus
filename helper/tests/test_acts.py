@@ -39,14 +39,28 @@ def test_running_acts_and_the_stop_options_use_the_games_words_from_the_newest_m
 def test_options_name_each_act_in_the_games_words_with_short_refs():
     texts = {"77": "Read a Book", "900": "Wooden Bookshelf"}
     catalog = {"511": {"name_key": "900"}}
-    result = options(MENU, texts.get, catalog.get)
+    result = options(MENU, texts.get, catalog.get, room="4")
     assert result == [
         {"object": "Wooden Bookshelf", "object_id": "11", "where": "here, 2.0 m", "acts": [
             {"ref": "a1", "guid64": "4242", "text": "Read a Book"},
             {"ref": "a2", "guid64": "4243", "text": "bookshelf Browse Books"}]},
-        {"object": "object guitar", "object_id": "12", "where": "nearby, 6.5 m", "acts": [
+        {"object": "object guitar", "object_id": "12", "where": "elsewhere, 6.5 m", "acts": [
             {"ref": "a3", "guid64": "5000", "text": "guitar Practice"}]},
     ]
+
+
+def test_an_object_in_another_room_than_hers_now_is_elsewhere_never_here():
+    # HE12: the menu's same_room is about the menu's room; a menu from another room never says "here".
+    menu = {"room": "4", "objects": [
+        {"object_id": "1", "class": "object_a", "distance_m": 2.0, "same_room": True,
+         "acts": [{"guid64": "1", "name": "a_Use", "text_key": None}]},
+        {"object_id": "2", "class": "object_b", "distance_m": 3.0, "same_room": False,
+         "acts": [{"guid64": "2", "name": "b_Use", "text_key": None}]},
+        {"object_id": "3", "class": "object_c", "distance_m": 4.0, "same_room": None,
+         "acts": [{"guid64": "3", "name": "c_Use", "text_key": None}]}]}
+    assert [item["where"] for item in options(menu, room="4")] == ["here, 2.0 m", "elsewhere, 3.0 m", "nearby, 4.0 m"]
+    assert [item["where"] for item in options(menu, room="7")] == ["elsewhere, 2.0 m", "nearby, 3.0 m", "nearby, 4.0 m"]
+    assert [item["where"] for item in options(menu)] == ["nearby, 2.0 m", "nearby, 3.0 m", "nearby, 4.0 m"]
 
 
 def test_options_drop_the_farthest_objects_to_fit_and_ignore_junk():

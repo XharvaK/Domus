@@ -234,7 +234,7 @@ class Bridge:
         room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
         listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
                              people=people_names(row), start=count, limit=max(0, room),
-                             withheld=self._withheld_names())
+                             withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"))
         return asked + listed
 
     def status(self):
@@ -315,7 +315,9 @@ class Bridge:
             written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
             clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
             if kind == "act_menu" and isinstance(record.get("e2"), dict):
-                self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"]}
+                # HE12: the menu keeps its wall time and its room; its labels are read against her room now.
+                self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"],
+                              "at_ms": clock_ms}
                 self._notebook_quietly(
                     lambda: self.notebook.observe_menu(self._world(), record["e2"], clock_ms))
             elif kind == "presence_snapshot":

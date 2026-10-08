@@ -492,8 +492,8 @@ def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_sessi
          "telemetry_session_id": "old-session", "sims_build": BUILD, "probe_version": "2.16.0", "e2": stale},
         {"event_kind": "act_menu", "written_sequence": 3, "wall_timestamp_ms": WALL, "monotonic_ns": WALL * 1_000_000,
          "telemetry_session_id": "sess-1", "sims_build": BUILD, "probe_version": "2.16.0", "e2": menu},
-        _snap(4, "ok", WALL, 10),
-        _snap(5, "low", WALL, 20),
+        dict(_snap(4, "ok", WALL, 10), zone={"zone_id": 7, "lot_id": 9, "room": "4"}),
+        dict(_snap(5, "low", WALL, 20), zone={"zone_id": 7, "lot_id": 9, "room": "4"}),
     ])
     mono = {"ms": WALL}
     bridge = _bridge(paths, mono)
@@ -503,6 +503,7 @@ def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_sessi
     payloads = _payloads(bridge)
     assert len(payloads) == 1
     obs = check(payloads[0], WALL + 1500)
+    assert bridge._menu["at_ms"] == WALL  # HE12: the menu keeps its wall time
     assert obs["options"] == [{"object": "object bookshelf", "object_id": "11", "where": "here, 2.0 m",
                                "acts": [{"ref": "a1", "guid64": "4242", "text": "bookshelf Read Book"}]}]
     bridge._menu = dict(bridge._menu, session="another")

@@ -246,11 +246,24 @@ OPENS_SCREEN = "a screen only the User's hands can use"
 NO_WAY = "the game sees no way for her to get there from where she is now"
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0, withheld=()):
+def _where(item, menu_room, room):
+    """HE12: where an object is from her room now. The probe's same_room is about the menu's room, which
+    may not be the room she is in now (the menu can be older than her last move): "here" only when that
+    room is hers now, and "elsewhere" for an object in another room than hers."""
+    same = item.get("same_room")
+    if room is None or menu_room is None:
+        return "nearby"
+    if str(menu_room) == str(room):
+        return "here" if same is True else ("elsewhere" if same is False else "nearby")
+    return "elsewhere" if same is True else "nearby"
+
+
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0, withheld=(), room=None):
     """The observation's options: nearest objects first, each act with a short ref (a1, a2,
     ...) unique in this observation, its guid64 and its text. Farthest objects are left out
     until it fits the byte budget. W2h: an act whose interaction the notebook has seen end on a
-    screen only the User's hands can use stays listed, marked with what it opens."""
+    screen only the User's hands can use stays listed, marked with what it opens. HE12: room is
+    the room she is in now (the zone's), and the menu's own room comes with the menu."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
     result = []
@@ -259,7 +272,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
         distance = item.get("distance_m")
-        where = "here" if item.get("same_room") is True else "nearby"
+        where = _where(item, menu.get("room"), room)
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
         if item.get("phone") is True:
