@@ -8,6 +8,9 @@ from dataclasses import dataclass
 
 from .contract import ContractError, validate_heartbeat, validate_observation
 
+# SNAPSHOT: a picture of up to 6 MiB, base64-encoded, can take longer than an act round trip.
+SNAPSHOT_TIMEOUT_S = 30
+
 
 @dataclass(frozen=True)
 class TransportResult:
@@ -61,13 +64,18 @@ class AshleyClient:
         """E3: her settled game passes for the overlay. The parsed 200 response, or None."""
         return self._round_trip("/domus/feed", body)
 
-    def _round_trip(self, path, body):
+    def post_snapshot(self, body):
+        """SNAPSHOT: one requested picture, or the reason there is none. The parsed 200 response, or None."""
+        return self._round_trip("/domus/snapshot", body, timeout_s=SNAPSHOT_TIMEOUT_S)
+
+    def _round_trip(self, path, body, timeout_s=None):
         raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(
             self._url + path, data=raw, method="POST",
             headers={"Content-Type": "application/json", "X-Domus-Token": self._token})
+        timeout = self._timeout_s if timeout_s is None else timeout_s
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_s) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 if response.status != 200:
                     return None
                 payload = json.loads(response.read().decode("utf-8"))

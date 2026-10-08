@@ -4,6 +4,8 @@ probe recorded about them (act_event rows) goes back to Mint. Nothing here choos
 import json
 import re
 
+from . import snapshot
+
 OPTIONS_LIMIT = 7800
 # Mint expires an act its helper never picked up after 90 s; a written act the probe never
 # answers about is unknown after this long.
@@ -336,4 +338,7 @@ class ActCourier(object):
             self._event(act_id, "received", now_ms)
             written.append(act_id)
         self._save()
+        # SNAPSHOT: after the acts, on its own thread, so a picture never delays one. Never raises.
+        snapshot.handle_requests_in_background(response.get("snapshots") or [], client,
+                                               helper_session=helper_session)
         return written
