@@ -40,6 +40,9 @@ _CAMERA_PROBE = (2, 21, 0)
 _TALK_PROBE = (2, 26, 0)
 # W3h: a pace command that could not be written is tried again after this long.
 PACE_RETRY_MS = 30_000
+# HE16: the wakes a quiet game makes (no new row), and the window an observation stays valid for.
+CLOCK_WAKES = ("check", "boredom")
+OBSERVATION_WINDOW_MS = 600_000
 
 
 def _body_sample(record):
@@ -58,6 +61,11 @@ def _probe_ok(probe, least=_CAMERA_PROBE):
         return tuple(int(part) for part in probe.split(".")) >= least
     except (TypeError, ValueError):
         return False
+
+
+def _wall(record):
+    wall = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
+    return wall if type(wall) is int else 0
 
 
 def _ticks(record):
@@ -381,7 +389,11 @@ class Bridge:
             self._fires += 1
             self._last_fire_reason = decision.reason
             self._last_fire_wall_ms = wall_ms
-            if decision.percepts and self._last_row is not None:
+            if decision.percepts and self._last_row is not None and decision.reason in CLOCK_WAKES and (
+                    wall_ms - _wall(self._last_row) > OBSERVATION_WINDOW_MS):
+                # HE16: a check or boredom wake is built from the newest row; a row this old would only expire.
+                scorer = {"skipped": "stale_row"}
+            elif decision.percepts and self._last_row is not None:
                 obs = build(decision, self._obs_ctx(wall_ms))
                 scorer = run_scorer(self.scorer, json.loads(json.dumps(obs)))
                 if self.client is not None and not self._telemetry_only:

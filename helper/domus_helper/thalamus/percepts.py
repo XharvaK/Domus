@@ -93,7 +93,8 @@ class Extractor:
             percepts.append(self._gap(session))
         elif (self._seq is not None and type(seq) is int and session == self._session
               and seq > self._seq + 1):
-            percepts.append(self._gap(session))
+            # HE16: the rows between the two sequence numbers are the ones she did not get.
+            percepts.append(self._gap(session, lost=seq - self._seq - 1))
         if kind == "lineage_event":
             percepts.append(self._lineage(row))
         if kind == "act_event":
@@ -147,13 +148,13 @@ class Extractor:
                                             ("tuning_name", e2.get("tuning_name")),
                                             ("finishing_type", e2.get("finishing_type")), ("origin", "her_choice"))))]
 
-    def _gap(self, session):
+    def _gap(self, session, lost=None):
         self.needs.reset()
         self.durations.reset()
         self._barrier += 1
         self._seen_row = True
         return Percept("gap", "session", "" if session is None else str(session), "gap",
-                       urgency="wake", lineage=self.lineage_id)
+                       urgency="wake", lineage=self.lineage_id, facts=_facts(None, (("lost", lost),)))
 
     def _lineage(self, row):
         e2 = row.get("e2") or {}

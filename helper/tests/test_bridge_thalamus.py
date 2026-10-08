@@ -269,6 +269,26 @@ def _log_lines(data):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def test_a_check_wake_over_a_stale_row_is_skipped_and_logged_and_a_fresh_one_is_sent(paths, tmp_path, monkeypatch):
+    # HE16: a check or boredom wake is built from the newest row; one over the window old is not sent.
+    from types import SimpleNamespace
+    from domus_helper.thalamus.types import Percept
+    data = _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10)])
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    bridge.tick(WALL)
+    percept = Percept("need", "hunger", "", "low", urgency="wake", lineage="")
+    decision = SimpleNamespace(fired=True, reason="check", percepts=[(percept, 1.0)], theta=1.0, arousal=0.0,
+                               trace=[])
+    before = len(_payloads(bridge))
+    bridge._on_decision(decision, [], WALL + 700_000, WALL + 700_000, None)
+    assert len(_payloads(bridge)) == before
+    assert _log_lines(data)[-1]["scorer"] == {"skipped": "stale_row"}
+    bridge._on_decision(decision, [], WALL + 1_000, WALL + 1_000, None)
+    assert len(_payloads(bridge)) == before + 1
+
+
 def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatch):
     from domus_helper.contract import validate_observation as check
     data = _data(paths, tmp_path, monkeypatch)
