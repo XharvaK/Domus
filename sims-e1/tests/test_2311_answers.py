@@ -363,6 +363,15 @@ class ShapeTests(unittest.TestCase):
         ok, connection = self.send("ok", text={"nick": "a"})
         self.assertEqual(connection.lines[-1], "ACT_REJECT NO_LIMIT")
 
+    def test_a_text_window_with_more_fields_than_the_schema_carries_has_no_text_rules(self):
+        self.push()
+        fields = [Field(text_input_name="f%d" % number, min_length=0, max_length=4) for number in range(9)]
+        self.place(self.hold(TextWindow(DIALOG, interaction=types.SimpleNamespace(id=OPENER)), message(fields)))
+        self.assertIsNone(self.report()["text_inputs"])
+        ok, connection = self.send("ok", text=dict(("f%d" % number, "a") for number in range(9)))
+        self.assertEqual(connection.lines[-1], "ACT_REJECT TEXT_NOT_HELD")
+        self.assertEqual(self.service.calls, [])
+
     def test_a_numeric_field_without_both_bounds_is_refused_as_no_limit(self):
         self.push()
         fields = [Field(text_input_name="amount", min_length=1, max_length=6, max_value=500000)]

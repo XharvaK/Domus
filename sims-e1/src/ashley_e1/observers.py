@@ -1219,15 +1219,16 @@ def read_text_inputs(message):
     game built (UiDialogMessage.text_input; bytecode ui/ui_text_input.UiTextInput.build_msg): the field
     name, its length and value limits, whether the game checks profanity, whether a restricted-character
     set exists, and the string key of the default text. Numbers and flags only, never the text. None when
-    the message has no text field, or a field name is one the probe cannot name."""
+    the message has no text field, a field name is one the probe cannot name, or there are more fields than
+    the schema carries (a partial report would let her answer leave a field empty)."""
     try:
         fields = list(message.text_input)
     except Exception:
         return None
-    if not fields:
+    if not fields or len(fields) > schema.MAX_TEXT_INPUTS:
         return None
     found = []
-    for field in fields[:schema.MAX_TEXT_INPUTS]:
+    for field in fields:
         name = _value(lambda: field.text_input_name)
         if type(name) is not str or not 1 <= len(name) <= 32 or not set(name) <= schema.FIELD_NAME_CHARS:
             return None
