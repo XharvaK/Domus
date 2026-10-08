@@ -87,6 +87,41 @@ def test_procedures_need_agreement_and_rebuild_drops_what_no_longer_holds(tmp_pa
     book.close()
 
 
+def test_a_procedure_keeps_the_time_she_first_had_it(tmp_path):
+    # HE13: an upsert keeps first_ms; a notebook from before the column gets it from its last update.
+    book = Notebook(tmp_path / "notebook.db")
+    held = _records("fridge_Grab_Snack", [{"hunger": 20}, {"hunger": 25}, {"hunger": 30}])
+    book.rebuild_procedures(held, 5000)
+    book.rebuild_procedures(held, 9000)
+    row = book._con.execute("SELECT n, first_ms, updated_ms FROM procedures").fetchone()
+    assert (row["n"], row["first_ms"], row["updated_ms"]) == (3, 5000, 9000)
+    book.close()
+    old = tmp_path / "old.db"
+    import sqlite3
+    raw = sqlite3.connect(str(old))
+    raw.execute("CREATE TABLE procedures (interaction TEXT PRIMARY KEY, n INTEGER NOT NULL, needs TEXT NOT NULL,"
+                " conditions TEXT NOT NULL, act_ids TEXT NOT NULL, updated_ms INTEGER NOT NULL)")
+    raw.execute("INSERT INTO procedures VALUES ('sip', 2, '{}', '{}', '[]', 4000)")
+    raw.commit()
+    raw.close()
+    migrated = Notebook(old)
+    assert migrated.show()["procedures"][0]["first_ms"] == 4000
+    migrated.close()
+
+
+def test_a_development_trial_never_teaches_a_procedure(tmp_path):
+    # HE13: origin "experiment" is development tooling, not something she learned.
+    book = Notebook(tmp_path / "notebook.db")
+    trials = _records("fridge_Grab_Snack", [{"hunger": 20}, {"hunger": 25}, {"hunger": 30}],
+                      origins=["experiment"] * 3)
+    assert book.rebuild_procedures(trials, 5000) == 0
+    mixed = _records("fridge_Grab_Snack", [{"hunger": 20}, {"hunger": 25}, {"hunger": 30}],
+                     origins=["experiment", "counter", "counter"])
+    assert book.rebuild_procedures(mixed, 6000) == 1
+    assert book._con.execute("SELECT n FROM procedures").fetchone()["n"] == 2
+    book.close()
+
+
 def test_slice_offers_moves_and_trims(tmp_path):
     book = Notebook(tmp_path / "notebook.db")
     book.observe_menu("slot1", _menu("7"), 1_000)
