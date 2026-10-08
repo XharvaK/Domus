@@ -9,6 +9,10 @@ that moved the same way every time. One observation is never a procedure. Proced
 are about her body and the game's interactions, so they are not per world. Facts are
 per world (the save slot).
 
+W2h: withheld records are the interactions whose act ended on a screen only the User's hands can
+use: the tuning name, the screen name, first and last seen, and how often. They are about the
+interaction, not the world, and nothing is deleted. Her options keep them listed, marked.
+
 Run: python -m domus_helper.notebook show [--world W] | rebuild
 """
 import argparse
@@ -42,6 +46,14 @@ CREATE TABLE IF NOT EXISTS facts (
   seen_ms INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS facts_open ON facts (world, kind, subject) WHERE valid_until_ms IS NULL;
+CREATE TABLE IF NOT EXISTS withheld (
+  tuning TEXT NOT NULL,
+  screen TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  first_ms INTEGER NOT NULL,
+  last_ms INTEGER NOT NULL,
+  PRIMARY KEY (tuning, screen)
+);
 CREATE TABLE IF NOT EXISTS procedures (
   interaction TEXT PRIMARY KEY,
   n INTEGER NOT NULL,
@@ -113,6 +125,27 @@ class Notebook:
             if item.get("household_id") != owner:
                 continue
             self._assert(world, "lives_here", str(item["id"]), str(owner), item.get("name"), now_ms)
+
+    def observe_withheld(self, tuning, screen, now_ms):
+        """W2h: an act of this interaction ended on a screen the User's hands had to use."""
+        if not isinstance(tuning, str) or not tuning or not isinstance(screen, str) or not screen:
+            return
+        tuning, screen = tuning[:80], screen[:128]
+        with self._con:
+            row = self._con.execute(
+                "SELECT n FROM withheld WHERE tuning = ? AND screen = ?", (tuning, screen)).fetchone()
+            if row is None:
+                self._con.execute(
+                    "INSERT INTO withheld (tuning, screen, n, first_ms, last_ms) VALUES (?, ?, 1, ?, ?)",
+                    (tuning, screen, now_ms, now_ms))
+            else:
+                self._con.execute(
+                    "UPDATE withheld SET n = n + 1, last_ms = ? WHERE tuning = ? AND screen = ?",
+                    (now_ms, tuning, screen))
+
+    def withheld_names(self):
+        """W2h: the tuning names of interactions that have ended on such a screen."""
+        return {row["tuning"] for row in self._con.execute("SELECT DISTINCT tuning FROM withheld")}
 
     def rebuild_procedures(self, records, now_ms):
         groups = {}
@@ -242,6 +275,8 @@ class Notebook:
                 "act_ids": json.loads(row["act_ids"]),
                 "updated_ms": row["updated_ms"],
             })
+        withheld = [dict(row) for row in self._con.execute(
+            "SELECT tuning, screen, n, first_ms, last_ms FROM withheld ORDER BY last_ms DESC, tuning LIMIT 50")]
         open_where = "WHERE valid_until_ms IS NULL"
         open_args = ()
         if world is not None:
@@ -256,6 +291,7 @@ class Notebook:
             "facts_open": facts_open,
             "facts_closed": facts_closed,
             "procedures": procedures,
+            "withheld": withheld,
             "open": open_facts,
         }
 

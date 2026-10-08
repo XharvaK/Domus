@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from domus_helper import commands
 from domus_helper.attachment import AttachmentMonitor
 from domus_helper.bridge import Bridge, main
 from domus_helper.contract import ContractError, validate_heartbeat, validate_observation
@@ -305,6 +306,8 @@ def test_probe_version_warns_once_and_withholds_camera(paths, tmp_path, monkeypa
     from domus_helper.vendor import schema as probe_schema
 
     monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+    # W3h: the attached bridge sends the pace command; the vendored cmdbox learns it at the W3p merge.
+    monkeypatch.setattr(commands, "publish", lambda *args, **kwargs: "stub")
 
     class Fake:
         def post_heartbeat(self, body):

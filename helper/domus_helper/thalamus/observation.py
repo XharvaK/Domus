@@ -3,11 +3,15 @@ import json
 import re
 
 from .. import lang
+from ..acts import body_id, dialog_is_hers
 from ..scene import NEAR_METERS as SEEN_DISTANCE_M
+from ..windows import PORTRAIT_LIMIT as WINDOWS_SHOWN
 
 _LINEAGE = re.compile(r"[A-Z_]{1,32}")
 _FACTS_LIMIT = 2048
 _PORTRAIT_LIMIT = 8192
+# W3h (C9): real time, how long an observation is kept for her answer. At slow_time 0.5 the world
+# moves half as far in these ten minutes, so the observation is no staler in game terms than before.
 _WINDOW_MS = 600_000
 # The game's Days enum (tunable_time.Days, bytecode 1.128): SUNDAY = 0 ... SATURDAY = 6,
 # the same index DateAndTime.day() prints as "day:N".
@@ -231,18 +235,48 @@ def _shed_sentence(portrait):
 
 
 def _drop_one(items, key):
-    """Company sheds a heard entry before any Sim she can see. Other lists lose the last item."""
+    """Company sheds a heard entry before any Sim she can see. Windows shed the oldest first.
+    Other lists lose the last item."""
     if key == "company":
         for index in range(len(items) - 1, -1, -1):
             item = items[index]
             if isinstance(item, dict) and item.get("heard") is True:
                 del items[index]
                 return
+    if key == "windows":
+        del items[0]
+        return
     items.pop()
 
 
-def _portrait(row, resolve=None, notebook=None):
-    """resolve: string key -> the game's own text (S0), or None when unknown."""
+def _asked_answer_rules(item, resolve):
+    """W2h: the rules a question puts on her answer, under answer_rules (the shape her options
+    carry, with the restricted-character flag added). Nothing when the game gave no rules."""
+    rules = {}
+    select = item.get("select")
+    if isinstance(select, dict):
+        rules["select"] = {"min": select.get("min"), "max": select.get("max")}
+    counts = item.get("counts")
+    if isinstance(counts, dict):
+        rules["counts"] = {"max_in_row": counts.get("max_in_row"), "max_rows": counts.get("max_rows")}
+    fields = item.get("text_inputs")
+    if isinstance(fields, list):
+        rules["text"] = [
+            {"name": field["name"],
+             "label": _resolve(resolve, field.get("default_key")) or field["name"],
+             "min_length": field.get("min_length"), "max_length": field.get("max_length"),
+             "numeric": field.get("numeric") is True,
+             "min_value": field.get("min_value"), "max_value": field.get("max_value"),
+             "profanity_checked": field.get("profanity_checked") is True,
+             "restricted": field.get("restricted") is True}
+            for field in fields if isinstance(field, dict) and isinstance(field.get("name"), str)]
+    return {"answer_rules": rules} if rules else {}
+
+
+def _portrait(row, resolve=None, notebook=None, windows=None, pace=None):
+    """resolve: string key -> the game's own text (S0), or None when unknown.
+    windows: W2h, the window facts of her session (windows.WindowLog.recent).
+    pace: W3h, her pace entry (pace.portrait), or None."""
     row = row or {}
     zone = row.get("zone") or {}
     addressing = _addressing_ids(row)
@@ -338,6 +372,8 @@ def _portrait(row, resolve=None, notebook=None):
         "moodlets": moodlets[:8],
         "company": company[:7],
         "addressed_by": addressed[:4],
+        # W2h: what happened to windows that were or became not hers (newest last, 4 at most).
+        "windows": [dict(item) for item in windows or [] if isinstance(item, dict)][-WINDOWS_SHOWN:],
     }
     if "presence" in (row.get("missingness") or {}):
         # D40: the company list missed someone this sample.
@@ -369,6 +405,8 @@ def _portrait(row, resolve=None, notebook=None):
     if isinstance(dialogs, dict) and dialogs.get("open"):
         # 2.15.2: the game's pop-ups, in its words, with the choices it offers. Hers to
         # answer (the User's ruling 2026-10-05); the probe does not answer them.
+        # W2h: whether it is held for her, whose it is, and the rules her answer must meet.
+        body = body_id(row)
         portrait["asked"] = [
             {"dialog_id": item.get("dialog_id"),
              "title": _resolve(resolve, item.get("title_key")),
@@ -377,7 +415,10 @@ def _portrait(row, resolve=None, notebook=None):
                           "text": _resolve(resolve, choice.get("text_key"))}
                          for choice in item.get("responses") or []
                          if isinstance(choice, dict)],
-             "answers_itself": item.get("auto_respond") is True}
+             "answers_itself": item.get("auto_respond") is True,
+             "held": item.get("held") is True,
+             "whose": "hers" if dialog_is_hers(item, body) else "the User's",
+             **_asked_answer_rules(item, resolve)}
             for item in dialogs["open"] if isinstance(item, dict)]
     own = row.get("self")
     if isinstance(own, dict):
@@ -417,17 +458,25 @@ def _portrait(row, resolve=None, notebook=None):
                     want["until"] = "%02d:%02d" % (until[0], until[1])
                 wants.append(want)
             portrait["self"]["wants"] = wants
+    if pace:
+        # W3h: facts about her pace (the drain, the clock, what her last decisions cost in game time).
+        portrait["pace"] = dict(pace)
     if notebook:
         portrait["notebook"] = notebook
     # Sentences are extra: her own (doing_said, last first), then addressed_by,
     # before anything that was already in the portrait.
-    # Then the least essential: the notebook, then queued and running lists,
-    # then moodlets, then company.
+    # Then the least essential: the notebook, then queued, the window facts, her pace, running
+    # lists, then moodlets, then company.
     while _bytes(portrait) > _PORTRAIT_LIMIT and _shed_sentence(portrait):
         pass
     if "notebook" in portrait and _bytes(portrait) > _PORTRAIT_LIMIT:
         del portrait["notebook"]
-    for key in ("queued", "running", "moodlets", "company"):
+    for key in ("queued", "windows", "pace", "running", "moodlets", "company"):
+        if key == "pace":
+            # W3h: the pace entry goes whole, not item by item.
+            if _bytes(portrait) > _PORTRAIT_LIMIT:
+                portrait.pop("pace", None)
+            continue
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:
             _drop_one(portrait[key], key)
     return portrait
@@ -477,6 +526,7 @@ def build(decision, ctx):
         "expires_at_ms": source + _WINDOW_MS,
         "lineage_class": lineage,
         "percepts": percepts,
-        "portrait": _portrait(row, ctx.get("resolve_text"), notebook=ctx.get("notebook")),
+        "portrait": _portrait(row, ctx.get("resolve_text"), notebook=ctx.get("notebook"),
+                              windows=ctx.get("windows"), pace=ctx.get("pace")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
     }

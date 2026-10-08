@@ -1,5 +1,7 @@
 """Attachment health from the probe process and the latest telemetry row."""
 
+# W3h (C9): real time. The probe writes its rows on real-time alarms, so the freshness of a row does not
+# depend on the game clock; the same 30 s at slow_time 0.5.
 STALE_AFTER_MS = 30_000
 SLEEP_GAP_MS = 30_000
 

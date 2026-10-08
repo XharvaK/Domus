@@ -12,6 +12,8 @@ KINDS = (
     "moodlet", "env", "lineage", "gap",
 )
 
+# W3h (C9): the *_ms values below are her attention rhythms on the wall clock (D50), not game time.
+# They mean the same at slow_time 0.5; what changes is how much game happens inside them.
 bounds = {
     "theta0": (0.5, 3.0),
     "alpha_ambient": (0.3, 0.8),

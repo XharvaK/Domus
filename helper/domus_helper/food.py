@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import atlas, telemetry
+from . import atlas, pace, telemetry
 from .crawl import _classify, _from_verdict, _live_rows, _verdict_row
 from .mcp_server import CommandFailed, DomusTools, SafetyError
 from .paths import Paths
@@ -14,6 +14,8 @@ from .vendor.schema import PROBE_VERSION
 
 SNACK_GUID = 13397
 COOK_GUID = 13388
+# Real seconds at normal pace (the verdict comes when the game finishes the meal). W3h: the wait
+# is stretched by slow_time (pace.game_budget), so it covers the same game time when the clock is slowed.
 EAT_TIMEOUT_S = 700.0
 
 
@@ -241,7 +243,7 @@ def fallback_rows(preflight_rows):
 
 
 def eat(client, timeout=EAT_TIMEOUT_S, sleep=time.sleep, monotonic=time.monotonic,
-        telemetry_rows=None):
+        telemetry_rows=None, slow_time=1.0):
     status = client.checked_status().result
     if status.get("state") != "SAMPLING":
         raise SafetyError("state=%s" % status.get("state"))
@@ -272,7 +274,7 @@ def eat(client, timeout=EAT_TIMEOUT_S, sleep=time.sleep, monotonic=time.monotoni
     kind, experiment_id, code = _classify((reply.result or {}).get("lines"))
     session = _session(client.paths)
     if kind == "TRIAL_PUSHED":
-        deadline = monotonic() + timeout
+        deadline = monotonic() + pace.game_budget(timeout, slow_time)
         found = None
         while monotonic() < deadline:
             source = telemetry_rows() if telemetry_rows else _live_rows(client.paths)
@@ -318,7 +320,7 @@ def main(argv=None):
             for line in report(scan(client)):
                 print(line)
             return 0
-        return eat(client)
+        return eat(client, slow_time=pace.configured_slow_time(client.paths.data_dir))
     except Exception as error:
         print(str(error), file=sys.stderr)
         return 1
