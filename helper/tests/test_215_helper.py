@@ -135,3 +135,23 @@ def test_portrait_names_her_job():
     portrait = observation._portrait(row, dict(TEXT, **{"71": "Culinary", "72": "Dishwasher"}).get)
     assert portrait["self"]["jobs"] == [{"job": "Culinary", "title": "Dishwasher", "level": 2,
                                          "at_work": True}]
+
+def test_portrait_names_her_wants_and_fears():
+    """2.30.0: what she wants and fears now, in the game's words, with the game's hint and counts."""
+    row = _v8(3, 606, [])
+    row["self"]["wants"] = [
+        {"want": "FakeFear_BeingAlone", "text_key": "81", "tip_key": None, "fear": True, "locked": False,
+         "done": 0, "of": 1, "until": None},
+        {"want": "FakeWant_ReadBook", "text_key": "82", "tip_key": "83", "fear": False, "locked": True,
+         "done": 1, "of": 3, "until": [9, 5]},
+        {"want": "FakeWant_Unnamed", "text_key": None, "tip_key": None, "fear": False, "locked": False,
+         "done": None, "of": None, "until": None}]
+    text = dict(TEXT, **{"81": "Being alone at night", "82": "Read a book", "83": "Any book will do"})
+    portrait = observation._portrait(row, text.get)
+    assert portrait["self"]["wants"] == [
+        {"want": "Being alone at night", "fear": True},
+        {"want": "Read a book", "fear": False, "how": "Any book will do", "locked": True,
+         "progress": "1/3", "until": "09:05"},
+        {"want": "FakeWant_Unnamed", "fear": False}]
+    assert "wants" not in observation._portrait(_v8(3, 606, []), TEXT.get)["self"]
+

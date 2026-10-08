@@ -1610,7 +1610,71 @@ def read_self(sim_info):
         funds = money
     return {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
             "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
-            "funds": funds, "careers": _own_careers(sim_info)}
+            "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info)}
+
+
+def _own_wants(sim_info):
+    """2.30.0 (the User: she should solve her own problems, so she sees the game's wants and fears):
+    plain reads (bytecode whims/whims_tracker, situations/situation_goal): sim_info `_whim_tracker`
+    (absent below full LOD), its `_whim_slots`, each slot's `whim`, `goal_instance` and `whim_type`
+    (CONFRONTATION is a fear), the goal's tuned `display_name` / `display_tooltip`, `_locked`, `_count`,
+    `_iterations` and `expiration_time`. Never `goal.score` (runs tests) nor any tracker method."""
+    try:
+        tracker = sim_info._whim_tracker
+    except Exception:
+        return None
+    if tracker is None:
+        return None
+    try:
+        slots = list(tracker._whim_slots)
+    except Exception:
+        return None
+    wants = []
+    for slot in slots:
+        try:
+            goal, whim = slot.goal_instance, slot.whim
+        except Exception:
+            continue
+        if goal is None or whim is None:
+            continue
+        name = _bounded_name(_type_name(whim), "want")
+        if name is None:
+            continue
+        try:
+            fear = slot.whim_type.name == "CONFRONTATION"
+        except Exception:
+            fear = False
+        keys = []
+        for read in (lambda: goal.display_name, lambda: goal.display_tooltip):
+            try:
+                keys.append(_string_key(read()))
+            except Exception:
+                keys.append(None)
+        try:
+            locked = goal._locked is True
+        except Exception:
+            locked = False
+        counts = []
+        for read in (lambda: goal._count, lambda: goal._iterations):
+            try:
+                value = read()
+            except Exception:
+                value = None
+            counts.append(value if type(value) is int else None)
+        until = None
+        try:
+            expiry = goal.expiration_time
+            if expiry is not None:
+                hour, minute = expiry.hour(), expiry.minute()
+                if type(hour) is int and type(minute) is int and 0 <= hour < 24 and 0 <= minute < 60:
+                    until = [hour, minute]
+        except Exception:
+            until = None
+        wants.append({"want": name, "text_key": keys[0], "tip_key": keys[1], "fear": fear,
+                      "locked": locked, "done": counts[0], "of": counts[1], "until": until})
+        if len(wants) >= schema.MAX_SELF_WANTS:
+            break
+    return sorted(wants, key=lambda item: (not item["fear"], item["want"]))
 
 
 def _own_careers(sim_info):

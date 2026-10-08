@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 12
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.29.0"
+OBSERVATION_SCHEMA_VERSION = 13
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v13"
+PROBE_VERSION = "2.30.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -180,6 +180,7 @@ MAX_SENTIMENTS = 3
 MAX_SELF_TRAITS = 12
 MAX_SELF_SKILLS = 12
 MAX_SELF_CAREERS = 4
+MAX_SELF_WANTS = 8
 MAX_SITUATIONS = 3
 MAX_DIALOGS = 4
 MAX_DIALOG_RESPONSES = 6
@@ -436,7 +437,9 @@ def _validate_string_tree(value, key="value"):
                       # 2.15.0: tuning names of traits, skills, sentiments, careers.
                       "trait", "skill", "sentiment", "careers",
                       # 2.15.2: situations, roles, venues, dialog classes and answers.
-                      "situation", "role", "venue", "kind", "response"):
+                      "situation", "role", "venue", "kind", "response",
+                      # 2.30.0: tuning names of her wants and fears.
+                      "want"):
             bounded_string(value, MAX_DISPLAY_TEXT_LENGTH, key, False)
         else:
             bounded_string(value, MAX_ID_LENGTH, key, False)
@@ -764,7 +767,8 @@ def _validate_self(row):
     value = row["self"]
     if value is None:
         return
-    keys = {"traits", "skills", "funds"} | ({"careers"} if row["schema_version"] >= 12 else set())
+    keys = ({"traits", "skills", "funds"} | ({"careers"} if row["schema_version"] >= 12 else set()) |
+            ({"wants"} if row["schema_version"] >= 13 else set()))
     _require(isinstance(value, dict) and set(value) == keys, "self shape")
     if value["traits"] is not None:
         _validate_named(value["traits"], "trait", MAX_SELF_TRAITS, "self.traits")
@@ -786,6 +790,20 @@ def _validate_self(row):
                      (item["level"] is None or type(item["level"]) is int), "self.careers entry")
             if item["title_key"] is not None:
                 string_id(item["title_key"], "self.careers.title_key")
+    if value.get("wants") is not None:
+        # 2.30.0: what she wants and fears now (the game's wants and fears panel).
+        _validate_named(value["wants"], "want", MAX_SELF_WANTS, "self.wants")
+        for item in value["wants"]:
+            _require(set(item) == {"want", "text_key", "tip_key", "fear", "locked", "done", "of", "until"} and
+                     type(item["fear"]) is bool and type(item["locked"]) is bool and
+                     all(item[key] is None or type(item[key]) is int for key in ("done", "of")),
+                     "self.wants entry")
+            if item["tip_key"] is not None:
+                string_id(item["tip_key"], "self.wants.tip_key")
+            until = item["until"]
+            _require(until is None or (isinstance(until, list) and len(until) == 2 and
+                                       all(type(part) is int for part in until) and
+                                       0 <= until[0] < 24 and 0 <= until[1] < 60), "self.wants.until")
 
 
 def _validate_situations(value):

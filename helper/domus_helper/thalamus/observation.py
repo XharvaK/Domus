@@ -397,6 +397,26 @@ def _portrait(row, resolve=None, notebook=None):
                  "title": _resolve(resolve, item.get("title_key")),
                  "level": item.get("level"), "at_work": item.get("at_work") is True}
                 for item in own["careers"] if isinstance(item, dict)]
+        if isinstance(own.get("wants"), list):
+            # 2.30.0: what she wants and fears now, in the game's words.
+            wants = []
+            for item in own["wants"]:
+                if not isinstance(item, dict):
+                    continue
+                want = {"want": _resolve(resolve, item.get("text_key")) or item.get("want"),
+                        "fear": item.get("fear") is True}
+                how = _resolve(resolve, item.get("tip_key"))
+                if how:
+                    want["how"] = how
+                if item.get("locked") is True:
+                    want["locked"] = True
+                if type(item.get("of")) is int and item["of"] > 1 and type(item.get("done")) is int:
+                    want["progress"] = "%d/%d" % (item["done"], item["of"])
+                until = item.get("until")
+                if isinstance(until, list) and len(until) == 2 and all(type(part) is int for part in until):
+                    want["until"] = "%02d:%02d" % (until[0], until[1])
+                wants.append(want)
+            portrait["self"]["wants"] = wants
     if notebook:
         portrait["notebook"] = notebook
     # Sentences are extra: her own (doing_said, last first), then addressed_by,
