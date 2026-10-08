@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from . import commands
 from . import fingerprints as fingerprint_reader
+from . import pace
 from .vendor import schema
 from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
@@ -37,6 +38,8 @@ _AUTO = object()
 HEARTBEAT_EVERY_MS = 60_000
 _CAMERA_PROBE = (2, 21, 0)
 _TALK_PROBE = (2, 26, 0)
+# W3h: a pace command that could not be written is tried again after this long.
+PACE_RETRY_MS = 30_000
 
 
 def _body_sample(record):
@@ -55,6 +58,11 @@ def _probe_ok(probe, least=_CAMERA_PROBE):
         return tuple(int(part) for part in probe.split(".")) >= least
     except (TypeError, ValueError):
         return False
+
+
+def _ticks(record):
+    game = record.get("game") if isinstance(record, dict) else None
+    return game.get("ticks") if isinstance(game, dict) else None
 
 
 def _trace(item):
@@ -144,6 +152,16 @@ class Bridge:
         self._outcomes_mtime = None
         self._outcomes_checked_ms = None
         self._probe_warned = None
+        # W3h: her pace. The settings file, what the probe last applied, and the decision costs.
+        self._pace_settings = pace.PaceSettings(self.paths.data_dir)
+        self._pace_log = pace.PaceLog(self.spool)
+        self._pace_block = None
+        self._pace_streak = 0
+        self._pace_mismatch = False
+        self._pace_attached = False
+        self._pace_sent = None
+        self._pace_sent_ms = None
+        self._pace_retry_ms = None
 
     def tick(self, now):
         self._maybe_rebuild_procedures(now)
@@ -184,8 +202,10 @@ class Bridge:
         if self.client is not None:
             self.spool.flush(self.client, now)
         if self.client is not None and self._acts is not None and hasattr(self.client, "sync_acts"):
-            self._acts.tick(self.client, self.helper_session, now, self._state == "attached")
+            written = self._acts.tick(self.client, self.helper_session, now, self._state == "attached")
+            self._pace_log.received(written)
             self.overlay.answered = self._acts.answered_dialogs
+        self._pace_tick(now)
         self.overlay.poll(self.client, self.helper_session, now)
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
@@ -306,6 +326,10 @@ class Bridge:
             if kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
             self._windows.on_row(record, clock_ms)
+            self._pace_log.on_row(record)
+            block = record.get("pace") if isinstance(record, dict) else None
+            if isinstance(block, dict):
+                self._pace_observe(block, clock_ms)
             held = withheld_of(record)
             if held is not None:
                 self._notebook_quietly(lambda: self.notebook.observe_withheld(held[0], held[1], clock_ms))
@@ -364,6 +388,7 @@ class Bridge:
                         scorer = {"error": "%s: %s" % (type(exc).__name__, exc)}
                     else:
                         enqueued = True
+                        self._pace_log.observed(_ticks(self._last_body_row or self._last_row))
                         observation_id = obs["observation_id"]
                         self._obs_seq += 1
                         self._enqueued += 1
@@ -420,7 +445,46 @@ class Bridge:
             "options": self._options(body),
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
+            "pace": pace.portrait(self._pace_block, self._pace_log.costs()),
         }
+
+    def _pace_observe(self, block, now_ms):
+        """W3h: the probe's applied pace, row by row. Three rows in a row that differ from the
+        wanted values ask for one resend (at most once a minute, so a refused clock is not
+        re-asked for every row)."""
+        self._pace_block = block
+        if not pace.applied_differs(block, self._pace_settings.values):
+            self._pace_streak = 0
+            return
+        self._pace_streak += 1
+        if self._pace_streak >= pace.MISMATCH_ROWS:
+            self._pace_streak = 0
+            if self._pace_sent_ms is None or now_ms - self._pace_sent_ms >= pace.MISMATCH_EVERY_MS:
+                self._pace_mismatch = True
+
+    def _pace_tick(self, now):
+        """W3h: the probe's pace follows the settings. Sent when the game attaches, when a setting
+        changes, and when the probe's rows show other values. Nothing is sent while detached."""
+        settings = self._pace_settings.refresh()
+        if self._state != "attached":
+            self._pace_attached = False
+            return
+        wanted = (settings["need_drain"], settings["slow_time"])
+        due = not self._pace_attached or wanted != self._pace_sent or self._pace_mismatch
+        if not due or (self._pace_retry_ms is not None and now < self._pace_retry_ms):
+            return
+        try:
+            commands.publish("pace", {"need_drain": wanted[0], "slow_time": wanted[1]}, "helper",
+                             paths=self.paths)
+        except (ValueError, OSError) as error:
+            self._pace_retry_ms = now + PACE_RETRY_MS
+            print("pace not sent: %s" % type(error).__name__)
+            return
+        self._pace_attached = True
+        self._pace_sent = wanted
+        self._pace_sent_ms = now
+        self._pace_mismatch = False
+        self._pace_retry_ms = None
 
     def _world(self):
         slot = self._extractor.slot_id
