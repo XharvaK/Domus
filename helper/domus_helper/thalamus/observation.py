@@ -6,6 +6,7 @@ from .. import lang
 from ..acts import answer_rules, body_id, dialog_is_hers, humanize
 from ..scene import NEAR_METERS as SEEN_DISTANCE_M
 from ..windows import PORTRAIT_LIMIT as WINDOWS_SHOWN
+from .percepts import _IDLE_SOURCES
 
 _LINEAGE = re.compile(r"[A-Z_]{1,32}")
 _FACTS_LIMIT = 2048
@@ -61,6 +62,9 @@ def _fit_strings(facts):
         excess = _bytes(fitted) - _FACTS_LIMIT
         fitted[key] = fitted[key][:-excess] if excess < longest else ""
     return fitted
+
+
+_IDLE_NAMES = ("sim-stand", "stand_Passive")
 
 
 def _resolve(resolve, key):
@@ -290,6 +294,9 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         if not isinstance(entry, dict) or entry.get("affordance_text") is None:
             continue
         tuning = _affordance_name(entry["affordance_text"])
+        if entry.get("source_raw") in _IDLE_SOURCES or tuning in _IDLE_NAMES:
+            # HE2: holding her body still (stand, sit, the body's cancel) is not an act; posture says it.
+            continue
         actors = _action_actors(entry, names, her, unseen_ids)
         if entry.get("membership") in ("RUNNING", "QUEUED_AND_RUNNING"):
             bucket, state = running, "running"
