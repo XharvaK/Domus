@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 12
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.27.0"
+PROBE_VERSION = "2.28.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -78,12 +78,16 @@ E2_PAYLOAD_KEYS = {
     # because a closed observation shape gained a key old rows must not carry.
     # 2.24.0: owner (ACCEPTED: pushed at Critical because the User asked) and started
     # (FINISHED of a pushed act: did the game ever begin it) are optional the same way.
+    # 2.28.0: aliases (PUSHED: the other interaction ids the push put in her queue, at most
+    # ACT_MAX_ALIASES; None when there are none) is optional the same way.
     "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
                   "tuning_name", "finishing_type", "detail", "reason_key",
-                  "closed", "resumed", "owner", "started"),
+                  "closed", "resumed", "owner", "started", "aliases"),
     "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
+# 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
+ACT_MAX_ALIASES = 4
 # 2.23.0: what her answer did to the pause the dialog made.
 RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
                   "other_dialog_open", "failed")
@@ -549,6 +553,8 @@ def _validate_e2(row):
             payload["owner"] = None
         if "started" not in payload:
             payload["started"] = None
+        if "aliases" not in payload:
+            payload["aliases"] = None
     _require(isinstance(payload, dict) and
              set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
@@ -611,6 +617,12 @@ def _validate_e2(row):
         for key in ("owner", "started"):
             if payload[key] is not None:
                 _require(type(payload[key]) is bool, "act %s" % key)
+        if payload["aliases"] is not None:
+            _require(type(payload["aliases"]) is list and len(payload["aliases"]) <= ACT_MAX_ALIASES,
+                     "act aliases")
+            for item in payload["aliases"]:
+                _require(isinstance(item, str), "act alias must be a string")
+                string_id(item, "act alias")
     elif kind == "act_menu":
         _validate_menu(payload)
     elif kind == "speed_event":

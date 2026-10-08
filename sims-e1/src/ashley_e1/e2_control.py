@@ -115,6 +115,8 @@ EXCLUDED_OBJECT_IDS = frozenset(("118245043789434044",))
 # 2.19.1: samples (about one a second) a pushed act may be missing from her queue before it
 # is recorded as gone (UNKNOWN, LEFT_QUEUE).
 LEFT_QUEUE_SAMPLES = 5
+# 2.28.0: at most this many entries of her queue and her running list are compared around a push.
+ALIAS_SCAN_LIMIT = 32
 
 
 def _now():
@@ -218,6 +220,28 @@ def _tuning_name(affordance):
     return str(name)[:128]
 
 
+def _queued_interactions(sim):
+    """2.28.0: her Sim's queued and running interactions by id, {id: interaction}: the two
+    collections observers.poll_once reads. At most ALIAS_SCAN_LIMIT of each. Never raises."""
+    found = {}
+    for read in (lambda: sim.queue, lambda: sim.si_state):
+        try:
+            items = read()
+            if items is None:
+                continue
+            for index, entry in enumerate(items):
+                if index >= ALIAS_SCAN_LIMIT:
+                    break
+                try:
+                    if entry.id is not None:
+                        found.setdefault(str(entry.id), entry)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return found
+
+
 class E2Control:
     def __init__(self, emit, get_state, get_session_id, get_armed_snapshot,
                  get_writer, output, get_armed_name=None):
@@ -252,7 +276,8 @@ class E2Control:
         self.presence = []
         self.act_ids = set()
         # 2.19.1: her pushed acts not yet finished, by interaction id: {act_id, base,
-        # tuning_name, seen, misses}.
+        # tuning_name, interaction_id, seen, misses}. 2.28.0: an act's returned id and each
+        # alias it gained map to one shared record.
         self.pushed = {}
 
     def available(self):
@@ -687,19 +712,35 @@ class E2Control:
             tuning_name = _tuning_name(affordance)
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
             accepted = True
+            queued_before = _queued_interactions(sim)
             interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
                 sim, obj, affordance, context)
-            if interaction is None:
+            # 2.28.0 (live 2026-10-08: a picker's push returned 704 while her queue gained 703, and
+            # 704 never appeared): whatever the push put in her queue or running list is this act too.
+            born = {}
+            if kind != "refused":
+                queued_after = _queued_interactions(sim)
+                born = dict((key, entry) for key, entry in queued_after.items()
+                            if key not in queued_before)
+            if interaction is None and not born:
                 code = "PUSH_REFUSED" if kind == "refused" else "PUSH_FAILED"
                 self._act_event(act_id, "REJECTED", code=code, tuning_name=tuning_name,
                                 detail=(detail or "")[:schema.MAX_DETAIL_LENGTH] or None,
                                 reason_key=reason_key if kind == "refused" else None, **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
-            interaction_id = str(interaction.id)
+            if interaction is None:
+                # 2.28.0 (live 2026-10-08: a push returned a truthy result with no interaction object,
+                # while interaction 2158 ran): the first interaction the push queued is the act.
+                interaction_id = next(iter(born))
+                interaction = born.pop(interaction_id)
+            else:
+                interaction_id = str(interaction.id)
+                born.pop(interaction_id, None)
+            aliases = list(born)[:schema.ACT_MAX_ALIASES]
             self._act_event(act_id, "PUSHED", interaction_id=interaction_id,
-                            tuning_name=tuning_name, **base)
-            self._watch_act(act_id, base, interaction_id, tuning_name, interaction)
+                            tuning_name=tuning_name, aliases=aliases or None, **base)
+            self._watch_act(act_id, base, interaction_id, tuning_name, interaction, born)
             self._say(connection, "ACT_PUSHED %s interaction %s" % (act_id, interaction_id))
             return True
         except observers.LabIdentityAmbiguous:
@@ -974,7 +1015,8 @@ class E2Control:
     def hold_picker(self, dialog, dialog_type, dialog_msg, immediate):
         """2.27.0: True when this picker's window is held back: she is sampling her own body and
         the interaction that opened it (its resolver's interaction or super interaction,
-        event_testing/resolver.InteractionResolver) is one of her pushed acts."""
+        event_testing/resolver.InteractionResolver) is one of her pushed acts. 2.28.0: any id a
+        pushed act tracks counts, its returned interaction or one the push put in her queue."""
         if self._state() != "SAMPLING" or self.lineage_class == e2_lineage.BODY_MISMATCH:
             return False
         resolver = dialog._resolver
@@ -1027,40 +1069,66 @@ class E2Control:
         appeared in her queue and never finished, so she believed it was still waiting):
         a pushed act whose interaction is missing from her queue for LEFT_QUEUE_SAMPLES
         samples in a row, with no finish from the game, is UNKNOWN (LEFT_QUEUE): it is gone
-        and nobody can tell how it ended."""
+        and nobody can tell how it ended. 2.28.0: an act is present when any of its ids is in
+        her queue, so an alias that stays keeps the act; it is gone when none of them is."""
         if not self.pushed:
             return
         observed = ((row.get("interactions") or {}).get("observed")) or []
         present = set(str(entry.get("interaction_id")) for entry in observed if isinstance(entry, dict))
-        for interaction_id in list(self.pushed):
-            item = self.pushed[interaction_id]
-            if interaction_id in present:
+        for item in self._pushed_records():
+            keys = self._pushed_keys(item)
+            if any(key in present for key in keys):
                 item["seen"], item["misses"] = True, 0
                 continue
             item["misses"] += 1
             if item["misses"] < LEFT_QUEUE_SAMPLES:
                 continue
-            del self.pushed[interaction_id]
-            self._act_event(item["act_id"], "UNKNOWN", code="LEFT_QUEUE", interaction_id=interaction_id,
+            for key in keys:
+                self.pushed.pop(key, None)
+            self._act_event(item["act_id"], "UNKNOWN", code="LEFT_QUEUE",
+                            interaction_id=item["interaction_id"],
                             tuning_name=item["tuning_name"],
                             detail="ran, then left" if item["seen"] else "never seen in her queue",
                             **item["base"])
 
-    def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction):
-        self.pushed[interaction_id] = {"act_id": act_id, "base": base, "tuning_name": tuning_name,
-                                       "seen": False, "misses": 0}
+    def _pushed_records(self):
+        """2.28.0: each pushed act once, however many of its ids are tracked."""
+        records = {}
+        for item in self.pushed.values():
+            records.setdefault(id(item), item)
+        return list(records.values())
 
-        def _finished(finished_interaction, _act_id=act_id):
-            if self.pushed.pop(interaction_id, None) is None:
-                return  # already recorded as gone
+    def _pushed_keys(self, item):
+        return [key for key, value in self.pushed.items() if value is item]
+
+    def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction, aliases=None):
+        """2.28.0: the act is tracked under its returned interaction and under each alias (the
+        interactions the push put in her queue, {id: interaction}). They share one record, so the
+        first finish of any of them is the act's FINISHED, and it names the one that finished."""
+        item = {"act_id": act_id, "base": base, "tuning_name": tuning_name,
+                "interaction_id": interaction_id, "seen": False, "misses": 0}
+        self.pushed[interaction_id] = item
+        watched = [(interaction_id, interaction)]
+        for alias_id, alias in (aliases or {}).items():
+            self.pushed[alias_id] = item
+            watched.append((alias_id, alias))
+        for watched_id, watched_interaction in watched:
+            self._watch_act_finish(item, watched_id, watched_interaction)
+
+    def _watch_act_finish(self, item, watched_id, interaction):
+        def _finished(finished_interaction):
+            if self.pushed.get(watched_id) is not item:
+                return  # already recorded as finished, or gone
+            for key in self._pushed_keys(item):
+                self.pushed.pop(key, None)
             try:
                 finishing = str(finished_interaction.finishing_type)
             except Exception:
                 finishing = "UNREADABLE"
-            self._act_event(_act_id, "FINISHED", interaction_id=interaction_id,
-                            tuning_name=tuning_name,
+            self._act_event(item["act_id"], "FINISHED", interaction_id=watched_id,
+                            tuning_name=item["tuning_name"],
                             finishing_type=finishing[:schema.MAX_DISPLAY_TEXT_LENGTH],
-                            started=e2_actuator.started(finished_interaction), **base)
+                            started=e2_actuator.started(finished_interaction), **item["base"])
 
         try:
             e2_actuator.watch_finish(interaction, _finished)
