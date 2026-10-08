@@ -17,7 +17,7 @@ def _window(**over):
 
 
 PACE = dict(need_drain=0.5, motives_modified=3, drain_measured=0.5, slow_time=1.0,
-            clock_scale=1.0, clock_foreign=False)
+            clock_scale=1.0, clock_foreign=False, clock_unreadable=False)
 
 
 def _observation(seq=1, **payload):

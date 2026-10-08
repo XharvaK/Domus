@@ -122,12 +122,15 @@ def body_id(row):
     return None
 
 
-def dialog_is_hers(dialog, body):
+def dialog_is_hers(dialog, body, version=None):
     """W2h: whose window it is. The probe's cause is the answer ("hers", "user", "identity_user").
-    A sample from an older probe has no cause: the owner rule decides (no owner, or her owner)."""
+    W4 (F5): under schema 14 every window carries its cause, so a null cause is not hers. A sample from an
+    older probe has no cause: the owner rule decides (no owner, or her owner)."""
     cause = dialog.get("cause")
     if cause is not None:
         return cause == "hers"
+    if type(version) is int and version >= 14:
+        return False
     owner = dialog.get("owner_id")
     return owner is None or body is None or str(owner) == body
 
@@ -142,8 +145,10 @@ def answer_rules(dialog, resolve=None):
     without a resolvable default is named by its field name."""
     rules = {}
     select = dialog.get("select")
-    if isinstance(select, dict) and (_int(select.get("max")) or 0) > 1:
-        rules["select"] = {"min": _int(select.get("min")), "max": select["max"]}
+    # W4 (F2): a max of 0 is no limit (the game's own meaning), so it is a rule too, as is any max above 1.
+    high = _int(select.get("max")) if isinstance(select, dict) else None
+    if high is not None and (high == 0 or high > 1):
+        rules["select"] = {"min": _int(select.get("min")), "max": high}
     counts = dialog.get("counts")
     if isinstance(counts, dict):
         rules["counts"] = {"max_in_row": _int(counts.get("max_in_row")),
@@ -161,7 +166,9 @@ def answer_rules(dialog, resolve=None):
                          "numeric": field.get("numeric") is True,
                          "min_value": _int(field.get("min_value")),
                          "max_value": _int(field.get("max_value")),
-                         "profanity_checked": field.get("profanity_checked") is True})
+                         "profanity_checked": field.get("profanity_checked") is True,
+                         # W4 (F9): the probe's restricted-character flag; the letters, digits and space rule is the probe's.
+                         "restricted": field.get("restricted") is True})
         if text:
             rules["text"] = text
     return rules or None
@@ -174,12 +181,14 @@ def dialog_options(row, resolve=None, start=0):
     from start."""
     dialogs = ((row or {}).get("dialogs") or {}).get("open") or []
     body = body_id(row)
+    version = (row or {}).get("schema_version")
     result = []
     count = start
     for dialog in dialogs:
         if not isinstance(dialog, dict) or not dialog.get("dialog_id"):
             continue
-        if not dialog_is_hers(dialog, body):
+        # W4 (F1): options are offered only for a window the probe holds for her; a shown or unanswerable one is not.
+        if dialog.get("held") is not True or not dialog_is_hers(dialog, body, version):
             continue
         rules = answer_rules(dialog, resolve)
         acts = []

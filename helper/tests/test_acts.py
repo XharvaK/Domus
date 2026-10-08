@@ -71,7 +71,7 @@ def test_her_own_phone_is_an_option_named_your_phone():
 
 DIALOG_ROW = {"presence": [{"id": "100", "is_body": True, "name": "Her"}], "dialogs": {"open": [
     {"dialog_id": "555", "kind": "UiRecipePicker", "owner_id": "100", "title_key": "1", "text_key": None,
-     "auto_respond": False, "responses": [{"response": "ok", "text_key": "2"}, {"response": "cancel", "text_key": "3"}],
+     "auto_respond": False, "held": True, "responses": [{"response": "ok", "text_key": "2"}, {"response": "cancel", "text_key": "3"}],
      "rows": [{"option_id": "11", "name_key": "4", "enabled": True, "price": 5},
               {"option_id": "12", "name_key": "5", "enabled": False, "price": 9}]},
     {"dialog_id": "556", "kind": "UiDialogOkCancel", "owner_id": "42", "title_key": "1", "text_key": None,
@@ -321,7 +321,7 @@ def test_no_round_trip_means_no_picture_is_handed_on(tmp_path, monkeypatch):
 def _dialog(dialog_id, **extra):
     """A dialog sample from the probe (invented strings)."""
     dialog = {"dialog_id": dialog_id, "kind": "UiPicker", "owner_id": "100", "title_key": "1",
-              "text_key": None, "auto_respond": False,
+              "text_key": None, "auto_respond": False, "held": True,
               "responses": [{"response": "ok", "text_key": "2"}, {"response": "cancel", "text_key": "3"}],
               "rows": [{"option_id": "11", "name_key": "4", "enabled": True, "price": None},
                        {"option_id": "12", "name_key": "5", "enabled": True, "price": None}]}
@@ -364,9 +364,9 @@ def test_counts_and_text_fields_carry_their_limits_and_resolved_labels():
     assert entry["answer_rules"] == {
         "counts": {"max_in_row": 4, "max_rows": 2},
         "text": [{"name": "tip", "label": "Tip Amount", "min_length": 1, "max_length": 6, "numeric": True,
-                  "min_value": 0, "max_value": 50, "profanity_checked": False},
+                  "min_value": 0, "max_value": 50, "profanity_checked": False, "restricted": False},
                  {"name": "note", "label": "note", "min_length": 0, "max_length": None, "numeric": False,
-                  "min_value": None, "max_value": None, "profanity_checked": True}]}
+                  "min_value": None, "max_value": None, "profanity_checked": True, "restricted": True}]}
     assert [act["guid64"] for act in entry["acts"]] == ["11", "12", "ok", "cancel"]
 
 
@@ -386,6 +386,25 @@ def test_dialogs_on_the_users_screen_are_never_offered():
     hers = _dialog("612", cause="hers", owner_id="100")
     result = dialog_options(_asked(user, identity, hers), TEXTS.get)
     assert [entry["object_id"] for entry in result] == ["dialog:612"]
+
+
+def test_a_window_the_probe_does_not_hold_is_not_offered():
+    shown = _dialog("630", held=False, cause="hers")
+    assert dialog_options(_asked(shown), TEXTS.get) == []
+
+
+def test_under_schema_14_a_null_cause_is_not_hers_and_under_13_the_owner_rule_decides():
+    dialog = _dialog("631", cause=None)
+    assert dialog_options(dict(_asked(dialog), schema_version=14), TEXTS.get) == []
+    older = dialog_options(dict(_asked(dialog), schema_version=13), TEXTS.get)
+    assert [entry["object_id"] for entry in older] == ["dialog:631"]
+
+
+def test_a_select_of_zero_is_no_limit_a_rule_and_keeps_the_ok_button():
+    dialog = _dialog("632", select={"min": 1, "max": 0})
+    [entry] = dialog_options(_asked(dialog), TEXTS.get)
+    assert entry["answer_rules"] == {"select": {"min": 1, "max": 0}}
+    assert [act["guid64"] for act in entry["acts"]] == ["11", "12", "ok", "cancel"]
 
 
 def test_an_older_probe_without_cause_keeps_the_owner_rule():

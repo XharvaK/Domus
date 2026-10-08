@@ -3,7 +3,7 @@ import json
 import re
 
 from .. import lang
-from ..acts import body_id, dialog_is_hers
+from ..acts import answer_rules, body_id, dialog_is_hers
 from ..scene import NEAR_METERS as SEEN_DISTANCE_M
 from ..windows import PORTRAIT_LIMIT as WINDOWS_SHOWN
 
@@ -250,26 +250,9 @@ def _drop_one(items, key):
 
 
 def _asked_answer_rules(item, resolve):
-    """W2h: the rules a question puts on her answer, under answer_rules (the shape her options
-    carry, with the restricted-character flag added). Nothing when the game gave no rules."""
-    rules = {}
-    select = item.get("select")
-    if isinstance(select, dict):
-        rules["select"] = {"min": select.get("min"), "max": select.get("max")}
-    counts = item.get("counts")
-    if isinstance(counts, dict):
-        rules["counts"] = {"max_in_row": counts.get("max_in_row"), "max_rows": counts.get("max_rows")}
-    fields = item.get("text_inputs")
-    if isinstance(fields, list):
-        rules["text"] = [
-            {"name": field["name"],
-             "label": _resolve(resolve, field.get("default_key")) or field["name"],
-             "min_length": field.get("min_length"), "max_length": field.get("max_length"),
-             "numeric": field.get("numeric") is True,
-             "min_value": field.get("min_value"), "max_value": field.get("max_value"),
-             "profanity_checked": field.get("profanity_checked") is True,
-             "restricted": field.get("restricted") is True}
-            for field in fields if isinstance(field, dict) and isinstance(field.get("name"), str)]
+    """W2h, W4 (F6): the rules a question puts on her answer. One source of truth with her options: acts.answer_rules
+    decides which rules exist, so the portrait and the options never disagree. Nothing when the game gave no rules."""
+    rules = answer_rules(item, resolve)
     return {"answer_rules": rules} if rules else {}
 
 
@@ -417,7 +400,7 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None):
                          if isinstance(choice, dict)],
              "answers_itself": item.get("auto_respond") is True,
              "held": item.get("held") is True,
-             "whose": "hers" if dialog_is_hers(item, body) else "the User's",
+             "whose": "hers" if dialog_is_hers(item, body, row.get("schema_version")) else "the User's",
              **_asked_answer_rules(item, resolve)}
             for item in dialogs["open"] if isinstance(item, dict)]
     own = row.get("self")
