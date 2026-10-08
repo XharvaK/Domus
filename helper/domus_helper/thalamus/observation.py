@@ -271,9 +271,10 @@ def _asked_answer_rules(item, resolve):
     return {"answer_rules": rules} if rules else {}
 
 
-def _portrait(row, resolve=None, notebook=None, windows=None):
+def _portrait(row, resolve=None, notebook=None, windows=None, pace=None):
     """resolve: string key -> the game's own text (S0), or None when unknown.
-    windows: W2h, the window facts of her session (windows.WindowLog.recent)."""
+    windows: W2h, the window facts of her session (windows.WindowLog.recent).
+    pace: W3h, her pace entry (pace.portrait), or None."""
     row = row or {}
     zone = row.get("zone") or {}
     addressing = _addressing_ids(row)
@@ -455,17 +456,25 @@ def _portrait(row, resolve=None, notebook=None, windows=None):
                     want["until"] = "%02d:%02d" % (until[0], until[1])
                 wants.append(want)
             portrait["self"]["wants"] = wants
+    if pace:
+        # W3h: facts about her pace (the drain, the clock, what her last decisions cost in game time).
+        portrait["pace"] = dict(pace)
     if notebook:
         portrait["notebook"] = notebook
     # Sentences are extra: her own (doing_said, last first), then addressed_by,
     # before anything that was already in the portrait.
-    # Then the least essential: the notebook, then queued, the window facts, running lists,
-    # then moodlets, then company.
+    # Then the least essential: the notebook, then queued, the window facts, her pace, running
+    # lists, then moodlets, then company.
     while _bytes(portrait) > _PORTRAIT_LIMIT and _shed_sentence(portrait):
         pass
     if "notebook" in portrait and _bytes(portrait) > _PORTRAIT_LIMIT:
         del portrait["notebook"]
-    for key in ("queued", "windows", "running", "moodlets", "company"):
+    for key in ("queued", "windows", "pace", "running", "moodlets", "company"):
+        if key == "pace":
+            # W3h: the pace entry goes whole, not item by item.
+            if _bytes(portrait) > _PORTRAIT_LIMIT:
+                portrait.pop("pace", None)
+            continue
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:
             _drop_one(portrait[key], key)
     return portrait
@@ -516,6 +525,6 @@ def build(decision, ctx):
         "lineage_class": lineage,
         "percepts": percepts,
         "portrait": _portrait(row, ctx.get("resolve_text"), notebook=ctx.get("notebook"),
-                              windows=ctx.get("windows")),
+                              windows=ctx.get("windows"), pace=ctx.get("pace")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
     }
