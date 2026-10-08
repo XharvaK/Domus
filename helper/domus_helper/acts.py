@@ -58,6 +58,9 @@ def _sentence(resolve, key):
 
 
 def _object_name(item, resolve, catalog, people=None):
+    if item.get("phone") is True:
+        # 2.29.0: her own phone is a thing she uses; her body is never named as a person here.
+        return "your phone"
     if item.get("class") == "sim":
         # 2.17.0: a person in her menu is named as her senses name them.
         return (people or {}).get(str(item.get("object_id"))) or "someone"
@@ -172,6 +175,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         where = "here" if item.get("same_room") is True else "nearby"
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
+        if item.get("phone") is True:
+            where = "with her"  # 2.29.0: her phone is on her, so no distance and no room.
         acts = []
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):

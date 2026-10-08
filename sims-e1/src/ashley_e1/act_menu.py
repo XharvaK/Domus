@@ -53,6 +53,8 @@ def ordered(objects):
 
 
 def _room_key(item):
+    if item.get("phone") is True:
+        return "phone"
     if item.get("person") is True:
         return "people"
     if item.get("same_room") is True:
@@ -75,7 +77,7 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
     ROOM_OBJECTS each); what is off the lot comes last. Within a room, fixtures come last.
     An object that offers nothing is passed over before it counts toward limit; one object
     per definition (four dining chairs are one choice), one per set of acts. At most scan objects have their
-    offers read."""
+    offers read. 2.29.0: her own phone (one item) comes right after her room's objects."""
     groups = []
     by_key = {}
     for item in items:
@@ -86,7 +88,7 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
         by_key[key].append(item)
     for key in groups:
         by_key[key].sort(key=fixture)  # stable: nearest first within each kind
-    rooms = [key for key in groups if key not in ("here", "off", "people")]
+    rooms = [key for key in groups if key not in ("here", "off", "people", "phone")]
     picked = []
     definitions = set()
     choices = set()
@@ -109,7 +111,8 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
             # 2.19.0 (live 2026-10-06: three mirrors with the same five acts, and the
             # kitchen never listed): an object offering exactly the acts of one already
             # picked is the same choice again. People are never folded.
-            same = None if item.get("person") is True else _choice(acts)
+            # 2.29.0: her own phone is never folded with another object, as people never are.
+            same = None if (item.get("person") is True or item.get("phone") is True) else _choice(acts)
             if same is not None and same in choices:
                 continue
             if definition is not None:
@@ -129,6 +132,11 @@ def pick(items, offers, limit=CANDIDATE_OBJECTS, scan=SCAN_OBJECTS):
             found = take("here")
             if found is None:
                 break
+            picked.append(found)
+    if "phone" in by_key and not full():
+        # 2.29.0: her own phone is one entry, right after her room's objects.
+        found = take("phone")
+        if found is not None:
             picked.append(found)
     if "people" in by_key:
         for _ in range(PEOPLE_OBJECTS):
@@ -205,7 +213,8 @@ class MenuBuild(object):
                 by_object[key] = {
                     "object_id": job["object_id"], "definition_id": job.get("definition_id"),
                     "class": (job.get("class") or "")[:96], "distance_m": job.get("distance_m"),
-                    "same_room": job.get("same_room"), "reach": job.get("reach"), "acts": []}
+                    "same_room": job.get("same_room"), "reach": job.get("reach"),
+                    "phone": True if job.get("phone") is True else None, "acts": []}
                 order.append(key)
             acts = by_object[key]["acts"]
             if len(acts) < schema.MENU_MAX_ACTS and all(a["guid64"] != job["guid64"] for a in acts):

@@ -52,6 +52,23 @@ def test_people_in_her_menu_are_named_as_her_senses_name_them():
         ("Dennis Kim", "social Greet Neighbor"), ("someone", "sim Invite In")]
 
 
+PHONE_MENU = {"menu_rev": 4, "room": "4", "tested": 3, "refused": 1, "build_ms": 2.0, "objects": [
+    {"object_id": "11", "definition_id": "511", "class": "object_bookshelf", "distance_m": 2.0, "same_room": True,
+     "reach": None, "phone": None, "acts": [{"guid64": "4242", "name": "bookshelf_ReadBook", "text_key": None}]},
+    {"object_id": "900", "definition_id": None, "class": "phone", "distance_m": None, "same_room": None,
+     "reach": None, "phone": True, "acts": [{"guid64": "6001", "name": "phone_SampleMessage", "text_key": None}]}]}
+
+
+def test_her_own_phone_is_an_option_named_your_phone():
+    # 2.29.0: her phone is an object she uses. It is named "your phone", placed with her, and her
+    # body (the same id) is never named as a person.
+    result = options(PHONE_MENU, lambda key: None, people={"900": "Dennis Kim"})
+    phone = [entry for entry in result if entry["object_id"] == "900"][0]
+    assert phone == {"object": "your phone", "object_id": "900", "where": "with her", "acts": [
+        {"ref": "a2", "guid64": "6001", "text": "phone Sample Message"}]}
+    assert [entry["object"] for entry in result] == ["object bookshelf", "your phone"]
+
+
 DIALOG_ROW = {"presence": [{"id": "100", "is_body": True, "name": "Her"}], "dialogs": {"open": [
     {"dialog_id": "555", "kind": "UiRecipePicker", "owner_id": "100", "title_key": "1", "text_key": None,
      "auto_respond": False, "responses": [{"response": "ok", "text_key": "2"}, {"response": "cancel", "text_key": "3"}],

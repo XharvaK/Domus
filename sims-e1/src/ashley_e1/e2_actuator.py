@@ -72,6 +72,84 @@ def offers_for(obj, context, guid64):
     return offers
 
 
+# 2.29.0: her own phone. The game keeps a Sim's phone acts in her own list (`_phone_affordances`,
+# which Sim.potential_phone_interactions reads), and their target is her own Sim. Leaving the lot
+# changes zones, so a phone act that travels is not offered in this version.
+PHONE_SCAN_LIMIT = 64
+PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "inviteto", "askon", "vacation",
+                      "lodging")
+# 2.29.0: her phone is how she calls, texts and invites people over, so the blanket name bans that
+# kept every phone act out (call_, phone_call, invite, social) do not apply to it. What still stays
+# out by name: testers' acts, money, jobs, emergencies and the acts that change a life in one click.
+PHONE_DENY_PARTS = ("debug", "cheat", "testing", "tutorial", "buy", "purchase", "order", "sell",
+                    "business", "career", "job", "quit", "retire", "police", "firefighter", "burglar",
+                    "woohoo", "trybaby", "propose", "breakup", "divorce", "adopt", "movein", "moveout",
+                    "autonomous", "npc")
+
+
+def phone_affordances(sim):
+    """Read: the phone affordances her Sim carries, at most PHONE_SCAN_LIMIT. Never raises."""
+    listed = []
+    try:
+        for affordance in sim._phone_affordances or ():
+            if len(listed) >= PHONE_SCAN_LIMIT:
+                break
+            listed.append(affordance)
+    except Exception:
+        pass
+    return listed
+
+
+def phone_offers_for(sim, guid64):
+    """Read: her phone affordances whose guid64 equals the request. An act on her own Sim is
+    offered by her phone and by nothing else."""
+    wanted = int(guid64)
+    offers = []
+    for affordance in phone_affordances(sim):
+        try:
+            if int(affordance.guid64) == wanted:
+                offers.append(affordance)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return offers
+
+
+def phone_act_excluded(affordance):
+    """2.29.0: None when a phone act may be on her menu, else a reason. Pickers (who to call,
+    text or invite) are hers to answer and socials are what a phone is for; a pie menu, a trip
+    off the lot, and the PHONE_DENY_PARTS names stay out."""
+    try:
+        low = str(affordance.__name__).lower().replace("_", "")
+    except Exception:
+        low = ""
+    if "piemenu" in low:
+        return "pie_picker"
+    if any(part in low for part in PHONE_DENY_PARTS):
+        return "deny_name"
+    return phone_excluded(affordance)
+
+
+def phone_excluded(affordance):
+    """2.29.0: None, or "travel" when the phone act would take her off the lot. Its class or
+    tuning name, read down the class MRO as food_route reads it, says travel, go to, or visit a
+    lot (underscores and spaces ignored, so go_to and GoTo both match)."""
+    names = []
+    for cls in _mro(affordance):
+        try:
+            names.append(cls.__name__)
+        except Exception:
+            continue
+    try:
+        names.append(affordance.__name__)
+    except Exception:
+        pass
+    for name in names:
+        low = str(name).lower().replace("_", "").replace(" ", "")
+        if any(part in low for part in PHONE_TRAVEL_PARTS):
+            return "travel"
+    return None
+
+
 def food_route(affordance):
     """Dialog-free food push, or None. Order and catering stay excluded (A30)."""
     names = []

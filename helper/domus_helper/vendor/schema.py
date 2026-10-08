@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 12
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v12"
-PROBE_VERSION = "2.28.0"
+PROBE_VERSION = "2.29.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -95,7 +95,8 @@ RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
 MENU_MAX_OBJECTS = 24
 MENU_MAX_ACTS = 8
 # 2.25.0: reach (the game's own connectivity check from her to the object; None when unread).
-MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "reach", "acts")
+# 2.29.0: phone (True on her own phone's entry, None on every other object) is optional the same way.
+MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "reach", "acts", "phone")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
@@ -537,10 +538,13 @@ def _validate_e2(row):
             if key not in payload:
                 payload[key] = None
     elif kind == "act_menu" and isinstance(payload, dict):
-        # 2.25.0: reach is optional; older menu rows omit it.
+        # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone.
         for item in payload.get("objects") or ():
-            if isinstance(item, dict) and "reach" not in item:
-                item["reach"] = None
+            if isinstance(item, dict):
+                if "reach" not in item:
+                    item["reach"] = None
+                if "phone" not in item:
+                    item["phone"] = None
     elif kind == "act_event" and isinstance(payload, dict):
         # 2.22.0 / 2.23.0: optional. Older act rows omit them.
         if "reason_key" not in payload:
@@ -662,6 +666,7 @@ def _validate_menu(payload):
         _number_or_none(item["distance_m"], "menu distance_m")
         _require(item["same_room"] in (True, False, None), "menu same_room")
         _require(item["reach"] in (True, False, None), "menu reach")
+        _require(item["phone"] in (True, False, None), "menu phone")
         acts = item["acts"]
         _require(isinstance(acts, list) and 1 <= len(acts) <= MENU_MAX_ACTS, "menu acts")
         for act in acts:
