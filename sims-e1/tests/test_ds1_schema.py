@@ -75,8 +75,8 @@ def full_self():
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 13)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v13")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 14)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v14")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -209,7 +209,13 @@ class SchemaV4Tests(unittest.TestCase):
                       "title_key": key, "text_key": key,
                       "responses": [{"response": "r" * 16, "text_key": key}] * 6,
                       "auto_respond": True,
-                      "rows": [{"option_id": "9" * 20, "name_key": key, "enabled": True, "price": 99999}] * 40}
+                      "rows": [{"option_id": "9" * 20, "name_key": key, "enabled": True, "price": 99999}] * 40,
+                      "held": True, "cause": "identity_user", "select": {"min": 0, "max": 40},
+                      "counts": {"max_in_row": 999, "max_rows": 999},
+                      "text_inputs": [{"name": "f" * 32, "min_length": 4096, "max_length": 4096,
+                                       "numeric": True, "min_value": -2 ** 53, "max_value": 2 ** 53,
+                                       "profanity_checked": True, "restricted": True,
+                                       "default_key": "4294967295"}] * 8}
                      for i in range(4)],
             "closed": [{"dialog_id": "%064d" % i, "kind": "k" * 128, "title_key": key,
                         "text_key": key, "response": "r" * 16} for i in range(4)],

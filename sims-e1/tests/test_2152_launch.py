@@ -248,7 +248,8 @@ class DialogTests(unittest.TestCase):
             "title_key": str(0x5001), "text_key": str(0x5002),
             "responses": [{"response": "ok", "text_key": str(0x6001)},
                           {"response": "cancel", "text_key": str(0x6002)}],
-            "auto_respond": False, "rows": []}])
+            "auto_respond": False, "rows": [], "held": False, "cause": None, "select": None,
+            "counts": None, "text_inputs": None}])
         self.assertEqual(dialogs["closed"], [])
         again = self.row()["dialogs"]  # still showing: open, never closed
         self.assertEqual([item["dialog_id"] for item in again["open"]], ["555"])

@@ -199,12 +199,12 @@ def excluded(affordance):
                 return "deny_name"
         return "social"
     try:
-        low = str(affordance.__name__).lower()
+        name = str(affordance.__name__)
     except Exception:
-        low = ""
-    for part in e2_trial.DENY_NAME_PARTS:
-        if part in low:
-            return "deny_name"
+        name = ""
+    # 2.31.0 (PR9): whole name words, not substrings ("kill" is not in "Skill").
+    if e2_trial.denied_name(name) is not None:
+        return "deny_name"
     return None
 
 

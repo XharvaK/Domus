@@ -20,14 +20,53 @@ IDLE_RUNNING_SOURCES = ("InteractionSource.POSTURE_GRAPH",
                         "InteractionSource.BODY_CANCEL_AOP",
                         "InteractionSource.CARRY_CANCEL_AOP")
 
+# 2.31.0 (PR9): each entry is one or more whole name words, underscores joined. A tuning name is
+# split on underscores, spaces and CamelCase edges (see name_words), and an entry matches only when
+# its words come next to each other in that order. So "kill" no longer hides the skill acts (the
+# word is inside "Skill") and "fire" no longer hides Fireplace or Campfire acts. Forms written as
+# one word are kept for names that spell the phrase in one piece (Woohoo, Breakup, Goto, Socialize).
 DENY_NAME_PARTS = (
     "debug", "cheat", "testing", "tutorial", "sell", "delete", "destroy",
-    "demolish", "burn", "fire", "kill", "death", "grim", "woohoo", "trybaby",
-    "try_for_baby", "propose", "breakup", "divorce", "adopt", "moveout",
-    "move_out", "travel", "goto", "go_here", "leave", "career", "job", "quit",
-    "retire", "buy", "purchase", "order", "call_", "phone_call", "invite",
-    "ask_to", "social",
+    "demolish", "burn", "fire", "kill", "death", "grim", "woohoo", "woo_hoo",
+    "trybaby", "try_baby", "try_for_baby", "propose", "breakup", "break_up", "divorce",
+    "adopt", "adoption", "moveout", "move_out", "travel", "goto", "go_to", "go_here",
+    "leave", "career", "careers", "job", "jobs", "quit", "retire", "buy", "purchase", "order",
+    "call", "phone_call", "invite", "ask_to", "social", "socialize",
 )
+
+
+def name_words(name):
+    """2.31.0: the lower-case words of a tuning or class name. Underscores, spaces and dashes end a
+    word; so does a capital that follows a lower-case letter or a digit, or that ends an acronym
+    (PIEMenu gives pie and menu). Pure: no regular expressions."""
+    words, word, text = [], "", str(name)
+    for index, ch in enumerate(text):
+        if not ch.isalnum():
+            if word:
+                words.append(word)
+                word = ""
+            continue
+        if word and ch.isupper():
+            before = text[index - 1]
+            after = text[index + 1] if index + 1 < len(text) else ""
+            if before.islower() or before.isdigit() or (before.isupper() and after.islower()):
+                words.append(word)
+                word = ""
+        word += ch
+    if word:
+        words.append(word)
+    return [item.lower() for item in words]
+
+
+def denied_name(name):
+    """2.31.0: the DENY_NAME_PARTS entry whose words come next to each other in the name, else None."""
+    words = name_words(name)
+    for entry in DENY_NAME_PARTS:
+        part = entry.split("_")
+        for start in range(len(words) - len(part) + 1):
+            if words[start:start + len(part)] == part:
+                return entry
+    return None
 
 # 2.17.0: her socials toward another Sim (greet, invite in, talk) are hers to choose. The
 # acts that change a life or a household in one click stay out, as do testers' acts.

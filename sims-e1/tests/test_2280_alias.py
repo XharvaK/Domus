@@ -252,12 +252,13 @@ class AliasHoldTests(unittest.TestCase):
         def original(dialog, dialog_type, dialog_msg, immediate=False):
             test.shown.append(dialog.dialog_id)
 
-        self.module._HOLD.update(controller=self.control, original=original)
+        self.hook = self.module._dialog_hook(original)
+        self.module._HOLD.update(controller=self.control)
         self.picker = self.answer.recipes
         self.picker.dialog_id = 555
 
     def tearDown(self):
-        self.module._HOLD.update(controller=None, original=None)
+        self.module._HOLD.update(controller=None)
         self.answer.tearDown()
 
     def speed(self):
@@ -269,7 +270,7 @@ class AliasHoldTests(unittest.TestCase):
         ok, connection = self.case.act()
         self.assertTrue(ok, connection.lines)
         self.picker._resolver = types.SimpleNamespace(_interaction=queued[0], super_interaction=None)
-        self.module._held_distribute(self.picker, "MSG_PICKER", "msg", immediate=True)
+        self.hook(self.picker, "MSG_PICKER", "msg", immediate=True)
         self.assertEqual(self.shown, [])
         self.assertIn("555", self.control.held)
         self.assertEqual(self.speed()[-1], ("DIALOG_HELD", None, "dialog 555 act %s" % acts.ACT))
@@ -286,7 +287,7 @@ class AliasHoldTests(unittest.TestCase):
         self.assertTrue(self.case.act()[0])
         self.picker.dialog_id = 556
         self.picker._resolver = types.SimpleNamespace(_interaction=returned, super_interaction=None)
-        self.module._held_distribute(self.picker, "MSG_PICKER", "msg", immediate=True)
+        self.hook(self.picker, "MSG_PICKER", "msg", immediate=True)
         self.assertEqual(self.shown, [])
         self.assertEqual(self.control.held["556"]["act_id"], acts.ACT)
 
@@ -296,7 +297,7 @@ class AliasHoldTests(unittest.TestCase):
         self.assertTrue(self.case.act()[0])
         self.picker._resolver = types.SimpleNamespace(
             _interaction=test_e2._Interaction(999), super_interaction=None)
-        self.module._held_distribute(self.picker, "MSG_PICKER", "msg", immediate=True)
+        self.hook(self.picker, "MSG_PICKER", "msg", immediate=True)
         self.assertEqual(self.shown, [555])
         self.assertEqual(self.control.held, {})
 

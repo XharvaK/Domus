@@ -2,19 +2,33 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.30.0 (she sees her wants and fears)
+## Current build: 2.31.0 (every window her act opens is hers)
 
-The source is version `2.30.0` (`src/ashley_e1/__init__.py`,
+The source is version `2.31.0` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 13, schema 4 to 12 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
 The file the game lists is `Domus_<version>.ts4script`. The package inside stays `ashley_e1`.
-2.30.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.31.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
 with an interaction card. Sit and sit_trial are unchanged. After the verdict the probe
 cancels only the interaction it pushed for that trial, so the next trial finds an idle body (A25).
+
+2.31.0 takes over every window her act or her game opens. A dialog or a phone call she can answer is held for
+her; the User sees it only after 180 s unanswered, and a late answer is then refused. A window she cannot answer
+(colour, composite, map, apartment) is shown to the User at once. A window that renames her Sim or changes its traits
+is always the User's. A client screen her act opens (the event planner, the family tree, the bills panel) is
+withheld and her act records it. Other people's windows are untouched.
+Her dialog report (schema 14) says whether she holds each window, who it belongs to, how many rows she may pick, the
+purchase counts, and for a held text window each field's length and value limits. Her answer may pick several rows,
+counted purchase rows, or text for every field; the probe checks each against the held message and refuses with a
+code, and never logs her text.
+The helper sends her pace with `pace` (`need_drain` and `slow_time`, fractions of normal pace where 1.0 is off; nothing
+applies until it does). Her motives drain at `need_drain` through the game's own decay-rate modifier while she is
+sampling, and the modifier comes off at stop; `slow_time` slows the game clock the same way, only when the clock is at
+the game's defaults. Each observation's `pace` block says what the probe applied.
 
 ## Crawl (DA6)
 
@@ -136,8 +150,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.30.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.30.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.31.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.31.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

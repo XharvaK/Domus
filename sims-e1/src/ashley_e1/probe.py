@@ -175,7 +175,7 @@ _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
-                     "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk")
+                     "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk", "pace")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -669,6 +669,14 @@ def _refuse_observe_only(connection, name):
     return False
 
 
+def _pace_block(row):
+    """2.31.0 (W3p): her pace as the probe applies it for this observation (never raises: None on a fault)."""
+    try:
+        return _E2.pace_row(row)
+    except Exception:
+        return None
+
+
 def _inbox_dispatch(cmd, connection):
     name, args = cmd['command'], cmd['args']
     if _CALIBRATE and name in _OBSERVE_REFUSED:
@@ -691,13 +699,16 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_e2_act(args['act_id'], args['object_id'], args['guid64'],
                                 _session_id=connection, owner=args.get('owner') is True)
     if name == 'answer':
-        return _E2.cmd_answer(args['act_id'], args['dialog_id'], args['pick'], connection)
+        return _E2.cmd_answer(args['act_id'], args['dialog_id'], args['pick'], connection,
+                              rows=args.get('rows'), text=args.get('text'))
     if name == 'cancel':
         return _E2.cmd_cancel(args['act_id'], args['interaction_id'], connection)
     if name == 'camera':
         return _E2.cmd_camera(args['op'], args['target_id'], connection)
     if name == 'talk':
         return _E2.cmd_talk(args['text'], args.get('sim_id'), connection)
+    if name == 'pace':
+        return _E2.cmd_pace(args['need_drain'], args['slow_time'], connection)
     if name == 'atlas_dump':
         return _dispatch_atlas_dump(connection)
     if name == 'tuned_scan':
@@ -2143,6 +2154,9 @@ def _poll_tick_body():
     row["attestation"] = schema.attestation(
         _ARMED_NAME, None, _ARMED_SNAPSHOT["guid"], _ARMED_SNAPSHOT["slot_id"],
         _ARMED_SNAPSHOT["sim_id"])
+    if row.get("event_kind") == "presence_snapshot":
+        # 2.31.0 (W3p): the pace block is decided before the row is written: the probe applies her pace now.
+        row["pace"] = _pace_block(row)
     if not _emit(row):
         _cmd_stop()
         return

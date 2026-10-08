@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 13
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v13"
-PROBE_VERSION = "2.30.0"
+OBSERVATION_SCHEMA_VERSION = 14
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v14"
+PROBE_VERSION = "2.31.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -106,7 +106,8 @@ EXPERIMENT_PHASES = (
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
-            "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act", "camera", "talk")
+            "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act", "camera", "talk",
+            "pace")
 
 
 def _command_id(value):
@@ -124,7 +125,9 @@ def _command_issuer(value):
 # (shown to the User after all: unanswered in time, or at a stop).
 SPEED_PHASES = ("REQUEST_PUSHED", "REQUEST_REMOVED", "REJECT",
                 "RELEASED_ON_DISARM", "RELEASED_ON_STOP", "RELEASE_FAILED",
-                "DIALOG_HELD", "DIALOG_SHOWN")
+                "DIALOG_HELD", "DIALOG_SHOWN", "SCREEN_WITHHELD", "UNKNOWN_SCREEN",
+                # 2.31.0 (W3p): the probe refused the game clock because another mod sets it.
+                "CLOCK_FOREIGN")
 LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED")
 CLAIM_KEYS = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
               "ATTRIBUTED", "MAINTAINED_10S", "FINISHED")
@@ -171,6 +174,8 @@ COMMON_KEYS = {
     "self",
     # 2.15.2 (schema 9): whose lot and what venue; the game's pop-ups; observation rows.
     "place", "dialogs",
+    # 2.31.0 (schema 14): her pace, as the probe applied it; observation rows only.
+    "pace",
 }
 MAX_OBJECT_EVENTS = 8
 MAX_REL_TRACKS = 4
@@ -187,6 +192,18 @@ MAX_DIALOG_RESPONSES = 6
 # 2.18.0 (schema 11): the rows a picker dialog offers (a recipe, a Sim, an object), so she can answer.
 MAX_DIALOG_ROWS = 40
 DIALOG_ROW_KEYS = ("option_id", "name_key", "enabled", "price")
+# 2.31.0 (schema 14, DOMUS_DEEP_DESIGN §11): who holds a window, and what she may answer. The text
+# limits come from the held message (bytecode ui/ui_text_input.UiTextInput.build_msg); numbers and
+# flags only, never game text.
+WINDOW_KEYS = frozenset(("held", "cause", "select", "counts", "text_inputs"))
+WINDOW_CAUSES = ("hers", "user", "identity_user")
+MAX_TEXT_INPUTS = 8
+MAX_TEXT_LIMIT = 4096
+MAX_TEXT_VALUE = 2 ** 53
+MAX_WINDOW_COUNT = 999
+TEXT_FIELD_KEYS = frozenset(("name", "min_length", "max_length", "numeric", "min_value",
+                             "max_value", "profanity_checked", "restricted", "default_key"))
+FIELD_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")
 
 
 class SchemaError(ValueError):
@@ -853,6 +870,76 @@ def _validate_dialog_text(item, label):
     string_id(item["dialog_id"], "%s.dialog_id" % label)
 
 
+def _int_between(value, low, high, label):
+    _require(type(value) is int and low <= value <= high, label)
+
+
+def _validate_window(item):
+    """2.31.0 (schema 14): her window attribution and the answer shapes its dialog offers."""
+    _require(type(item["held"]) is bool, "dialogs.held")
+    _require(item["cause"] is None or item["cause"] in WINDOW_CAUSES, "dialogs.cause")
+    if item["select"] is not None:
+        _require(isinstance(item["select"], dict) and set(item["select"]) == {"min", "max"},
+                 "dialogs.select shape")
+        for number in item["select"].values():
+            _int_between(number, 0, MAX_DIALOG_ROWS, "dialogs.select")
+    if item["counts"] is not None:
+        _require(isinstance(item["counts"], dict) and set(item["counts"]) == {"max_in_row", "max_rows"},
+                 "dialogs.counts shape")
+        for number in item["counts"].values():
+            _int_between(number, 0, MAX_WINDOW_COUNT, "dialogs.counts")
+    fields = item["text_inputs"]
+    if fields is None:
+        return
+    _require(item["held"] is True and isinstance(fields, list) and 1 <= len(fields) <= MAX_TEXT_INPUTS,
+             "dialogs.text_inputs")
+    for field in fields:
+        _require(isinstance(field, dict) and set(field) == TEXT_FIELD_KEYS, "dialogs.text_input entry")
+        bounded_string(field["name"], 32, "dialogs.text_input.name", False)
+        _require(set(field["name"]) <= FIELD_NAME_CHARS, "dialogs.text_input.name characters")
+        _int_between(field["min_length"], 0, MAX_TEXT_LIMIT, "dialogs.text_input.min_length")
+        if field["max_length"] is not None:
+            _int_between(field["max_length"], 0, MAX_TEXT_LIMIT, "dialogs.text_input.max_length")
+        for key in ("min_value", "max_value"):
+            if field[key] is not None:
+                _int_between(field[key], -MAX_TEXT_VALUE, MAX_TEXT_VALUE, "dialogs.text_input.%s" % key)
+        for key in ("numeric", "profanity_checked", "restricted"):
+            _require(type(field[key]) is bool, "dialogs.text_input.%s" % key)
+        if field["default_key"] is not None:
+            _require(isinstance(field["default_key"], str), "dialogs.text_input.default_key")
+            string_id(field["default_key"], "dialogs.text_input.default_key")
+
+
+# 2.31.0 (W3p, schema 14): the pace block of an observation row. need_drain and slow_time are the wanted
+# factors (1.0 is normal pace); drain_measured is the effective factor one motive shows (None when its
+# decay is not running); clock_scale is the value the game multiplies by (None when unread).
+PACE_KEYS = ("need_drain", "motives_modified", "drain_measured", "slow_time", "clock_scale", "clock_foreign")
+PACE_MEASURE_LIMIT = 100
+
+
+def _pace_factor(value, label):
+    _require(type(value) in (int, float) and 0.25 <= value <= 1.0, label)
+
+
+def _validate_pace(row):
+    """2.31.0 (schema 14): the probe's pace block, observation rows only."""
+    if "pace" not in row:
+        return
+    _observation_only(row, "pace", 14)
+    value = row["pace"]
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == set(PACE_KEYS), "pace shape")
+    _pace_factor(value["need_drain"], "pace.need_drain")
+    _pace_factor(value["slow_time"], "pace.slow_time")
+    _int_between(value["motives_modified"], 0, MAX_MOTIVES, "pace.motives_modified")
+    for key in ("drain_measured", "clock_scale"):
+        if value[key] is not None:
+            _require(type(value[key]) in (int, float) and 0 <= value[key] <= PACE_MEASURE_LIMIT,
+                     "pace.%s" % key)
+    _require(type(value["clock_foreign"]) is bool, "pace.clock_foreign")
+
+
 def _validate_dialogs(row):
     """2.15.2: the game's pop-ups. `open` lists those showing now (with the choices the
     game offers), `closed` those gone since the last sample, with the answer read from
@@ -872,6 +959,8 @@ def _validate_dialogs(row):
         keys = {"dialog_id", "kind", "owner_id", "title_key", "text_key", "responses", "auto_respond"}
         if row["schema_version"] >= 11:
             keys.add("rows")
+        if row["schema_version"] >= 14:
+            keys = keys | WINDOW_KEYS
         _require(isinstance(item, dict) and set(item) == keys, "dialogs.open entry")
         if "rows" in keys:
             _require(isinstance(item["rows"], list) and len(item["rows"]) <= MAX_DIALOG_ROWS,
@@ -887,6 +976,8 @@ def _validate_dialogs(row):
                 _require(entry["price"] is None or (type(entry["price"]) is int and entry["price"] >= 0),
                          "dialogs.row.price")
         _validate_dialog_text(item, "dialogs.open")
+        if "held" in keys:
+            _validate_window(item)
         if item["owner_id"] is not None:
             _require(isinstance(item["owner_id"], str), "dialogs.owner_id")
             string_id(item["owner_id"], "dialogs.owner_id")
@@ -1291,6 +1382,7 @@ def validate_record(row):
     _validate_self(row)
     _validate_place(row)
     _validate_dialogs(row)
+    _validate_pace(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
     _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds the record limit")

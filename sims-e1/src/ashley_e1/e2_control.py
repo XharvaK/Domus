@@ -5,6 +5,7 @@ observers/e2_actuator read helpers; all file I/O through the writer queue.
 The host supplies emit/state callables so this module never imports probe.
 """
 
+import sys
 import time
 
 from . import e2_admission
@@ -45,10 +46,40 @@ try:
 except ImportError:
     UiDialogNotification = LocalizationHelperTuning = None
 try:
-    # 2.27.0: the picker class, only to hold back the window of a picker her own act opened.
-    from ui.ui_dialog_picker import UiDialogObjectPicker
+    # 2.31.0: the base of every dialog window: ui/ui_dialog.UiDialogBase.distribute_dialog sends it.
+    from ui.ui_dialog import UiDialogBase
 except ImportError:
-    UiDialogObjectPicker = None
+    UiDialogBase = None
+try:
+    # 2.31.0: the game's own overriders of distribute_dialog (bytecode scan, DOMUS_DEEP_DESIGN §3.2):
+    # a colour picker, her personality dialog, the map and apartment pickers. UiDialogNotification is
+    # left alone on purpose.
+    from objects.color.object_color_dialog import UiDialogObjectColorPicker
+except ImportError:
+    UiDialogObjectColorPicker = None
+try:
+    from sims.sim_dialogs import SimPersonalityAssignmentDialog
+except ImportError:
+    SimPersonalityAssignmentDialog = None
+try:
+    from ui.ui_dialog_picker import UiMapViewPicker, UiApartmentPicker
+except ImportError:
+    UiMapViewPicker = UiApartmentPicker = None
+try:
+    # 2.31.0: the hold's real-time watchdog (alarms.add_alarm_real_time / cancel_alarm, as probe.py uses them)
+    # and the probe's own real-time interval (clock.interval_in_real_seconds).
+    import alarms
+except ImportError:
+    alarms = None
+try:
+    import clock as game_clock
+except ImportError:
+    game_clock = None
+try:
+    # 2.31.0 (W3p): the milliseconds per sim second, read once for the clock preflight (CLOCK_RESEARCH §1).
+    import date_and_time
+except ImportError:
+    date_and_time = None
 try:
     # 2.23.0: the close message ui/ui_dialog_service._dialog_cancel_internal builds.
     from protocolbuffers import Consts_pb2, Dialog_pb2
@@ -62,38 +93,321 @@ except ImportError:
 CAMERA_MIN_GAP_S = 1.5
 # 2.26.0: social talk on the User's screen, at most one line each TALK_MIN_GAP_S.
 TALK_MIN_GAP_S = 2.0
-# 2.27.0: a picker opened by an act she pushed is hers to answer, so its window is held back from
-# the User's screen. Unanswered after PICKER_HOLD_S, it is shown to the User (the fallback).
-PICKER_HOLD_S = 180.0
-_HOLD = {"controller": None, "original": None}
+# 2.31.0 (W3p, DOMUS_DEEP_DESIGN §5a and §5): her pace. Her needs drain through the game's own decay-rate
+# modifier on each motive (lever D). The game clock runs at a slower normal speed through one class
+# attribute (lever A), only when the preflight finds the clock at the game's own defaults. 1.0 is normal
+# pace and changes nothing.
+PACE_LOWEST = 0.25
+PACE_NORMAL = 1.0
+CLOCK_DEFAULT_SPEED = 1
+CLOCK_DEFAULT_MS_PER_SIM_SECOND = 25
 
 
-def _held_distribute(dialog, dialog_type, dialog_msg, immediate=False):
-    """Stands in for UiDialogObjectPicker.distribute_dialog, which UiDialogService.dialog_show
-    calls after the dialog is already in _active_dialogs (bytecode ui/ui_dialog_service). The
-    game's own (ui/ui_dialog.UiDialogBase) only sends the window to the client:
-    Distributor.instance().add_event(dialog_type, dialog_msg, immediate=immediate). Holding it
-    changes nothing on the server: the dialog stays open and answerable. Any doubt shows it."""
-    controller = _HOLD["controller"]
+def _factor(value):
+    """2.31.0: a pace factor: a finite number from PACE_LOWEST to PACE_NORMAL (a bool is not one), else None."""
+    if type(value) not in (int, float) or not PACE_LOWEST <= value <= PACE_NORMAL:
+        return None
+    return float(value)
+
+
+def _measure(value):
+    """2.31.0: a reading for the pace block: a number within the schema's bound, else None."""
+    if type(value) not in (int, float) or not 0 <= value <= schema.PACE_MEASURE_LIMIT:
+        return None
+    return float(value)
+
+
+def _capture_clock():
+    """2.31.0: the game clock's normal multiplier, read once at install, and whether the clock is foreign:
+    not the game's own defaults (or unreadable). A foreign clock is never touched. Returns (base, foreign)."""
     try:
-        if controller is not None and controller.hold_picker(dialog, dialog_type, dialog_msg, immediate):
-            return None
+        base = game_clock.GameClock.NORMAL_SPEED_MULTIPLIER
+        per_second = date_and_time.REAL_MILLISECONDS_PER_SIM_SECOND
+        foreign = not (base == CLOCK_DEFAULT_SPEED and per_second == CLOCK_DEFAULT_MS_PER_SIM_SECOND)
+    except Exception:
+        return None, True
+    return base, foreign
+# 2.27.0: a window her own act opened is hers to answer, so it is held back from the User's screen.
+# Unanswered after PICKER_HOLD_S, it is shown to the User (the fallback). 2.31.0: the same hold covers
+# every window and call she is offered (DOMUS_DEEP_DESIGN §4.2).
+PICKER_HOLD_S = 180.0
+# 2.31.0: the watchdog wakes this often (real seconds) while a window is held (§4.6).
+WATCHDOG_TICK_S = 1.0
+# 2.31.0: frames of the call stack read to find her act (§4.1).
+STACK_FRAME_LIMIT = 64
+# 2.31.0: windows the fallback showed to the User; a late answer to one of them is refused.
+SHOWN_TO_USER_LIMIT = 64
+# 2.31.0: windows she cannot answer (§3.2): shown at once with DIALOG_SHOWN NOT_ANSWERABLE.
+NOT_ANSWERABLE_CLASSES = frozenset(("UiMultiPicker", "UiDialogObjectColorPicker",
+                                    "SimPersonalityAssignmentDialog"))
+# 2.31.0: client-drawn pickers (§4.2): never sent; the dialog is cancelled instead.
+WITHHELD_DIALOG_CLASSES = frozenset(("UiMapViewPicker", "UiApartmentPicker"))
+# 2.31.0: interactions that rename or retrait her own Sim: always the User's (User ruling Q3).
+IDENTITY_CLASSES = frozenset(("ChangeSimNameInteraction", "TraitTypePickerSuperInteraction",
+                              "TraitPickerSuperInteraction", "MatchmakingTraitPickerSuperInteraction"))
+# 2.31.0: the message that rings her phone; dialog_show sends it instead of distribute_dialog (§3.1 R2).
+RING_MESSAGE_NAME = "MSG_UI_PHONE_RING"
+# 2.31.0: client screens she may not open by message (§4.5, R4), Consts_pb2 names, resolved at install.
+SCREEN_MESSAGE_NAMES = (
+    "MSG_SITUATION_PREPARE", "MSG_SHOW_FAMILY_TREE_UI", "MSG_SHOW_FAMILY_TREE_FORGERY",
+    "MSG_SHOW_SIM_PROFILE", "MSG_MOVE_IN_MOVE_OUT", "MSG_SHOW_DYNASTY_CONFIGURATOR",
+    "MSG_SHOW_SMALL_BUSINESS_CONFIGURATOR", "MSG_MANAGE_EMPLOYEES_DIALOG",
+    "MSG_MANAGE_SMALL_BUSINESS_EMPLOYEES_DIALOG", "MSG_MANAGE_SMALL_BUSINESS_EMPLOYEE_TASKS_DIALOG",
+    "MSG_RETAIL_MANAGE_EMPLOYEES", "OPEN_INVENTORY", "OPEN_INVENTORY_WITH_FILTERS", "SHOW_FAMILY_TREE",
+    "SHOW_RENTAL_UNIT_MANAGEMENT", "SHOW_LIFETIME_MILESTONES_PANEL")
+# 2.31.0: client screens sent as ops (§3.1 R5, distributor/ops), by class name.
+SCREEN_OP_NAMES = frozenset(("ShowBillsPanel", "ShowSocialMediaPanel", "ShowMatchmakingDialog",
+                             "ShowClubInfoUI", "ShowHorseCompetitionSelector",
+                             "ShowSimCompetitionSelector"))
+# 2.31.0 (§11): the answer shapes the probe accepts. Rows per answer. A restricted field takes only letters,
+# digits and spaces, because its restricted set is a localized string the probe cannot read (a conservative rule).
+ANSWER_ROWS_LIMIT = 16
+RESTRICTED_SAFE_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ")
+# controller: the E2Control the hooks report to (None: pass through). saved: the game's originals
+# while installed. events: watched message ids; screens: id -> name; ring: the phone ring's id.
+_HOLD = {"controller": None, "saved": None, "events": frozenset(), "screens": {}, "ring": None,
+         "ops": SCREEN_OP_NAMES}
+
+
+class _HoldAlarmOwner(object):
+    """2.31.0: the owner of the hold's watchdog alarm (alarms keep the owner weakly)."""
+
+
+def _class_names(obj):
+    """2.31.0: the class names along obj's MRO, read only (matched by name, no imports)."""
+    try:
+        return frozenset(klass.__name__ for klass in type(obj).__mro__)
+    except Exception:
+        return frozenset()
+
+
+def _read(read):
+    """2.31.0: one read that never raises; None when it cannot be read."""
+    try:
+        return read()
+    except Exception:
+        return None
+
+
+def _note_window(key, **facts):
+    """2.31.0 (§11): what the observers report about one window (cause, held, text fields). Never raises."""
+    try:
+        observers.note_window(key, **facts)
     except Exception:
         pass
-    return _HOLD["original"](dialog, dialog_type, dialog_msg, immediate=immediate)
 
 
-def _install_picker_hold(controller):
-    """Once per game process: UiDialogObjectPicker.distribute_dialog -> _held_distribute. Its
-    subclasses that do not override it (UiRecipePicker, UiObjectPicker, ...) follow."""
+def _read_text_fields(message):
+    """2.31.0 (§4.4, §11): the text fields of a held message (observers.read_text_inputs), or None. Never raises."""
+    try:
+        return observers.read_text_inputs(message)
+    except Exception:
+        return None
+
+
+def _window_detail(kind, key, act_id):
+    """2.31.0: a speed event's detail: the kind, the dialog id when there is one, and "act <id>" only when
+    her act opened the window (helper windows.py reads that word pair; never "act None")."""
+    words = [kind] + ([key] if key else []) + (["act %s" % act_id] if act_id else [])
+    return " ".join(words)[:schema.MAX_DETAIL_LENGTH]
+
+
+def _held_message(kind, send_args, send_kwargs):
+    """2.31.0 (§4.4): the dialog message a held window sends: the dialog_msg of a distribute_dialog send, or
+    the dialog of a phone ring. None when it cannot be read."""
+    message = (send_args[2] if len(send_args) > 2
+               else send_kwargs.get("dialog_msg" if kind == "dialog" else "msg"))
+    if kind == "ring":
+        message = _read(lambda: message.dialog)
+    return message
+
+
+def _def_id_of(dialog, option):
+    """2.31.0 (§4.3): the definition id of a purchase row (PurchasePickerRow.def_id), found by its option id."""
+    for row in _read(lambda: list(dialog.picker_rows or ())) or []:
+        if _read(lambda: str(int(row.option_id))) == option:
+            return _read(lambda: int(row.def_id))
+    return None
+
+
+def _check_text(fields, text):
+    """2.31.0 (§4.4): every field of the held message gets a value (the game's order), each within its limits.
+    Returns (refusal, [(name, value)]). Her text never goes into a refusal, only a field name."""
+    if sorted(text) != sorted(field["name"] for field in fields):
+        return ("TEXT_INVALID", None), None
+    pairs = []
+    for field in fields:
+        name, value = field["name"], text[field["name"]]
+        if field["max_length"] is None or (field["numeric"] and (field["min_value"] is None or
+                                                                 field["max_value"] is None)):
+            return ("NO_LIMIT", name), None
+        if not all(ch.isprintable() for ch in value) or not field["min_length"] <= len(value) <= field["max_length"]:
+            return ("TEXT_INVALID", name), None
+        if field["numeric"]:
+            digits = value[1:] if value.startswith("-") else value
+            if not digits or not set(digits) <= set("0123456789") or not (
+                    field["min_value"] <= int(value) <= field["max_value"]):
+                return ("TEXT_INVALID", name), None
+        if field["restricted"] and not set(value) <= RESTRICTED_SAFE_CHARS:
+            return ("TEXT_INVALID", name), None
+        pairs.append((name, value))
+    return None, pairs
+
+
+def _same_id(obj, her):
+    return her is not None and obj is not None and _read(lambda: str(obj.id)) == her
+
+
+def _target_or_actor_is(interaction, her):
+    """2.31.0 (§4.1 identity): the interaction's target Sim, or its actor when the target cannot be read."""
+    target = _read(lambda: interaction.target)
+    if target is None:
+        target = _read(lambda: interaction.sim)
+    return _same_id(target, her)
+
+
+def _is_commands_file(path):
+    path = str(path).replace("\\", "/")
+    return "sims4" in path and path.endswith("commands.py")
+
+
+def _dialog_hook(original):
+    """2.31.0: stands in for one distribute_dialog (UiDialogBase and each overrider of §3.2). The
+    game's own sends the window; a window that is hers is held or withheld here. Any exception:
+    the original runs with the same arguments."""
+    def distribute_dialog(dialog, *args, **kwargs):
+        controller = _HOLD["controller"]
+        if controller is not None:
+            try:
+                if controller.hold_dialog(original, dialog, args, kwargs):
+                    return None
+            except Exception:
+                pass
+        return original(dialog, *args, **kwargs)
+    return distribute_dialog
+
+
+def _event_hook(original):
+    """2.31.0: stands in for Distributor.add_event. The first check is a membership test on the
+    message id, because add_event runs constantly; every other message passes straight through."""
+    def add_event(distributor, *args, **kwargs):
+        controller = _HOLD["controller"]
+        if controller is None:
+            return original(distributor, *args, **kwargs)
+        msg_id = args[0] if args else kwargs.get("msg_id")
+        try:
+            watched = msg_id in _HOLD["events"]
+        except Exception:
+            watched = False
+        if watched:
+            try:
+                if controller.hold_event(original, distributor, msg_id, args, kwargs):
+                    return None
+            except Exception:
+                pass
+        else:
+            controller.pass_by()
+        return original(distributor, *args, **kwargs)
+    return add_event
+
+
+def _op_hook(original):
+    """2.31.0: stands in for Distributor.add_op and add_op_with_no_owner (the op is the last argument)."""
+    def add_op(distributor, *args, **kwargs):
+        controller = _HOLD["controller"]
+        if controller is None:
+            return original(distributor, *args, **kwargs)
+        op = args[-1] if args else kwargs.get("op")
+        name = type(op).__name__
+        if name in _HOLD["ops"]:
+            try:
+                if controller.withhold_op(name):
+                    return None
+            except Exception:
+                pass
+        else:
+            controller.pass_by()
+        return original(distributor, *args, **kwargs)
+    return add_op
+
+
+def _message_ids():
+    """2.31.0: Consts_pb2 ids by catalogue name; a name the build does not have is skipped."""
+    found = {}
+    if Consts_pb2 is None:
+        return found
+    for name in (RING_MESSAGE_NAME,) + SCREEN_MESSAGE_NAMES:
+        value = Consts_pb2.__dict__.get(name)
+        if value is not None:
+            found[name] = value
+    return found
+
+
+def _install_holds(controller):
+    """2.31.0, once per game process: the holds and withholds of §4.2 and §4.5, each with the game's
+    original kept for _restore_holds. Returns False when nothing could be installed."""
     _HOLD["controller"] = controller
-    if _HOLD["original"] is not None:
+    if _HOLD["saved"]:
         return True
-    if UiDialogObjectPicker is None:
+    found = _message_ids()
+    _HOLD["ring"] = found.pop(RING_MESSAGE_NAME, None)
+    _HOLD["screens"] = dict((value, name) for name, value in found.items())
+    _HOLD["events"] = frozenset(found.values()) | (frozenset() if _HOLD["ring"] is None
+                                                  else frozenset((_HOLD["ring"],)))
+    saved = {}
+    _HOLD["saved"] = saved
+    try:
+        if UiDialogBase is not None:
+            saved["base"] = UiDialogBase.distribute_dialog
+            UiDialogBase.distribute_dialog = _dialog_hook(saved["base"])
+        if UiDialogObjectColorPicker is not None:
+            saved["color"] = UiDialogObjectColorPicker.distribute_dialog
+            UiDialogObjectColorPicker.distribute_dialog = _dialog_hook(saved["color"])
+        if SimPersonalityAssignmentDialog is not None:
+            saved["personality"] = SimPersonalityAssignmentDialog.distribute_dialog
+            SimPersonalityAssignmentDialog.distribute_dialog = _dialog_hook(saved["personality"])
+        if UiMapViewPicker is not None:
+            saved["map"] = UiMapViewPicker.distribute_dialog
+            UiMapViewPicker.distribute_dialog = _dialog_hook(saved["map"])
+        if UiApartmentPicker is not None:
+            saved["apartment"] = UiApartmentPicker.distribute_dialog
+            UiApartmentPicker.distribute_dialog = _dialog_hook(saved["apartment"])
+        if Distributor is not None:
+            saved["add_event"] = Distributor.add_event
+            Distributor.add_event = _event_hook(saved["add_event"])
+            saved["add_op"] = Distributor.add_op
+            Distributor.add_op = _op_hook(saved["add_op"])
+            saved["add_op_no_owner"] = Distributor.add_op_with_no_owner
+            Distributor.add_op_with_no_owner = _op_hook(saved["add_op_no_owner"])
+    except Exception:
+        _restore_holds()
         return False
-    _HOLD["original"] = UiDialogObjectPicker.distribute_dialog
-    UiDialogObjectPicker.distribute_dialog = _held_distribute
     return True
+
+
+def _restore_holds():
+    """2.31.0: the game's own originals back, and no controller: every hook passes through."""
+    saved = _HOLD["saved"]
+    _HOLD["controller"] = None
+    if saved is None:
+        return
+    _HOLD["saved"] = None
+    if "base" in saved:
+        UiDialogBase.distribute_dialog = saved["base"]
+    if "color" in saved:
+        UiDialogObjectColorPicker.distribute_dialog = saved["color"]
+    if "personality" in saved:
+        SimPersonalityAssignmentDialog.distribute_dialog = saved["personality"]
+    if "map" in saved:
+        UiMapViewPicker.distribute_dialog = saved["map"]
+    if "apartment" in saved:
+        UiApartmentPicker.distribute_dialog = saved["apartment"]
+    if "add_event" in saved:
+        Distributor.add_event = saved["add_event"]
+    if "add_op" in saved:
+        Distributor.add_op = saved["add_op"]
+    if "add_op_no_owner" in saved:
+        Distributor.add_op_with_no_owner = saved["add_op_no_owner"]
 
 
 def _send_queued_events():
@@ -254,8 +568,17 @@ class E2Control:
         self._armed_name = get_armed_name or (lambda: None)
         self._camera_at = None
         self._talk_at = None
-        # 2.27.0: picker windows held back, by dialog id: {act_id, at, send}.
+        # 2.27.0: windows held back, by dialog id: {act_id, at, kind, send}. 2.31.0: the same record for
+        # every window she is offered; send = (original function, args, kwargs) for the fallback.
         self.held = {}
+        self._watchdog = None
+        self._alarm_owner = _HoldAlarmOwner()
+        # 2.31.0 (W3p): her pace as the helper last sent it (kept for the session, saved nowhere); the motives
+        # the probe has slowed, by identity: {id: (commodity, the value it got)}; and the game clock as read at install.
+        self._pace = {"need_drain": PACE_NORMAL, "slow_time": PACE_NORMAL}
+        self._drained = {}
+        self._clock_base, self._clock_foreign = _capture_clock()
+        self._clock_applied = False
         self._reset_state()
 
     # ------------------------------------------------------------------ state
@@ -279,6 +602,9 @@ class E2Control:
         # tuning_name, interaction_id, seen, misses}. 2.28.0: an act's returned id and each
         # alias it gained map to one shared record.
         self.pushed = {}
+        # 2.31.0: the UI_MODAL pause requests seen so far (catch-all), and the windows the fallback showed.
+        self._modal_seen = []
+        self.shown_to_user = []
 
     def available(self):
         return (e2_actuator is not None and observers is not None and
@@ -319,11 +645,15 @@ class E2Control:
     # ------------------------------------------------------------- lifecycle
     def on_arm(self):
         self._release_held(everything=True, code="ARM")
+        # 2.31.0 (PR8): the load path. Arming reads the world as it is loaded; an act an earlier
+        # session left pushed is resolved as LOADED here, not dropped silently by the reset.
+        self._resolve_pushed("LOADED")
+        self._pace_release()
         self._reset_state()
         if not self.available():
             return
         try:
-            _install_picker_hold(self)
+            _install_holds(self)
         except Exception:
             pass
         try:
@@ -335,7 +665,13 @@ class E2Control:
     def on_stop(self, reason):
         """Called after a successful STOP (and by DISARM). Fail-safe cleanup."""
         self._release_held(everything=True, code="STOP")
+        self._cancel_watchdog()
         self._release_pause(reason)
+        # 2.31.0 (PR8): a zone change ends every act still pushed now, as UNKNOWN, not as a LEFT_QUEUE later.
+        if reason == "ZONE_CHANGE":
+            self._resolve_pushed("ZONE_CHANGE")
+        # 2.31.0 (W3p): her motives drain at their own pace again, and the clock is the game's, until she samples.
+        self._pace_release()
         for experiment in list(self.experiments.values()):
             if not experiment.closed:
                 self._close_experiment(experiment)
@@ -343,6 +679,9 @@ class E2Control:
 
     def on_disarm(self):
         self.on_stop("DISARM")
+        # 2.31.0: the game's own methods back on disarm. The probe has no start hook, so a stop alone
+        # keeps the hooks, which act only while she is sampling (every hook passes through otherwise).
+        _restore_holds()
         if self.save_subscribed and e2_actuator is not None:
             try:
                 e2_actuator.unsubscribe_saves(self.on_manual_save)
@@ -359,8 +698,11 @@ class E2Control:
                 del self.presence[:-120]
             self._reconcile_pushed(row)
             self._release_held()
+            self._check_modal()
         if self.lineage_class is None:
             self._try_classify(row)
+        if row.get("event_kind") == "presence_snapshot":
+            self._body_switch(row)
         learned = self.learner.observe(row, self.open_ids)
         if learned is not None:
             self._experiment_event("SIGNATURE_LEARNED", object_id=learned[0],
@@ -378,6 +720,26 @@ class E2Control:
                                        code=claim, claims=dict(experiment.claims))
             if experiment.closed:
                 self._emit_verdict(experiment)
+
+    def _body_switch(self, row):
+        """2.31.0 (PR7, live 2026-10-08: the User played another household Sim and her acts could land on
+        it): every presence row names the body it saw. A body other than the armed Sim's is a switch.
+        The lineage becomes BODY_MISMATCH (sticky until the session is armed again, as a classified
+        mismatch is) and a CLASSIFIED lineage record says so once. Her acts, answers, camera and talk
+        refuse from then on, with or without a prepare."""
+        if self.lineage_class is None or self.lineage_class == e2_lineage.BODY_MISMATCH:
+            return
+        armed = (self._armed_snapshot() or {}).get("sim_id")
+        body = (row.get("body") or {}).get("sim_id")
+        if armed is None or body is None or str(body) == str(armed):
+            return
+        self.lineage_class = e2_lineage.BODY_MISMATCH
+        save = row.get("save") or {}
+        game = row.get("game") or {}
+        ticks = game.get("ticks")
+        self._lineage_event("CLASSIFIED", guid=save.get("save_slot_guid"), slot_id=save.get("slot_id"),
+                            sim_id=str(body), ticks=ticks if type(ticks) is int else None,
+                            lineage_class=e2_lineage.BODY_MISMATCH)
 
     def _try_classify(self, row):
         writer = self._writer()
@@ -659,6 +1021,10 @@ class E2Control:
             return ("BODY_UNAVAILABLE", None), None
         if self.designated_sim_id is not None and str(sim_info.id) != self.designated_sim_id:
             return ("BODY_MISMATCH", None), None
+        # 2.31.0 (PR7): the body an act would use must be the armed Sim, with or without a prepare.
+        armed = (self._armed_snapshot() or {}).get("sim_id")
+        if armed is not None and str(sim_info.id) != str(armed):
+            return ("BODY_MISMATCH", None), None
         if object_id in EXCLUDED_OBJECT_IDS:
             return (e2_admission.OBJECT_EXCLUDED, None), None
         obj = e2_actuator.find_object(object_id)
@@ -764,9 +1130,11 @@ class E2Control:
             self._say(connection, "ACT_%s %s" % (phase, code))
             return False
 
-    def _answer_check(self, dialog_id, pick):
+    def _answer_check(self, dialog_id, pick, rows=None, text=None):
         """None when her answer may be given now, else (code, detail). The dialog must be open
-        and hers (or the game's own, with no owner); a row must be one it offers, enabled."""
+        and hers (or the game's own, with no owner); a row must be one it offers, enabled.
+        2.31.0 (§4.3, §4.4): rows, counts and text are checked by _answer_plan; the bound plan
+        says what cmd_answer sends (rows, counts, text fields), None for a button."""
         if self._state() != "SAMPLING":
             return ("NOT_SAMPLING", None), None
         if self.lineage_class == e2_lineage.BODY_MISMATCH:
@@ -785,22 +1153,98 @@ class E2Control:
             owner = None
         if owner is not None and owner.id != sim_info.id:
             return ("NOT_HERS", None), None
+        # 2.31.0 (§4.2): a window the fallback showed is the User's now; her renaming or retraiting
+        # windows are the User's always (Q3).
+        if str(int(dialog_id)) in self.shown_to_user:
+            return ("SHOWN_TO_USER", None), None
+        try:
+            interactions = self._resolver_interactions(dialog)
+        except Exception:
+            interactions = []
+        if self._identity_window(dialog, str(sim_info.id), interactions, []):
+            return ("IDENTITY_USER", None), None
+        if rows is not None or text is not None:
+            refusal, plan = self._answer_plan(dialog, dialog_id, pick, rows, text)
+            if refusal is not None:
+                return refusal, None
+            return None, (service, dialog, plan, observers.RESPONSE_IDS["ok"])
         if pick.isdigit():
-            rows = [row for row in observers._dialog_rows(dialog) if row["option_id"] == pick]
-            if not rows:
+            offered_rows = [row for row in observers._dialog_rows(dialog) if row["option_id"] == pick]
+            if not offered_rows:
                 return ("NO_ROW", None), None
-            if not rows[0]["enabled"]:
+            if not offered_rows[0]["enabled"]:
                 return ("ROW_DISABLED", None), None
-            return None, (service, dialog, int(pick), observers.RESPONSE_IDS["ok"])
+            return None, (service, dialog, {"rows": [int(pick)], "counts": None, "text": None},
+                          observers.RESPONSE_IDS["ok"])
         response = observers.RESPONSE_IDS.get(pick)
         offered = [item["response"] for item in observers._dialog_responses(dialog)]
         if response is None or (pick not in offered and pick not in ("ok", "cancel")):
             return ("NO_RESPONSE", pick), None
         return None, (service, dialog, None, response)
 
-    def cmd_answer(self, act_id, dialog_id, pick, connection):
+    def _answer_plan(self, dialog, dialog_id, pick, rows, text):
+        """2.31.0 (§4.3, §4.4, §11): her rows, counts and text, checked against the live dialog and, for
+        text, the held message. Returns (refusal, plan); plan has "rows", "counts" and "text" (None each
+        when absent)."""
+        if pick != "ok":
+            return ("NO_RESPONSE", pick), None
+        plan = {"rows": None, "counts": None, "text": None}
+        if rows is not None:
+            refusal, found = self._check_rows(dialog, rows)
+            if refusal is not None:
+                return refusal, None
+            plan.update(found)
+        if text is not None:
+            item = self.held.get(str(int(dialog_id)))
+            fields = None
+            if item is not None:
+                fields = _read_text_fields(_held_message(item["kind"], item["send"][1], item["send"][2]))
+            if not fields:
+                return ("TEXT_NOT_HELD", None), None
+            refusal, pairs = _check_text(fields, text)
+            if refusal is not None:
+                return refusal, None
+            plan["text"] = pairs
+        return None, plan
+
+    def _check_rows(self, dialog, rows):
+        """2.31.0 (§4.3): each row is one the dialog offers and enables, the count is within its select, and
+        for a purchase picker each count is within its caps (a count of 1 is the only count elsewhere).
+        Returns (refusal, {"rows": [ids]} or {"counts": (def ids, object ids, counts)})."""
+        select = observers.select_of(dialog)
+        if select is None:
+            return ("NO_ROW", None), None
+        offered = dict((item["option_id"], item) for item in observers._dialog_rows(dialog))
+        options = [row["option_id"] for row in rows]
+        if len(set(options)) != len(options) or any(option not in offered for option in options):
+            return ("NO_ROW", None), None
+        if any(not offered[option]["enabled"] for option in options):
+            return ("ROW_DISABLED", None), None
+        high = select["max"] or ANSWER_ROWS_LIMIT
+        if not max(select["min"], 1) <= len(rows) <= min(high, ANSWER_ROWS_LIMIT):
+            return ("ROW_COUNT", None), None
+        counts = observers.counts_of(dialog)
+        if counts is None:
+            if any(row["count"] != 1 for row in rows):
+                return ("COUNT_INVALID", None), None
+            return None, {"rows": [int(option) for option in options]}
+        if counts["max_rows"] and len(rows) > counts["max_rows"]:
+            return ("COUNT_INVALID", None), None
+        if any(counts["max_in_row"] and row["count"] > counts["max_in_row"] for row in rows):
+            return ("COUNT_INVALID", None), None
+        def_ids = [_def_id_of(dialog, option) for option in options]
+        if any(def_id is None for def_id in def_ids):
+            return ("NO_ROW", None), None
+        # ASSUMPTION (not read from bytecode, confirm live): a purchase row has no object yet, so its
+        # object id is sent as 0; pick_definitions_ids_and_counts only checks the three lists' lengths.
+        return None, {"counts": (def_ids, [0] * len(rows), [row["count"] for row in rows])}
+
+    def cmd_answer(self, act_id, dialog_id, pick, connection, rows=None, text=None):
         """2.18.0: answer a game dialog as she chose, the way the client does: pick the row
-        (dialog_pick_result), then respond (dialog_respond). Once per act id."""
+        (dialog_pick_result), then respond (dialog_respond). Once per act id.
+        2.31.0 (§4.3, §4.4): rows (several, or counted for a purchase picker) and text fields are sent
+        first, in the client's order (every text field, the rows, then dialog_respond). Her text is never
+        logged: the act records only how many rows and fields she answered."""
         if act_id in self.act_ids:
             self._say(connection, "ACT_REJECT DUPLICATE")
             return False
@@ -812,21 +1256,30 @@ class E2Control:
             return False
         accepted = False
         try:
-            refusal, bound = self._answer_check(dialog_id, pick)
+            refusal, bound = self._answer_check(dialog_id, pick, rows, text)
             if refusal is not None:
                 code, detail = refusal
                 self._act_event(act_id, "REJECTED", code=code,
                                 detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH], **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
-            service, dialog, row, response = bound
+            service, dialog, plan, response = bound
             kind = _tuning_name(dialog)
             # 2.27.0: a held window was never on the User's screen; it is hers alone now.
             held = self.held.pop(str(int(dialog_id)), None) is not None
+            _note_window(str(int(dialog_id)), held=False)
             self._act_event(act_id, "ACCEPTED", tuning_name=kind, **base)
             accepted = True
-            if row is not None:
-                service.dialog_pick_result(int(dialog_id), [row])
+            if plan is not None:
+                # 2.31.0 (§3.3): every text field, then the rows, then the response (the client's order).
+                for name, value in plan["text"] or []:
+                    service.dialog_text_input(int(dialog_id), name, value)
+                if plan["counts"] is not None:
+                    def_ids, object_ids, counts = plan["counts"]
+                    service.dialog_pick_result_def_ids_and_counts(
+                        int(dialog_id), def_ids, object_ids, counts, False)
+                elif plan["rows"]:
+                    service.dialog_pick_result(int(dialog_id), plan["rows"])
             service.dialog_respond(int(dialog_id), response)
             # 2.23.0: dialog_respond already accepted. Closing the window and lifting the
             # pause are separate; a failure of either never turns the answer into a rejection.
@@ -886,8 +1339,17 @@ class E2Control:
             except Exception:
                 resumed = "failed"
             _send_queued_events()
+            # 2.31.0: an answer in the new shapes says how many rows and text fields she gave (counts only, never
+            # her text). A single row or a button keeps the detail it always had.
+            tokens = ["held"] if held else []
+            if rows is not None or text is not None:
+                shape = plan or {}
+                tokens += (["counts %d" % len(shape["counts"][0])] if shape.get("counts") is not None else
+                           (["rows %d" % len(shape["rows"])] if shape.get("rows") else []))
+                tokens += ["text %d" % len(shape["text"])] if shape.get("text") else []
             self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED",
-                            closed=closed, resumed=resumed, detail="held" if held else None, **base)
+                            closed=closed, resumed=resumed,
+                            detail=" ".join(tokens)[:schema.MAX_DETAIL_LENGTH] or None, **base)
             self._say(connection, "ACT_ANSWERED %s" % act_id)
             return True
         except Exception as error:
@@ -1021,57 +1483,446 @@ class E2Control:
             self._say(connection, ("TALK_REJECT E2_EXCEPTION:%s" % type(error).__name__)[:64])
             return False
 
-    def hold_picker(self, dialog, dialog_type, dialog_msg, immediate):
-        """2.27.0: True when this picker's window is held back: she is sampling her own body and
-        the interaction that opened it (its resolver's interaction or super interaction,
-        event_testing/resolver.InteractionResolver) is one of her pushed acts. 2.28.0: any id a
-        pushed act tracks counts, its returned interaction or one the push put in her queue."""
-        if self._state() != "SAMPLING" or self.lineage_class == e2_lineage.BODY_MISMATCH:
+    # ------------------------------------------------------------ windows (2.31.0)
+    # ------------------------------------------------------------------ pace (2.31.0, W3p)
+    def cmd_pace(self, need_drain, slow_time, connection):
+        """2.31.0 (W3p): the helper's pace, two fractions of normal pace (1.0 is off). The probe keeps the last
+        values for the session and applies them while she is sampling. Only the helper may send it."""
+        try:
+            issuer = connection.issuer
+        except AttributeError:
+            issuer = None
+        if issuer != "helper":
+            connection.code = "BAD_ISSUER"
+            self._say(connection, "PACE_REJECT BAD_ISSUER")
             return False
-        resolver = dialog._resolver
-        found = None
-        for read in (lambda: resolver._interaction, lambda: resolver.super_interaction):
-            try:
-                interaction = read()
-            except AttributeError:
-                continue
-            if interaction is not None and str(interaction.id) in self.pushed:
-                found = self.pushed[str(interaction.id)]["act_id"]
-                break
-        if found is None:
+        need, slow = _factor(need_drain), _factor(slow_time)
+        if need is None or slow is None:
+            connection.code = "BAD_ARGS"
+            self._say(connection, "PACE_REJECT BAD_ARGS")
             return False
-        key = str(dialog.dialog_id)
-        self.held[key] = {"act_id": found, "at": time.monotonic(),
-                          "send": (dialog, dialog_type, dialog_msg, immediate)}
-        self._speed_event("DIALOG_HELD", detail=("dialog %s act %s" % (key, found))[:schema.MAX_DETAIL_LENGTH])
+        self._pace = {"need_drain": need, "slow_time": slow}
+        self._pace_apply()
+        if self._clock_foreign and slow < PACE_NORMAL:
+            self._speed_event("CLOCK_FOREIGN", detail="another mod sets the game clock; the probe leaves it alone")
+        self._say(connection, "PACE_OK need_drain %g slow_time %g" % (need, slow))
         return True
 
-    def _release_held(self, everything=False, code="TIMEOUT"):
-        """2.27.0: a held window whose dialog is gone (answered, cancelled) is dropped; one still
-        open after PICKER_HOLD_S, or at a stop, is shown to the User as the game would have."""
+    def pace_row(self, row):
+        """2.31.0 (W3p): called for each observation row before it is written. Checks her body (PR7), applies her
+        pace for this moment, and returns the pace block the row carries: what the probe applied."""
+        self._body_switch(row)
+        self._pace_apply()
+        return self.pace_block()
+
+    def pace_block(self):
+        """2.31.0 (W3p): the pace block of an observation row (schema PACE_KEYS). `drain_measured` is one
+        motive's effective factor, get_decay_rate() over get_decay_rate(False), when its decay is running."""
+        measured = None
+        for item, _ in list(self._drained.values())[:1]:
+            try:
+                plain = item.get_decay_rate(False)
+                if plain:
+                    measured = _measure(item.get_decay_rate() / plain)
+            except Exception:
+                measured = None
+        return {"need_drain": self._pace["need_drain"],
+                "motives_modified": min(len(self._drained), schema.MAX_MOTIVES),
+                "drain_measured": measured, "slow_time": self._pace["slow_time"],
+                "clock_scale": self._clock_scale(), "clock_foreign": bool(self._clock_foreign)}
+
+    def _pace_apply(self):
+        """Her pace now: applied while she is live (sampling, not a body switch, the zone running), else undone."""
+        live = self._live() and self._zone_running()
+        self._pace_drain(live)
+        self._pace_clock(live)
+
+    def _pace_release(self):
+        """Undo everything the probe changed for her pace: the modifiers and the clock (stop, disarm, arm)."""
+        self._pace_drain(False)
+        self._pace_clock(False)
+
+    def _pace_drain(self, live):
+        """Her motives drain at the wanted factor while live, each motive once (recorded by identity, so a second
+        tick never stacks). The modifier comes off each recorded motive when the factor changes or she is not live;
+        an entry whose motive left her tracker (travel or load rebuilt it) is dropped, and its new motive gets it."""
+        if not live:
+            self._undo_drain()
+            return
+        want = self._pace["need_drain"]
+        motives = self._motives()
+        if motives is None:
+            self._undo_drain()
+            return
+        present = set(id(item) for item in motives)
+        for key in [key for key in self._drained if key not in present]:
+            del self._drained[key]
+        if any(value != want for _, value in self._drained.values()):
+            self._undo_drain()
+        if want >= PACE_NORMAL:
+            return
+        for item in motives:
+            if id(item) in self._drained:
+                continue
+            try:
+                item.add_decay_rate_modifier(want)
+            except Exception:
+                continue
+            self._drained[id(item)] = (item, want)
+            try:
+                item.send_commodity_progress_msg()
+            except Exception:
+                pass
+
+    def _undo_drain(self):
+        """Take the modifier off each recorded motive (the value it got), send its progress, empty the record."""
+        for item, value in list(self._drained.values()):
+            try:
+                item.remove_decay_rate_modifier(value)
+            except Exception:
+                pass
+            try:
+                item.send_commodity_progress_msg()
+            except Exception:
+                pass
+        self._drained.clear()
+
+    def _motives(self):
+        """Her motive commodities (the guids in observers.MOTIVE_GUIDS), from her body's commodity tracker.
+        None when they cannot be read now."""
+        try:
+            sim_info, _ = observers.select_lab_body(
+                services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+            commodities = list(sim_info.commodity_tracker.get_all_commodities())
+        except Exception:
+            return None
+        return [item for item in commodities if observers._motive_guid(item) in observers.MOTIVE_GUIDS]
+
+    def _pace_clock(self, live):
+        """The game clock runs at the wanted scale while she is live: the class attribute is asserted on every tick,
+        and the client is told when the value changes. Otherwise the value read at install comes back. A clock
+        another mod owns, or one that cannot be read, is never touched."""
+        if self._clock_foreign or game_clock is None:
+            return
+        want = self._pace["slow_time"]
+        if live and want < PACE_NORMAL:
+            self._set_clock(want)
+            self._clock_applied = True
+        elif self._clock_applied:
+            self._set_clock(self._clock_base)
+            self._clock_applied = False
+
+    def _set_clock(self, value):
+        try:
+            before = game_clock.GameClock.NORMAL_SPEED_MULTIPLIER
+            game_clock.GameClock.NORMAL_SPEED_MULTIPLIER = value
+            if before != value:
+                services.game_clock_service()._sync_clock_and_broadcast_gameclock()
+        except Exception:
+            pass
+
+    def _clock_scale(self):
+        try:
+            return _measure(services.game_clock_service().current_clock_speed_scale())
+        except Exception:
+            return None
+
+    def _zone_running(self):
+        try:
+            zone = services.current_zone()
+            return zone is not None and bool(zone.is_zone_running)
+        except Exception:
+            return False
+
+    def pass_by(self):
+        """Every pass through a wrapper (a hook inside the distributor's own work) only drops held
+        windows whose dialog is gone. It never sends: a window due for the User is shown from the probe
+        tick or the real-time watchdog, at the top of the game loop (2.31.0 review fix). Never raises."""
+        if self.held:
+            try:
+                self._drop_closed()
+            except Exception:
+                pass
+
+    def _live(self):
+        return self._state() == "SAMPLING" and self.lineage_class != e2_lineage.BODY_MISMATCH
+
+    def hold_dialog(self, original, dialog, args, kwargs):
+        """Route R1 (distribute_dialog, 2.27.0 for pickers, 2.31.0 for every window): True when the
+        window is taken here, held for her or withheld. False: the original sends it, untouched."""
+        self.pass_by()
+        if not self._live():
+            return False
+        return self._window(original, dialog, (dialog,) + tuple(args), kwargs, "dialog")
+
+    def hold_event(self, original, distributor, msg_id, args, kwargs):
+        """Route R2 (her phone ring, held like a window) or R4 (a client screen by message)."""
+        self.pass_by()
+        if not self._live():
+            return False
+        if msg_id == _HOLD["ring"]:
+            msg = args[1] if len(args) > 1 else kwargs.get("msg")
+            dialog = services.ui_dialog_service()._active_dialogs.get(int(msg.dialog.dialog_id))
+            if dialog is None:
+                return False
+            return self._window(original, dialog, (distributor,) + tuple(args), kwargs, "ring")
+        return self._withhold_screen(_HOLD["screens"].get(msg_id))
+
+    def withhold_op(self, name):
+        """Route R5 (a client screen sent as an op, §3.1)."""
+        self.pass_by()
+        return self._live() and self._withhold_screen(name)
+
+    def _window(self, original, dialog, send_args, send_kwargs, kind):
+        """The one decision for a dialog window or her phone ring (§4.1, §4.2, §4.3)."""
+        who, act = self._window_owner(dialog)
+        name = type(dialog).__name__
+        key = str(int(dialog.dialog_id))
+        if who == "identity_user":
+            _note_window(key, cause="identity_user", held=False)
+            self._speed_event("DIALOG_SHOWN", code="IDENTITY_USER", detail=_window_detail(kind, key, None))
+            return False
+        if who != "hers":
+            _note_window(key, cause="user", held=False)
+            return False
+        names = _class_names(dialog)
+        if names & WITHHELD_DIALOG_CLASSES:
+            services.ui_dialog_service().dialog_cancel(int(dialog.dialog_id))
+            self._withheld(act, name, kind)
+            return True
+        act_id = None if act is None else act["act_id"]
+        if names & NOT_ANSWERABLE_CLASSES:
+            _note_window(key, cause="hers", held=False)
+            self._speed_event("DIALOG_SHOWN", code=("NOT_ANSWERABLE:%s" % name)[:schema.MAX_DETAIL_LENGTH],
+                              detail=_window_detail(kind, key, act_id))
+            return False
+        self.held[key] = {"act_id": act_id, "at": time.monotonic(), "kind": kind,
+                          "send": (original, send_args, send_kwargs)}
+        # 2.31.0 (§11): the held message's text fields are read now, while the message is in hand.
+        _note_window(key, cause="hers", held=True,
+                     text_inputs=_read_text_fields(_held_message(kind, send_args, send_kwargs)))
+        self._speed_event("DIALOG_HELD", detail=_window_detail(kind, key, act_id))
+        self._arm_watchdog()
+        return True
+
+    def _withhold_screen(self, name):
+        """R4/R5 (§4.5): a client screen her own act opened is not sent. Only her act's frame on the
+        call stack makes it hers (§4.1 rule 1); anything else is the game's or the User's."""
+        if name is None:
+            return False
+        item = self._pushed_on_stack()
+        if item is None:
+            return False
+        self._withheld(item, name, "screen")
+        return True
+
+    def _withheld(self, act, name, kind):
+        """Her act records the window it opened and was not shown (UNKNOWN: the act's own finish
+        still reports from the game's finish watch); a speed event names it."""
+        if act is not None:
+            self._act_event(act["act_id"], "UNKNOWN", code=("SCREEN_WITHHELD:%s" % name)[:schema.MAX_ID_LENGTH],
+                            interaction_id=act["interaction_id"], tuning_name=act["tuning_name"],
+                            **act["base"])
+        act_id = None if act is None else act["act_id"]
+        self._speed_event("SCREEN_WITHHELD", code=name[:schema.MAX_DETAIL_LENGTH],
+                          detail=_window_detail(kind, "", act_id))
+
+    def _window_owner(self, dialog):
+        """§4.1 and Q3: (who, act), who "hers", "user" or "identity_user"; act is her pushed act's
+        record or None. Any exception: ("user", None)."""
+        try:
+            return self._decide_window(dialog)
+        except Exception:
+            return "user", None
+
+    def _decide_window(self, dialog):
+        her = self._her_sim_id()
+        pairs, commanded = self._stack_read()
+        interactions = self._resolver_interactions(dialog)
+        if self._identity_window(dialog, her, interactions, pairs):
+            return "identity_user", None
+        if pairs:
+            return "hers", pairs[0][1]
+        for interaction in interactions:
+            item = self._pushed_for(interaction)
+            if item is not None:
+                return "hers", item
+        if interactions:
+            first = interactions[0]
+            source = _read(lambda: str(first.context.source))
+            if source is not None and source.endswith("AUTONOMY") and _same_id(_read(lambda: first.sim), her):
+                return "hers", None
+            return "user", None
+        if commanded:
+            return "user", None
+        if _same_id(_read(lambda: dialog._owner()), her):
+            return "hers", None
+        return "user", None
+
+    def _identity_window(self, dialog, her, interactions, pairs):
+        """§4.1 identity, checked before the rest: her own Sim renamed, retraited or re-personalised
+        is always the User's (Q3). Naming a pet, a painting or a song is not identity."""
+        if her is None:
+            return False
+        if ("SimPersonalityAssignmentDialog" in _class_names(dialog) and
+                _same_id(_read(lambda: dialog._assignment_sim_info), her)):
+            return True
+        for candidate in list(interactions) + [obj for obj, _item in pairs]:
+            if _class_names(candidate) & IDENTITY_CLASSES and _target_or_actor_is(candidate, her):
+                return True
+        return False
+
+    def _resolver_interactions(self, dialog):
+        """The dialog's resolver interaction and super interaction (event_testing/resolver), the
+        present ones only. A dialog with no resolver raises, so it is not hers (the caller's "user")."""
+        resolver = dialog._resolver
+        if resolver is None:
+            raise ValueError("no resolver")
+        found = []
+        for read in (lambda: resolver._interaction, lambda: resolver.super_interaction):
+            value = _read(read)
+            if value is not None:
+                found.append(value)
+        return found
+
+    def _her_sim_id(self):
+        sim_info, _sim = observers.select_lab_body(services.sim_info_manager().get_all(),
+                                                   observers.ALL_HIDDEN_REASONS)
+        return None if sim_info is None else str(sim_info.id)
+
+    def _stack_read(self):
+        """One read-only walk of the call stack, at most STACK_FRAME_LIMIT frames. Returns
+        ([(obj, act record)] for each frame whose self is one of her pushed acts, and whether a
+        sims4.commands handler is on the stack)."""
+        pairs = []
+        commanded = False
+        frame = sys._getframe(1)
+        for _count in range(STACK_FRAME_LIMIT):
+            if frame is None:
+                break
+            try:
+                code = frame.f_code
+                if code.co_name == "invoke_command" and _is_commands_file(code.co_filename):
+                    commanded = True
+                if self.pushed:
+                    obj = frame.f_locals.get("self")
+                    item = self._pushed_for(obj)
+                    if item is not None:
+                        pairs.append((obj, item))
+            except Exception:
+                pass
+            frame = frame.f_back
+        return pairs, commanded
+
+    def _pushed_on_stack(self):
+        if not self.pushed:
+            return None
+        pairs, _commanded = self._stack_read()
+        return pairs[0][1] if pairs else None
+
+    def _pushed_for(self, obj):
+        if obj is None or not self.pushed:
+            return None
+        key = _read(lambda: str(obj.id))
+        return None if key is None else self.pushed.get(key)
+
+    def _remember_shown(self, key):
+        self.shown_to_user.append(key)
+        if len(self.shown_to_user) > SHOWN_TO_USER_LIMIT:
+            del self.shown_to_user[0]
+
+    def _drop_closed(self):
+        """A held window whose dialog is gone (answered, cancelled) is dropped. Nothing is sent here,
+        so it is safe inside a hook (pass_by)."""
         if not self.held:
             return
         try:
             active = services.ui_dialog_service()._active_dialogs
         except Exception:
-            active = None
-        now = time.monotonic()
+            return
         for key in list(self.held):
-            item = self.held[key]
-            if active is not None and int(key) not in active:
+            if int(key) not in active:
                 del self.held[key]
-                continue
-            if not everything and now - item["at"] < PICKER_HOLD_S:
-                continue
-            del self.held[key]
-            dialog, dialog_type, dialog_msg, immediate = item["send"]
-            try:
-                _HOLD["original"](dialog, dialog_type, dialog_msg, immediate=immediate)
-                shown = code
-            except Exception as error:
-                shown = ("FAILED:%s" % type(error).__name__)[:64]
-            self._speed_event("DIALOG_SHOWN", code=shown,
-                              detail=("dialog %s act %s" % (key, item["act_id"]))[:schema.MAX_DETAIL_LENGTH])
+        if not self.held:
+            self._cancel_watchdog()
+
+    def _release_held(self, everything=False, code="TIMEOUT"):
+        """2.27.0: a held window whose dialog is gone (answered, cancelled) is dropped; one still
+        open after PICKER_HOLD_S, or at a stop, is shown to the User through its original send.
+        2.31.0: the same for her phone ring; a window shown here is the User's from then on.
+        Sends only from the probe tick (on_poll_row), the watchdog and arm/stop, never from a hook."""
+        self._drop_closed()
+        if self.held:
+            now = time.monotonic()
+            for key in list(self.held):
+                item = self.held[key]
+                if not everything and now - item["at"] < PICKER_HOLD_S:
+                    continue
+                del self.held[key]
+                _note_window(key, held=False)
+                function, args, kwargs = item["send"]
+                try:
+                    function(*args, **kwargs)
+                    shown = code
+                    self._remember_shown(key)
+                except Exception as error:
+                    shown = ("FAILED:%s" % type(error).__name__)[:64]
+                self._speed_event("DIALOG_SHOWN", code=shown,
+                                  detail=_window_detail(item["kind"], key, item["act_id"]))
+        if not self.held:
+            self._cancel_watchdog()
+
+    def _arm_watchdog(self):
+        """2.31.0 (§4.6): one repeating real-time alarm while a window is held; it releases what is due."""
+        if self._watchdog is not None or alarms is None or game_clock is None:
+            return
+        try:
+            self._watchdog = alarms.add_alarm_real_time(
+                owner=self._alarm_owner, time_span=game_clock.interval_in_real_seconds(WATCHDOG_TICK_S),
+                callback=self._watchdog_tick, repeating=True, use_sleep_time=False, cross_zone=False)
+        except Exception:
+            self._watchdog = None
+
+    def _watchdog_tick(self, _alarm_handle=None):
+        """2.31.0 (§4.6): the real-time alarm may show a due window (the top of the game loop)."""
+        try:
+            self._release_held()
+        except Exception:
+            pass
+
+    def _cancel_watchdog(self):
+        handle, self._watchdog = self._watchdog, None
+        if handle is None or alarms is None:
+            return
+        try:
+            alarms.cancel_alarm(handle)
+        except Exception:
+            pass
+
+    def _ui_modal_pauses(self):
+        """UI_MODAL paused speed requests, read only: clock.GameClock.speed_controllers is a defaultdict
+        of list-like _SpeedController by source, and .get never creates one."""
+        controller = services.game_clock_service().speed_controllers.get(GameSpeedChangeSource.UI_MODAL)
+        if controller is None:
+            return []
+        return [item for item in list(controller) if item.speed == ClockSpeedMode.PAUSED]
+
+    def _check_modal(self):
+        """Catch-all (§4.5, P28): a NEW UI_MODAL pause while her act runs, with no dialog open, is a
+        screen nobody catalogued. Speed event UNKNOWN_SCREEN with the act's tuning name; nothing is closed."""
+        try:
+            requests = self._ui_modal_pauses()
+            new = [item for item in requests if not any(item is seen for seen in self._modal_seen)]
+            self._modal_seen = requests
+            if not new or not self.pushed or not self._live():
+                return
+            if services.ui_dialog_service()._active_dialogs:
+                return
+            act = self._pushed_records()[-1]
+            self._speed_event("UNKNOWN_SCREEN", code=str(act["tuning_name"])[:schema.MAX_DETAIL_LENGTH],
+                              detail=("act %s" % act["act_id"])[:schema.MAX_DETAIL_LENGTH])
+        except Exception:
+            pass
 
     def _reconcile_pushed(self, row):
         """2.19.1 (live 2026-10-06: a quick meal pushed while she was in the bath never
@@ -1099,6 +1950,18 @@ class E2Control:
                             tuning_name=item["tuning_name"],
                             detail="ran, then left" if item["seen"] else "never seen in her queue",
                             **item["base"])
+
+    def _resolve_pushed(self, code):
+        """2.31.0 (PR8, live 2026-10-08: pushed acts outlived a zone change and ended as LEFT_QUEUE): every
+        act still pushed is UNKNOWN now, with code ZONE_CHANGE or LOADED, and nothing is left to sample."""
+        for item in self._pushed_records():
+            for key in self._pushed_keys(item):
+                self.pushed.pop(key, None)
+            detail = "the zone changed while it ran" if code == "ZONE_CHANGE" else "the save was loaded while it ran"
+            self._act_event(item["act_id"], "UNKNOWN", code=code,
+                            interaction_id=item["interaction_id"],
+                            tuning_name=item["tuning_name"],
+                            detail=detail[:schema.MAX_DETAIL_LENGTH], **item["base"])
 
     def _pushed_records(self):
         """2.28.0: each pushed act once, however many of its ids are tracked."""
