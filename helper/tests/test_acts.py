@@ -316,3 +316,82 @@ def test_no_round_trip_means_no_picture_is_handed_on(tmp_path, monkeypatch):
     client.down = True
     assert ActCourier(Spool(tmp_path / "spool.db"), lambda command, args: None).tick(client, "h", 1000, True) == []
     assert handed == []
+
+
+def _dialog(dialog_id, **extra):
+    """A dialog sample from the probe (invented strings)."""
+    dialog = {"dialog_id": dialog_id, "kind": "UiPicker", "owner_id": "100", "title_key": "1",
+              "text_key": None, "auto_respond": False,
+              "responses": [{"response": "ok", "text_key": "2"}, {"response": "cancel", "text_key": "3"}],
+              "rows": [{"option_id": "11", "name_key": "4", "enabled": True, "price": None},
+                       {"option_id": "12", "name_key": "5", "enabled": True, "price": None}]}
+    dialog.update(extra)
+    return dialog
+
+
+BODY = [{"id": "100", "is_body": True, "name": "Her"}]
+TEXTS = {"1": "Pick some", "2": "OK", "3": "Cancel", "4": "Blue Vase", "5": "Red Vase", "9": "Tip Amount"}
+
+
+def _asked(*dialogs):
+    return {"presence": BODY, "dialogs": {"open": list(dialogs), "closed": [], "truncated": False}}
+
+
+def test_a_picker_with_several_rows_lists_ok_and_carries_its_rules():
+    dialog = _dialog("600", select={"min": 1, "max": 3})
+    [entry] = dialog_options(_asked(dialog), TEXTS.get)
+    assert [act["text"] for act in entry["acts"]] == ["Blue Vase", "Red Vase", "OK", "Cancel"]
+    assert entry["acts"][2]["guid64"] == "ok"
+    assert entry["answer_rules"] == {"select": {"min": 1, "max": 3}}
+
+
+def test_a_single_row_picker_keeps_today_s_shape_without_rules():
+    dialog = _dialog("601", select={"min": 1, "max": 1})
+    [entry] = dialog_options(_asked(dialog), TEXTS.get)
+    assert [act["guid64"] for act in entry["acts"]] == ["11", "12", "cancel"]
+    assert "answer_rules" not in entry
+
+
+def test_counts_and_text_fields_carry_their_limits_and_resolved_labels():
+    dialog = _dialog("602", counts={"max_in_row": 4, "max_rows": 2},
+                     text_inputs=[{"name": "tip", "min_length": 1, "max_length": 6, "numeric": True,
+                                   "min_value": 0, "max_value": 50, "profanity_checked": False,
+                                   "restricted": False, "default_key": "9"},
+                                  {"name": "note", "min_length": 0, "max_length": None, "numeric": False,
+                                   "min_value": None, "max_value": None, "profanity_checked": True,
+                                   "restricted": True, "default_key": None}])
+    [entry] = dialog_options(_asked(dialog), TEXTS.get)
+    assert entry["answer_rules"] == {
+        "counts": {"max_in_row": 4, "max_rows": 2},
+        "text": [{"name": "tip", "label": "Tip Amount", "min_length": 1, "max_length": 6, "numeric": True,
+                  "min_value": 0, "max_value": 50, "profanity_checked": False},
+                 {"name": "note", "label": "note", "min_length": 0, "max_length": None, "numeric": False,
+                  "min_value": None, "max_value": None, "profanity_checked": True}]}
+    assert [act["guid64"] for act in entry["acts"]] == ["11", "12", "ok", "cancel"]
+
+
+def test_a_text_dialog_with_only_buttons_is_offered_with_its_rules():
+    dialog = _dialog("603", rows=[], responses=[{"response": "ok", "text_key": "2"}],
+                     text_inputs=[{"name": "name", "min_length": 1, "max_length": 12, "numeric": False,
+                                   "min_value": None, "max_value": None, "profanity_checked": True,
+                                   "restricted": False, "default_key": "77"}])
+    [entry] = dialog_options(_asked(dialog), TEXTS.get)
+    assert entry["answer_rules"]["text"][0]["label"] == "name"
+    assert [act["guid64"] for act in entry["acts"]] == ["ok"]
+
+
+def test_dialogs_on_the_users_screen_are_never_offered():
+    user = _dialog("610", cause="user", owner_id="100")
+    identity = _dialog("611", cause="identity_user", owner_id="100")
+    hers = _dialog("612", cause="hers", owner_id="100")
+    result = dialog_options(_asked(user, identity, hers), TEXTS.get)
+    assert [entry["object_id"] for entry in result] == ["dialog:612"]
+
+
+def test_an_older_probe_without_cause_keeps_the_owner_rule():
+    mine = _dialog("620", owner_id="100")
+    nobody = _dialog("621", owner_id=None)
+    someone = _dialog("622", owner_id="42")
+    result = dialog_options(_asked(mine, nobody, someone), TEXTS.get)
+    assert [entry["object_id"] for entry in result] == ["dialog:620", "dialog:621"]
+

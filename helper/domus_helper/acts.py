@@ -110,22 +110,74 @@ def queue_options(row, start=0):
     return [{"object": "What you are doing", "object_id": QUEUE_OBJECT_ID, "where": "your queue", "acts": acts}]
 
 
-def dialog_options(row, resolve=None, start=0):
-    """2.18.0: the game's open dialogs that are hers (or nobody's), as options she answers:
-    a picker's enabled rows (with price), then its buttons. Refs continue from start."""
-    dialogs = ((row or {}).get("dialogs") or {}).get("open") or []
-    body = None
+def body_id(row):
+    """Her body's sim id in a sample, or None."""
     for item in (row or {}).get("presence") or []:
         if isinstance(item, dict) and item.get("is_body") and item.get("id") is not None:
-            body = str(item["id"])
+            return str(item["id"])
+    return None
+
+
+def dialog_is_hers(dialog, body):
+    """W2h: whose window it is. The probe's cause is the answer ("hers", "user", "identity_user").
+    A sample from an older probe has no cause: the owner rule decides (no owner, or her owner)."""
+    cause = dialog.get("cause")
+    if cause is not None:
+        return cause == "hers"
+    owner = dialog.get("owner_id")
+    return owner is None or body is None or str(owner) == body
+
+
+def _int(value):
+    return value if type(value) is int else None
+
+
+def answer_rules(dialog, resolve=None):
+    """W2h (wire contract 11): how she may answer a dialog that is more than one button. None for
+    plain buttons. Labels are the game's own text for a field's default, resolved here; a field
+    without a resolvable default is named by its field name."""
+    rules = {}
+    select = dialog.get("select")
+    if isinstance(select, dict) and (_int(select.get("max")) or 0) > 1:
+        rules["select"] = {"min": _int(select.get("min")), "max": select["max"]}
+    counts = dialog.get("counts")
+    if isinstance(counts, dict):
+        rules["counts"] = {"max_in_row": _int(counts.get("max_in_row")),
+                           "max_rows": _int(counts.get("max_rows"))}
+    fields = dialog.get("text_inputs")
+    if isinstance(fields, list) and fields:
+        text = []
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+                continue
+            name = field["name"][:32]
+            text.append({"name": name, "label": _text(resolve, field.get("default_key")) or name,
+                         "min_length": _int(field.get("min_length")),
+                         "max_length": _int(field.get("max_length")),
+                         "numeric": field.get("numeric") is True,
+                         "min_value": _int(field.get("min_value")),
+                         "max_value": _int(field.get("max_value")),
+                         "profanity_checked": field.get("profanity_checked") is True})
+        if text:
+            rules["text"] = text
+    return rules or None
+
+
+def dialog_options(row, resolve=None, start=0):
+    """2.18.0: the game's open dialogs that are hers, as options she answers: a picker's enabled
+    rows (with price), then its buttons. W2h: a dialog with more than one selectable row, counts
+    or text fields carries answer_rules, and its ok button is listed with the rows. Refs continue
+    from start."""
+    dialogs = ((row or {}).get("dialogs") or {}).get("open") or []
+    body = body_id(row)
     result = []
     count = start
     for dialog in dialogs:
         if not isinstance(dialog, dict) or not dialog.get("dialog_id"):
             continue
-        owner = dialog.get("owner_id")
-        if owner is not None and body is not None and str(owner) != body:
+        if not dialog_is_hers(dialog, body):
             continue
+        rules = answer_rules(dialog, resolve)
         acts = []
         for entry in [r for r in dialog.get("rows") or [] if isinstance(r, dict) and r.get("enabled")][:DIALOG_ROWS_SHOWN]:
             text = _text(resolve, entry.get("name_key")) or "choice %s" % entry.get("option_id")
@@ -135,16 +187,19 @@ def dialog_options(row, resolve=None, start=0):
             acts.append({"ref": "a%d" % count, "guid64": str(entry["option_id"]), "text": text})
         for response in dialog.get("responses") or []:
             name = response.get("response") if isinstance(response, dict) else None
-            if not isinstance(name, str) or (acts and name == "ok"):
-                continue  # with rows, picking a row is the ok
+            if not isinstance(name, str) or (acts and name == "ok" and rules is None):
+                continue  # with rows, picking a row is the ok (unless her answer has rules)
             count += 1
             acts.append({"ref": "a%d" % count, "guid64": name,
                          "text": _text(resolve, response.get("text_key")) or name})
         if acts:
             title = _text(resolve, dialog.get("title_key")) or _text(resolve, dialog.get("text_key"))
-            result.append({"object": "The game asks: %s" % (title or "a question"),
-                           "object_id": DIALOG_PREFIX + str(dialog["dialog_id"]),
-                           "where": "asked now", "acts": acts})
+            entry = {"object": "The game asks: %s" % (title or "a question"),
+                     "object_id": DIALOG_PREFIX + str(dialog["dialog_id"]),
+                     "where": "asked now", "acts": acts}
+            if rules is not None:
+                entry["answer_rules"] = rules
+            result.append(entry)
     return result
 
 
