@@ -373,10 +373,14 @@ def test_probe_version_warns_once_and_withholds_camera(paths, tmp_path, monkeypa
 
 
 def test_cli_once_and_interval(paths, tmp_path, monkeypatch):
+    import domus_helper.bridge as bridge_module
     monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DOMUS_SIMS_ROOT", str(paths.sims_root))
     monkeypatch.delenv("DOMUS_ASHLEY_URL", raising=False)
     monkeypatch.delenv("DOMUS_ASHLEY_TOKEN", raising=False)
+    # OP19: the archive and the string indexes are other tests' business; this one checks the CLI loop.
+    monkeypatch.setattr(bridge_module, "_archive_quietly", lambda now: None)
+    monkeypatch.setattr(bridge_module, "_strings_quietly", lambda: None)
     assert main(["--once"]) == 0
     calls = {"n": 0}
 
