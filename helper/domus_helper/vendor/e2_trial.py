@@ -58,23 +58,34 @@ def name_words(name):
     return [item.lower() for item in words]
 
 
-def denied_name(name):
-    """2.31.0: the DENY_NAME_PARTS entry whose words come next to each other in the name, else None."""
+def denied_part(name, parts):
+    """2.31.0 (PR9, W4): the entry of parts whose words come next to each other in the name, else None.
+    Whole words only: "kill" is not in "Skill", "fire" is not in "Fireplace". An entry written as one
+    word matches a name that spells the phrase in one piece (TryBaby); underscores join the words."""
     words = name_words(name)
-    for entry in DENY_NAME_PARTS:
+    for entry in parts:
         part = entry.split("_")
         for start in range(len(words) - len(part) + 1):
             if words[start:start + len(part)] == part:
                 return entry
     return None
 
+
+def denied_name(name):
+    """2.31.0: the DENY_NAME_PARTS entry whose words come next to each other in the name, else None."""
+    return denied_part(name, DENY_NAME_PARTS)
+
 # 2.17.0: her socials toward another Sim (greet, invite in, talk) are hers to choose. The
 # acts that change a life or a household in one click stay out, as do testers' acts.
+# 2.31.0 (W4): whole words, as DENY_NAME_PARTS; the plural and -ing forms the substring match caught
+# stay listed so the same acts stay out.
 SOCIAL_DENY_PARTS = (
-    "debug", "cheat", "testing", "tutorial", "kill", "death", "grim", "fire", "burn",
-    "woohoo", "trybaby", "try_for_baby", "propose", "breakup", "divorce", "adopt",
-    "moveout", "move_out", "movein", "move_in", "travel", "vacation", "career", "job",
-    "quit", "retire", "buy", "purchase", "sell", "phone",
+    "debug", "cheat", "cheats", "cheating", "testing", "tutorial", "kill", "killing", "death", "deaths",
+    "grim", "fire", "burn", "burning", "woohoo", "woo_hoo", "trybaby", "try_baby", "try_for_baby",
+    "propose", "breakup", "break_up", "divorce", "adopt", "adopted", "adoption", "moveout", "move_out",
+    "movein", "move_in", "travel", "traveling", "travelling", "vacation", "career", "careers", "job",
+    "jobs", "quit", "quitting", "retire", "retired", "buy", "buying", "purchase", "sell", "selling",
+    "phone",
 )
 
 # D8 (live 2026-10-04): with energy in distress the guard refused bed and food too,
