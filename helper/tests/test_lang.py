@@ -220,3 +220,21 @@ def test_over_budget_sheds_doing_said_then_addressed_before_notebook(monkeypatch
     assert second["queued"] == ["invented_queued", "invented_solo"]
     assert all(isinstance(item, str) for item in second["running"] + second["queued"])
     assert observation._bytes(second) <= observation._PORTRAIT_LIMIT
+
+
+def test_the_bundled_phrases_ship_with_their_license():
+    bundled = lang._BUNDLED
+    data = json.loads(bundled.read_text(encoding="utf-8"))
+    assert data["source"]["license"] == "MIT" and len(data["entries"]) > 1000
+    assert "MIT" in (bundled.parent / "SENTIENT_SIMS_LICENSE").read_text(encoding="utf-8")
+
+
+def test_a_data_dir_import_takes_precedence_over_the_bundled_copy(tmp_path, monkeypatch):
+    class _Paths:
+        data_dir = tmp_path
+    monkeypatch.setattr(lang.Paths, "from_env", staticmethod(lambda: _Paths))
+    assert lang._social_path() == lang._BUNDLED
+    local = tmp_path / "lang" / "social.json"
+    local.parent.mkdir()
+    local.write_text('{"v": 1, "entries": {}}', encoding="utf-8")
+    assert lang._social_path() == local

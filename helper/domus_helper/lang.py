@@ -2,7 +2,9 @@
 
 Domus already sees the same tuning names: the portrait's addressed list (domus_helper/thalamus/observation.py: {"by": actor_id, "interaction": _affordance_name(text)}), and her own running/queued interactions in the same portrait. This lane adds a sentence beside those names when the dictionary has one.
 
-The phrase data is Sentient Sims' (MIT, guspuffygit/sentient-sims-app); it is imported locally and never committed. Attribution travels inside the data file.
+The phrase data is Sentient Sims' (MIT, guspuffygit/sentient-sims-app). It ships with the helper in
+domus_helper/data/social.json beside its license (data/SENTIENT_SIMS_LICENSE); attribution also travels
+inside the data file. A re-import into the data dir (lang/social.json) takes precedence over the bundled copy.
 """
 import argparse
 import json
@@ -193,8 +195,13 @@ def phrases():
     return _cached
 
 
+_BUNDLED = Path(__file__).resolve().parent / "data" / "social.json"
+
+
 def _social_path():
-    return Paths.from_env().data_dir / "lang" / "social.json"
+    """A re-import in the data dir if there is one, else the copy that ships with the helper."""
+    local = Paths.from_env().data_dir / "lang" / "social.json"
+    return local if local.is_file() else _BUNDLED
 
 
 def main(argv=None):
