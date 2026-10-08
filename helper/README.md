@@ -107,6 +107,16 @@ notification. A sentence shows once while it lasts and again only after a minute
 at most one line each 2.1 s and three waiting (the newest kept). It needs no Ashley
 connection and changes nothing in the game. `python -m domus_helper.talk on|off|show`.
 
+Snapshots (Windows only, stdlib and ctypes): when Ashley asks for a picture in a pass,
+Mint hands the request back in the next acts round trip. The helper captures the game's
+own top-level window once per request id, never the whole screen or another window:
+PrintWindow into a client-area bitmap, and only if that gives a black frame and the game
+is the foreground window, a copy of the screen over that area. A minimised or missing
+window, or a failed capture, is reported as its reason instead. The picture is an 8-bit
+RGB PNG at most 1600 px wide, posted once to `POST /domus/snapshot` (a 30 s timeout), and
+Mint sends it to the User's DM only. `python -m domus_helper.snapshot test <out.png>`
+captures the game once and writes the PNG to that file here; it sends nothing.
+
 Proof kit (`proof/` in the data folder, all append-only and hash-chained, each line
 carrying the previous hash): `trace-YYYYMMDD.jsonl` records every pass of hers the
 overlay showed, once, as it was shown, with what produced it (agent build, model,

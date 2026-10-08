@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from domus_helper import snapshot
 from domus_helper.acts import PROBE_REPLY_MS, ActCourier, dialog_options, humanize, options, people_names
 from domus_helper.contract import ContractError, validate_observation
 from domus_helper.spool import Spool
@@ -271,3 +272,30 @@ def test_an_object_the_game_sees_no_way_to_says_so_and_stays_listed():
     assert [item["object_id"] for item in listed] == ["11", "12"]
     assert listed[0]["noWay"] == "the game sees no way for her to get there from where she is now"
     assert "noWay" not in listed[1]
+
+
+class _SnapClient(_Client):
+    def sync_acts(self, body):
+        payload = super().sync_acts(body)
+        if payload is not None:
+            payload["snapshots"] = [{"snapshot_id": "p" * 32}]
+        return payload
+
+
+def test_requested_pictures_go_to_the_snapshot_module_after_the_acts(tmp_path, monkeypatch):
+    handed = []
+    monkeypatch.setattr(snapshot, "handle_requests", lambda ids, client, **kwargs: handed.append((ids, kwargs)))
+    published = []
+    courier = ActCourier(Spool(tmp_path / "spool.db"), lambda command, args: published.append(command))
+    assert courier.tick(_SnapClient([ACT]), "h", 1000, True) == ["a" * 32]
+    assert published == ["act"]
+    assert handed == [([{"snapshot_id": "p" * 32}], {"helper_session": "h"})]
+
+
+def test_no_round_trip_means_no_picture_is_handed_on(tmp_path, monkeypatch):
+    handed = []
+    monkeypatch.setattr(snapshot, "handle_requests", lambda ids, client, **kwargs: handed.append(ids))
+    client = _SnapClient([ACT])
+    client.down = True
+    assert ActCourier(Spool(tmp_path / "spool.db"), lambda command, args: None).tick(client, "h", 1000, True) == []
+    assert handed == []
