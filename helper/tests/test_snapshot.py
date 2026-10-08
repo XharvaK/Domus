@@ -12,7 +12,7 @@ import pytest
 
 from domus_helper import snapshot
 from domus_helper.snapshot import SnapshotFailed, downscale_bgra, encode_png_rgb, handle_requests
-from domus_helper.transport import SNAPSHOT_TIMEOUT_S, AshleyClient
+from domus_helper.transport import SNAPSHOT_TIMEOUT_S, AshleyClient, TransportResult
 
 
 @pytest.fixture(autouse=True)
@@ -97,7 +97,7 @@ class FakeClient:
         if body["snapshot_id"] in self.fail_on:
             raise OSError("no route")
         self.bodies.append(body)
-        return {"status": "ok"}
+        return TransportResult("sent", 200)
 
 
 PNG = b"\x89PNG\r\n\x1a\nfake picture"
@@ -225,26 +225,66 @@ def test_post_snapshot_uses_its_path_the_token_and_a_30_second_timeout(monkeypat
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     client = AshleyClient("http://ashley.invalid/", token, timeout_s=10)
     body = {"v": 1, "helper_session": "sess", "snapshot_id": "s-1", "failed": "no_game_window"}
-    assert client.post_snapshot(body) == {"status": "ok"}
+    assert client.post_snapshot(body) == TransportResult("sent", 200)
     assert client.sync_acts({"v": 1, "helper_session": "sess", "events": []}) == {"status": "ok"}
     assert SNAPSHOT_TIMEOUT_S == 30
     assert seen[0] == ("http://ashley.invalid/domus/snapshot", "POST", token, body, 30)
     assert seen[1][1:] == ("POST", token, {"v": 1, "helper_session": "sess", "events": []}, 10)
 
 
-def test_post_snapshot_is_none_when_the_round_trip_fails(monkeypatch):
+def test_post_snapshot_returns_the_kind_when_it_fails(monkeypatch):
+    # HE15: a failed upload says what kind of failure it was; nothing is raised or hidden.
     def down(request, timeout):
         raise urllib.error.URLError("unreachable")
 
     monkeypatch.setattr(urllib.request, "urlopen", down)
     client = AshleyClient("http://ashley.invalid", "t" * 40, timeout_s=10)
-    assert client.post_snapshot({"v": 1, "helper_session": "s", "snapshot_id": "s-1", "failed": "x"}) is None
+    body = {"v": 1, "helper_session": "s", "snapshot_id": "s-1", "failed": "x"}
+    assert client.post_snapshot(body) == TransportResult("unavailable", None)
+
+    def gone(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 410, "gone", None, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", gone)
+    assert client.post_snapshot(body) == TransportResult("expired", 410)
+
+
+@pytest.fixture(autouse=True)
+def no_retry_wait(monkeypatch):
+    monkeypatch.setattr(snapshot.time, "sleep", lambda seconds: None)
+
+
+def test_a_failed_upload_is_retried_once_after_five_seconds_and_logged_by_kind(monkeypatch, caplog):
+    waits = []
+    monkeypatch.setattr(snapshot.time, "sleep", lambda seconds: waits.append(seconds))
+    answers = [TransportResult("unavailable", None), TransportResult("sent", 200)]
+    sent = []
+
+    class Flaky:
+        def post_snapshot(self, body):
+            sent.append(body)
+            return answers.pop(0)
+
+    with caplog.at_level("WARNING", logger="domus_helper.snapshot"):
+        snapshot._post_all(["retry-1"], Flaky(), lambda: PNG, "sess")
+    assert waits == [5]
+    assert len(sent) == 2 and sent[0] == sent[1]
+    assert "unavailable" in caplog.text and "retry-1" in caplog.text
+    assert "fake picture" not in caplog.text  # HE15: the log names the kind, never the picture
+
+    answers[:] = [TransportResult("rejected", 400), TransportResult("rejected", 400)]
+    waits.clear()
+    with caplog.at_level("WARNING", logger="domus_helper.snapshot"):
+        snapshot._post_all(["retry-2"], Flaky(), lambda: PNG, "sess")
+    assert waits == [5]
+    assert "not sent after a retry: rejected" in caplog.text
 
 
 def test_background_claims_here_and_posts_on_the_runner(monkeypatch):
     snapshot._HANDLED.clear()
     monkeypatch.setattr(snapshot, "capture_game_window", lambda: (_ for _ in ()).throw(SnapshotFailed("no_game_window")))
-    client = types.SimpleNamespace(posted=[], post_snapshot=lambda body: client.posted.append(body))
+    client = types.SimpleNamespace(posted=[], post_snapshot=lambda body: (
+        client.posted.append(body), TransportResult("sent", 200))[1])
     runs = []
     snapshot.handle_requests_in_background([{"snapshot_id": "bg-1"}], client, helper_session="s", start=runs.append)
     snapshot.handle_requests_in_background([{"snapshot_id": "bg-1"}], client, helper_session="s", start=runs.append)

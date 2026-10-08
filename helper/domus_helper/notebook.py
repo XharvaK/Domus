@@ -60,9 +60,14 @@ CREATE TABLE IF NOT EXISTS procedures (
   needs TEXT NOT NULL,
   conditions TEXT NOT NULL,
   act_ids TEXT NOT NULL,
-  updated_ms INTEGER NOT NULL
+  updated_ms INTEGER NOT NULL,
+  first_ms INTEGER
 );
 """
+# HE13: a notebook made before first_ms existed gets the column; its first-seen time is the last update known.
+_MIGRATIONS = (
+    ("procedures", "first_ms", "ALTER TABLE procedures ADD COLUMN first_ms INTEGER"),
+)
 
 
 class Notebook:
@@ -71,6 +76,15 @@ class Notebook:
         self._con.row_factory = sqlite3.Row
         self._con.execute("PRAGMA journal_mode=WAL")
         self._con.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self):
+        for table, column, statement in _MIGRATIONS:
+            names = {row["name"] for row in self._con.execute("PRAGMA table_info(%s)" % table)}
+            if column not in names:
+                with self._con:
+                    self._con.execute(statement)
+                    self._con.execute("UPDATE %s SET first_ms = updated_ms WHERE first_ms IS NULL" % table)
 
     def close(self):
         self._con.close()
@@ -150,7 +164,8 @@ class Notebook:
     def rebuild_procedures(self, records, now_ms):
         groups = {}
         for record in records or []:
-            if not isinstance(record, dict):
+            # HE13: a development trial is not something she learned.
+            if not isinstance(record, dict) or record.get("origin") == "experiment":
                 continue
             name = (record.get("interaction") or {}).get("name")
             if name:
@@ -183,13 +198,20 @@ class Notebook:
             act_ids = sorted(record["act_id"] for record in group if record.get("act_id"))[:5]
             rows.append((name, len(group), json.dumps(needs, sort_keys=True),
                          json.dumps({"origins": origins, "company": company}),
-                         json.dumps(act_ids), now_ms))
+                         json.dumps(act_ids), now_ms, now_ms))
+        # HE13: a procedure keeps the time she first had it; one that no longer holds is dropped.
+        held = {row[0] for row in rows}
         with self._con:
-            self._con.execute("DELETE FROM procedures")
+            gone = [row["interaction"] for row in self._con.execute("SELECT interaction FROM procedures")
+                    if row["interaction"] not in held]
+            self._con.executemany("DELETE FROM procedures WHERE interaction = ?", [(name,) for name in gone])
             self._con.executemany(
-                "INSERT OR REPLACE INTO procedures"
-                " (interaction, n, needs, conditions, act_ids, updated_ms)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO procedures"
+                " (interaction, n, needs, conditions, act_ids, updated_ms, first_ms)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (interaction) DO UPDATE SET n = excluded.n, needs = excluded.needs,"
+                " conditions = excluded.conditions, act_ids = excluded.act_ids,"
+                " updated_ms = excluded.updated_ms",
                 rows)
         return len(rows)
 
@@ -265,7 +287,7 @@ class Notebook:
             + " valid_until_ms IS NOT NULL", args).fetchone()[0]
         procedures = []
         for row in self._con.execute(
-                "SELECT interaction, n, needs, conditions, act_ids, updated_ms"
+                "SELECT interaction, n, needs, conditions, act_ids, updated_ms, first_ms"
                 " FROM procedures ORDER BY n DESC, interaction"):
             procedures.append({
                 "interaction": row["interaction"],
@@ -274,6 +296,7 @@ class Notebook:
                 "conditions": json.loads(row["conditions"]),
                 "act_ids": json.loads(row["act_ids"]),
                 "updated_ms": row["updated_ms"],
+                "first_ms": row["first_ms"],
             })
         withheld = [dict(row) for row in self._con.execute(
             "SELECT tuning, screen, n, first_ms, last_ms FROM withheld ORDER BY last_ms DESC, tuning LIMIT 50")]

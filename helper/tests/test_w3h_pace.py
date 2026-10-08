@@ -238,7 +238,7 @@ def test_over_the_limit_the_pace_entry_goes_whole_before_the_running_lists():
     assert _size(observation._portrait(fits)) == limit
     shed = observation._portrait(fits, pace=entry)
     assert "pace" not in shed
-    assert shed["running"] == ["bookshelf-ReadBook"]
+    assert shed["running"] == ["bookshelf Read Book"]  # HE1: no menu here, so the name is humanized
     assert _size(shed) <= limit
 
 

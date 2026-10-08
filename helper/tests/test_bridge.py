@@ -103,6 +103,20 @@ def test_cursor_no_rescan_partial_rotation_resume(paths, tmp_path):
     assert [row["written_sequence"] for row in TelemetryCursor(Spool(db), paths).read_new()] == [2]
 
 
+def test_a_rotated_segment_is_not_a_gap(tmp_path):
+    # GL12: after a rotation the newest row is the last one written, in the newest segment.
+    spool = Spool(tmp_path / "spool.db")
+    for offset, seq in ((0, 1), (10, 2), (20, 3)):
+        spool.ingest("sess.jsonl", 0, offset, _row(seq), raw_len=10)
+    spool.ingest("sess.jsonl", 1, 0, _row(4), raw_len=10)
+    spool.ingest("sess.jsonl", 1, 10, _row(5), raw_len=10)
+    spool.ingest("sess.jsonl", 1, 20, _row(6), raw_len=10)
+    assert [row["kind"] for row in spool.gaps()] == []
+    spool.ingest("sess.jsonl", 1, 30, _row(8), raw_len=10)
+    assert [json.loads(row["detail_json"]) for row in spool.gaps()] == [{"from": 6, "to": 8}]
+    spool.close()
+
+
 def test_spool_gap_drop_and_cap(tmp_path):
     spool = Spool(tmp_path / "spool.db")
     spool.row_cap = 2
@@ -190,6 +204,21 @@ def test_load_credentials(paths, monkeypatch, tmp_path):
     monkeypatch.setenv("DOMUS_ASHLEY_TOKEN", "e" * 32)
     override = load_credentials(paths)
     assert override.url == "http://127.0.0.1:8" and override.token == "e" * 32
+
+
+def test_kv_is_written_only_when_its_value_changes(tmp_path):
+    # HE17: an unchanged value is not rewritten; a changed one is.
+    from domus_helper.spool import Spool
+    spool = Spool(tmp_path / "spool.db")
+    spool.put_kv("k", "v")
+    before = spool._con.total_changes
+    spool.put_kv("k", "v")
+    spool.put_many_kv({"k": "v"})
+    assert spool._con.total_changes == before
+    spool.put_many_kv({"k": "w", "j": "1"})
+    assert spool._con.total_changes == before + 2
+    assert spool.get_kv("k") == "w" and spool.get_kv("j") == "1"
+    spool.close()
 
 
 def test_outbox_idempotent_conflict_backoff_expiry_auth(tmp_path):
@@ -344,10 +373,14 @@ def test_probe_version_warns_once_and_withholds_camera(paths, tmp_path, monkeypa
 
 
 def test_cli_once_and_interval(paths, tmp_path, monkeypatch):
+    import domus_helper.bridge as bridge_module
     monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DOMUS_SIMS_ROOT", str(paths.sims_root))
     monkeypatch.delenv("DOMUS_ASHLEY_URL", raising=False)
     monkeypatch.delenv("DOMUS_ASHLEY_TOKEN", raising=False)
+    # OP19: the archive and the string indexes are other tests' business; this one checks the CLI loop.
+    monkeypatch.setattr(bridge_module, "_archive_quietly", lambda now: None)
+    monkeypatch.setattr(bridge_module, "_strings_quietly", lambda: None)
     assert main(["--once"]) == 0
     calls = {"n": 0}
 

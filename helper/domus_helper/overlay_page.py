@@ -43,7 +43,7 @@ html[data-layout="vertical"] #needs-v { display: grid; }
 .card .day { color: var(--ink); font-size: 1.35rem; font-style: italic; font-weight: 600; }
 .card .ai { margin-left: auto; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em;
   color: var(--faint); border: 1px solid var(--faint); border-radius: 0.3rem; padding: 0.1rem 0.45rem; }
-#human { border: 1px solid var(--ink); border-radius: 0.4rem; padding: 0.45rem 0.75rem; font-size: 0.95rem;
+#human, #privacy { border: 1px solid var(--ink); border-radius: 0.4rem; padding: 0.45rem 0.75rem; font-size: 0.95rem;
   text-align: center; animation: breathe 2.4s ease-in-out infinite; }
 @keyframes breathe { 50% { border-color: var(--faint); color: var(--dim); } }
 
@@ -106,6 +106,7 @@ html[data-layout="vertical"] .scene .wordmark { width: 70vw; }
   <aside id="panel">
     <div class="card"><svg class="glyph" viewBox="0 0 1820 1890" aria-hidden="true"><path d="M420 490L1400 0L1820 420L840 910Z" fill="#625d56"/><path d="M840 910L1820 420L1820 1400L840 1890Z" fill="#9c968d"/><path d="M0 1890L0 910L420 490L840 910L840 1890Z" fill="#f5f3ee"/><path class="window" d="M420 735L595 910L420 1085L245 910Z" fill="#f4b3aa"/></svg><span class="day" data-day></span><span data-time></span><span class="ai">AI-controlled</span></div>
     <div id="human" class="hidden">Human at the controls</div>
+    <div id="privacy" class="hidden">The privacy list is missing: names and places are not held from this screen.</div>
     <div><h2>Now</h2><ul id="doing"></ul></div>
     <div id="thoughts"></div>
     <div id="needs-v" class="needs"></div>
@@ -170,6 +171,7 @@ function render(state) {
   if (scene === "work") document.querySelector("[data-work]").textContent = (state.work && state.work.title) || "";
   if (scene !== "live") return;
   document.getElementById("human").classList.toggle("hidden", !state.human_at_controls);
+  document.getElementById("privacy").classList.toggle("hidden", state.privacy_list !== "missing");
   document.getElementById("doing").replaceChildren(...(state.doing || []).map((item) => {
     const li = el("li", item.queued ? "queued" : "");
     if (item.by) li.append(el("span", "by " + item.by, BY[item.by]));

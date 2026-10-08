@@ -100,7 +100,7 @@ class Spool:
             wall = None
         previous = self._con.execute(
             "SELECT written_sequence FROM rows WHERE session=? AND written_sequence IS NOT NULL "
-            "ORDER BY segment, offset DESC LIMIT 1",
+            "ORDER BY rowid DESC LIMIT 1",
             (session,)).fetchone()
         with self._con:
             if previous is not None and seq is not None and seq != previous["written_sequence"] + 1:
@@ -160,6 +160,10 @@ class Spool:
     def put_many_kv(self, items):
         with self._con:
             for key, value in items.items():
+                # HE17: a value that is already stored is not rewritten.
+                stored = self._con.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+                if stored is not None and stored["v"] == value:
+                    continue
                 self._con.execute(
                     """INSERT INTO kv (k, v) VALUES (?, ?)
                        ON CONFLICT(k) DO UPDATE SET v=excluded.v""",

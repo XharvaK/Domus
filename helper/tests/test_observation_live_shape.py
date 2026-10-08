@@ -14,7 +14,7 @@ def test_actions_read_as_tuning_names():
         "game": {"calendar": "02:31:21.960 day:2 week:0"},
     }
     portrait = observation._portrait(row)
-    assert portrait["running"] == ["sim-stand"]
+    assert portrait["running"] == []  # HE2: standing is not an act; her posture says it
     assert portrait["company"][0]["doing"] == "social_Chat"
     assert portrait["addressed_by"] == [{"by": "2", "interaction": "social_Chat"}]
     assert portrait["time"]["weekday"] == "Tuesday" and portrait["time"]["hour"] == 2

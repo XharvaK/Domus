@@ -9,6 +9,8 @@ _CANCEL = "InteractionSource.BODY_CANCEL_AOP"
 # H0.5: what the game runs to hold a body in place (stand, sit): not doing anything.
 _IDLE_SOURCES = ("InteractionSource.POSTURE_GRAPH", _CANCEL)
 _TEXT_CAP = 120
+# GL9: a mood change this soon after her own act ended folds into her next wake; it does not wake her by itself.
+MOOD_FOLD_MS = 60_000
 # Who started an interaction. The game acts on her body's distress even with autonomy
 # off (live DA6F: sim_BladderDistress, then toilet). That is her body's own action
 # (design 12.3, NATIVE_AUTONOMY), reported as a fact, never as an override or error.
@@ -69,11 +71,15 @@ class Extractor:
         self._open = {}
         self._barrier = 0
         self._presence = None
+        # HE3: who each present Sim was (name and last room), so "left" can say who and where.
+        self._presence_names = {}
         self._on_lot = set()
         self._social = set()
         self._asked = set()
         self._busy = None
         self._mood = None
+        self._wall_ms = None
+        self._finished_ms = None
 
     @property
     def busy(self):
@@ -83,6 +89,8 @@ class Extractor:
     def step(self, row):
         percepts = []
         kind = row.get("event_kind")
+        wall = row.get("wall_timestamp_ms")
+        self._wall_ms = wall if type(wall) is int else None
         session = row.get("telemetry_session_id")
         seq = row.get("written_sequence")
         if kind == "session_open":
@@ -91,7 +99,8 @@ class Extractor:
             percepts.append(self._gap(session))
         elif (self._seq is not None and type(seq) is int and session == self._session
               and seq > self._seq + 1):
-            percepts.append(self._gap(session))
+            # HE16: the rows between the two sequence numbers are the ones she did not get.
+            percepts.append(self._gap(session, lost=seq - self._seq - 1))
         if kind == "lineage_event":
             percepts.append(self._lineage(row))
         if kind == "act_event":
@@ -125,6 +134,8 @@ class Extractor:
         self._asked = set()
         self._busy = None
         self._mood = None
+        self._wall_ms = None
+        self._finished_ms = None
 
     def _act(self, row):
         """8f: her chosen act was refused, or nobody can tell what became of it. Wakes her;
@@ -145,13 +156,13 @@ class Extractor:
                                             ("tuning_name", e2.get("tuning_name")),
                                             ("finishing_type", e2.get("finishing_type")), ("origin", "her_choice"))))]
 
-    def _gap(self, session):
+    def _gap(self, session, lost=None):
         self.needs.reset()
         self.durations.reset()
         self._barrier += 1
         self._seen_row = True
         return Percept("gap", "session", "" if session is None else str(session), "gap",
-                       urgency="wake", lineage=self.lineage_id)
+                       urgency="wake", lineage=self.lineage_id, facts=_facts(None, (("lost", lost),)))
 
     def _lineage(self, row):
         e2 = row.get("e2") or {}
@@ -311,9 +322,11 @@ class Extractor:
                 surprise = self.durations.surprise(duration, affordance)
                 self.durations.observe(affordance, duration)
             pressure = "action_end" if source == _USER else None
+            # GL10: a normal finish is a decision point; the plan's steps (H0.5) are held back in the bridge.
+            self._finished_ms = self._wall_ms
             percepts.append(Percept(
                 "interaction", sim_s, str(affordance), "ended", surprise=surprise,
-                pressure=pressure, lineage=self.lineage_id,
+                pressure=pressure, urgency="wake", lineage=self.lineage_id,
                 facts=_facts(ticks, (("affordance_text", _text(
                     (closing or entry).get("affordance_text"))),
                     ("origin", _origin(entry.get("source_raw")))))))
@@ -374,9 +387,13 @@ class Extractor:
                     ("distance_m", item.get("distance_m")),
                     ("doing", doing[:120] if isinstance(doing, str) else None)))))
         for sim_id in sorted(self._presence - set(current)):
+            gone = self._presence_names.get(sim_id) or {}
             percepts.append(Percept(
-                "presence", sim_id, "", "left", lineage=self.lineage_id, facts=_facts(ticks, ())))
+                "presence", sim_id, "", "left", lineage=self.lineage_id, facts=_facts(ticks, (
+                    ("name", gone.get("name")), ("room", gone.get("room"))))))
         self._presence = set(current)
+        self._presence_names = {sim_id: {"name": item.get("name"), "room": item.get("room")}
+                                for sim_id, item in current.items()}
         # 2.17.0 (live 2026-10-06: the welcome wagon waited at her door while she stood at the
         # mirror): someone stepping onto the lot she is on wakes her, with the game situation
         # they are in. Walkbys on the street stay ordinary presence.
@@ -407,7 +424,10 @@ class Extractor:
         name = mood.get("name") if isinstance(mood, dict) else None
         if isinstance(name, str) and name:
             if self._mood is not None and name != self._mood:
-                percepts.append(Percept("moodlet", "mood", self._mood[:64], name[:64], urgency="wake",
+                folds = (self._finished_ms is not None and self._wall_ms is not None
+                         and 0 <= self._wall_ms - self._finished_ms < MOOD_FOLD_MS)
+                percepts.append(Percept("moodlet", "mood", self._mood[:64], name[:64],
+                                        urgency="normal" if folds else "wake",
                                         lineage=self.lineage_id,
                                         facts=_facts(ticks, (("from", self._mood[:64]), ("to", name[:64])))))
             self._mood = name
@@ -475,6 +495,7 @@ class Extractor:
             "open": self._open,
             "barrier": self._barrier,
             "presence": None if self._presence is None else sorted(self._presence),
+            "presence_names": self._presence_names,
             "on_lot": sorted(self._on_lot),
             "social": sorted(self._social),
             "asked": sorted(self._asked),
@@ -499,6 +520,7 @@ class Extractor:
         extractor._barrier = blob.get("barrier") or 0
         presence = blob.get("presence")
         extractor._presence = None if presence is None else set(presence)
+        extractor._presence_names = blob.get("presence_names") or {}
         extractor._on_lot = set(blob.get("on_lot") or [])
         extractor._social = set(blob.get("social") or [])
         extractor._asked = set(blob.get("asked") or [])

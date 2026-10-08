@@ -102,7 +102,7 @@ def test_build_clamps_salience_and_fits_caps():
     assert normalized["expires_at_ms"] - normalized["source_time_ms"] == 600_000
     assert normalized["percepts"][0]["salience"] == 1.0
     facts = normalized["percepts"][0]["facts"]
-    assert facts["reason"] == "threshold" and facts["urgency"] == "wake"
+    assert "reason" not in facts and "urgency" not in facts and "ticks" not in facts  # HE11: trace only
     assert len(json.dumps(facts, separators=(",", ":")).encode()) <= 2048
     assert len(normalized["portrait"]["running"]) <= 8
     assert all(len(item) <= 80 for item in normalized["portrait"]["running"])
@@ -269,6 +269,37 @@ def _log_lines(data):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def test_a_check_wake_over_a_stale_row_is_skipped_and_logged_and_a_fresh_one_is_sent(paths, tmp_path, monkeypatch):
+    # HE16: a check or boredom wake is built from the newest row; one over the window old is not sent.
+    from types import SimpleNamespace
+    from domus_helper.thalamus.types import Percept
+    data = _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10)])
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    bridge.tick(WALL)
+    percept = Percept("need", "hunger", "", "low", urgency="wake", lineage="")
+    decision = SimpleNamespace(fired=True, reason="check", percepts=[(percept, 1.0)], theta=1.0, arousal=0.0,
+                               trace=[])
+    before = len(_payloads(bridge))
+    bridge._on_decision(decision, [], WALL + 700_000, WALL + 700_000, None)
+    assert len(_payloads(bridge)) == before
+    assert _log_lines(data)[-1]["scorer"] == {"skipped": "stale_row"}
+    bridge._on_decision(decision, [], WALL + 1_000, WALL + 1_000, None)
+    assert len(_payloads(bridge)) == before + 1
+
+
+def test_the_newest_row_is_kept_when_it_changes_and_at_most_every_30_seconds(paths, tmp_path, monkeypatch):
+    # HE17: last_row is written on a change, and not sooner than 30 s after its last write.
+    _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL})
+    assert bridge._row_due("last_row", "a", 0) is True
+    assert bridge._row_due("last_row", "a", 1_000) is False
+    assert bridge._row_due("last_row", "b", 1_000) is False
+    assert bridge._row_due("last_row", "b", 30_000) is True
+    assert bridge._row_due("last_row", "b", 60_000) is False
+
+
 def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatch):
     from domus_helper.contract import validate_observation as check
     data = _data(paths, tmp_path, monkeypatch)
@@ -290,7 +321,7 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     assert obs["seq"] == 0 and obs["observation_id"].endswith(".0")
     assert obs["world"] == "slot3" and obs["snapshot"] == "3"
     assert obs["portrait"]["needs"]["hunger"]["band"] == "low"
-    assert need["facts"]["bucket"] == "low" and need["facts"]["reason"] == "wake"
+    assert need["facts"]["bucket"] == "low" and "reason" not in need["facts"]
     _append(paths, [_snap(4, "distress", WALL + 4000, 30)])
     mono["ms"] = WALL + 4000
     bridge.tick(WALL + 4000)
@@ -299,6 +330,7 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     assert payloads[1]["observation_id"].endswith(".1")
     fired = [line for line in _log_lines(data) if line["fired"]]
     assert fired[0]["enqueued"] is True and fired[0]["reason"] == "wake"
+    assert fired[0]["urgency"] and "ticks" in fired[0]  # HE11: the wake mechanics are in the trace
     traced = [line for line in _log_lines(data) if line["traces"]]
     assert traced and "key" in traced[0]["traces"][0]
     status = bridge.status()
@@ -492,8 +524,8 @@ def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_sessi
          "telemetry_session_id": "old-session", "sims_build": BUILD, "probe_version": "2.16.0", "e2": stale},
         {"event_kind": "act_menu", "written_sequence": 3, "wall_timestamp_ms": WALL, "monotonic_ns": WALL * 1_000_000,
          "telemetry_session_id": "sess-1", "sims_build": BUILD, "probe_version": "2.16.0", "e2": menu},
-        _snap(4, "ok", WALL, 10),
-        _snap(5, "low", WALL, 20),
+        dict(_snap(4, "ok", WALL, 10), zone={"zone_id": 7, "lot_id": 9, "room": "4"}),
+        dict(_snap(5, "low", WALL, 20), zone={"zone_id": 7, "lot_id": 9, "room": "4"}),
     ])
     mono = {"ms": WALL}
     bridge = _bridge(paths, mono)
@@ -503,6 +535,7 @@ def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_sessi
     payloads = _payloads(bridge)
     assert len(payloads) == 1
     obs = check(payloads[0], WALL + 1500)
+    assert bridge._menu["at_ms"] == WALL  # HE12: the menu keeps its wall time
     assert obs["options"] == [{"object": "object bookshelf", "object_id": "11", "where": "here, 2.0 m",
                                "acts": [{"ref": "a1", "guid64": "4242", "text": "bookshelf Read Book"}]}]
     bridge._menu = dict(bridge._menu, session="another")

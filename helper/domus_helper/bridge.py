@@ -11,7 +11,7 @@ from . import commands
 from . import fingerprints as fingerprint_reader
 from . import pace
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
+from .acts import OPTIONS_LIMIT, ActCourier, act_names, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -40,6 +40,11 @@ _CAMERA_PROBE = (2, 21, 0)
 _TALK_PROBE = (2, 26, 0)
 # W3h: a pace command that could not be written is tried again after this long.
 PACE_RETRY_MS = 30_000
+# HE17: the newest row is kept in the spool when it changed, and at most this often.
+ROW_WRITE_EVERY_MS = 30_000
+# HE16: the wakes a quiet game makes (no new row), and the window an observation stays valid for.
+CLOCK_WAKES = ("check", "boredom")
+OBSERVATION_WINDOW_MS = 600_000
 
 
 def _body_sample(record):
@@ -58,6 +63,11 @@ def _probe_ok(probe, least=_CAMERA_PROBE):
         return tuple(int(part) for part in probe.split(".")) >= least
     except (TypeError, ValueError):
         return False
+
+
+def _wall(record):
+    wall = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
+    return wall if type(wall) is int else 0
 
 
 def _ticks(record):
@@ -162,6 +172,7 @@ class Bridge:
         self._pace_sent = None
         self._pace_sent_ms = None
         self._pace_retry_ms = None
+        self._row_written = {}
 
     def tick(self, now):
         self._maybe_rebuild_procedures(now)
@@ -207,6 +218,7 @@ class Bridge:
             self.overlay.answered = self._acts.answered_dialogs
         self._pace_tick(now)
         self.overlay.poll(self.client, self.helper_session, now)
+        self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
             live = self.overlay.published.get("mode") == "live" and _probe_ok(probe)
@@ -219,7 +231,7 @@ class Bridge:
         if not isinstance(row, dict):
             return []
         asked = dialog_options(row, self._resolve_text)
-        asked += queue_options(row, start=sum(len(item["acts"]) for item in asked))
+        asked += queue_options(row, start=sum(len(item["acts"]) for item in asked), act_name=self._act_names())
         menu = self._menu
         if not isinstance(menu, dict) or menu.get("session") != row.get("telemetry_session_id"):
             return asked
@@ -233,7 +245,7 @@ class Bridge:
         room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
         listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
                              people=people_names(row), start=count, limit=max(0, room),
-                             withheld=self._withheld_names())
+                             withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"))
         return asked + listed
 
     def status(self):
@@ -314,7 +326,9 @@ class Bridge:
             written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
             clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
             if kind == "act_menu" and isinstance(record.get("e2"), dict):
-                self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"]}
+                # HE12: the menu keeps its wall time and its room; its labels are read against her room now.
+                self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"],
+                              "at_ms": clock_ms}
                 self._notebook_quietly(
                     lambda: self.notebook.observe_menu(self._world(), record["e2"], clock_ms))
             elif kind == "presence_snapshot":
@@ -341,9 +355,10 @@ class Bridge:
             self.talk.on_row(record, wall_ms, _body_sample(record))
             percepts = self._extractor.step(record)
             if self._acts is not None and self._acts.planned > 0:
-                # H0.5: between the steps of her plan she is idle for a moment; that is not a
-                # decision point (Ashley sends the next step in the same round trip).
-                percepts = [dataclasses.replace(p, urgency="normal") if p.bucket == "idle" else p
+                # H0.5: between the steps of her plan she is idle for a moment, and a step's end is
+                # not a decision point either (Ashley sends the next step in the same round trip).
+                percepts = [dataclasses.replace(p, urgency="normal")
+                            if p.kind == "interaction" and p.bucket in ("idle", "ended") else p
                             for p in percepts]
             self._thalamus, decision = decide(
                 self._thalamus, percepts, clock_ms, self._params, self._points())
@@ -361,7 +376,7 @@ class Bridge:
         self._on_decision(decision, [], wall_ms, wall_ms, None)
         lineage = self._extractor.lineage_id
         self._thalamus = prune(self._thalamus, wall_ms, self._params, lineage)
-        self._persist_thalamus()
+        self._persist_thalamus(wall_ms)
 
     def _points(self):
         """H0.5: the live bridge wakes her at decision points. Before the first snapshot her body
@@ -378,7 +393,11 @@ class Bridge:
             self._fires += 1
             self._last_fire_reason = decision.reason
             self._last_fire_wall_ms = wall_ms
-            if decision.percepts and self._last_row is not None:
+            if decision.percepts and self._last_row is not None and decision.reason in CLOCK_WAKES and (
+                    wall_ms - _wall(self._last_row) > OBSERVATION_WINDOW_MS):
+                # HE16: a check or boredom wake is built from the newest row; a row this old would only expire.
+                scorer = {"skipped": "stale_row"}
+            elif decision.percepts and self._last_row is not None:
                 obs = build(decision, self._obs_ctx(wall_ms))
                 scorer = run_scorer(self.scorer, json.loads(json.dumps(obs)))
                 if self.client is not None and not self._telemetry_only:
@@ -395,6 +414,8 @@ class Bridge:
         self._log.write({
             "wall_ms": wall_ms,
             "clock_ms": clock_ms,
+            "ticks": _ticks(self._last_row),
+            "urgency": sorted({percept.urgency for percept, _ in decision.percepts}),
             "row_seq": row_seq,
             "fired": decision.fired,
             "reason": decision.reason,
@@ -442,6 +463,7 @@ class Bridge:
             "row": body,
             "event_row": self._last_row,
             "resolve_text": self._resolve_text,
+            "act_name": self._act_names(),
             "options": self._options(body),
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
@@ -486,6 +508,10 @@ class Bridge:
         self._pace_mismatch = False
         self._pace_retry_ms = None
 
+    def _act_names(self):
+        """HE1: the game's own words for her acts, from the newest menu's text keys (humanized as fallback)."""
+        return act_names(self._menu.get("payload") if isinstance(self._menu, dict) else None, self._resolve_text)
+
     def _world(self):
         slot = self._extractor.slot_id
         return "unknown" if slot is None else "slot%s" % slot
@@ -522,21 +548,34 @@ class Bridge:
         self._notebook_quietly(lambda: self.notebook.rebuild_procedures(
             notebook.load_outcome_records(self.paths), now))
 
-    def _persist_thalamus(self):
-        self.spool.put_many_kv({
+    def _row_due(self, key, value, now_ms):
+        """HE17: a newest row is written when it changed since its last write, and no sooner than 30 s after it."""
+        last = self._row_written.get(key)
+        due = last is None or (last[0] != value and now_ms - last[1] >= ROW_WRITE_EVERY_MS)
+        if due:
+            self._row_written[key] = (value, now_ms)
+        return due
+
+    def _persist_thalamus(self, now_ms):
+        rows = {}
+        for key, row in (("last_row", self._last_row), ("last_body_row", self._last_body_row)):
+            value = json.dumps(row)
+            if self._row_due(key, value, now_ms):
+                rows[key] = value
+        values = {
             "thalamus_state": json.dumps(self._thalamus.to_dict()),
             "extractor_state": json.dumps(self._extractor.to_dict()),
             "last_rowid": str(self._last_rowid),
             "obs_seq": str(self._obs_seq),
-            "last_row": json.dumps(self._last_row),
-            "last_body_row": json.dumps(self._last_body_row),
             "act_menu": json.dumps(self._menu),
             "thalamus_fires": str(self._fires),
             "thalamus_enqueued": str(self._enqueued),
             "thalamus_last_reason": "" if self._last_fire_reason is None else self._last_fire_reason,
             "thalamus_last_wall_ms": "" if self._last_fire_wall_ms is None else str(self._last_fire_wall_ms),
             "thalamus_theta": str(self._theta),
-        })
+        }
+        values.update(rows)
+        self.spool.put_many_kv(values)
 
 
 def _helper_build():

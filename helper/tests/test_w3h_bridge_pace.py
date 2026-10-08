@@ -142,7 +142,8 @@ def test_a_decision_sent_to_ashley_is_the_one_its_act_is_measured_from(paths, tm
     monkeypatch.setattr(bridge_module, "build", lambda decision, ctx: {"observation_id": "s.1"})
     monkeypatch.setattr(bridge_module, "run_scorer", lambda scorer, obs: None)
     monkeypatch.setattr(bridge.spool, "enqueue_observation", lambda obs, now: None)
-    decision = type("D", (), {"fired": True, "percepts": [object()], "reason": "need",
+    decision = type("D", (), {"fired": True, "percepts": [(type("P", (), {"urgency": "normal"})(), 1.0)],
+                              "reason": "need",
                               "theta": 1.0, "arousal": 0.0, "trace": []})()
     bridge._on_decision(decision, [], NOW, NOW, None)
     bridge._pace_log.received(["a" * 32])

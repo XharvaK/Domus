@@ -81,8 +81,27 @@ def test_her_portrait_shows_what_waits_in_her_queue():
         {"affordance_text": "<class 'sims4.tuning.instances.seating_Sit_single'>", "membership": "RUNNING"},
     ]}}
     portrait = observation._portrait(row)
-    assert portrait["running"] == ["piano_Play_Song", "seating_Sit_single"]
-    assert portrait["queued"] == ["fridge_CreateTray", "fridge_CreateTray"]
+    assert portrait["running"] == ["piano Play Song", "seating Sit single"]
+    assert portrait["queued"] == ["fridge Create Tray", "fridge Create Tray"]
+
+
+def test_holding_still_never_fills_her_running_or_queued_acts():
+    # HE2: posture and body-cancel entries, and the stand names, are idle; her running slot holds an act.
+    row = {"interactions": {"observed": [
+        {"affordance_text": "<class 'sims4.tuning.instances.sim-stand'>", "membership": "RUNNING",
+         "source_raw": "InteractionSource.AUTONOMY"},
+        {"affordance_text": "<class 'sims4.tuning.instances.posture_x'>", "membership": "RUNNING",
+         "source_raw": "InteractionSource.POSTURE_GRAPH"},
+        {"affordance_text": "<class 'sims4.tuning.instances.cancel_x'>", "membership": "QUEUED",
+         "source_raw": "InteractionSource.BODY_CANCEL_AOP"},
+        {"affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>", "membership": "RUNNING",
+         "source_raw": "InteractionSource.AUTONOMY"},
+        {"affordance_text": "<class 'sims4.tuning.instances.seating_Sit_single'>", "membership": "RUNNING",
+         "source_raw": "InteractionSource.AUTONOMY"},
+    ]}}
+    portrait = observation._portrait(row)
+    assert portrait["running"] == ["seating Sit single"]
+    assert portrait["queued"] == []
 
 
 def test_what_she_is_doing_is_hers_to_stop_and_posture_is_not():

@@ -12,6 +12,11 @@ OPTIONS_LIMIT = 7800
 # W3h (C9): real time. The probe reads its inbox on a real-time alarm and writes the reply then,
 # not on the game clock, so 90 s means the same at slow_time 0.5.
 PROBE_REPLY_MS = 90_000
+# GL8: an act the probe started but never ends is unknown at once when the game detaches, and otherwise only
+# after this backstop from her request. Long acts (a night's sleep, a painting) can run well past 15 real
+# minutes, so the backstop is generous: it must never call a running act unknown.
+ACT_CEILING_MS = 60 * 60_000
+_TERMINAL = ("finished", "rejected", "unknown")
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
 ASKED_LIMIT = 8
@@ -43,6 +48,22 @@ def _text(resolve, key):
     except Exception:
         return None
     return text.strip()[:80] if isinstance(text, str) and text.strip() else None
+
+
+def act_names(menu, resolve=None):
+    """HE1: a function from an act's tuning name to the game's own words. The newest menu gives each act
+    its text key (the words her menu shows); the tuning name is humanized only when the menu has none."""
+    keys = {}
+    objects = menu.get("objects") if isinstance(menu, dict) else None
+    for item in objects if isinstance(objects, list) else []:
+        acts = item.get("acts") if isinstance(item, dict) else None
+        for act in acts if isinstance(acts, list) else []:
+            if isinstance(act, dict) and isinstance(act.get("name"), str) and act.get("text_key") is not None:
+                keys.setdefault(act["name"], act["text_key"])
+
+    def name(tuning):
+        return _text(resolve, keys.get(tuning)) or humanize(tuning)
+    return name
 
 
 def _sentence(resolve, key):
@@ -88,10 +109,10 @@ _NOT_HERS_TO_STOP = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_
 _CLASS_REPR = re.compile(r"^<class '([^']+)'>$")
 
 
-def queue_options(row, start=0):
+def queue_options(row, start=0, act_name=None):
     """2.20.0 (live 2026-10-06: her meal waited behind an open-ended piano song she had no
     way to stop): what her body is doing and has queued, each one hers to stop, the way the
-    client's X on her queue is. Refs continue from start."""
+    client's X on her queue is. Refs continue from start. HE1: act_name gives the game's words."""
     acts = []
     count = start
     for entry in ((row or {}).get("interactions") or {}).get("observed") or []:
@@ -103,7 +124,8 @@ def queue_options(row, start=0):
             continue
         text = str(entry.get("affordance_text") or "")
         match = _CLASS_REPR.match(text)
-        name = humanize(match.group(1).rsplit(".", 1)[-1] if match else text)
+        tuning = match.group(1).rsplit(".", 1)[-1] if match else text
+        name = (act_name or humanize)(tuning)
         count += 1
         acts.append({"ref": "a%d" % count, "guid64": iid,
                      "text": ("Cancel (queued): %s" if membership == "QUEUED" else "Stop: %s") % name})
@@ -229,11 +251,24 @@ OPENS_SCREEN = "a screen only the User's hands can use"
 NO_WAY = "the game sees no way for her to get there from where she is now"
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0, withheld=()):
+def _where(item, menu_room, room):
+    """HE12: where an object is from her room now. The probe's same_room is about the menu's room, which
+    may not be the room she is in now (the menu can be older than her last move): "here" only when that
+    room is hers now, and "elsewhere" for an object in another room than hers."""
+    same = item.get("same_room")
+    if room is None or menu_room is None:
+        return "nearby"
+    if str(menu_room) == str(room):
+        return "here" if same is True else ("elsewhere" if same is False else "nearby")
+    return "elsewhere" if same is True else "nearby"
+
+
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0, withheld=(), room=None):
     """The observation's options: nearest objects first, each act with a short ref (a1, a2,
     ...) unique in this observation, its guid64 and its text. Farthest objects are left out
     until it fits the byte budget. W2h: an act whose interaction the notebook has seen end on a
-    screen only the User's hands can use stays listed, marked with what it opens."""
+    screen only the User's hands can use stays listed, marked with what it opens. HE12: room is
+    the room she is in now (the zone's), and the menu's own room comes with the menu."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
     result = []
@@ -242,7 +277,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
         distance = item.get("distance_m")
-        where = "here" if item.get("same_room") is True else "nearby"
+        where = _where(item, menu.get("room"), room)
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
         if item.get("phone") is True:
@@ -399,14 +434,23 @@ class ActCourier(object):
         self._event(act_id, phase, at, detail)
         if known is not None:
             known["answered"] = True
+            if phase in _TERMINAL:
+                known["terminal"] = True
         self._save()
 
     def tick(self, client, helper_session, now_ms, attached):
         """One round trip: send what happened, receive what to do. Returns the acts written."""
         for act_id, known in self._known.items():
-            if not known.get("answered") and not known.get("timed_out") and now_ms - known["written_ms"] >= PROBE_REPLY_MS:
+            if known.get("timed_out") or known.get("terminal"):
+                continue
+            if not known.get("answered"):
+                if now_ms - known["written_ms"] >= PROBE_REPLY_MS:
+                    known["timed_out"] = True
+                    self._event(act_id, "unknown", now_ms, {"code": "NO_PROBE_REPLY"})
+            elif not attached or now_ms - known["written_ms"] >= ACT_CEILING_MS:
+                # GL8: the probe began it, and no end came: the game detached, or it never ended.
                 known["timed_out"] = True
-                self._event(act_id, "unknown", now_ms, {"code": "NO_PROBE_REPLY"})
+                self._event(act_id, "unknown", now_ms, {"code": "GAME_DETACHED" if not attached else "NO_END_REPORTED"})
         sending = list(self._events)
         response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": sending})
         if response is None:

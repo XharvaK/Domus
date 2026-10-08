@@ -65,8 +65,23 @@ class AshleyClient:
         return self._round_trip("/domus/feed", body)
 
     def post_snapshot(self, body):
-        """SNAPSHOT: one requested picture, or the reason there is none. The parsed 200 response, or None."""
-        return self._round_trip("/domus/snapshot", body, timeout_s=SNAPSHOT_TIMEOUT_S)
+        """SNAPSHOT: one requested picture, or the reason there is none. HE15: a TransportResult whose kind is
+        "sent" when Ashley took it, and otherwise why not (the same kinds as the other posts)."""
+        raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        request = urllib.request.Request(
+            self._url + "/domus/snapshot", data=raw, method="POST",
+            headers={"Content-Type": "application/json", "X-Domus-Token": self._token})
+        try:
+            with urllib.request.urlopen(request, timeout=SNAPSHOT_TIMEOUT_S) as response:
+                status = response.status
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return TransportResult(_kind(error.code, False), error.code)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return TransportResult("unavailable", None)
+        if status == 200 and isinstance(payload, dict) and payload.get("status") == "ok":
+            return TransportResult("sent", status)
+        return TransportResult("rejected", status)
 
     def _round_trip(self, path, body, timeout_s=None):
         raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

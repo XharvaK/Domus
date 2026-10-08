@@ -247,6 +247,24 @@ def test_presence_social_and_owner():
     assert bare.step(_row(2, posture="sit"))[0].kind == "posture"
 
 
+def test_a_left_sim_is_named_with_her_last_room_even_after_a_restart():
+    # HE3: "left" carries who and where; the names survive the extractor's saved state.
+    ext = Extractor(owner_sim_id="OWNER")
+    ext.step(_row(1, include_presence=True, presence=[{"id": "A", "name": "Ada", "room": "Kitchen"}], social=[]))
+    restored = Extractor.from_dict(json.loads(json.dumps(ext.to_dict())))
+    left = restored.step(_row(2, include_presence=True, presence=[], social=[]))
+    gone = [p for p in left if p.kind == "presence" and p.bucket == "left"]
+    assert [(p.subject, dict(p.facts)) for p in gone] == [("A", {"ticks": "100", "name": "Ada", "room": "Kitchen"})]
+
+
+def test_a_sequence_gap_says_how_many_rows_were_lost():
+    # HE16: the gap percept carries the lost-row count (the sequence numbers skipped).
+    ext = Extractor(owner_sim_id="OWNER")
+    ext.step(_row(1, include_presence=True, presence=[], social=[]))
+    gaps = [p for p in ext.step(_row(5, include_presence=True, presence=[], social=[])) if p.bucket == "gap"]
+    assert [dict(p.facts)["lost"] for p in gaps] == ["3"]
+
+
 def test_facts_stay_under_the_wire_cap():
     ext = Extractor()
     text = "x" * 5000

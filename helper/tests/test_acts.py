@@ -4,7 +4,7 @@ import json
 import pytest
 
 from domus_helper import snapshot
-from domus_helper.acts import PROBE_REPLY_MS, ActCourier, dialog_options, humanize, options, people_names
+from domus_helper.acts import ACT_CEILING_MS, PROBE_REPLY_MS, ActCourier, act_names, dialog_options, humanize, options, people_names, queue_options
 from domus_helper.contract import ContractError, validate_observation
 from domus_helper.spool import Spool
 from domus_helper.thalamus.percepts import Extractor
@@ -18,17 +18,49 @@ MENU = {"menu_rev": 3, "room": "4", "tested": 9, "refused": 2, "build_ms": 12.0,
 ]}
 
 
+def test_running_acts_and_the_stop_options_use_the_games_words_from_the_newest_menu():
+    # HE1: the menu's text key gives the words; an act the menu gives no text for is humanized.
+    from domus_helper.thalamus import observation
+    names = act_names(MENU, {"77": "Read a Book"}.get)
+    assert names("bookshelf_ReadBook") == "Read a Book"
+    assert names("bookshelf_BrowseBooks") == "bookshelf Browse Books"
+    assert act_names(None, {"77": "Read a Book"}.get)("bookshelf_ReadBook") == "bookshelf Read Book"
+    row = {"interactions": {"observed": [
+        {"interaction_id": "9", "affordance_text": "<class 'sims4.tuning.instances.bookshelf_ReadBook'>",
+         "membership": "RUNNING"},
+        {"interaction_id": "10", "affordance_text": "<class 'sims4.tuning.instances.bookshelf_BrowseBooks'>",
+         "membership": "QUEUED"}]}}
+    assert observation._portrait(row, act_name=names)["running"] == ["Read a Book"]
+    assert observation._portrait(row, act_name=names)["queued"] == ["bookshelf Browse Books"]
+    stops = queue_options(row, act_name=names)[0]["acts"]
+    assert [item["text"] for item in stops] == ["Stop: Read a Book", "Cancel (queued): bookshelf Browse Books"]
+
+
 def test_options_name_each_act_in_the_games_words_with_short_refs():
     texts = {"77": "Read a Book", "900": "Wooden Bookshelf"}
     catalog = {"511": {"name_key": "900"}}
-    result = options(MENU, texts.get, catalog.get)
+    result = options(MENU, texts.get, catalog.get, room="4")
     assert result == [
         {"object": "Wooden Bookshelf", "object_id": "11", "where": "here, 2.0 m", "acts": [
             {"ref": "a1", "guid64": "4242", "text": "Read a Book"},
             {"ref": "a2", "guid64": "4243", "text": "bookshelf Browse Books"}]},
-        {"object": "object guitar", "object_id": "12", "where": "nearby, 6.5 m", "acts": [
+        {"object": "object guitar", "object_id": "12", "where": "elsewhere, 6.5 m", "acts": [
             {"ref": "a3", "guid64": "5000", "text": "guitar Practice"}]},
     ]
+
+
+def test_an_object_in_another_room_than_hers_now_is_elsewhere_never_here():
+    # HE12: the menu's same_room is about the menu's room; a menu from another room never says "here".
+    menu = {"room": "4", "objects": [
+        {"object_id": "1", "class": "object_a", "distance_m": 2.0, "same_room": True,
+         "acts": [{"guid64": "1", "name": "a_Use", "text_key": None}]},
+        {"object_id": "2", "class": "object_b", "distance_m": 3.0, "same_room": False,
+         "acts": [{"guid64": "2", "name": "b_Use", "text_key": None}]},
+        {"object_id": "3", "class": "object_c", "distance_m": 4.0, "same_room": None,
+         "acts": [{"guid64": "3", "name": "c_Use", "text_key": None}]}]}
+    assert [item["where"] for item in options(menu, room="4")] == ["here, 2.0 m", "elsewhere, 3.0 m", "nearby, 4.0 m"]
+    assert [item["where"] for item in options(menu, room="7")] == ["elsewhere, 2.0 m", "nearby, 3.0 m", "nearby, 4.0 m"]
+    assert [item["where"] for item in options(menu)] == ["nearby, 2.0 m", "nearby, 3.0 m", "nearby, 4.0 m"]
 
 
 def test_options_drop_the_farthest_objects_to_fit_and_ignore_junk():
@@ -209,6 +241,30 @@ def test_an_act_the_probe_never_answers_about_becomes_unknown_once(tmp_path):
     unknown = [e for body in client.bodies for e in body["events"] if e["phase"] == "unknown"]
     assert unknown == [{"act_id": "a" * 32, "phase": "unknown", "at_ms": 1000 + PROBE_REPLY_MS,
                         "detail": {"code": "NO_PROBE_REPLY"}}]
+
+
+def test_an_act_the_game_never_ends_becomes_unknown_once_it_detaches_or_passes_the_ceiling(tmp_path):
+    # GL8: pushed acts do not stay "pushed" forever; a finished act is left alone.
+    spool = Spool(tmp_path / "spool.db")
+    client = _Client([ACT])
+    courier = ActCourier(spool, lambda command, args: None)
+    courier.tick(client, "h", 1000, True)
+    client.acts = []
+    courier.on_row(_row("PUSHED", act_id="a" * 32))
+    courier.tick(client, "h", 2000, True)
+    courier.tick(client, "h", 3000, False)
+    courier.tick(client, "h", 4000, False)
+    unknown = [e for body in client.bodies for e in body["events"] if e["phase"] == "unknown"]
+    assert unknown == [{"act_id": "a" * 32, "phase": "unknown", "at_ms": 3000,
+                        "detail": {"code": "GAME_DETACHED"}}]
+    done = ActCourier(spool, lambda command, args: None)
+    other = _Client([dict(ACT, act_id="b" * 32)])
+    done.tick(other, "h", 1000, True)
+    done.on_row(_row("FINISHED", act_id="b" * 32))
+    late = _Client()
+    done.tick(late, "h", 1000 + ACT_CEILING_MS, False)
+    assert [e for body in late.bodies for e in body["events"] if e["phase"] == "unknown"] == []
+    spool.close()
 
 
 def test_a_refusal_carries_the_resolved_sentence_not_the_key(tmp_path):
