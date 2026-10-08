@@ -105,8 +105,8 @@ def test_load_missing_or_broken_is_empty(tmp_path):
 
 def _row():
     return {
-        "presence": [{"id": "1", "is_body": True, "name": "Ada"},
-                     {"id": "2", "is_body": False, "name": "Bea"}],
+        "presence": [{"id": "1", "level": 0, "is_body": True, "name": "Ada"},
+                     {"id": "2", "level": 0, "is_body": False, "name": "Bea", "distance_m": 1.0}],
         "social": [{"actor_id": "2", "affordance_text": "invented_address"}],
         "interactions": {"observed": [
             {"affordance_text": "invented_running", "membership": "RUNNING", "target_id": "2"},

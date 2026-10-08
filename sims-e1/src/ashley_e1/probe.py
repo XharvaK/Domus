@@ -1954,8 +1954,10 @@ def _menu_jobs(row):
         # The room lookup is only worth it for objects of this lot or near her.
         room = (observers._room(obj, position)
                 if on_lot is True or (distance is not None and distance <= 20.0) else None)
-        if person and on_lot is not True and (distance is None or distance > act_menu.PEOPLE_NEAR_M):
-            continue  # 2.17.0: people she could reach: on this lot or close by, not the street
+        if person and not observers.seen_here(room, None if position is None else position.get("level"),
+                                              distance, body_room,
+                                              None if body_position is None else body_position.get("level")):
+            continue  # 2.32.0 (SS4-v2, PR3): a person she cannot see is not offered (2.17.0: the same test, wider)
         items.append({
             "object_id": object_id, "obj": obj, "distance_m": distance, "on_lot": on_lot,
             "room": room, "person": person,

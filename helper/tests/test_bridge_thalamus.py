@@ -457,8 +457,8 @@ def test_ds3_portrait_has_time_room_company_moodlets():
         "game": {"calendar": "07:05:00.000 day:0 week:2", "clock_speed": "NORMAL",
                  "paused": False},
         "zone": {"zone_id": "1", "lot_id": "2", "room": "3", "position": None},
-        "presence": [{"id": "100", "is_body": True, "name": "E1 Proband"},
-                     {"id": "200", "is_body": False, "name": "Bella Goth", "room": "3",
+        "presence": [{"id": "100", "level": 0, "is_body": True, "name": "E1 Proband"},
+                     {"id": "200", "level": 0, "is_body": False, "name": "Bella Goth", "room": "3",
                       "distance_m": 1.0, "doing": "<class 'social_Chat'>"}],
         "sim_signals": [
             {"kind": "MOODLET", "tuning_id": "902", "tuning_name": "Buff_Hungry",
@@ -586,8 +586,8 @@ def _body(seq, band, wall, ticks):
     row["zone"] = {"zone_id": 7, "lot_id": 9, "room": "4"}
     row["body"]["posture"] = {"posture_name": "sit", "target_id": "stool"}
     row["presence"] = [
-        {"id": "1", "is_body": True, "name": "Ada Quill"},
-        {"id": "2", "is_body": False, "name": "Nia Cole", "room": "4"},
+        {"id": "1", "level": 0, "is_body": True, "name": "Ada Quill", "room": "4"},
+        {"id": "2", "level": 0, "is_body": False, "name": "Nia Cole", "room": "4"},
     ]
     return row
 

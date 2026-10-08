@@ -678,6 +678,20 @@ def _room(obj, position):
     return str(room)
 
 
+# 2.32.0 (SS4-v2): outdoors, a Sim is seen within this many metres on her level (the helper's scene.seen_here).
+SEEN_METERS = 4.0
+
+
+def seen_here(room, level, distance, body_room, body_level):
+    """2.32.0 (SS4-v2): is this Sim one she can see? Indoors (her room real) the same room and level;
+    outdoors (her room None or "0") within SEEN_METERS on her level. Addressing does not make her seen."""
+    if type(level) is not int or level != body_level:
+        return False
+    if body_room is not None and body_room != "0":
+        return room is not None and room == body_room
+    return type(distance) in (int, float) and distance <= SEEN_METERS
+
+
 def _distance(a, b):
     if a is None or b is None:
         return None

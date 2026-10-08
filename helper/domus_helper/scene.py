@@ -196,6 +196,24 @@ def offers_for(object_id, preflight_rows, resolve=None):
     return {"allowed": sorted(set(allowed)), "refused": refused[:6]}
 
 
+def seen_here(item, body):
+    """SS4-v2: is this Sim one she can see? Indoors (her body in a real room): the same room and the
+    same level. Outdoors (her room None or "0"): within NEAR_METERS and on the same level. Being
+    addressed does not make a Sim seen, and nothing is seen through a wall."""
+    if not isinstance(item, dict) or not isinstance(body, dict):
+        return False
+    level = item.get("level")
+    if type(level) is not int or level != body.get("level"):
+        return False
+    body_room = body.get("room")
+    if body_room is not None and str(body_room) != "0":
+        return item.get("room") is not None and str(item["room"]) == str(body_room)
+    distance = item.get("distance_m")
+    if isinstance(distance, bool) or not isinstance(distance, (int, float)):
+        return False
+    return distance <= NEAR_METERS
+
+
 def layers(header, objects, *, resolve=None, preflight_rows=None, catalog=None):
     body = (header or {}).get("body") or {}
     body_room = body.get("room")
