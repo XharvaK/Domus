@@ -718,19 +718,25 @@ class E2Control:
             # 2.28.0 (live 2026-10-08: a picker's push returned 704 while her queue gained 703, and
             # 704 never appeared): whatever the push put in her queue or running list is this act too.
             born = {}
-            if interaction is not None:
+            if kind != "refused":
                 queued_after = _queued_interactions(sim)
                 born = dict((key, entry) for key, entry in queued_after.items()
                             if key not in queued_before)
-            if interaction is None:
+            if interaction is None and not born:
                 code = "PUSH_REFUSED" if kind == "refused" else "PUSH_FAILED"
                 self._act_event(act_id, "REJECTED", code=code, tuning_name=tuning_name,
                                 detail=(detail or "")[:schema.MAX_DETAIL_LENGTH] or None,
                                 reason_key=reason_key if kind == "refused" else None, **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
-            interaction_id = str(interaction.id)
-            born.pop(interaction_id, None)
+            if interaction is None:
+                # 2.28.0 (live 2026-10-08: a push returned a truthy result with no interaction object,
+                # while interaction 2158 ran): the first interaction the push queued is the act.
+                interaction_id = next(iter(born))
+                interaction = born.pop(interaction_id)
+            else:
+                interaction_id = str(interaction.id)
+                born.pop(interaction_id, None)
             aliases = list(born)[:schema.ACT_MAX_ALIASES]
             self._act_event(act_id, "PUSHED", interaction_id=interaction_id,
                             tuning_name=tuning_name, aliases=aliases or None, **base)

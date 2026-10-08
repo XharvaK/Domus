@@ -156,6 +156,54 @@ class AliasTests(unittest.TestCase):
         self.assertEqual(self.pushed()[0]["aliases"], ["701", "702", "703", "705"])
         self.assertEqual(sorted(self.control.pushed), ["701", "702", "703", "704", "705", "706", "707"])
 
+    def truthy_push(self, running_ids):
+        """The push result is truthy, yet carries no interaction object (the game's
+        execute_result.interaction is None); her running list gains the given ids."""
+        def push(affordance, target, context):
+            self.base.pushes.append((affordance.guid64, target.id, context))
+            self.base.sim.si_state = list(self.base.sim.si_state) + [Queued(i) for i in running_ids]
+            return test_e2._EnqueueResult(True, None)
+
+        self.base.sim.push_super_affordance = push
+
+    def test_a_truthy_push_without_an_interaction_is_the_one_it_queued(self):
+        self.case.ready()
+        self.truthy_push([2158])
+        ok, connection = self.case.act()
+        self.assertTrue(ok, connection.lines)
+        self.assertEqual(connection.lines[-1], "ACT_PUSHED %s interaction 2158" % acts.ACT)
+        self.assertEqual([row["phase"] for row in self.case.events()], ["ACCEPTED", "PUSHED"])
+        self.assertEqual((self.pushed()[0]["interaction_id"], self.pushed()[0]["aliases"]), ("2158", None))
+        self.assertEqual(list(self.control.pushed), ["2158"])
+        running = self.base.sim.si_state[0]
+        self.assertEqual(len(running.callbacks), 1)
+        running.callbacks[0](running)
+        finished = [row for row in self.case.events() if row["phase"] == "FINISHED"]
+        self.assertEqual([(row["interaction_id"], row["finishing_type"]) for row in finished],
+                         [("2158", "FinishingType.NATURAL")])
+        self.assertEqual(self.control.pushed, {})
+
+    def test_the_first_queued_is_the_act_and_the_others_are_its_aliases(self):
+        self.case.ready()
+        self.truthy_push([2158, 2159])
+        self.assertTrue(self.case.act()[0])
+        self.assertEqual((self.pushed()[0]["interaction_id"], self.pushed()[0]["aliases"]), ("2158", ["2159"]))
+        self.assertEqual(sorted(self.control.pushed), ["2158", "2159"])
+        for _ in range(7):
+            self.base.tick()
+        self.assertEqual([row["phase"] for row in self.case.events()], ["ACCEPTED", "PUSHED"])
+        self.assertTrue(self.control.pushed["2158"]["seen"])
+
+    def test_a_truthy_push_that_queues_nothing_is_still_push_failed(self):
+        self.case.ready()
+        self.truthy_push([])
+        ok, connection = self.case.act()
+        self.assertFalse(ok)
+        self.assertEqual(connection.lines[-1], "ACT_REJECT PUSH_FAILED")
+        self.assertEqual([(row["phase"], row["code"]) for row in self.case.events()],
+                         [("ACCEPTED", None), ("REJECTED", "PUSH_FAILED")])
+        self.assertEqual(self.control.pushed, {})
+
     def test_the_scan_is_bounded_and_never_raises(self):
         many = [test_e2._Interaction(i) for i in range(1, 41)]
         found = self.module._queued_interactions(types.SimpleNamespace(queue=many, si_state=None))
