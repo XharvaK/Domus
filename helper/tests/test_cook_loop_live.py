@@ -81,8 +81,8 @@ def test_her_portrait_shows_what_waits_in_her_queue():
         {"affordance_text": "<class 'sims4.tuning.instances.seating_Sit_single'>", "membership": "RUNNING"},
     ]}}
     portrait = observation._portrait(row)
-    assert portrait["running"] == ["piano_Play_Song", "seating_Sit_single"]
-    assert portrait["queued"] == ["fridge_CreateTray", "fridge_CreateTray"]
+    assert portrait["running"] == ["piano Play Song", "seating Sit single"]
+    assert portrait["queued"] == ["fridge Create Tray", "fridge Create Tray"]
 
 
 def test_what_she_is_doing_is_hers_to_stop_and_posture_is_not():

@@ -11,7 +11,7 @@ from . import commands
 from . import fingerprints as fingerprint_reader
 from . import pace
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, ActCourier, dialog_options, options as act_options, people_names, queue_options
+from .acts import OPTIONS_LIMIT, ActCourier, act_names, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -207,6 +207,7 @@ class Bridge:
             self.overlay.answered = self._acts.answered_dialogs
         self._pace_tick(now)
         self.overlay.poll(self.client, self.helper_session, now)
+        self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
             live = self.overlay.published.get("mode") == "live" and _probe_ok(probe)
@@ -219,7 +220,7 @@ class Bridge:
         if not isinstance(row, dict):
             return []
         asked = dialog_options(row, self._resolve_text)
-        asked += queue_options(row, start=sum(len(item["acts"]) for item in asked))
+        asked += queue_options(row, start=sum(len(item["acts"]) for item in asked), act_name=self._act_names())
         menu = self._menu
         if not isinstance(menu, dict) or menu.get("session") != row.get("telemetry_session_id"):
             return asked
@@ -442,6 +443,7 @@ class Bridge:
             "row": body,
             "event_row": self._last_row,
             "resolve_text": self._resolve_text,
+            "act_name": self._act_names(),
             "options": self._options(body),
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
@@ -485,6 +487,10 @@ class Bridge:
         self._pace_sent_ms = now
         self._pace_mismatch = False
         self._pace_retry_ms = None
+
+    def _act_names(self):
+        """HE1: the game's own words for her acts, from the newest menu's text keys (humanized as fallback)."""
+        return act_names(self._menu.get("payload") if isinstance(self._menu, dict) else None, self._resolve_text)
 
     def _world(self):
         slot = self._extractor.slot_id

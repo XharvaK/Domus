@@ -3,6 +3,7 @@ import json
 import re
 
 from domus_helper import inputs, overlay
+from domus_helper.acts import act_names
 from domus_helper.overlay_page import PAGE
 from domus_helper.spool import Spool
 
@@ -168,6 +169,25 @@ def test_the_privacy_list_holds_lines_and_labels(tmp_path):
         assert [item.get("line", "held" if item.get("held") else "") for item in passes] == [
             "held", "held", "Marrowindy weather.", "held", "held"]
         assert passes[2]["act"]["label"] == overlay.HELD
+    finally:
+        spool.close()
+
+
+def test_the_now_list_names_running_acts_in_the_games_words(tmp_path):
+    # HE1: the newest menu's text key names the act; the tuning name is humanized only as a fallback.
+    spool, view = made(tmp_path)
+    try:
+        view.act_name = act_names({"objects": [{"acts": [{"name": "piano_Play_Song", "text_key": "5"}]}]},
+                                  {"5": "Play a Song"}.get)
+        observed = [
+            {"interaction_id": "601", "affordance_text": "<class 'sims4.tuning.instances.piano_Play_Song'>",
+             "source_raw": "InteractionSource.AUTONOMY", "membership": "RUNNING"},
+            {"interaction_id": "602", "affordance_text": "<class 'sims4.tuning.instances.stove_Cook'>",
+             "source_raw": "InteractionSource.AUTONOMY", "membership": "QUEUED"}]
+        view.on_row(snapshot(interactions={"observed": observed}), NOW)
+        state = view.publish(NOW, attached=True)
+        assert state["doing"] == [{"text": "Play a Song", "by": "body", "queued": False},
+                                  {"text": "stove Cook", "by": "body", "queued": True}]
     finally:
         spool.close()
 

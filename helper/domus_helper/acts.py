@@ -45,6 +45,22 @@ def _text(resolve, key):
     return text.strip()[:80] if isinstance(text, str) and text.strip() else None
 
 
+def act_names(menu, resolve=None):
+    """HE1: a function from an act's tuning name to the game's own words. The newest menu gives each act
+    its text key (the words her menu shows); the tuning name is humanized only when the menu has none."""
+    keys = {}
+    objects = menu.get("objects") if isinstance(menu, dict) else None
+    for item in objects if isinstance(objects, list) else []:
+        acts = item.get("acts") if isinstance(item, dict) else None
+        for act in acts if isinstance(acts, list) else []:
+            if isinstance(act, dict) and isinstance(act.get("name"), str) and act.get("text_key") is not None:
+                keys.setdefault(act["name"], act["text_key"])
+
+    def name(tuning):
+        return _text(resolve, keys.get(tuning)) or humanize(tuning)
+    return name
+
+
 def _sentence(resolve, key):
     """Resolved sentence for a string key, at most 200 characters. Unknown is None."""
     if resolve is None or not isinstance(key, str) or not key:
@@ -88,10 +104,10 @@ _NOT_HERS_TO_STOP = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_
 _CLASS_REPR = re.compile(r"^<class '([^']+)'>$")
 
 
-def queue_options(row, start=0):
+def queue_options(row, start=0, act_name=None):
     """2.20.0 (live 2026-10-06: her meal waited behind an open-ended piano song she had no
     way to stop): what her body is doing and has queued, each one hers to stop, the way the
-    client's X on her queue is. Refs continue from start."""
+    client's X on her queue is. Refs continue from start. HE1: act_name gives the game's words."""
     acts = []
     count = start
     for entry in ((row or {}).get("interactions") or {}).get("observed") or []:
@@ -103,7 +119,8 @@ def queue_options(row, start=0):
             continue
         text = str(entry.get("affordance_text") or "")
         match = _CLASS_REPR.match(text)
-        name = humanize(match.group(1).rsplit(".", 1)[-1] if match else text)
+        tuning = match.group(1).rsplit(".", 1)[-1] if match else text
+        name = (act_name or humanize)(tuning)
         count += 1
         acts.append({"ref": "a%d" % count, "guid64": iid,
                      "text": ("Cancel (queued): %s" if membership == "QUEUED" else "Stop: %s") % name})

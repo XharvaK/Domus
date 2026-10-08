@@ -3,7 +3,7 @@ import json
 import re
 
 from .. import lang
-from ..acts import answer_rules, body_id, dialog_is_hers
+from ..acts import answer_rules, body_id, dialog_is_hers, humanize
 from ..scene import NEAR_METERS as SEEN_DISTANCE_M
 from ..windows import PORTRAIT_LIMIT as WINDOWS_SHOWN
 
@@ -256,10 +256,12 @@ def _asked_answer_rules(item, resolve):
     return {"answer_rules": rules} if rules else {}
 
 
-def _portrait(row, resolve=None, notebook=None, windows=None, pace=None):
+def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_name=None):
     """resolve: string key -> the game's own text (S0), or None when unknown.
     windows: W2h, the window facts of her session (windows.WindowLog.recent).
-    pace: W3h, her pace entry (pace.portrait), or None."""
+    pace: W3h, her pace entry (pace.portrait), or None.
+    act_name: HE1, tuning name -> the game's own words for the act (humanized when unknown)."""
+    name_of = act_name or humanize
     row = row or {}
     zone = row.get("zone") or {}
     addressing = _addressing_ids(row)
@@ -298,7 +300,7 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None):
             continue
         if len(bucket) >= 8:
             continue
-        bucket.append(tuning)
+        bucket.append(name_of(tuning))
         text = _sentence(tuning, actors)
         if text is not None:
             doing_said.append({"interaction": tuning, "sentence": text, "state": state})
@@ -510,6 +512,7 @@ def build(decision, ctx):
         "lineage_class": lineage,
         "percepts": percepts,
         "portrait": _portrait(row, ctx.get("resolve_text"), notebook=ctx.get("notebook"),
-                              windows=ctx.get("windows"), pace=ctx.get("pace")),
+                              windows=ctx.get("windows"), pace=ctx.get("pace"),
+                              act_name=ctx.get("act_name")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
     }

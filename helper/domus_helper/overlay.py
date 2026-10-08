@@ -228,6 +228,8 @@ class Overlay:
         self._helper_build = helper_build
         self._data_dir = data_dir
         self._resolve = resolve
+        # HE1: tuning name -> the game's own words for an act (set by the bridge from the newest menu).
+        self.act_name = None
         self._privacy = PrivacyList(data_dir / PRIVACY_FILE)
         self._save_names = SaveNames(data_dir / SAVE_NAMES_FILE)
         self._row = None
@@ -346,7 +348,7 @@ class Overlay:
             if not name or name in _IDLE:
                 continue
             by = "her" if entry.get("interaction_id") in self._hers else _BY.get(entry.get("source_raw"))
-            text = humanize(name)
+            text = (self.act_name or humanize)(name)
             doing.append({"text": HELD if self._held(text) else text, "by": by,
                           "queued": entry.get("membership") == "QUEUED"})
         return doing[:DOING_SHOWN]

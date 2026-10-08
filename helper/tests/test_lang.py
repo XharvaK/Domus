@@ -140,8 +140,8 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
     portrait = observation._portrait(_row())
     assert portrait["addressed_by"] == [{
         "by": "2", "interaction": "invented_address", "sentence": "PLAIN invented_address Bea Ada"}]
-    assert portrait["running"] == ["invented_running"]
-    assert portrait["queued"] == ["invented_queued", "invented_solo"]
+    assert portrait["running"] == ["invented running"]
+    assert portrait["queued"] == ["invented queued", "invented solo"]
     assert portrait["doing_said"] == [
         {"interaction": "invented_running", "sentence": "PLAIN invented_running Ada Bea",
          "state": "running"},
@@ -153,8 +153,8 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
 
     monkeypatch.setattr(lang, "phrases", lambda: _Book(lambda tuning, actors: None))
     quiet = observation._portrait(_row())
-    assert quiet["running"] == ["invented_running"]
-    assert quiet["queued"] == ["invented_queued", "invented_solo"]
+    assert quiet["running"] == ["invented running"]
+    assert quiet["queued"] == ["invented queued", "invented solo"]
     assert quiet["addressed_by"] == [{"by": "2", "interaction": "invented_address"}]
     assert "doing_said" not in quiet
     assert not _has_sentence(quiet)
@@ -164,7 +164,7 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
             raise RuntimeError("down")
 
     monkeypatch.setattr(lang, "phrases", lambda: _Down())
-    assert observation._portrait(_row())["running"] == ["invented_running"]
+    assert observation._portrait(_row())["running"] == ["invented running"]
 
     note = {"pad": ""}
     monkeypatch.setattr(lang, "phrases", lambda: _Book(lambda tuning, actors: None))
@@ -176,8 +176,8 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
     monkeypatch.setattr(lang, "phrases", lambda: _Book(lambda tuning, actors: "S" * 200))
     shed = observation._portrait(_row(), notebook=note)
     assert shed["notebook"]["pad"] == note["pad"]
-    assert shed["running"] == ["invented_running"]
-    assert shed["queued"] == ["invented_queued", "invented_solo"]
+    assert shed["running"] == ["invented running"]
+    assert shed["queued"] == ["invented queued", "invented solo"]
     assert all(isinstance(item, str) for item in shed["running"] + shed["queued"])
     assert "doing_said" not in shed
     assert "sentence" not in shed["addressed_by"][0]
@@ -188,8 +188,8 @@ def test_over_budget_sheds_doing_said_then_addressed_before_notebook(monkeypatch
     monkeypatch.setattr(lang, "phrases", lambda: _Book(lambda tuning, actors: "S" * 60))
     note = {"pad": ""}
     full = observation._portrait(_row(), notebook=note)
-    assert full["running"] == ["invented_running"]
-    assert full["queued"] == ["invented_queued", "invented_solo"]
+    assert full["running"] == ["invented running"]
+    assert full["queued"] == ["invented queued", "invented solo"]
     assert all(isinstance(item, str) for item in full["running"] + full["queued"])
     full_bytes = observation._bytes(full)
     without_last = json.loads(json.dumps(full))
@@ -207,8 +207,8 @@ def test_over_budget_sheds_doing_said_then_addressed_before_notebook(monkeypatch
     assert one["doing_said"][1]["state"] == "queued"
     assert "sentence" in one["addressed_by"][0]
     assert one["notebook"]["pad"] == note["pad"]
-    assert one["running"] == ["invented_running"]
-    assert one["queued"] == ["invented_queued", "invented_solo"]
+    assert one["running"] == ["invented running"]
+    assert one["queued"] == ["invented queued", "invented solo"]
     assert observation._bytes(one) <= observation._PORTRAIT_LIMIT
 
     note_b = {"pad": "p" * (observation._PORTRAIT_LIMIT - observation._bytes(without_said) + 1)}
@@ -216,8 +216,8 @@ def test_over_budget_sheds_doing_said_then_addressed_before_notebook(monkeypatch
     assert "doing_said" not in second
     assert "sentence" not in second["addressed_by"][0]
     assert second["notebook"]["pad"] == note_b["pad"]
-    assert second["running"] == ["invented_running"]
-    assert second["queued"] == ["invented_queued", "invented_solo"]
+    assert second["running"] == ["invented running"]
+    assert second["queued"] == ["invented queued", "invented solo"]
     assert all(isinstance(item, str) for item in second["running"] + second["queued"])
     assert observation._bytes(second) <= observation._PORTRAIT_LIMIT
 

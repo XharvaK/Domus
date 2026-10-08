@@ -4,7 +4,7 @@ import json
 import pytest
 
 from domus_helper import snapshot
-from domus_helper.acts import PROBE_REPLY_MS, ActCourier, dialog_options, humanize, options, people_names
+from domus_helper.acts import PROBE_REPLY_MS, ActCourier, act_names, dialog_options, humanize, options, people_names, queue_options
 from domus_helper.contract import ContractError, validate_observation
 from domus_helper.spool import Spool
 from domus_helper.thalamus.percepts import Extractor
@@ -16,6 +16,24 @@ MENU = {"menu_rev": 3, "room": "4", "tested": 9, "refused": 2, "build_ms": 12.0,
     {"object_id": "12", "definition_id": None, "class": "object_guitar", "distance_m": 6.5, "same_room": False,
      "acts": [{"guid64": "5000", "name": "guitar_Practice", "text_key": None}]},
 ]}
+
+
+def test_running_acts_and_the_stop_options_use_the_games_words_from_the_newest_menu():
+    # HE1: the menu's text key gives the words; an act the menu gives no text for is humanized.
+    from domus_helper.thalamus import observation
+    names = act_names(MENU, {"77": "Read a Book"}.get)
+    assert names("bookshelf_ReadBook") == "Read a Book"
+    assert names("bookshelf_BrowseBooks") == "bookshelf Browse Books"
+    assert act_names(None, {"77": "Read a Book"}.get)("bookshelf_ReadBook") == "bookshelf Read Book"
+    row = {"interactions": {"observed": [
+        {"interaction_id": "9", "affordance_text": "<class 'sims4.tuning.instances.bookshelf_ReadBook'>",
+         "membership": "RUNNING"},
+        {"interaction_id": "10", "affordance_text": "<class 'sims4.tuning.instances.bookshelf_BrowseBooks'>",
+         "membership": "QUEUED"}]}}
+    assert observation._portrait(row, act_name=names)["running"] == ["Read a Book"]
+    assert observation._portrait(row, act_name=names)["queued"] == ["bookshelf Browse Books"]
+    stops = queue_options(row, act_name=names)[0]["acts"]
+    assert [item["text"] for item in stops] == ["Stop: Read a Book", "Cancel (queued): bookshelf Browse Books"]
 
 
 def test_options_name_each_act_in_the_games_words_with_short_refs():
