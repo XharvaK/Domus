@@ -190,3 +190,15 @@ no game or credentials are needed. The vendored cmdbox and full schema v4
 validator are pure Python copies from da68647. AST equality tests detect
 changes to their vocabulary, shapes, key sets and validation behavior.
 The existing probe guard is invoked only on `sims-e1/src/ashley_e1`.
+
+## Scheduled tasks
+
+Two Windows tasks keep the helper running, and `tools\install_tasks.ps1` registers both (OP15). Run it from `helper/` with `-WhatIf` first to see the plan, then without it to register:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\install_tasks.ps1 -WhatIf
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\install_tasks.ps1
+```
+
+- "Domus bridge": `tools\bridge.ps1` starts at logon and again every 5 minutes. The watcher runs one bridge while the game is open; a named mutex keeps a second watcher from starting. Without the venv (`.venv\Scripts\python.exe`) it writes a line to `domus_bridge_watcher.log` in the temp folder and exits.
+- "Domus telemetry archive": `tools\daily_archive.ps1` runs daily at 12:00, and as soon as possible after a missed run.
