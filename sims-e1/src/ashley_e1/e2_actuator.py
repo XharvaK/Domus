@@ -81,10 +81,14 @@ PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "inviteto", "as
 # 2.29.0: her phone is how she calls, texts and invites people over, so the blanket name bans that
 # kept every phone act out (call_, phone_call, invite, social) do not apply to it. What still stays
 # out by name: testers' acts, money, jobs, emergencies and the acts that change a life in one click.
-PHONE_DENY_PARTS = ("debug", "cheat", "testing", "tutorial", "buy", "purchase", "order", "sell",
-                    "business", "career", "job", "quit", "retire", "police", "firefighter", "burglar",
-                    "woohoo", "trybaby", "propose", "breakup", "divorce", "adopt", "movein", "moveout",
-                    "autonomous", "npc")
+# 2.31.0 (W4): whole words (e2_trial.denied_part), so the plural and -ing forms and the two-word forms
+# stay listed where the old substring match caught them.
+PHONE_DENY_PARTS = ("debug", "cheat", "cheats", "cheating", "testing", "tutorial", "buy", "buying",
+                    "purchase", "order", "orders", "ordering", "sell", "selling", "business", "businesses",
+                    "career", "careers", "job", "jobs", "quit", "quitting", "retire", "retired", "police",
+                    "firefighter", "firefighters", "burglar", "burglars", "woohoo", "woo_hoo", "trybaby",
+                    "try_baby", "try_for_baby", "propose", "breakup", "break_up", "divorce", "adopt",
+                    "adopted", "adoption", "movein", "move_in", "moveout", "move_out", "autonomous", "npc")
 
 
 def phone_affordances(sim):
@@ -119,12 +123,12 @@ def phone_act_excluded(affordance):
     text or invite) are hers to answer and socials are what a phone is for; a pie menu, a trip
     off the lot, and the PHONE_DENY_PARTS names stay out."""
     try:
-        low = str(affordance.__name__).lower().replace("_", "")
+        name = str(affordance.__name__)
     except Exception:
-        low = ""
-    if "piemenu" in low:
+        name = ""
+    if "piemenu" in name.lower().replace("_", ""):
         return "pie_picker"
-    if any(part in low for part in PHONE_DENY_PARTS):
+    if e2_trial.denied_part(name, PHONE_DENY_PARTS) is not None:
         return "deny_name"
     return phone_excluded(affordance)
 
@@ -191,12 +195,11 @@ def excluded(affordance):
         social = False
     if social is True:
         try:
-            low = str(affordance.__name__).lower()
+            name = str(affordance.__name__)
         except Exception:
-            low = ""
-        for part in e2_trial.SOCIAL_DENY_PARTS:
-            if part in low:
-                return "deny_name"
+            name = ""
+        if e2_trial.denied_part(name, e2_trial.SOCIAL_DENY_PARTS) is not None:
+            return "deny_name"
         return "social"
     try:
         name = str(affordance.__name__)

@@ -127,6 +127,26 @@ def test_a_question_says_whether_it_is_held_whose_it_is_and_its_rules():
     assert "answer_rules" not in user
 
 
+def test_a_window_dropped_without_an_answer_is_a_fact_with_its_reason(tmp_path):
+    log = _log(tmp_path)
+    log.on_row(_speed("DIALOG_DROPPED", code="VANISHED", detail="dialog 555 act %s" % ACT), NOW)
+    log.on_row(_speed("DIALOG_DROPPED", code="ZONE_CHANGE", detail="dialog 556"), NOW + 1)
+    log.on_row(_speed("DIALOG_DROPPED", code="NOT_A_REASON", detail="dialog 557"), NOW + 2)
+    assert log.recent(NOW + 3, "s") == [
+        {"event": "DIALOG_DROPPED", "code": "VANISHED", "ago_min": 0},
+        {"event": "DIALOG_DROPPED", "code": "ZONE_CHANGE", "ago_min": 0}]
+
+
+def test_a_picker_with_one_row_has_no_rule_in_the_portrait_either(tmp_path):
+    asked = [{"dialog_id": "600", "owner_id": "100", "cause": "hers", "held": True, "title_key": "1",
+              "responses": [{"response": "ok", "text_key": "2"}], "select": {"min": 1, "max": 1}},
+             {"dialog_id": "601", "owner_id": "100", "cause": "hers", "held": True, "title_key": "1",
+              "responses": [{"response": "ok", "text_key": "2"}], "select": {"min": 1, "max": 0}}]
+    first, unlimited = observation._portrait(_row(asked=asked), TEXTS.get)["asked"]
+    assert "answer_rules" not in first
+    assert unlimited["answer_rules"] == {"select": {"min": 1, "max": 0}}
+
+
 def test_the_portrait_carries_window_facts_newest_last():
     windows = [{"event": "DIALOG_SHOWN", "code": "TIMEOUT", "ago_min": 9}]
     assert observation._portrait(_row(), TEXTS.get, windows=windows)["windows"] == windows

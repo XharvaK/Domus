@@ -108,6 +108,7 @@ class ClosePauseTests(unittest.TestCase):
 
     def answer(self, pick="13"):
         self.case.case.ready()
+        self.case.hold_recipes()  # 2.31.0 (W4): her picker is a held window
         return self.case.answer(pick)
 
     def finished(self):

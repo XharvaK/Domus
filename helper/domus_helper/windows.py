@@ -2,8 +2,8 @@
 
 Read from the probe's speed events and act events: a held window the User was shown after the
 wait, a window she could not answer that went to the User, an identity window (always the User's),
-a screen her act would have opened that only the User's hands can use, and a screen nobody could
-name. Facts only: what she does about them is her Thought's. Kept in the spool, so a restart keeps
+a screen her act would have opened that only the User's hands can use, a screen nobody could
+name, and a held window that vanished or was dropped by a zone change (W4, ids only). Facts only: what she does about them is her Thought's. Kept in the spool, so a restart keeps
 the last half hour."""
 import json
 import re
@@ -13,6 +13,8 @@ PORTRAIT_LIMIT = 4
 KEPT = 32
 TUNINGS_KEPT = 64
 DIALOG_SHOWN = "DIALOG_SHOWN"
+DIALOG_DROPPED = "DIALOG_DROPPED"
+DROP_CODES = ("VANISHED", "ZONE_CHANGE")
 SCREEN_WITHHELD = "SCREEN_WITHHELD"
 UNKNOWN_SCREEN = "UNKNOWN_SCREEN"
 _ACT = re.compile(r"\bact (\S+)")
@@ -60,7 +62,8 @@ class WindowLog(object):
         if type(at_ms) is not int or at_ms < 0:
             return False
         # One window per (event, act): a dialog shown is told apart by its code, a screen by its act.
-        key = "%s|%s|%s" % (event, code if event == DIALOG_SHOWN else "", act_id or "at%d" % at_ms)
+        key = "%s|%s|%s" % (event, code if event in (DIALOG_SHOWN, DIALOG_DROPPED) else "",
+                            act_id or "at%d" % at_ms)
         entry = {"key": key, "event": event, "code": code, "at_ms": at_ms, "session": session}
         for index, item in enumerate(self._entries):
             if item.get("key") == key:
@@ -95,6 +98,8 @@ class WindowLog(object):
             if phase == DIALOG_SHOWN and isinstance(code, str) and (
                     code == "TIMEOUT" or code == "IDENTITY_USER" or code.startswith("NOT_ANSWERABLE:")):
                 changed = self._add(DIALOG_SHOWN, code[:64], act_id, clock_ms, session)
+            elif phase == DIALOG_DROPPED and code in DROP_CODES:
+                changed = self._add(DIALOG_DROPPED, code, act_id, clock_ms, session)
             elif phase in (SCREEN_WITHHELD, UNKNOWN_SCREEN):
                 changed = self._add(phase, self._tunings.get(act_id) or "unnamed", act_id, clock_ms, session)
         if changed:

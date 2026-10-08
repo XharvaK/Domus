@@ -55,6 +55,12 @@ class AnswerTests(unittest.TestCase):
     def tearDown(self):
         self.case.tearDown()
 
+    def hold_recipes(self):
+        """2.31.0 (W4): her picker is a held window, as the hook holds the window her act opened; a window
+        that is not held is refused NOT_HELD."""
+        self.probe._E2.held["555"] = {"act_id": ANSWER, "at": 0.0, "kind": "dialog",
+                                      "send": (lambda *args, **kwargs: None, (), {})}
+
     def answer(self, pick, dialog_id="555", act_id=ANSWER):
         connection = self.probe._InboxReply("helper")
         ok = self.probe._inbox_dispatch(
@@ -63,6 +69,7 @@ class AnswerTests(unittest.TestCase):
 
     def test_a_row_is_picked_then_ok_like_the_client(self):
         self.case.ready()
+        self.hold_recipes()
         ok, connection = self.answer("13")
         self.assertTrue(ok, connection.lines)
         self.assertEqual(self.service.calls, [("pick", 555, [13]), ("respond", 555, 10001)])
@@ -73,9 +80,11 @@ class AnswerTests(unittest.TestCase):
 
     def test_a_button_answer_and_every_refusal(self):
         self.case.ready()
+        self.hold_recipes()
         ok, _ = self.answer("cancel")
         self.assertTrue(ok)
         self.assertEqual(self.service.calls, [("respond", 555, 10002)])
+        self.hold_recipes()
         cases = [("12", "555", "ROW_DISABLED"), ("99", "555", "NO_ROW"), ("13", "556", "NO_DIALOG"),
                  ("custom_3", "555", "NO_RESPONSE")]
         for index, (pick, dialog_id, code) in enumerate(cases):

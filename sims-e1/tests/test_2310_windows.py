@@ -452,6 +452,91 @@ class WindowTests(unittest.TestCase):
         self.control._check_modal()
         self.assertEqual(self.speed(), [])
 
+    # 2.31.0 (W4 review fixes): held windows only, the cause before the live check, zone change, vanished windows
+    def test_a_window_shown_at_once_is_recorded_and_its_late_answer_is_refused_as_shown(self):
+        self.push()
+        window = self.window(interaction=types.SimpleNamespace(id=OPENER), cls=UiDialogObjectColorPicker)
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m")])
+        self.assertIn("601", self.control.shown_to_user)
+        ok, connection = self.answer.answer("ok", dialog_id="601")
+        self.assertFalse(ok)
+        self.assertIn("ACT_REJECT SHOWN_TO_USER", connection.lines)
+
+    def test_a_window_that_was_never_held_is_refused_not_held(self):
+        self.push()
+        self.window(dialog_id=603, interaction=types.SimpleNamespace(id=OPENER))
+        ok, connection = self.answer.answer("ok", dialog_id="603")
+        self.assertFalse(ok)
+        self.assertIn("ACT_REJECT NOT_HELD", connection.lines)
+
+    def test_the_cause_of_a_window_is_noted_before_the_live_check(self):
+        self.push()
+        window = self.window(interaction=types.SimpleNamespace(id=OPENER))
+        self.control._live = lambda: False
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
+        self.assertEqual(self.control.held, {})
+        self.assertEqual(self.module.observers._WINDOWS["601"]["cause"], "hers")
+
+    def test_a_zone_change_drops_held_windows_unsent(self):
+        self.push()
+        window = self.window(interaction=types.SimpleNamespace(id=OPENER))
+        window.distribute_dialog("T", "m")
+        self.control.on_stop("ZONE_CHANGE")
+        self.assertEqual(window.sent, [])
+        self.assertEqual(self.control.held, {})
+        self.assertEqual(self.last_speed(), ("DIALOG_DROPPED", "ZONE_CHANGE", "dialog 601 act %s" % ACT_ID))
+
+    def test_a_stop_still_sends_held_windows_to_the_user(self):
+        self.push()
+        window = self.window(interaction=types.SimpleNamespace(id=OPENER))
+        window.distribute_dialog("T", "m")
+        self.control.on_stop("STOP")
+        self.assertEqual(window.sent, [("T", "m", False)])
+        self.assertEqual(self.last_speed(), ("DIALOG_SHOWN", "STOP", "dialog 601 act %s" % ACT_ID))
+
+    def test_a_held_window_that_vanishes_is_dropped_with_an_event_and_never_sent(self):
+        self.push()
+        window = self.window(interaction=types.SimpleNamespace(id=OPENER))
+        window.distribute_dialog("T", "m")
+        del self.service._active_dialogs[601]
+        self.control._drop_closed()
+        self.assertEqual(window.sent, [])
+        self.assertEqual(self.control.held, {})
+        self.assertEqual(self.last_speed(), ("DIALOG_DROPPED", "VANISHED", "dialog 601 act %s" % ACT_ID))
+
+    def test_a_release_skips_a_window_dropped_by_an_earlier_send(self):
+        self.push()
+        first = self.window(dialog_id=601, interaction=types.SimpleNamespace(id=OPENER))
+        second = self.window(dialog_id=602, interaction=types.SimpleNamespace(id=OPENER))
+        first.distribute_dialog("T", "one")
+        second.distribute_dialog("T", "two")
+        original, args, kwargs = self.control.held["601"]["send"]
+
+        def send_and_drop(*call_args, **call_kwargs):
+            self.control.held.pop("602", None)
+            return original(*args, **kwargs)
+        self.control.held["601"]["send"] = (send_and_drop, (), {})
+        self.control._release_held(everything=True, code="STOP")
+        self.assertEqual(len(first.sent), 1)
+        self.assertEqual(second.sent, [])
+        self.assertEqual(self.control.held, {})
+
+    def test_the_shown_record_keeps_the_newest_64_windows(self):
+        self.control.shown_to_user = []
+        limit = self.module.SHOWN_TO_USER_LIMIT
+        self.assertEqual(limit, 64)
+        for index in range(limit + 2):
+            self.control._remember_shown(str(900 + index))
+        self.assertEqual(len(self.control.shown_to_user), limit)
+        self.assertEqual(self.control.shown_to_user[0], "902")
+        self.assertEqual(self.control.shown_to_user[-1], str(900 + limit + 1))
+        self.window(dialog_id=901, interaction=types.SimpleNamespace(id=OPENER))
+        ok, connection = self.answer.answer("ok", dialog_id="901")
+        self.assertFalse(ok)
+        self.assertIn("ACT_REJECT NOT_HELD", connection.lines)
+
 
 if __name__ == "__main__":
     unittest.main()

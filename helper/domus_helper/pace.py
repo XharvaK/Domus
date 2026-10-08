@@ -113,6 +113,18 @@ def clock_sentence(scale):
     return "the game's clock runs at %s its normal speed." % amount(scale)
 
 
+def drain_sentence(need, block):
+    """W4 (F7): her needs drain in words, and only what the probe applied. A drain no motive carries
+    (motives_modified 0) or the probe cannot measure (drain_measured null) is said not to be applied."""
+    measured = _factor(block.get("drain_measured"))
+    motives = block.get("motives_modified")
+    if type(motives) is int and motives > 0 and measured is not None:
+        return needs_sentence(measured)
+    if need < 1.0:
+        return "the slower need drain is not applied right now."
+    return needs_sentence(1.0)
+
+
 def game_minutes(decided_ticks, reached_ticks):
     """Game minutes from the game time of what she decided on to the game time her act reached
     the game (one decimal), or None when either tick is missing or the order is wrong."""
@@ -131,7 +143,7 @@ def applied_differs(block, wanted):
     need = _factor(block.get("need_drain"))
     if need is None or abs(need - wanted["need_drain"]) > 1e-9:
         return True
-    if block.get("clock_foreign") is True:
+    if block.get("clock_foreign") is True or block.get("clock_unreadable") is True:
         return False
     slow = _factor(block.get("slow_time"))
     return slow is None or abs(slow - wanted["slow_time"]) > 1e-9
@@ -144,12 +156,15 @@ def portrait(block, costs):
     if isinstance(block, dict):
         need = _factor(block.get("need_drain"))
         if need is not None:
-            entry["needs"] = needs_sentence(need)
+            entry["needs"] = drain_sentence(need, block)
         scale = block.get("clock_scale")
         if isinstance(scale, (int, float)) and not isinstance(scale, bool) and math.isfinite(scale) \
                 and scale > 0 and scale != 1:
             entry["clock"] = clock_sentence(float(scale))
-        if block.get("clock_foreign") is True:
+        # W4 (F12): the two refusals of the clock have their own words; an unreadable clock is foreign too.
+        if block.get("clock_unreadable") is True:
+            entry["clock_unreadable"] = "Domus could not read the game's clock; it leaves the clock alone."
+        elif block.get("clock_foreign") is True:
             entry["clock_foreign"] = "another mod sets the game's clock; Domus leaves it alone."
     if costs:
         entry["decisions"] = [dict(item) for item in costs[-DECISIONS_SHOWN:]]

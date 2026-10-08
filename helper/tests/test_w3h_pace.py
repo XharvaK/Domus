@@ -99,7 +99,29 @@ def test_foreign_clock_is_a_fact_and_no_block_means_no_pace_entry():
     block = {"need_drain": 0.5, "slow_time": 1.0, "clock_scale": 1.0, "clock_foreign": True}
     assert pace.portrait(block, [])["clock_foreign"] == "another mod sets the game's clock; Domus leaves it alone."
     assert pace.portrait(None, []) is None
-    assert pace.portrait({"need_drain": 0.5}, []) == {"needs": "your needs drain at half the game's pace, by the User's choice."}
+    assert pace.portrait({"need_drain": 0.5}, []) == {"needs": "the slower need drain is not applied right now."}
+
+
+def test_the_drain_is_stated_only_when_the_probe_applies_it():
+    applied = {"need_drain": 0.5, "motives_modified": 6, "drain_measured": 0.5, "slow_time": 1.0,
+               "clock_scale": 1.0, "clock_foreign": False, "clock_unreadable": False}
+    assert pace.portrait(applied, [])["needs"] == "your needs drain at half the game's pace, by the User's choice."
+    assert pace.portrait(dict(applied, motives_modified=0), [])["needs"] == "the slower need drain is not applied right now."
+    assert pace.portrait(dict(applied, drain_measured=None), [])["needs"] == "the slower need drain is not applied right now."
+    quarter = dict(applied, drain_measured=0.25)
+    assert pace.portrait(quarter, [])["needs"] == "your needs drain at a quarter the game's pace, by the User's choice."
+    normal = dict(applied, need_drain=1.0, motives_modified=0, drain_measured=None)
+    assert pace.portrait(normal, [])["needs"] == "your needs drain at the game's pace."
+
+
+def test_an_unreadable_clock_has_its_own_fact_and_is_not_counted_as_foreign():
+    block = {"need_drain": 0.5, "motives_modified": 6, "drain_measured": 0.5, "slow_time": 0.4,
+             "clock_scale": None, "clock_foreign": True, "clock_unreadable": True}
+    entry = pace.portrait(block, [])
+    assert entry["clock_unreadable"] == "Domus could not read the game's clock; it leaves the clock alone."
+    assert "clock_foreign" not in entry
+    assert pace.applied_differs(block, {"need_drain": 0.5, "slow_time": 0.4}) is False
+    assert "clock_foreign" in pace.portrait(dict(block, clock_unreadable=False), [])
 
 
 def test_portrait_shows_the_last_three_decision_costs_newest_last():
@@ -188,7 +210,8 @@ def _body(pace_block=None, windows=None):
 
 
 def test_the_portrait_carries_the_pace_entry_when_there_is_one():
-    portrait = _body({"need_drain": 0.5, "clock_scale": 1.0, "slow_time": 1.0})
+    portrait = _body({"need_drain": 0.5, "motives_modified": 6, "drain_measured": 0.5, "clock_scale": 1.0,
+                      "slow_time": 1.0})
     assert portrait["pace"] == {"needs": "your needs drain at half the game's pace, by the User's choice."}
     assert "pace" not in _body(None)
 

@@ -72,5 +72,50 @@ class DenyNameTests(unittest.TestCase):
         self.assertEqual(e2_actuator.act_excluded(KillSim, False), "deny_name")
 
 
+class SocialAndPhoneWordTests(unittest.TestCase):
+    """2.31.0 (W4): the social and phone deny parts match whole words, as DENY_NAME_PARTS does. The
+    intended exclusions (kill, fire, move in, try for baby, phone call) still deny; Skill and
+    Fireplace acts, and Border, are not hidden by them."""
+    def setUp(self):
+        load_probe()
+        from ashley_e1 import e2_trial, e2_actuator
+        self.trial = e2_trial
+        self.actuator = e2_actuator
+
+    def test_social_parts_match_whole_words(self):
+        part = self.trial.denied_part
+        social = self.trial.SOCIAL_DENY_PARTS
+        for name in ("SkillSocialGreet", "SkillBasedChat", "FireplaceChat", "CampfireTalk"):
+            with self.subTest(name=name):
+                self.assertIsNone(part(name, social))
+        self.assertEqual(part("CareerTalk", social), "career")
+        cases = {"KillSim": "kill", "Trybaby": "trybaby", "TryBaby": "try_baby", "Move_In_Sim": "move_in",
+                 "PhoneCall": "phone",
+                 "CareersTalk": "careers", "AdoptionTalk": "adoption", "BurnSocial": "burn"}
+        for name, entry in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(part(name, social), entry)
+
+    def test_phone_parts_match_whole_words_and_keep_the_two_word_forms(self):
+        part = self.trial.denied_part
+        phone = self.actuator.PHONE_DENY_PARTS
+        self.assertIsNone(part("Border_Chat", phone))
+        self.assertIsNone(part("Recorder_Sample", phone))
+        self.assertEqual(part("Move_In_Sim", phone), "move_in")
+        self.assertEqual(part("Try_For_Baby", phone), "try_for_baby")
+        self.assertEqual(part("Jobs_Board", phone), "jobs")
+        self.assertEqual(part("Ordering_Food", phone), "ordering")
+
+    def test_the_actuator_uses_the_whole_word_rule_for_socials_and_phone_acts(self):
+        def named(name, social=False):
+            return type(name, (object,), {"guid64": 1, "allow_user_directed": True, "is_social": social})
+        actuator = self.actuator
+        self.assertEqual(actuator.act_excluded(named("KillSocial", True), True), "deny_name")
+        self.assertIsNone(actuator.act_excluded(named("SkillSocialGreet", True), True))
+        self.assertIsNone(actuator.act_excluded(named("FireplaceChat", True), True))
+        self.assertIsNone(actuator.phone_act_excluded(named("phone_Border_Chat")))
+        self.assertEqual(actuator.phone_act_excluded(named("phone_Move_In_Sim")), "deny_name")
+
+
 if __name__ == "__main__":
     unittest.main()
