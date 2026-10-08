@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 13
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v13"
+OBSERVATION_SCHEMA_VERSION = 14
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v14"
 PROBE_VERSION = "2.31.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -187,6 +187,18 @@ MAX_DIALOG_RESPONSES = 6
 # 2.18.0 (schema 11): the rows a picker dialog offers (a recipe, a Sim, an object), so she can answer.
 MAX_DIALOG_ROWS = 40
 DIALOG_ROW_KEYS = ("option_id", "name_key", "enabled", "price")
+# 2.31.0 (schema 14, DOMUS_DEEP_DESIGN §11): who holds a window, and what she may answer. The text
+# limits come from the held message (bytecode ui/ui_text_input.UiTextInput.build_msg); numbers and
+# flags only, never game text.
+WINDOW_KEYS = frozenset(("held", "cause", "select", "counts", "text_inputs"))
+WINDOW_CAUSES = ("hers", "user", "identity_user")
+MAX_TEXT_INPUTS = 8
+MAX_TEXT_LIMIT = 4096
+MAX_TEXT_VALUE = 2 ** 53
+MAX_WINDOW_COUNT = 999
+TEXT_FIELD_KEYS = frozenset(("name", "min_length", "max_length", "numeric", "min_value",
+                             "max_value", "profanity_checked", "restricted", "default_key"))
+FIELD_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")
 
 
 class SchemaError(ValueError):
@@ -853,6 +865,46 @@ def _validate_dialog_text(item, label):
     string_id(item["dialog_id"], "%s.dialog_id" % label)
 
 
+def _int_between(value, low, high, label):
+    _require(type(value) is int and low <= value <= high, label)
+
+
+def _validate_window(item):
+    """2.31.0 (schema 14): her window attribution and the answer shapes its dialog offers."""
+    _require(type(item["held"]) is bool, "dialogs.held")
+    _require(item["cause"] is None or item["cause"] in WINDOW_CAUSES, "dialogs.cause")
+    if item["select"] is not None:
+        _require(isinstance(item["select"], dict) and set(item["select"]) == {"min", "max"},
+                 "dialogs.select shape")
+        for number in item["select"].values():
+            _int_between(number, 0, MAX_DIALOG_ROWS, "dialogs.select")
+    if item["counts"] is not None:
+        _require(isinstance(item["counts"], dict) and set(item["counts"]) == {"max_in_row", "max_rows"},
+                 "dialogs.counts shape")
+        for number in item["counts"].values():
+            _int_between(number, 0, MAX_WINDOW_COUNT, "dialogs.counts")
+    fields = item["text_inputs"]
+    if fields is None:
+        return
+    _require(item["held"] is True and isinstance(fields, list) and 1 <= len(fields) <= MAX_TEXT_INPUTS,
+             "dialogs.text_inputs")
+    for field in fields:
+        _require(isinstance(field, dict) and set(field) == TEXT_FIELD_KEYS, "dialogs.text_input entry")
+        bounded_string(field["name"], 32, "dialogs.text_input.name", False)
+        _require(set(field["name"]) <= FIELD_NAME_CHARS, "dialogs.text_input.name characters")
+        _int_between(field["min_length"], 0, MAX_TEXT_LIMIT, "dialogs.text_input.min_length")
+        if field["max_length"] is not None:
+            _int_between(field["max_length"], 0, MAX_TEXT_LIMIT, "dialogs.text_input.max_length")
+        for key in ("min_value", "max_value"):
+            if field[key] is not None:
+                _int_between(field[key], -MAX_TEXT_VALUE, MAX_TEXT_VALUE, "dialogs.text_input.%s" % key)
+        for key in ("numeric", "profanity_checked", "restricted"):
+            _require(type(field[key]) is bool, "dialogs.text_input.%s" % key)
+        if field["default_key"] is not None:
+            _require(isinstance(field["default_key"], str), "dialogs.text_input.default_key")
+            string_id(field["default_key"], "dialogs.text_input.default_key")
+
+
 def _validate_dialogs(row):
     """2.15.2: the game's pop-ups. `open` lists those showing now (with the choices the
     game offers), `closed` those gone since the last sample, with the answer read from
@@ -872,6 +924,8 @@ def _validate_dialogs(row):
         keys = {"dialog_id", "kind", "owner_id", "title_key", "text_key", "responses", "auto_respond"}
         if row["schema_version"] >= 11:
             keys.add("rows")
+        if row["schema_version"] >= 14:
+            keys = keys | WINDOW_KEYS
         _require(isinstance(item, dict) and set(item) == keys, "dialogs.open entry")
         if "rows" in keys:
             _require(isinstance(item["rows"], list) and len(item["rows"]) <= MAX_DIALOG_ROWS,
@@ -887,6 +941,8 @@ def _validate_dialogs(row):
                 _require(entry["price"] is None or (type(entry["price"]) is int and entry["price"] >= 0),
                          "dialogs.row.price")
         _validate_dialog_text(item, "dialogs.open")
+        if "held" in keys:
+            _validate_window(item)
         if item["owner_id"] is not None:
             _require(isinstance(item["owner_id"], str), "dialogs.owner_id")
             string_id(item["owner_id"], "dialogs.owner_id")

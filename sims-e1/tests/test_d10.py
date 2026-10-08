@@ -72,7 +72,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_v4_and_closed_command_event(self):
         s=self.s
-        self.assertEqual((s.OBSERVATION_SCHEMA_VERSION,s.TELEMETRY_SCHEMA_ID),(13,'e1.telemetry/v13'))
+        self.assertEqual((s.OBSERVATION_SCHEMA_VERSION,s.TELEMETRY_SCHEMA_ID),(14,'e1.telemetry/v14'))
         payload=dict(id='a'*32,issuer='agent:coder',command='status',status='OK',code=None)
         def row(p): return s.make_record('command_event',telemetry_session_id='u',
                                         wall_timestamp_ms=1,monotonic_ns=1,e2=p)
@@ -137,7 +137,7 @@ class InboxTests(unittest.TestCase):
         reply=self.reply()
         self.assertEqual(reply['status'],'OK')
         result=reply['result']
-        self.assertEqual((result['state'],result['inbox'],result['probe_version'],result['schema_version']),('UNARMED','on','2.31.0',13))
+        self.assertEqual((result['state'],result['inbox'],result['probe_version'],result['schema_version']),('UNARMED','on','2.31.0',14))
         for key in ('armed_name','signatures','continuation','lineage_class','designated_sim_id','verdicts'): self.assertIn(key,result)
         self.assertIsNone(self.p._WRITER)
         self.assertTrue((self.root/'done'/('a'*32+'.json')).exists())
