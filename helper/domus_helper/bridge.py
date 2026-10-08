@@ -31,6 +31,7 @@ from .thalamus.percepts import Extractor
 from .thalamus.scorer import load_scorer, run_scorer
 from .thalamus.types import Context, ThalamusState
 from .transport import AshleyClient, load_credentials
+from .windows import WindowLog
 
 _AUTO = object()
 HEARTBEAT_EVERY_MS = 60_000
@@ -137,6 +138,8 @@ class Bridge:
             self.scorer = scorer
             self._scorer_note = None
         self.notebook = notebook.Notebook(self.paths.data_dir / notebook.DB_NAME)
+        # W2h: the window facts (held windows shown, screens only the User's hands can use).
+        self._windows = WindowLog(self.spool)
         self.diary = DiaryWatch(self.spool, self.paths) if self.client is not None else None
         self._outcomes_mtime = None
         self._outcomes_checked_ms = None
@@ -301,6 +304,7 @@ class Bridge:
                         lambda: self.diary.tick(clock_ms, record, self._world()))
             if kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
+            self._windows.on_row(record, clock_ms)
             if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
                 self._acts.on_sample(record)
             self.overlay.on_row(record, wall_ms)
@@ -399,6 +403,7 @@ class Bridge:
         # Portrait, dialogs and presence come from the latest body sample. Timing and
         # identity of this decision stay on the newest row, which may be an event.
         body = self._last_body_row or self._last_row
+        session = body.get("telemetry_session_id") if isinstance(body, dict) else None
         return {
             "helper_session": self.helper_session,
             "obs_seq": self._obs_seq,
@@ -410,6 +415,7 @@ class Bridge:
             "resolve_text": self._resolve_text,
             "options": self._options(body),
             "notebook": self._notebook_slice(wall_ms),
+            "windows": self._windows.recent(wall_ms, session),
         }
 
     def _world(self):
