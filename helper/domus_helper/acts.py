@@ -12,6 +12,10 @@ OPTIONS_LIMIT = 7800
 # W3h (C9): real time. The probe reads its inbox on a real-time alarm and writes the reply then,
 # not on the game clock, so 90 s means the same at slow_time 0.5.
 PROBE_REPLY_MS = 90_000
+# GL8: an act the probe started but never ends (the game detached, or ran past this) is unknown after this
+# long from her request. Live acts ran up to 8.5 minutes, so the ceiling is well past a real one.
+ACT_CEILING_MS = 15 * 60_000
+_TERMINAL = ("finished", "rejected", "unknown")
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
 ASKED_LIMIT = 8
@@ -429,14 +433,23 @@ class ActCourier(object):
         self._event(act_id, phase, at, detail)
         if known is not None:
             known["answered"] = True
+            if phase in _TERMINAL:
+                known["terminal"] = True
         self._save()
 
     def tick(self, client, helper_session, now_ms, attached):
         """One round trip: send what happened, receive what to do. Returns the acts written."""
         for act_id, known in self._known.items():
-            if not known.get("answered") and not known.get("timed_out") and now_ms - known["written_ms"] >= PROBE_REPLY_MS:
+            if known.get("timed_out") or known.get("terminal"):
+                continue
+            if not known.get("answered"):
+                if now_ms - known["written_ms"] >= PROBE_REPLY_MS:
+                    known["timed_out"] = True
+                    self._event(act_id, "unknown", now_ms, {"code": "NO_PROBE_REPLY"})
+            elif not attached or now_ms - known["written_ms"] >= ACT_CEILING_MS:
+                # GL8: the probe began it, and no end came: the game detached, or it never ended.
                 known["timed_out"] = True
-                self._event(act_id, "unknown", now_ms, {"code": "NO_PROBE_REPLY"})
+                self._event(act_id, "unknown", now_ms, {"code": "GAME_DETACHED" if not attached else "NO_END_REPORTED"})
         sending = list(self._events)
         response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": sending})
         if response is None:

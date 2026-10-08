@@ -4,7 +4,7 @@ import json
 import pytest
 
 from domus_helper import snapshot
-from domus_helper.acts import PROBE_REPLY_MS, ActCourier, act_names, dialog_options, humanize, options, people_names, queue_options
+from domus_helper.acts import ACT_CEILING_MS, PROBE_REPLY_MS, ActCourier, act_names, dialog_options, humanize, options, people_names, queue_options
 from domus_helper.contract import ContractError, validate_observation
 from domus_helper.spool import Spool
 from domus_helper.thalamus.percepts import Extractor
@@ -241,6 +241,30 @@ def test_an_act_the_probe_never_answers_about_becomes_unknown_once(tmp_path):
     unknown = [e for body in client.bodies for e in body["events"] if e["phase"] == "unknown"]
     assert unknown == [{"act_id": "a" * 32, "phase": "unknown", "at_ms": 1000 + PROBE_REPLY_MS,
                         "detail": {"code": "NO_PROBE_REPLY"}}]
+
+
+def test_an_act_the_game_never_ends_becomes_unknown_once_it_detaches_or_passes_the_ceiling(tmp_path):
+    # GL8: pushed acts do not stay "pushed" forever; a finished act is left alone.
+    spool = Spool(tmp_path / "spool.db")
+    client = _Client([ACT])
+    courier = ActCourier(spool, lambda command, args: None)
+    courier.tick(client, "h", 1000, True)
+    client.acts = []
+    courier.on_row(_row("PUSHED", act_id="a" * 32))
+    courier.tick(client, "h", 2000, True)
+    courier.tick(client, "h", 3000, False)
+    courier.tick(client, "h", 4000, False)
+    unknown = [e for body in client.bodies for e in body["events"] if e["phase"] == "unknown"]
+    assert unknown == [{"act_id": "a" * 32, "phase": "unknown", "at_ms": 3000,
+                        "detail": {"code": "GAME_DETACHED"}}]
+    done = ActCourier(spool, lambda command, args: None)
+    other = _Client([dict(ACT, act_id="b" * 32)])
+    done.tick(other, "h", 1000, True)
+    done.on_row(_row("FINISHED", act_id="b" * 32))
+    late = _Client()
+    done.tick(late, "h", 1000 + ACT_CEILING_MS, False)
+    assert [e for body in late.bodies for e in body["events"] if e["phase"] == "unknown"] == []
+    spool.close()
 
 
 def test_a_refusal_carries_the_resolved_sentence_not_the_key(tmp_path):
