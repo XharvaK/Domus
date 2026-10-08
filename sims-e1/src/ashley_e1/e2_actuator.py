@@ -72,6 +72,61 @@ def offers_for(obj, context, guid64):
     return offers
 
 
+# 2.29.0: her own phone. The game keeps a Sim's phone acts in her own list (`_phone_affordances`,
+# which Sim.potential_phone_interactions reads), and their target is her own Sim. Leaving the lot
+# changes zones, so a phone act that travels is not offered in this version.
+PHONE_SCAN_LIMIT = 64
+PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot")
+
+
+def phone_affordances(sim):
+    """Read: the phone affordances her Sim carries, at most PHONE_SCAN_LIMIT. Never raises."""
+    listed = []
+    try:
+        for affordance in sim._phone_affordances or ():
+            if len(listed) >= PHONE_SCAN_LIMIT:
+                break
+            listed.append(affordance)
+    except Exception:
+        pass
+    return listed
+
+
+def phone_offers_for(sim, guid64):
+    """Read: her phone affordances whose guid64 equals the request. An act on her own Sim is
+    offered by her phone and by nothing else."""
+    wanted = int(guid64)
+    offers = []
+    for affordance in phone_affordances(sim):
+        try:
+            if int(affordance.guid64) == wanted:
+                offers.append(affordance)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return offers
+
+
+def phone_excluded(affordance):
+    """2.29.0: None, or "travel" when the phone act would take her off the lot. Its class or
+    tuning name, read down the class MRO as food_route reads it, says travel, go to, or visit a
+    lot (underscores and spaces ignored, so go_to and GoTo both match)."""
+    names = []
+    for cls in _mro(affordance):
+        try:
+            names.append(cls.__name__)
+        except Exception:
+            continue
+    try:
+        names.append(affordance.__name__)
+    except Exception:
+        pass
+    for name in names:
+        low = str(name).lower().replace("_", "").replace(" ", "")
+        if any(part in low for part in PHONE_TRAVEL_PARTS):
+            return "travel"
+    return None
+
+
 def food_route(affordance):
     """Dialog-free food push, or None. Order and catering stay excluded (A30)."""
     names = []

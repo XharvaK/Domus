@@ -665,7 +665,13 @@ class E2Control:
         if obj is None:
             return ("NO_OBJECT", None), None
         context = e2_actuator.build_context(sim, owner=owner)
-        offers = e2_actuator.offers_for(obj, context, guid64)
+        # 2.29.0: an act whose target is her own Sim is one of her phone's acts, offered by her
+        # phone's list and by nothing else; the push still targets her Sim (push_affordance_ex).
+        own_phone = obj is sim
+        if own_phone:
+            offers = e2_actuator.phone_offers_for(sim, guid64)
+        else:
+            offers = e2_actuator.offers_for(obj, context, guid64)
         if not offers:
             return ("NOT_OFFERED", None), None
         affordance = offers[0]
@@ -674,6 +680,8 @@ class E2Control:
         except Exception:
             person = False
         excluded = e2_actuator.act_excluded(affordance, person)
+        if excluded is None and own_phone:
+            excluded = e2_actuator.phone_excluded(affordance)
         if excluded is not None:
             return ("EXCLUDED", excluded), None
         if not e2_actuator.user_directed(affordance):

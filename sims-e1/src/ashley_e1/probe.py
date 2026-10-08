@@ -1870,6 +1870,37 @@ def _menu_offers(item, sim, context):
     return jobs
 
 
+def _menu_phone_offers(item, sim, context):
+    """2.29.0: the candidate acts of her own phone. Her phone's affordances the trial guard does
+    not exclude (as her own acts, so never a social), the game does not mark as a cheat, debug or
+    automation, and that do not take her off the lot. Each is tested like any other candidate;
+    the target of each is her own Sim."""
+    jobs = []
+    for affordance in e2_actuator.phone_affordances(sim):
+        if len(jobs) >= act_menu.CANDIDATE_ACTS:
+            break
+        guid = tuned._class_plain(affordance, "guid64")
+        if type(guid) is not int:
+            continue
+        if (e2_actuator.act_excluded(affordance, False) is not None
+                or not e2_actuator.user_directed(affordance)
+                or e2_actuator.phone_excluded(affordance) is not None
+                or _menu_hidden(affordance)):
+            continue
+        try:
+            name = affordance.__name__
+        except Exception:
+            name = ""
+        jobs.append({
+            "object_id": item["object_id"], "definition_id": None, "class": "phone",
+            "distance_m": None, "same_room": None, "phone": True,
+            "guid64": str(guid), "name": name if type(name) is str else "",
+            "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
+            "obj": sim, "affordance": affordance, "sim": sim, "context": context,
+        })
+    return jobs
+
+
 def _on_lot(obj):
     try:
         value = obj.is_on_active_lot()
@@ -1894,6 +1925,8 @@ def _menu_jobs(row):
     if sim is None:
         return None, body_room
     context = e2_actuator.build_context(sim)
+    # 2.29.0: her own phone is one entry, carrying her Sim's id (the object she is, not a person).
+    sim_id = situation._int_id(tuned._plain(sim, "id", True))
     items = []
     for obj in objects:
         try:
@@ -1920,8 +1953,14 @@ def _menu_jobs(row):
                           and room != "0"),
         })
     ordered = act_menu.ordered(items)
+    phone = []
+    if sim_id is not None and sim_id not in e2_control.EXCLUDED_OBJECT_IDS:
+        phone.append({"object_id": sim_id, "obj": sim, "phone": True, "person": False,
+                      "same_room": None, "on_lot": None, "distance_m": None, "room": None})
 
     def offers(item):
+        if item.get("phone") is True:
+            return _menu_phone_offers(item, sim, context)
         return _menu_offers(item, sim, context)
 
     for item in ordered:
@@ -1937,9 +1976,10 @@ def _menu_jobs(row):
         item["class"] = situation._name(type(item["obj"])) or ""
     jobs = []
     reach = {}
-    for _item, acts in act_menu.pick(ordered, offers):
+    for item, acts in act_menu.pick(phone + ordered, offers):
         for job in acts:
-            job["reach_seen"] = reach
+            # Her phone's reach is not asked: the game's connectivity check is for objects.
+            job["reach_seen"] = None if item.get("phone") is True else reach
         jobs.extend(acts)
     return jobs, body_room
 
