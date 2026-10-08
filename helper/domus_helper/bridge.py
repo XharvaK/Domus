@@ -398,6 +398,8 @@ class Bridge:
         self._log.write({
             "wall_ms": wall_ms,
             "clock_ms": clock_ms,
+            "ticks": _ticks(self._last_row),
+            "urgency": sorted({percept.urgency for percept, _ in decision.percepts}),
             "row_seq": row_seq,
             "fired": decision.fired,
             "reason": decision.reason,

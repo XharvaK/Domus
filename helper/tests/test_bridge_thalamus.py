@@ -102,7 +102,7 @@ def test_build_clamps_salience_and_fits_caps():
     assert normalized["expires_at_ms"] - normalized["source_time_ms"] == 600_000
     assert normalized["percepts"][0]["salience"] == 1.0
     facts = normalized["percepts"][0]["facts"]
-    assert facts["reason"] == "threshold" and facts["urgency"] == "wake"
+    assert "reason" not in facts and "urgency" not in facts and "ticks" not in facts  # HE11: trace only
     assert len(json.dumps(facts, separators=(",", ":")).encode()) <= 2048
     assert len(normalized["portrait"]["running"]) <= 8
     assert all(len(item) <= 80 for item in normalized["portrait"]["running"])
@@ -290,7 +290,7 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     assert obs["seq"] == 0 and obs["observation_id"].endswith(".0")
     assert obs["world"] == "slot3" and obs["snapshot"] == "3"
     assert obs["portrait"]["needs"]["hunger"]["band"] == "low"
-    assert need["facts"]["bucket"] == "low" and need["facts"]["reason"] == "wake"
+    assert need["facts"]["bucket"] == "low" and "reason" not in need["facts"]
     _append(paths, [_snap(4, "distress", WALL + 4000, 30)])
     mono["ms"] = WALL + 4000
     bridge.tick(WALL + 4000)
@@ -299,6 +299,7 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     assert payloads[1]["observation_id"].endswith(".1")
     fired = [line for line in _log_lines(data) if line["fired"]]
     assert fired[0]["enqueued"] is True and fired[0]["reason"] == "wake"
+    assert fired[0]["urgency"] and "ticks" in fired[0]  # HE11: the wake mechanics are in the trace
     traced = [line for line in _log_lines(data) if line["traces"]]
     assert traced and "key" in traced[0]["traces"][0]
     status = bridge.status()

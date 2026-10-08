@@ -494,13 +494,13 @@ def build(decision, ctx):
             score = 0.0
         if score > 1:
             score = 1.0
+        # HE11: the wake mechanics (ticks, urgency, reason) stay in the decision trace; the facts are the world.
         facts = dict(percept.facts)
+        facts.pop("ticks", None)
         facts.update({
             "subject": percept.subject,
             "object": percept.object,
             "bucket": percept.bucket,
-            "urgency": percept.urgency,
-            "reason": decision.reason,
         })
         percepts.append({"kind": percept.kind, "salience": score, "facts": _fit_strings(facts)})
     seq = ctx["obs_seq"]
