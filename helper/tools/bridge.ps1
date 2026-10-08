@@ -6,6 +6,16 @@
 $ErrorActionPreference = 'Continue'
 $helper = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $helper '.venv\Scripts\python.exe'
+# OP16: one watcher at a time, by a named mutex (a check-then-start scan could let two in).
+$mutex = New-Object System.Threading.Mutex($false, 'Local\DomusBridgeWatcher')
+try { $held = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+if (-not $held) { exit 0 }
+if (-not (Test-Path $python)) {
+    # OP16: a broken install is said out loud, in a log that exists without the venv.
+    $missing = Join-Path $env:TEMP 'domus_bridge_watcher.log'
+    Add-Content -Path $missing -Value ("== venv missing, bridge not started {0:u}: helper\.venv\Scripts\python.exe" -f (Get-Date).ToUniversalTime()) -Encoding utf8
+    exit 1
+}
 Set-Location $helper
 $env:PYTHONPATH = '.'
 $dataDir = & $python -c "from domus_helper.paths import Paths; print(Paths.from_env().data_dir)"
