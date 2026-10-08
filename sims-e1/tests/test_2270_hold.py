@@ -1,5 +1,6 @@
 """2.27.0: a picker her own act opened is hers to answer; its window stays off the User's screen,
-and is shown to the User only if she has not answered in time."""
+and is shown to the User only if she has not answered in time. 2.31.0: the same hold is built per
+game send (_dialog_hook), so the fallback replays that send's original with its own arguments."""
 import os
 import sys
 import types
@@ -9,6 +10,7 @@ import test_2180_answer as answers
 
 ACT = "a" * 32
 OPENER = 900
+OTHER = 4242
 
 
 class HoldTests(unittest.TestCase):
@@ -19,7 +21,6 @@ class HoldTests(unittest.TestCase):
         self.control = self.probe._E2
         self.module = sys.modules[type(self.control).__module__]
         self.saved_monotonic = self.module.time.monotonic
-        self.saved_picker = self.module.UiDialogObjectPicker
         self.now = [100.0]
         self.module.time.monotonic = lambda: self.now[0]
         self.shown = []
@@ -28,7 +29,8 @@ class HoldTests(unittest.TestCase):
         def original(dialog, dialog_type, dialog_msg, immediate=False):
             test.shown.append((dialog.dialog_id, dialog_type, dialog_msg, immediate))
 
-        self.module._HOLD.update(controller=self.control, original=original)
+        self.hook = self.module._dialog_hook(original)
+        self.module._HOLD.update(controller=self.control)
         self.picker = self.case.recipes
         self.picker.dialog_id = 555
         self.picker._resolver = types.SimpleNamespace(
@@ -36,8 +38,7 @@ class HoldTests(unittest.TestCase):
 
     def tearDown(self):
         self.module.time.monotonic = self.saved_monotonic
-        self.module.UiDialogObjectPicker = self.saved_picker
-        self.module._HOLD.update(controller=None, original=None)
+        self.module._HOLD.update(controller=None)
         self.case.tearDown()
 
     def mine(self):
@@ -45,7 +46,7 @@ class HoldTests(unittest.TestCase):
                                             "interaction_id": str(OPENER), "seen": True, "misses": 0}
 
     def distribute(self):
-        return self.module._held_distribute(self.picker, "MSG_PICKER", "msg", immediate=True)
+        return self.hook(self.picker, "MSG_PICKER", "msg", immediate=True)
 
     def speed(self):
         return [(row["phase"], row["code"], row["detail"]) for row in self.case.case.base.e2("speed_event")]
@@ -95,6 +96,7 @@ class HoldTests(unittest.TestCase):
         self.distribute()
         self.assertEqual(len(self.shown), 1)
         self.mine()
+        self.picker._owner = lambda: types.SimpleNamespace(id=OTHER)
         self.picker._resolver = types.SimpleNamespace()
         self.distribute()
         self.assertEqual(len(self.shown), 2)
@@ -116,34 +118,42 @@ class HoldTests(unittest.TestCase):
         for row in self.case.case.base.rows("speed_event"):
             self.probe.schema.validate_record(row)
 
-    def test_install_replaces_only_the_picker_class_once(self):
+    def test_install_replaces_the_game_send_once_and_restores_it(self):
         calls = []
 
-        class _Picker(object):
+        class _Base(object):
             def distribute_dialog(self, dialog_type, dialog_msg, immediate=False):
                 calls.append((dialog_type, dialog_msg, immediate))
 
-        game = _Picker.distribute_dialog
-        self.module.UiDialogObjectPicker = _Picker
-        self.module._HOLD.update(controller=None, original=None)
-        self.assertTrue(self.module._install_picker_hold(self.control))
-        self.assertTrue(self.module._install_picker_hold(self.control))
-        self.assertIs(self.module._HOLD["original"], game)
-        self.assertIs(_Picker.distribute_dialog, self.module._held_distribute)
-        _Picker().distribute_dialog("T", "M", immediate=True)
-        self.assertEqual(calls, [("T", "M", True)])
+        game = _Base.distribute_dialog
+        saved = self.module.UiDialogBase
+        self.module.UiDialogBase = _Base
+        self.module._HOLD.update(controller=None, saved=None)
+        try:
+            self.assertTrue(self.module._install_holds(self.control))
+            self.assertTrue(self.module._install_holds(self.control))
+            self.assertIs(self.module._HOLD["saved"]["base"], game)
+            self.assertIsNot(_Base.distribute_dialog, game)
+            _Base().distribute_dialog("T", "M", immediate=True)
+            self.assertEqual(calls, [("T", "M", True)])
+            self.module._restore_holds()
+            self.assertIs(_Base.distribute_dialog, game)
+            self.assertIsNone(self.module._HOLD["saved"])
+        finally:
+            self.module.UiDialogBase = saved
+            self.module._restore_holds()
 
-    def test_the_guard_allows_only_this_one_replacement(self):
+    def test_the_guard_allows_only_the_reviewed_replacements(self):
         tools = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
         sys.path.insert(0, tools)
         import check_guards
-        allowed = ("from ui.ui_dialog_picker import UiDialogObjectPicker\n"
-                   "UiDialogObjectPicker.distribute_dialog = f\n")
+        allowed = ("from ui.ui_dialog import UiDialogBase\n"
+                   "UiDialogBase.distribute_dialog = f\n")
         self.assertEqual(check_guards.scan_text(allowed, "e2_control.py"), [])
         self.assertEqual(len(check_guards.scan_text(allowed, "probe.py")), 2)
         for bad in ("import services\nservices.sim_info_manager = f\n",
                     "from sims.sim import Sim\nSim.update = f\n",
-                    "from ui.ui_dialog_picker import UiDialogObjectPicker\nUiDialogObjectPicker.show_dialog = f\n"):
+                    "from ui.ui_dialog import UiDialogBase\nUiDialogBase.show_dialog = f\n"):
             self.assertEqual(len(check_guards.scan_text(bad, "e2_control.py")), 1, bad)
         self.assertEqual(check_guards.scan_text("self.held = {}\nitem.x = 1\n", "e2_control.py"), [])
 

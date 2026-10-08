@@ -5,7 +5,7 @@ import json
 
 OBSERVATION_SCHEMA_VERSION = 13
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v13"
-PROBE_VERSION = "2.30.0"
+PROBE_VERSION = "2.31.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
@@ -124,7 +124,7 @@ def _command_issuer(value):
 # (shown to the User after all: unanswered in time, or at a stop).
 SPEED_PHASES = ("REQUEST_PUSHED", "REQUEST_REMOVED", "REJECT",
                 "RELEASED_ON_DISARM", "RELEASED_ON_STOP", "RELEASE_FAILED",
-                "DIALOG_HELD", "DIALOG_SHOWN")
+                "DIALOG_HELD", "DIALOG_SHOWN", "SCREEN_WITHHELD", "UNKNOWN_SCREEN")
 LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED")
 CLAIM_KEYS = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
               "ATTRIBUTED", "MAINTAINED_10S", "FINISHED")

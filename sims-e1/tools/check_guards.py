@@ -28,10 +28,20 @@ NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
                        "camera": {"focus_on_sim", "focus_on_object"},
                        # 2.26.0: only the game's notification, to show one line of text. e2_control only.
                        "ui.ui_dialog_notification": {"UiDialogNotification"},
-                       # 2.27.0: only the picker class, to hold back her own pickers' windows. e2_control only.
-                       "ui.ui_dialog_picker": {"UiDialogObjectPicker"},
+                       # 2.31.0: the dialog base and its overriders, to hold or withhold the windows she is
+                       # offered (e2_control only; see E2_CONTROL_ASSIGNABLE).
+                       "ui.ui_dialog": {"UiDialogBase"},
+                       "objects.color.object_color_dialog": {"UiDialogObjectColorPicker"},
+                       "sims.sim_dialogs": {"SimPersonalityAssignmentDialog"},
+                       "ui.ui_dialog_picker": {"UiMapViewPicker", "UiApartmentPicker"},
                        # 2.23.0: the close message _dialog_cancel_internal builds. e2_control only.
                        "protocolbuffers": {"Consts_pb2", "Dialog_pb2"}}
+# 2.31.0: modules whose names only e2_control.py may import.
+E2_CONTROL_ONLY_MODULES = frozenset(("protocolbuffers", "ui.ui_dialog", "ui.ui_dialog_notification",
+                                     "ui.ui_dialog_picker", "objects.color.object_color_dialog",
+                                     "sims.sim_dialogs"))
+# 2.31.0: dialog_cancel closes the map or apartment window she may not see (e2_control only).
+E2_CONTROL_ONLY_CALLS = frozenset(("dialog_cancel",))
 # 2.23.0, cmd_answer only. Reviewed path: ui/ui_dialog_service._dialog_cancel_internal
 # (Dialog_pb2.UiDialogCloseRequest, Consts_pb2.MSG_UI_DIALOG_CLOSE, Distributor.add_event
 # with immediate=True). The dialog pause is released by clock.GameClock.pop_speed of the
@@ -41,8 +51,20 @@ NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
 ANSWER_ONLY_CALLS = {"UiDialogCloseRequest", "add_event", "pop_speed", "set_clock_speed"}
 ANSWER_ONLY_FILE = "e2_control.py"
 ANSWER_ONLY_FUNC = "cmd_answer"
-# 2.27.0: the one game attribute the probe may replace (e2_control._install_picker_hold).
-PICKER_HOLD_TARGET = "ui.ui_dialog_picker.UiDialogObjectPicker.distribute_dialog"
+# 2.27.0: the first game attribute the probe replaced (e2_control's picker hold, now _install_holds).
+# 2.31.0: the fixed allow-list of game attributes e2_control.py alone may replace (_install_holds):
+# the dialog sends of UiDialogBase and of its overriders the hold reaches, and the three Distributor
+# senders (add_event for the phone ring and client screens; add_op and add_op_with_no_owner for ops).
+E2_CONTROL_ASSIGNABLE = frozenset((
+    "ui.ui_dialog.UiDialogBase.distribute_dialog",
+    "objects.color.object_color_dialog.UiDialogObjectColorPicker.distribute_dialog",
+    "sims.sim_dialogs.SimPersonalityAssignmentDialog.distribute_dialog",
+    "ui.ui_dialog_picker.UiMapViewPicker.distribute_dialog",
+    "ui.ui_dialog_picker.UiApartmentPicker.distribute_dialog",
+    "distributor.system.Distributor.add_event",
+    "distributor.system.Distributor.add_op",
+    "distributor.system.Distributor.add_op_with_no_owner",
+))
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
 }
@@ -103,7 +125,7 @@ def scan_text(source, filename):
             narrow = NARROW_GAME_IMPORTS.get(module)
             if narrow is not None:
                 names = {item.name for item in node.names}
-                wrong_file = (module in ("protocolbuffers", "ui.ui_dialog_notification", "ui.ui_dialog_picker") and
+                wrong_file = (module in E2_CONTROL_ONLY_MODULES and
                               os.path.basename(filename).lower() != ANSWER_ONLY_FILE)
                 if (not names <= narrow or wrong_file or
                         os.path.basename(filename).lower() in PURE_FILES):
@@ -119,8 +141,8 @@ def scan_text(source, filename):
                                  module))
             for item in node.names:
                 aliases[item.asname or item.name] = (module + "." + item.name).strip(".")
-    # 2.27.0: nothing shipped may replace a game attribute, except the one reviewed hold:
-    # UiDialogObjectPicker.distribute_dialog in e2_control.py.
+    # 2.27.0: nothing shipped may replace a game attribute, except the reviewed hold attributes of
+    # E2_CONTROL_ASSIGNABLE, and only in e2_control.py.
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
             continue
@@ -132,7 +154,7 @@ def scan_text(source, filename):
                 continue
             game = (_root(resolved) in APPROVED_GAME_ROOTS or
                     any(resolved.startswith(module + ".") for module in NARROW_GAME_IMPORTS))
-            if game and not (resolved == PICKER_HOLD_TARGET and
+            if game and not (resolved in E2_CONTROL_ASSIGNABLE and
                              os.path.basename(filename).lower() == ANSWER_ONLY_FILE):
                 findings.append("%s:%d game attribute assigned %s" % (filename, node.lineno, resolved))
     for node in ast.walk(tree):
@@ -172,6 +194,9 @@ def scan_text(source, filename):
                     filename, node.lineno, resolved_target or leaf))
             if resolved_target in ("eval", "exec", "compile", "__import__"):
                 findings.append("%s:%d dynamic execution %s" % (filename, node.lineno, resolved_target))
+            if leaf in E2_CONTROL_ONLY_CALLS and os.path.basename(filename).lower() != ANSWER_ONLY_FILE:
+                findings.append("%s:%d %s allowed only in %s" % (
+                    filename, node.lineno, leaf, ANSWER_ONLY_FILE))
             if leaf == "getattr" or leaf == "__import__":
                 findings.append("%s:%d reflective dispatch" % (filename, node.lineno))
             if leaf == "open" and os.path.basename(filename).lower() != "writer.py":
