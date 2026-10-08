@@ -106,10 +106,11 @@ class PhoneMenuTests(unittest.TestCase):
         self.assertEqual((entry["object_id"], entry["class"], entry["phone"]), (str(SIM_ID), "phone", True))
         self.assertEqual((entry["definition_id"], entry["distance_m"], entry["same_room"], entry["reach"]),
                          (None, None, None, None))
-        # Ring and Note pass the game's test and the rules; Untested is refused by the game; the rest
-        # are a cheat, not user-directed, a travel act, a deny name (invite), or travel by MRO.
-        self.assertEqual([act["guid64"] for act in entry["acts"]], ["5001", "5002"])
-        self.assertEqual([act["name"] for act in entry["acts"]], ["PhoneSampleRing", "PhoneSampleNote"])
+        # Ring, Note and InviteOver pass the game's test and the phone rules; Untested is refused by
+        # the game; the rest are a cheat, autonomous-only, a travel act, or travel by MRO.
+        self.assertEqual([act["guid64"] for act in entry["acts"]], ["5001", "5002", "5010"])
+        self.assertEqual([act["name"] for act in entry["acts"]],
+                         ["PhoneSampleRing", "PhoneSampleNote", "PhoneSampleInviteOver"])
         row = self.probe.schema.make_record("act_menu", telemetry_session_id="s", wall_timestamp_ms=1,
                                             monotonic_ns=1, e2=payload)
         self.probe.schema.validate_record(row)
@@ -124,11 +125,24 @@ class PhoneMenuTests(unittest.TestCase):
         self.assertNotIn("5006", [act["guid64"] for act in self._payload()["objects"][0]["acts"]])
         self.assertNotIn("5009", [act["guid64"] for act in self._payload()["objects"][0]["acts"]])
 
-    def test_the_existing_deny_rules_still_apply_to_phone_acts(self):
-        # Invite is a deny name for every act (act_excluded, person=False), phones included.
-        excluded = self.probe.e2_actuator.act_excluded(PhoneSampleInviteOver, False)
-        self.assertEqual(excluded, "deny_name")
-        self.assertNotIn("5010", [act["guid64"] for act in self._payload()["objects"][0]["acts"]])
+    def test_inviting_over_is_on_her_phone_though_invite_is_a_deny_name_elsewhere(self):
+        actuator = self.probe.e2_actuator
+        self.assertEqual(actuator.act_excluded(PhoneSampleInviteOver, False), "deny_name")
+        self.assertIsNone(actuator.phone_act_excluded(PhoneSampleInviteOver))
+        self.assertIn("5010", [act["guid64"] for act in self._payload()["objects"][0]["acts"]])
+
+    def test_phone_names_keep_out_trips_money_emergencies_and_testers(self):
+        actuator = self.probe.e2_actuator
+        def named(name):
+            return type(name, (object,), {"guid64": 1, "allow_user_directed": True})
+        for kept in ("phone_Picker_Chat", "phone_Picker_Text", "phone_Picker_Invite_Over",
+                     "phone_Picker_VideoCall", "phone_Picker_PrankCall"):
+            self.assertIsNone(actuator.phone_act_excluded(named(kept)), kept)
+        for out in ("phone_mapPicker_AskOnDate", "phone_Picker_InviteTo_NEW", "phone_simPicker_AskOnHangout_CAD",
+                    "phone_simPicker_InviteToJoinVacation", "phone_CallBackToLodging", "phone_Burglar_CallPolice",
+                    "phone_Business_MakeBusinessCalls", "phone_Picker_Chat_Autonomous", "phone_CallOver_EventNPC",
+                    "phone_Debug_Sample", "phone_Sample_PieMenu"):
+            self.assertIsNotNone(actuator.phone_act_excluded(named(out)), out)
 
     def test_a_cheat_an_autonomous_only_or_untested_phone_act_is_left_out(self):
         guids = [act["guid64"] for act in self._payload()["objects"][0]["acts"]]
@@ -237,13 +251,11 @@ class PhoneActTests(unittest.TestCase):
         self.assertEqual((rejected[-1]["code"], rejected[-1]["detail"]), ("EXCLUDED", "travel"))
         self.assertEqual(self.base.pushes, [])
 
-    def test_an_invite_phone_act_is_refused_by_the_existing_deny_rule(self):
+    def test_inviting_people_over_from_her_phone_is_pushed(self):
         self.case.ready()
-        ok, connection = self.case.act(act_id="%032x" % 4, object_id=str(SIM_ID), guid64="5010")
-        self.assertFalse(ok)
-        rejected = [row for row in self.case.events() if row["phase"] == "REJECTED"]
-        self.assertEqual((rejected[-1]["code"], rejected[-1]["detail"]), ("EXCLUDED", "deny_name"))
-        self.assertEqual(self.base.pushes, [])
+        ok, _connection = self.case.act(act_id="%032x" % 4, object_id=str(SIM_ID), guid64="5010")
+        self.assertTrue(ok)
+        self.assertEqual(len(self.base.pushes), 1)
 
     def test_a_phone_act_on_another_object_still_uses_its_own_offers(self):
         self.case.ready()

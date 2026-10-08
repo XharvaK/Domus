@@ -76,7 +76,15 @@ def offers_for(obj, context, guid64):
 # which Sim.potential_phone_interactions reads), and their target is her own Sim. Leaving the lot
 # changes zones, so a phone act that travels is not offered in this version.
 PHONE_SCAN_LIMIT = 64
-PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot")
+PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "inviteto", "askon", "vacation",
+                      "lodging")
+# 2.29.0: her phone is how she calls, texts and invites people over, so the blanket name bans that
+# kept every phone act out (call_, phone_call, invite, social) do not apply to it. What still stays
+# out by name: testers' acts, money, jobs, emergencies and the acts that change a life in one click.
+PHONE_DENY_PARTS = ("debug", "cheat", "testing", "tutorial", "buy", "purchase", "order", "sell",
+                    "business", "career", "job", "quit", "retire", "police", "firefighter", "burglar",
+                    "woohoo", "trybaby", "propose", "breakup", "divorce", "adopt", "movein", "moveout",
+                    "autonomous", "npc")
 
 
 def phone_affordances(sim):
@@ -104,6 +112,21 @@ def phone_offers_for(sim, guid64):
         except (TypeError, ValueError, AttributeError):
             continue
     return offers
+
+
+def phone_act_excluded(affordance):
+    """2.29.0: None when a phone act may be on her menu, else a reason. Pickers (who to call,
+    text or invite) are hers to answer and socials are what a phone is for; a pie menu, a trip
+    off the lot, and the PHONE_DENY_PARTS names stay out."""
+    try:
+        low = str(affordance.__name__).lower().replace("_", "")
+    except Exception:
+        low = ""
+    if "piemenu" in low:
+        return "pie_picker"
+    if any(part in low for part in PHONE_DENY_PARTS):
+        return "deny_name"
+    return phone_excluded(affordance)
 
 
 def phone_excluded(affordance):

@@ -679,9 +679,10 @@ class E2Control:
             person = obj.is_sim is True and obj is not sim
         except Exception:
             person = False
-        excluded = e2_actuator.act_excluded(affordance, person)
-        if excluded is None and own_phone:
-            excluded = e2_actuator.phone_excluded(affordance)
+        if own_phone:
+            excluded = e2_actuator.phone_act_excluded(affordance)
+        else:
+            excluded = e2_actuator.act_excluded(affordance, person)
         if excluded is not None:
             return ("EXCLUDED", excluded), None
         if not e2_actuator.user_directed(affordance):

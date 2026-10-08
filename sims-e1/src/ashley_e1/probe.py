@@ -1882,9 +1882,8 @@ def _menu_phone_offers(item, sim, context):
         guid = tuned._class_plain(affordance, "guid64")
         if type(guid) is not int:
             continue
-        if (e2_actuator.act_excluded(affordance, False) is not None
+        if (e2_actuator.phone_act_excluded(affordance) is not None
                 or not e2_actuator.user_directed(affordance)
-                or e2_actuator.phone_excluded(affordance) is not None
                 or _menu_hidden(affordance)):
             continue
         try:
