@@ -1250,10 +1250,12 @@ class E2Control:
 
     # ------------------------------------------------------------ windows (2.31.0)
     def pass_by(self):
-        """Every pass through a wrapper releases what is due (§4.6). Never raises."""
+        """Every pass through a wrapper (a hook inside the distributor's own work) only drops held
+        windows whose dialog is gone. It never sends: a window due for the User is shown from the probe
+        tick or the real-time watchdog, at the top of the game loop (2.31.0 review fix). Never raises."""
         if self.held:
             try:
-                self._release_held()
+                self._drop_closed()
             except Exception:
                 pass
 
@@ -1439,21 +1441,31 @@ class E2Control:
         if len(self.shown_to_user) > SHOWN_TO_USER_LIMIT:
             del self.shown_to_user[0]
 
+    def _drop_closed(self):
+        """A held window whose dialog is gone (answered, cancelled) is dropped. Nothing is sent here,
+        so it is safe inside a hook (pass_by)."""
+        if not self.held:
+            return
+        try:
+            active = services.ui_dialog_service()._active_dialogs
+        except Exception:
+            return
+        for key in list(self.held):
+            if int(key) not in active:
+                del self.held[key]
+        if not self.held:
+            self._cancel_watchdog()
+
     def _release_held(self, everything=False, code="TIMEOUT"):
         """2.27.0: a held window whose dialog is gone (answered, cancelled) is dropped; one still
         open after PICKER_HOLD_S, or at a stop, is shown to the User through its original send.
-        2.31.0: the same for her phone ring; a window shown here is the User's from then on."""
+        2.31.0: the same for her phone ring; a window shown here is the User's from then on.
+        Sends only from the probe tick (on_poll_row), the watchdog and arm/stop, never from a hook."""
+        self._drop_closed()
         if self.held:
-            try:
-                active = services.ui_dialog_service()._active_dialogs
-            except Exception:
-                active = None
             now = time.monotonic()
             for key in list(self.held):
                 item = self.held[key]
-                if active is not None and int(key) not in active:
-                    del self.held[key]
-                    continue
                 if not everything and now - item["at"] < PICKER_HOLD_S:
                     continue
                 del self.held[key]
@@ -1482,7 +1494,11 @@ class E2Control:
             self._watchdog = None
 
     def _watchdog_tick(self, _alarm_handle=None):
-        self.pass_by()
+        """2.31.0 (§4.6): the real-time alarm may show a due window (the top of the game loop)."""
+        try:
+            self._release_held()
+        except Exception:
+            pass
 
     def _cancel_watchdog(self):
         handle, self._watchdog = self._watchdog, None

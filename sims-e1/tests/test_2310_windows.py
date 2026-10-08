@@ -382,6 +382,22 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.control.held, {})
         self.assertIn(alarm[0], self.base.calls["cancelled"])
 
+    def test_a_hook_pass_with_a_due_window_sends_nothing_and_the_tick_shows_it(self):
+        """2.31.0 review fix: a wrapper pass runs inside the distributor's own work, so it only drops
+        windows whose dialog is gone. The due window goes out from the tick or the watchdog."""
+        self.push()
+        window = self.window(interaction=types.SimpleNamespace(id=OPENER))
+        window.distribute_dialog("T", "m")
+        self.now[0] += self.module.PICKER_HOLD_S + 1
+        self.dist.add_event(999, "unwatched")
+        self.assertEqual(window.sent, [])
+        self.assertEqual(sorted(self.control.held), ["601"])
+        self.assertIn(("DIALOG_HELD", None, "dialog 601 act %s" % ACT_ID), self.speed())
+        self.control._watchdog_tick()
+        self.assertEqual(len(window.sent), 1)
+        self.assertEqual(self.control.held, {})
+        self.assertEqual(self.last_speed(), ("DIALOG_SHOWN", "TIMEOUT", "dialog 601 act %s" % ACT_ID))
+
     def test_a_raising_controller_runs_the_original(self):
         self.push()
         self.control.hold_dialog = lambda *args: 1 / 0
