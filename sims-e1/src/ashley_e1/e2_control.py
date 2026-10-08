@@ -600,6 +600,9 @@ class E2Control:
     # ------------------------------------------------------------- lifecycle
     def on_arm(self):
         self._release_held(everything=True, code="ARM")
+        # 2.31.0 (PR8): the load path. Arming reads the world as it is loaded; an act an earlier
+        # session left pushed is resolved as LOADED here, not dropped silently by the reset.
+        self._resolve_pushed("LOADED")
         self._reset_state()
         if not self.available():
             return
@@ -618,6 +621,9 @@ class E2Control:
         self._release_held(everything=True, code="STOP")
         self._cancel_watchdog()
         self._release_pause(reason)
+        # 2.31.0 (PR8): a zone change ends every act still pushed now, as UNKNOWN, not as a LEFT_QUEUE later.
+        if reason == "ZONE_CHANGE":
+            self._resolve_pushed("ZONE_CHANGE")
         for experiment in list(self.experiments.values()):
             if not experiment.closed:
                 self._close_experiment(experiment)
@@ -647,6 +653,8 @@ class E2Control:
             self._check_modal()
         if self.lineage_class is None:
             self._try_classify(row)
+        if row.get("event_kind") == "presence_snapshot":
+            self._body_switch(row)
         learned = self.learner.observe(row, self.open_ids)
         if learned is not None:
             self._experiment_event("SIGNATURE_LEARNED", object_id=learned[0],
@@ -664,6 +672,26 @@ class E2Control:
                                        code=claim, claims=dict(experiment.claims))
             if experiment.closed:
                 self._emit_verdict(experiment)
+
+    def _body_switch(self, row):
+        """2.31.0 (PR7, live 2026-10-08: the User played another household Sim and her acts could land on
+        it): every presence row names the body it saw. A body other than the armed Sim's is a switch.
+        The lineage becomes BODY_MISMATCH (sticky until the session is armed again, as a classified
+        mismatch is) and a CLASSIFIED lineage record says so once. Her acts, answers, camera and talk
+        refuse from then on, with or without a prepare."""
+        if self.lineage_class is None or self.lineage_class == e2_lineage.BODY_MISMATCH:
+            return
+        armed = (self._armed_snapshot() or {}).get("sim_id")
+        body = (row.get("body") or {}).get("sim_id")
+        if armed is None or body is None or str(body) == str(armed):
+            return
+        self.lineage_class = e2_lineage.BODY_MISMATCH
+        save = row.get("save") or {}
+        game = row.get("game") or {}
+        ticks = game.get("ticks")
+        self._lineage_event("CLASSIFIED", guid=save.get("save_slot_guid"), slot_id=save.get("slot_id"),
+                            sim_id=str(body), ticks=ticks if type(ticks) is int else None,
+                            lineage_class=e2_lineage.BODY_MISMATCH)
 
     def _try_classify(self, row):
         writer = self._writer()
@@ -944,6 +972,10 @@ class E2Control:
         if sim is None:
             return ("BODY_UNAVAILABLE", None), None
         if self.designated_sim_id is not None and str(sim_info.id) != self.designated_sim_id:
+            return ("BODY_MISMATCH", None), None
+        # 2.31.0 (PR7): the body an act would use must be the armed Sim, with or without a prepare.
+        armed = (self._armed_snapshot() or {}).get("sim_id")
+        if armed is not None and str(sim_info.id) != str(armed):
             return ("BODY_MISMATCH", None), None
         if object_id in EXCLUDED_OBJECT_IDS:
             return (e2_admission.OBJECT_EXCLUDED, None), None
@@ -1720,6 +1752,18 @@ class E2Control:
                             tuning_name=item["tuning_name"],
                             detail="ran, then left" if item["seen"] else "never seen in her queue",
                             **item["base"])
+
+    def _resolve_pushed(self, code):
+        """2.31.0 (PR8, live 2026-10-08: pushed acts outlived a zone change and ended as LEFT_QUEUE): every
+        act still pushed is UNKNOWN now, with code ZONE_CHANGE or LOADED, and nothing is left to sample."""
+        for item in self._pushed_records():
+            for key in self._pushed_keys(item):
+                self.pushed.pop(key, None)
+            detail = "the zone changed while it ran" if code == "ZONE_CHANGE" else "the save was loaded while it ran"
+            self._act_event(item["act_id"], "UNKNOWN", code=code,
+                            interaction_id=item["interaction_id"],
+                            tuning_name=item["tuning_name"],
+                            detail=detail[:schema.MAX_DETAIL_LENGTH], **item["base"])
 
     def _pushed_records(self):
         """2.28.0: each pushed act once, however many of its ids are tracked."""
