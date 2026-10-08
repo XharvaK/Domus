@@ -12,9 +12,10 @@ OPTIONS_LIMIT = 7800
 # W3h (C9): real time. The probe reads its inbox on a real-time alarm and writes the reply then,
 # not on the game clock, so 90 s means the same at slow_time 0.5.
 PROBE_REPLY_MS = 90_000
-# GL8: an act the probe started but never ends (the game detached, or ran past this) is unknown after this
-# long from her request. Live acts ran up to 8.5 minutes, so the ceiling is well past a real one.
-ACT_CEILING_MS = 15 * 60_000
+# GL8: an act the probe started but never ends is unknown at once when the game detaches, and otherwise only
+# after this backstop from her request. Long acts (a night's sleep, a painting) can run well past 15 real
+# minutes, so the backstop is generous: it must never call a running act unknown.
+ACT_CEILING_MS = 60 * 60_000
 _TERMINAL = ("finished", "rejected", "unknown")
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
