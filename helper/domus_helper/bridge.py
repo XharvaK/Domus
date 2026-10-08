@@ -355,9 +355,10 @@ class Bridge:
             self.talk.on_row(record, wall_ms, _body_sample(record))
             percepts = self._extractor.step(record)
             if self._acts is not None and self._acts.planned > 0:
-                # H0.5: between the steps of her plan she is idle for a moment; that is not a
-                # decision point (Ashley sends the next step in the same round trip).
-                percepts = [dataclasses.replace(p, urgency="normal") if p.bucket == "idle" else p
+                # H0.5: between the steps of her plan she is idle for a moment, and a step's end is
+                # not a decision point either (Ashley sends the next step in the same round trip).
+                percepts = [dataclasses.replace(p, urgency="normal")
+                            if p.kind == "interaction" and p.bucket in ("idle", "ended") else p
                             for p in percepts]
             self._thalamus, decision = decide(
                 self._thalamus, percepts, clock_ms, self._params, self._points())

@@ -114,6 +114,28 @@ def test_a_mood_change_wakes_her_once():
     assert [p for p in ext.step(_row(3, mood="Happy")) if p.kind == "moodlet"] == []
 
 
+def test_a_normal_finish_is_a_wake_and_a_mood_change_just_after_it_folds_into_the_next_one():
+    # GL10: her act's end wakes her. GL9: a mood change within a minute of her own act's end folds in.
+    ext = Extractor()
+    ext.step(_row(1, [_si(1, MINE)]))
+    ended = [p for p in ext.step(_row(2, [])) if p.bucket == "ended"]
+    assert [(p.kind, p.urgency) for p in ended] == [("interaction", "wake")]
+    ext2 = Extractor()
+    ext2.step(_row(1, mood="Fine"))
+    ext2.step(_row(2, [_si(1, MINE)]))
+    ext2.step(_row(3, []))
+    near = [p for p in ext2.step(dict(_row(4, mood="Happy"), wall_timestamp_ms=1_000 + 3 + 30_000))
+            if p.kind == "moodlet"]
+    assert [(p.object, p.urgency) for p in near] == [("Fine", "normal")]
+    ext3 = Extractor()
+    ext3.step(_row(1, mood="Fine"))
+    ext3.step(_row(2, [_si(1, MINE)]))
+    ext3.step(_row(3, []))
+    late = [p for p in ext3.step(dict(_row(4, mood="Happy"), wall_timestamp_ms=1_000 + 3 + 60_000))
+            if p.kind == "moodlet"]
+    assert [(p.object, p.urgency) for p in late] == [("Fine", "wake")]
+
+
 class _Sync:
     def __init__(self, planned):
         self.planned = planned

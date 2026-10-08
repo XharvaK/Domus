@@ -9,6 +9,8 @@ _CANCEL = "InteractionSource.BODY_CANCEL_AOP"
 # H0.5: what the game runs to hold a body in place (stand, sit): not doing anything.
 _IDLE_SOURCES = ("InteractionSource.POSTURE_GRAPH", _CANCEL)
 _TEXT_CAP = 120
+# GL9: a mood change this soon after her own act ended folds into her next wake; it does not wake her by itself.
+MOOD_FOLD_MS = 60_000
 # Who started an interaction. The game acts on her body's distress even with autonomy
 # off (live DA6F: sim_BladderDistress, then toilet). That is her body's own action
 # (design 12.3, NATIVE_AUTONOMY), reported as a fact, never as an override or error.
@@ -76,6 +78,8 @@ class Extractor:
         self._asked = set()
         self._busy = None
         self._mood = None
+        self._wall_ms = None
+        self._finished_ms = None
 
     @property
     def busy(self):
@@ -85,6 +89,8 @@ class Extractor:
     def step(self, row):
         percepts = []
         kind = row.get("event_kind")
+        wall = row.get("wall_timestamp_ms")
+        self._wall_ms = wall if type(wall) is int else None
         session = row.get("telemetry_session_id")
         seq = row.get("written_sequence")
         if kind == "session_open":
@@ -128,6 +134,8 @@ class Extractor:
         self._asked = set()
         self._busy = None
         self._mood = None
+        self._wall_ms = None
+        self._finished_ms = None
 
     def _act(self, row):
         """8f: her chosen act was refused, or nobody can tell what became of it. Wakes her;
@@ -314,9 +322,11 @@ class Extractor:
                 surprise = self.durations.surprise(duration, affordance)
                 self.durations.observe(affordance, duration)
             pressure = "action_end" if source == _USER else None
+            # GL10: a normal finish is a decision point; the plan's steps (H0.5) are held back in the bridge.
+            self._finished_ms = self._wall_ms
             percepts.append(Percept(
                 "interaction", sim_s, str(affordance), "ended", surprise=surprise,
-                pressure=pressure, lineage=self.lineage_id,
+                pressure=pressure, urgency="wake", lineage=self.lineage_id,
                 facts=_facts(ticks, (("affordance_text", _text(
                     (closing or entry).get("affordance_text"))),
                     ("origin", _origin(entry.get("source_raw")))))))
@@ -414,7 +424,10 @@ class Extractor:
         name = mood.get("name") if isinstance(mood, dict) else None
         if isinstance(name, str) and name:
             if self._mood is not None and name != self._mood:
-                percepts.append(Percept("moodlet", "mood", self._mood[:64], name[:64], urgency="wake",
+                folds = (self._finished_ms is not None and self._wall_ms is not None
+                         and 0 <= self._wall_ms - self._finished_ms < MOOD_FOLD_MS)
+                percepts.append(Percept("moodlet", "mood", self._mood[:64], name[:64],
+                                        urgency="normal" if folds else "wake",
                                         lineage=self.lineage_id,
                                         facts=_facts(ticks, (("from", self._mood[:64]), ("to", name[:64])))))
             self._mood = name
