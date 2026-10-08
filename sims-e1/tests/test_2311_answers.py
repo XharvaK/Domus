@@ -54,6 +54,16 @@ class Picker(windows.Base):
         self.title, self.text = Text(0x5001), None
 
 
+class CountsOnlyPicker(windows.Base):
+    """A purchase window with its counts and no min/max attributes (2.31.0 W4): counts alone check it."""
+    def __init__(self, dialog_id, interaction=None, owner=HER, rows=(), in_row=5, max_rows=2):
+        windows.Base.__init__(self, dialog_id, interaction=interaction, owner=owner)
+        self.picker_rows = list(rows)
+        self.max_selectable_in_row, self.max_selectable_rows = in_row, max_rows
+        self.text_ok, self.text_cancel = Text(0x6001), Text(0x6002)
+        self.title, self.text = Text(0x5001), None
+
+
 class TextWindow(windows.Base):
     """ui/ui_dialog_generic.UiDialogTextInput: no picker rows, no selects; its message carries the fields."""
     def __init__(self, dialog_id, interaction=None, owner=HER):
@@ -278,6 +288,34 @@ class ShapeTests(unittest.TestCase):
                 self.assertEqual(connection.lines[-1], "ACT_REJECT %s" % code)
         self.assertEqual(self.service.calls, [("pick", 655, [11, 13]), ("respond", 655, 10001)])
 
+    def test_a_select_of_zero_is_no_limit_so_any_number_of_rows_is_answered(self):
+        self.push()
+        self.place(self.hold(Picker(DIALOG, interaction=types.SimpleNamespace(id=OPENER),
+                                    rows=[Row(11), Row(13), Row(14)], low=1, high=0)))
+        ok, connection = self.send("ok", rows=[{"option_id": "11", "count": 1}, {"option_id": "13", "count": 1},
+                                               {"option_id": "14", "count": 1}])
+        self.assertTrue(ok, connection.lines)
+        self.assertEqual(self.service.calls, [("pick", 655, [11, 13, 14]), ("respond", 655, 10001)])
+        self.assertEqual(self.report()["select"], {"min": 1, "max": 0})
+
+    def test_a_single_row_pick_on_a_picker_that_needs_two_goes_through_the_row_check(self):
+        self.push()
+        self.place(self.hold(Picker(DIALOG, interaction=types.SimpleNamespace(id=OPENER),
+                                    rows=[Row(11), Row(13)], low=2, high=0)))
+        ok, connection = self.send("11")
+        self.assertFalse(ok)
+        self.assertEqual(connection.lines[-1], "ACT_REJECT ROW_COUNT")
+        self.assertEqual(self.service.calls, [])
+
+    def test_a_purchase_window_without_select_attributes_is_answered_by_its_counts(self):
+        self.push()
+        self.place(self.hold(CountsOnlyPicker(DIALOG, interaction=types.SimpleNamespace(id=OPENER),
+                                              rows=[Row(11, def_id=0x4001), Row(13, def_id=0x4002)])))
+        ok, connection = self.send("ok", rows=[{"option_id": "11", "count": 2}, {"option_id": "13", "count": 1}])
+        self.assertTrue(ok, connection.lines)
+        self.assertEqual(self.service.calls, [("counts", 655, [0x4001, 0x4002], [0, 0], [2, 1], False),
+                                              ("respond", 655, 10001)])
+
     def test_rows_on_a_window_without_a_select_are_refused(self):
         self.push()
         self.place(self.hold(windows.Base(DIALOG, interaction=types.SimpleNamespace(id=OPENER))))
@@ -326,7 +364,7 @@ class ShapeTests(unittest.TestCase):
     def test_a_text_answer_is_refused_unless_the_window_is_held(self):
         self.place(TextWindow(DIALOG, owner=HER))  # in the dialog service, never sent: not held
         ok, connection = self.send("ok", text={"given_name": "Vesperine", "amount": "1"})
-        self.assertEqual(connection.lines[-1], "ACT_REJECT TEXT_NOT_HELD")
+        self.assertEqual(connection.lines[-1], "ACT_REJECT NOT_HELD")
         self.assertEqual(self.service.calls, [])
 
     def test_a_text_answer_is_checked_against_the_limits_of_the_held_message(self):

@@ -34,6 +34,7 @@ class CloseTests(unittest.TestCase):
     def test_the_close_is_sent_right_after_the_answer(self):
         self.use()
         self.case.case.ready()
+        self.case.hold_recipes()  # 2.31.0 (W4): her picker is a held window
         ok, connection = self.case.answer("13")
         self.assertTrue(ok, connection.lines)
         self.assertEqual(self.calls, [("pick", 555, [13]), ("respond", 555, 10001), "process_events"])
@@ -41,6 +42,7 @@ class CloseTests(unittest.TestCase):
     def test_a_failed_send_never_changes_the_answer(self):
         self.use(fails=True)
         self.case.case.ready()
+        self.case.hold_recipes()  # 2.31.0 (W4): her picker is a held window
         ok, connection = self.case.answer("13")
         self.assertTrue(ok, connection.lines)
         phases = [(e["phase"], e["finishing_type"]) for e in self.case.case.events()]
@@ -49,6 +51,7 @@ class CloseTests(unittest.TestCase):
     def test_without_the_distributor_the_answer_stands(self):
         self.module.Distributor = None
         self.case.case.ready()
+        self.case.hold_recipes()  # 2.31.0 (W4): her picker is a held window
         ok, _ = self.case.answer("13")
         self.assertTrue(ok)
         self.assertEqual(self.calls, [("pick", 555, [13]), ("respond", 555, 10001)])

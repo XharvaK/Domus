@@ -117,7 +117,7 @@ class PaceFixture(unittest.TestCase):
             get_session_id=lambda: "0" * 32,
             get_armed_snapshot=lambda: {"guid": "2773024768", "slot_id": "2", "sim_id": "4242"},
             get_writer=lambda: None,
-            output=lambda text, connection: None)
+            output=lambda text, connection: connection.lines.append(text))
 
     def observation(self):
         return {"event_kind": "presence_snapshot", "body": {"sim_id": "4242"},
@@ -247,13 +247,40 @@ class ClockTests(PaceFixture):
         self.clock_module.GameClock.NORMAL_SPEED_MULTIPLIER = 1.2
         self.control = self.new_control()
         self.assertTrue(self.control._clock_foreign)
-        self.assertTrue(self.command(1.0, 0.5)[0])
+        ok, connection = self.command(1.0, 0.5)
+        self.assertFalse(ok)
+        self.assertEqual(connection.code, "CLOCK_FOREIGN")
+        self.assertEqual(connection.lines[-1], "PACE_REFUSED CLOCK_FOREIGN slow_time; need_drain 1 applied")
         self.assertEqual(self.clock_module.GameClock.NORMAL_SPEED_MULTIPLIER, 1.2)
         self.assertEqual(self.clock_service.syncs, 0)
         self.assertEqual(len(self.speed_events("CLOCK_FOREIGN")), 1)
         block = self.tick()
         self.assertTrue(block["clock_foreign"])
         self.assertEqual(self.clock_module.GameClock.NORMAL_SPEED_MULTIPLIER, 1.2)
+
+    def test_a_foreign_clock_refuses_slow_time_and_still_applies_need_drain(self):
+        self.clock_module.GameClock.NORMAL_SPEED_MULTIPLIER = 1.2
+        self.control = self.new_control()
+        ok, connection = self.command(0.5, 0.5)
+        self.assertFalse(ok)
+        self.assertEqual(connection.code, "CLOCK_FOREIGN")
+        self.assertEqual(connection.lines[-1], "PACE_REFUSED CLOCK_FOREIGN slow_time; need_drain 0.5 applied")
+        block = self.tick()
+        self.assertEqual((block["need_drain"], block["motives_modified"]), (0.5, 6))
+        self.assertEqual((block["clock_foreign"], block["clock_unreadable"]), (True, False))
+        self.assertEqual(self.clock_service.syncs, 0)
+
+    def test_an_unreadable_clock_is_refused_with_its_own_reason_not_as_foreign(self):
+        self.clock_module.GameClock = object()  # no NORMAL_SPEED_MULTIPLIER: the read fails
+        self.control = self.new_control()
+        self.assertTrue(self.control._clock_unreadable)
+        ok, connection = self.command(1.0, 0.5)
+        self.assertFalse(ok)
+        self.assertEqual(connection.code, "CLOCK_UNREADABLE")
+        self.assertEqual(len(self.speed_events("CLOCK_UNREADABLE")), 1)
+        self.assertEqual(self.speed_events("CLOCK_FOREIGN"), [])
+        block = self.tick()
+        self.assertEqual((block["clock_unreadable"], block["clock_foreign"]), (True, True))
 
     def test_a_clock_with_another_milliseconds_per_second_is_foreign_too(self):
         self.date.REAL_MILLISECONDS_PER_SIM_SECOND = 30
@@ -291,12 +318,25 @@ class ClockTests(PaceFixture):
         self.clock_service.scale = 0.4
         block = self.tick()
         self.assertEqual(block, {"need_drain": 0.5, "motives_modified": 6, "drain_measured": 0.5,
-                                 "slow_time": 0.4, "clock_scale": 0.4, "clock_foreign": False})
+                                 "slow_time": 0.4, "clock_scale": 0.4, "clock_foreign": False,
+                                 "clock_unreadable": False})
         self.clock_service.scale = None
         self.assertIsNone(self.tick()["clock_scale"])
 
 
 class CommandTests(PaceFixture):
+    def test_pace_during_calibrate_is_refused_and_applies_nothing(self):
+        from ashley_e1 import probe
+        saved = probe._CALIBRATE
+        probe._CALIBRATE = True
+        self.addCleanup(setattr, probe, "_CALIBRATE", saved)
+        connection = probe._InboxReply(HELPER)
+        self.assertFalse(probe._inbox_dispatch({"command": "pace", "args": {"need_drain": 0.5, "slow_time": 0.5}},
+                                               connection))
+        self.assertEqual(connection.code, "CALIBRATE_OBSERVE_ONLY")
+        self.assertEqual(self.control._pace, {"need_drain": 1.0, "slow_time": 1.0})
+        self.assertEqual(self.tick()["need_drain"], 1.0)
+
     def test_only_the_helper_may_send_pace(self):
         ok, connection = self.command(0.5, 0.5, issuer="console")
         self.assertFalse(ok)

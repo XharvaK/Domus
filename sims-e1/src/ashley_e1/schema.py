@@ -127,7 +127,9 @@ SPEED_PHASES = ("REQUEST_PUSHED", "REQUEST_REMOVED", "REJECT",
                 "RELEASED_ON_DISARM", "RELEASED_ON_STOP", "RELEASE_FAILED",
                 "DIALOG_HELD", "DIALOG_SHOWN", "SCREEN_WITHHELD", "UNKNOWN_SCREEN",
                 # 2.31.0 (W3p): the probe refused the game clock because another mod sets it.
-                "CLOCK_FOREIGN")
+                # 2.31.0 (W4): the probe could not read the game clock (its own reason), and a held window
+                # that vanished or was dropped by a zone change (ids only).
+                "CLOCK_FOREIGN", "CLOCK_UNREADABLE", "DIALOG_DROPPED")
 LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED")
 CLAIM_KEYS = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
               "ATTRIBUTED", "MAINTAINED_10S", "FINISHED")
@@ -913,7 +915,8 @@ def _validate_window(item):
 # 2.31.0 (W3p, schema 14): the pace block of an observation row. need_drain and slow_time are the wanted
 # factors (1.0 is normal pace); drain_measured is the effective factor one motive shows (None when its
 # decay is not running); clock_scale is the value the game multiplies by (None when unread).
-PACE_KEYS = ("need_drain", "motives_modified", "drain_measured", "slow_time", "clock_scale", "clock_foreign")
+PACE_KEYS = ("need_drain", "motives_modified", "drain_measured", "slow_time", "clock_scale", "clock_foreign",
+             "clock_unreadable")
 PACE_MEASURE_LIMIT = 100
 
 
@@ -938,6 +941,7 @@ def _validate_pace(row):
             _require(type(value[key]) in (int, float) and 0 <= value[key] <= PACE_MEASURE_LIMIT,
                      "pace.%s" % key)
     _require(type(value["clock_foreign"]) is bool, "pace.clock_foreign")
+    _require(type(value["clock_unreadable"]) is bool, "pace.clock_unreadable")
 
 
 def _validate_dialogs(row):

@@ -119,14 +119,15 @@ def _measure(value):
 
 def _capture_clock():
     """2.31.0: the game clock's normal multiplier, read once at install, and whether the clock is foreign:
-    not the game's own defaults (or unreadable). A foreign clock is never touched. Returns (base, foreign)."""
+    not the game's own defaults. A foreign clock is never touched. 2.31.0 (W4, F12): an unreadable clock is
+    foreign too, and reported with its own reason. Returns (base, foreign, unreadable)."""
     try:
         base = game_clock.GameClock.NORMAL_SPEED_MULTIPLIER
         per_second = date_and_time.REAL_MILLISECONDS_PER_SIM_SECOND
         foreign = not (base == CLOCK_DEFAULT_SPEED and per_second == CLOCK_DEFAULT_MS_PER_SIM_SECOND)
     except Exception:
-        return None, True
-    return base, foreign
+        return None, True, True
+    return base, foreign, False
 # 2.27.0: a window her own act opened is hers to answer, so it is held back from the User's screen.
 # Unanswered after PICKER_HOLD_S, it is shown to the User (the fallback). 2.31.0: the same hold covers
 # every window and call she is offered (DOMUS_DEEP_DESIGN §4.2).
@@ -577,7 +578,7 @@ class E2Control:
         # the probe has slowed, by identity: {id: (commodity, the value it got)}; and the game clock as read at install.
         self._pace = {"need_drain": PACE_NORMAL, "slow_time": PACE_NORMAL}
         self._drained = {}
-        self._clock_base, self._clock_foreign = _capture_clock()
+        self._clock_base, self._clock_foreign, self._clock_unreadable = _capture_clock()
         self._clock_applied = False
         self._reset_state()
 
@@ -664,7 +665,13 @@ class E2Control:
 
     def on_stop(self, reason):
         """Called after a successful STOP (and by DISARM). Fail-safe cleanup."""
-        self._release_held(everything=True, code="STOP")
+        if reason == "ZONE_CHANGE":
+            # 2.31.0 (W4, F8): refines design §4.6. Travel takes the dialog with it, so a held window is dropped
+            # here, not sent to the User. Only STOP and DISARM send held windows to the User.
+            for key in list(self.held):
+                self._drop_held(key, "ZONE_CHANGE")
+        else:
+            self._release_held(everything=True, code="STOP")
         self._cancel_watchdog()
         self._release_pause(reason)
         # 2.31.0 (PR8): a zone change ends every act still pushed now, as UNKNOWN, not as a LEFT_QUEUE later.
@@ -1163,6 +1170,9 @@ class E2Control:
             interactions = []
         if self._identity_window(dialog, str(sim_info.id), interactions, []):
             return ("IDENTITY_USER", None), None
+        # 2.31.0 (W4, F1): only a window held for her is answerable; one the game or the User was shown is not.
+        if str(int(dialog_id)) not in self.held:
+            return ("NOT_HELD", None), None
         if rows is not None or text is not None:
             refusal, plan = self._answer_plan(dialog, dialog_id, pick, rows, text)
             if refusal is not None:
@@ -1174,6 +1184,12 @@ class E2Control:
                 return ("NO_ROW", None), None
             if not offered_rows[0]["enabled"]:
                 return ("ROW_DISABLED", None), None
+            # 2.31.0 (W4, F2): a picker that needs more than one row is never answered with a single row.
+            select = observers.select_of(dialog)
+            if select is not None and select["min"] > 1:
+                refusal, _found = self._check_rows(dialog, [{"option_id": pick, "count": 1}])
+                if refusal is not None:
+                    return refusal, None
             return None, (service, dialog, {"rows": [int(pick)], "counts": None, "text": None},
                           observers.RESPONSE_IDS["ok"])
         response = observers.RESPONSE_IDS.get(pick)
@@ -1212,7 +1228,10 @@ class E2Control:
         for a purchase picker each count is within its caps (a count of 1 is the only count elsewhere).
         Returns (refusal, {"rows": [ids]} or {"counts": (def ids, object ids, counts)})."""
         select = observers.select_of(dialog)
-        if select is None:
+        counts = observers.counts_of(dialog)
+        # 2.31.0 (W4, F11): a purchase picker may carry counts and no select attributes, so the select bounds
+        # apply only when the window has them. A window with neither is not one she can answer by rows.
+        if select is None and counts is None:
             return ("NO_ROW", None), None
         offered = dict((item["option_id"], item) for item in observers._dialog_rows(dialog))
         options = [row["option_id"] for row in rows]
@@ -1220,10 +1239,12 @@ class E2Control:
             return ("NO_ROW", None), None
         if any(not offered[option]["enabled"] for option in options):
             return ("ROW_DISABLED", None), None
-        high = select["max"] or ANSWER_ROWS_LIMIT
-        if not max(select["min"], 1) <= len(rows) <= min(high, ANSWER_ROWS_LIMIT):
+        low, high = 1, ANSWER_ROWS_LIMIT
+        if select is not None:
+            # 2.31.0 (W4, F2): a max of 0 is no limit (the game's own meaning); the row limit alone applies.
+            low, high = max(select["min"], 1), (select["max"] or ANSWER_ROWS_LIMIT)
+        if not low <= len(rows) <= min(high, ANSWER_ROWS_LIMIT):
             return ("ROW_COUNT", None), None
-        counts = observers.counts_of(dialog)
         if counts is None:
             if any(row["count"] != 1 for row in rows):
                 return ("COUNT_INVALID", None), None
@@ -1503,8 +1524,15 @@ class E2Control:
             return False
         self._pace = {"need_drain": need, "slow_time": slow}
         self._pace_apply()
-        if self._clock_foreign and slow < PACE_NORMAL:
-            self._speed_event("CLOCK_FOREIGN", detail="another mod sets the game clock; the probe leaves it alone")
+        if (self._clock_foreign or self._clock_unreadable) and slow < PACE_NORMAL:
+            # 2.31.0 (W4, F12): the clock is refused, not the drain: need_drain is applied, and the reply says so.
+            reason = "CLOCK_UNREADABLE" if self._clock_unreadable else "CLOCK_FOREIGN"
+            detail = ("the game clock could not be read" if self._clock_unreadable else
+                      "another mod sets the game clock") + "; the probe leaves it alone"
+            connection.code = reason
+            self._speed_event(reason, detail=detail)
+            self._say(connection, "PACE_REFUSED %s slow_time; need_drain %g applied" % (reason, need))
+            return False
         self._say(connection, "PACE_OK need_drain %g slow_time %g" % (need, slow))
         return True
 
@@ -1529,7 +1557,8 @@ class E2Control:
         return {"need_drain": self._pace["need_drain"],
                 "motives_modified": min(len(self._drained), schema.MAX_MOTIVES),
                 "drain_measured": measured, "slow_time": self._pace["slow_time"],
-                "clock_scale": self._clock_scale(), "clock_foreign": bool(self._clock_foreign)}
+                "clock_scale": self._clock_scale(), "clock_foreign": bool(self._clock_foreign),
+                "clock_unreadable": bool(self._clock_unreadable)}
 
     def _pace_apply(self):
         """Her pace now: applied while she is live (sampling, not a body switch, the zone running), else undone."""
@@ -1651,6 +1680,7 @@ class E2Control:
         """Route R1 (distribute_dialog, 2.27.0 for pickers, 2.31.0 for every window): True when the
         window is taken here, held for her or withheld. False: the original sends it, untouched."""
         self.pass_by()
+        self._note_cause(dialog)
         if not self._live():
             return False
         return self._window(original, dialog, (dialog,) + tuple(args), kwargs, "dialog")
@@ -1658,6 +1688,8 @@ class E2Control:
     def hold_event(self, original, distributor, msg_id, args, kwargs):
         """Route R2 (her phone ring, held like a window) or R4 (a client screen by message)."""
         self.pass_by()
+        if msg_id == _HOLD["ring"]:
+            self._note_ring_cause(args, kwargs)
         if not self._live():
             return False
         if msg_id == _HOLD["ring"]:
@@ -1672,6 +1704,23 @@ class E2Control:
         """Route R5 (a client screen sent as an op, §3.1)."""
         self.pass_by()
         return self._live() and self._withhold_screen(name)
+
+    def _note_cause(self, dialog):
+        """2.31.0 (W4, F5): a window's cause is noted before the live check, so every window the hook sees has
+        one, held or not. Never raises."""
+        try:
+            who, _act = self._window_owner(dialog)
+            _note_window(str(int(dialog.dialog_id)), cause=who, held=False)
+        except Exception:
+            pass
+
+    def _note_ring_cause(self, args, kwargs):
+        """2.31.0 (W4, F5): the cause of her phone ring, noted before the live check. Never raises."""
+        try:
+            msg = args[1] if len(args) > 1 else kwargs.get("msg")
+            self._note_cause(services.ui_dialog_service()._active_dialogs.get(int(msg.dialog.dialog_id)))
+        except Exception:
+            pass
 
     def _window(self, original, dialog, send_args, send_kwargs, kind):
         """The one decision for a dialog window or her phone ring (§4.1, §4.2, §4.3)."""
@@ -1693,6 +1742,8 @@ class E2Control:
         act_id = None if act is None else act["act_id"]
         if names & NOT_ANSWERABLE_CLASSES:
             _note_window(key, cause="hers", held=False)
+            # 2.31.0 (W4, F1): shown to the User at once, so a late answer to it is refused as shown.
+            self._remember_shown(key)
             self._speed_event("DIALOG_SHOWN", code=("NOT_ANSWERABLE:%s" % name)[:schema.MAX_DETAIL_LENGTH],
                               detail=_window_detail(kind, key, act_id))
             return False
@@ -1842,9 +1893,18 @@ class E2Control:
             return
         for key in list(self.held):
             if int(key) not in active:
-                del self.held[key]
+                self._drop_held(key, "VANISHED")
         if not self.held:
             self._cancel_watchdog()
+
+    def _drop_held(self, key, code):
+        """2.31.0 (W4, F14): a held window leaves her hands unsent (it vanished, or the zone changed). Its speed
+        event names the dialog and the act by id only, never its text. Never raises."""
+        item = self.held.pop(key, None)
+        if item is None:
+            return
+        _note_window(key, held=False)
+        self._speed_event("DIALOG_DROPPED", code=code, detail=_window_detail(item["kind"], key, item["act_id"]))
 
     def _release_held(self, everything=False, code="TIMEOUT"):
         """2.27.0: a held window whose dialog is gone (answered, cancelled) is dropped; one still
@@ -1855,7 +1915,10 @@ class E2Control:
         if self.held:
             now = time.monotonic()
             for key in list(self.held):
-                item = self.held[key]
+                # 2.31.0 (W4, F13): a window dropped meanwhile is skipped, never a KeyError.
+                item = self.held.get(key)
+                if item is None:
+                    continue
                 if not everything and now - item["at"] < PICKER_HOLD_S:
                     continue
                 del self.held[key]
