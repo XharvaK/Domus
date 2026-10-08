@@ -103,6 +103,20 @@ def test_cursor_no_rescan_partial_rotation_resume(paths, tmp_path):
     assert [row["written_sequence"] for row in TelemetryCursor(Spool(db), paths).read_new()] == [2]
 
 
+def test_a_rotated_segment_is_not_a_gap(tmp_path):
+    # GL12: after a rotation the newest row is the last one written, in the newest segment.
+    spool = Spool(tmp_path / "spool.db")
+    for offset, seq in ((0, 1), (10, 2), (20, 3)):
+        spool.ingest("sess.jsonl", 0, offset, _row(seq), raw_len=10)
+    spool.ingest("sess.jsonl", 1, 0, _row(4), raw_len=10)
+    spool.ingest("sess.jsonl", 1, 10, _row(5), raw_len=10)
+    spool.ingest("sess.jsonl", 1, 20, _row(6), raw_len=10)
+    assert [row["kind"] for row in spool.gaps()] == []
+    spool.ingest("sess.jsonl", 1, 30, _row(8), raw_len=10)
+    assert [json.loads(row["detail_json"]) for row in spool.gaps()] == [{"from": 6, "to": 8}]
+    spool.close()
+
+
 def test_spool_gap_drop_and_cap(tmp_path):
     spool = Spool(tmp_path / "spool.db")
     spool.row_cap = 2

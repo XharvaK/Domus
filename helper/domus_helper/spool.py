@@ -100,7 +100,7 @@ class Spool:
             wall = None
         previous = self._con.execute(
             "SELECT written_sequence FROM rows WHERE session=? AND written_sequence IS NOT NULL "
-            "ORDER BY segment, offset DESC LIMIT 1",
+            "ORDER BY rowid DESC LIMIT 1",
             (session,)).fetchone()
         with self._con:
             if previous is not None and seq is not None and seq != previous["written_sequence"] + 1:
