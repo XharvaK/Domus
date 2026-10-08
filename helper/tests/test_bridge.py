@@ -289,8 +289,10 @@ def test_bridge_heartbeat_cadence_and_status_has_no_secret(paths, tmp_path, monk
     bridge.tick(NOW + 59_000)
     mono_at["ms"] = 60_000
     bridge.tick(NOW + 60_000)
-    assert [body["sent_at_ms"] for body in sent] == [NOW, NOW + 60_000]
-    assert sent[0]["v"] == 1 and sent[0]["attached"] is True and len(sent[0]["helper_session"]) == 32
+    # The minute cadence, except that a change of attachment goes out at once (stale at 59 s).
+    assert [body["sent_at_ms"] for body in sent] == [NOW, NOW + 59_000]
+    assert [body["attached"] for body in sent] == [True, False]
+    assert sent[0]["v"] == 1 and len(sent[0]["helper_session"]) == 32
     status = bridge.status()
     blob = json.dumps(status)
     assert token not in blob and "127.0.0.1" not in blob
@@ -381,3 +383,35 @@ def test_cli_with_game_lives_as_long_as_the_game(paths, tmp_path, monkeypatch):
     assert main(["--interval", "5", "--with-game"]) == 0
     assert len(ticks) == 6 + bridge_module.GAME_DRAIN_S // 5 - 1
     assert ticks[-1] - ticks[5] == (bridge_module.GAME_DRAIN_S - 5) * 1000
+
+
+def test_bridge_heartbeat_goes_at_once_when_the_game_attaches(paths, tmp_path, monkeypatch):
+    """Live 2026-10-08: the bridge starts before the save loads; its first heartbeat says not
+    attached, and her first game moments waited a minute for the next one."""
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DOMUS_ASHLEY_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("DOMUS_ASHLEY_TOKEN", "s" * 48)
+    session = _session(paths)
+    _append(session, _row(1, wall=NOW - 120_000))
+    sent = []
+
+    class Fake:
+        def post_heartbeat(self, body):
+            sent.append(body)
+            return type("R", (), {"kind": "admitted", "status": 200})()
+
+        def post_observation(self, body, now_ms=None):
+            return type("R", (), {"kind": "admitted", "status": 202})()
+
+    mono_at = {"ms": 0}
+    bridge = Bridge(paths, client=Fake(), process=(1, "t"), detected_build="1.128.90.1030",
+                    mono=lambda: mono_at["ms"])
+    bridge.tick(NOW)
+    assert [body["attached"] for body in sent] == [False]
+    _append(session, _row(2, wall=NOW + 5_000))
+    mono_at["ms"] = 5_000
+    bridge.tick(NOW + 5_000)
+    assert [body["attached"] for body in sent] == [False, True]
+    mono_at["ms"] = 6_000
+    bridge.tick(NOW + 6_000)
+    assert len(sent) == 2

@@ -39,9 +39,11 @@ _TALK_PROBE = (2, 26, 0)
 
 
 def _body_sample(record):
-    # Motives is the field every body sample carries. E2 event rows are not samples.
+    # A body sample is a presence snapshot. Live 2026-10-08: a session checkpoint carries an empty
+    # body (motives [], no zone, no interactions); taken as her latest sample, it told her she was
+    # doing nothing while she played the piano, and she queued the piano again.
     return (isinstance(record, dict)
-            and record.get("event_kind") not in schema.E2_EVENT_KINDS
+            and record.get("event_kind") == "presence_snapshot"
             and "motives" in record)
 
 
@@ -96,6 +98,7 @@ class Bridge:
         self._telemetry_only = False
         self._last_heartbeat = None
         self._last_heartbeat_ms = None
+        self._tried_attached = None
         self._tried_inputs = None
         self._params = Parameters()
         self._context = Context()
@@ -152,10 +155,13 @@ class Bridge:
         self._telemetry_only = observed["telemetry_only"]
         self._advance_thalamus(now)
         # E1b: a flipped game-only switch goes out at once, not with the next minute's heartbeat.
+        # Live 2026-10-08: so does attaching; the first heartbeat goes before the save loads, and
+        # her first game moments waited a minute for the next one.
         inputs = game_inputs.current(self.spool)
+        attached = self._state == "attached"
         if self.client is not None and (
             self._last_heartbeat_ms is None or now - self._last_heartbeat_ms >= HEARTBEAT_EVERY_MS
-            or inputs != self._tried_inputs
+            or inputs != self._tried_inputs or attached != self._tried_attached
         ):
             body = {
                 "v": 1,
@@ -171,6 +177,7 @@ class Bridge:
             self._last_heartbeat = {"kind": result.kind, "status": result.status}
             self._last_heartbeat_ms = now
             self._tried_inputs = inputs
+            self._tried_attached = attached
         if self.client is not None:
             self.spool.flush(self.client, now)
         if self.client is not None and self._acts is not None and hasattr(self.client, "sync_acts"):

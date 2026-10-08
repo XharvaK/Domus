@@ -586,6 +586,34 @@ def test_portrait_comes_from_the_body_sample_not_the_act_event(paths, tmp_path, 
     assert obs["body"] == "ASH"
 
 
+def test_a_session_checkpoint_never_replaces_her_body_sample(paths, tmp_path, monkeypatch):
+    """Live 2026-10-08: a checkpoint row (empty body skeleton) became her portrait and her running
+    act vanished from it. Her portrait stays the latest presence snapshot."""
+    _data(paths, tmp_path, monkeypatch)
+    acted = WALL + 400
+    checkpoint = _act(4, acted - 100)
+    checkpoint.update({"event_kind": "session_checkpoint", "checkpoint_reason": "interval", "e2": None,
+                       "motives": [], "zone": {"zone_id": None, "lot_id": None, "room": None},
+                       "body": {"sim_id": None, "posture": None},
+                       "interactions": {"observed": []}, "presence": []})
+    _append(paths, [
+        _lineage(1, WALL),
+        _body(2, "ok", WALL, 10),
+        _body(3, "low", WALL, 20),
+        checkpoint,
+        _act(5, acted),
+    ])
+    mono = {"ms": acted}
+    bridge = _bridge(paths, mono)
+    bridge.tick(acted)
+    bridge.tick(acted + 1_500)
+    portrait = _payloads(bridge)[-1]["portrait"]
+    assert portrait["posture"] == "sit"
+    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room": "4"}
+    assert portrait["needs"]["hunger"] == {"value": 40, "band": "low"}
+    assert bridge._last_body_row["written_sequence"] == 3
+
+
 def test_only_event_rows_still_build_a_portrait(paths, tmp_path, monkeypatch):
     """No sample yet: the portrait is the event row's, and nothing raises."""
     _data(paths, tmp_path, monkeypatch)
