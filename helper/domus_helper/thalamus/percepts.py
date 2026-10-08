@@ -69,6 +69,8 @@ class Extractor:
         self._open = {}
         self._barrier = 0
         self._presence = None
+        # HE3: who each present Sim was (name and last room), so "left" can say who and where.
+        self._presence_names = {}
         self._on_lot = set()
         self._social = set()
         self._asked = set()
@@ -374,9 +376,13 @@ class Extractor:
                     ("distance_m", item.get("distance_m")),
                     ("doing", doing[:120] if isinstance(doing, str) else None)))))
         for sim_id in sorted(self._presence - set(current)):
+            gone = self._presence_names.get(sim_id) or {}
             percepts.append(Percept(
-                "presence", sim_id, "", "left", lineage=self.lineage_id, facts=_facts(ticks, ())))
+                "presence", sim_id, "", "left", lineage=self.lineage_id, facts=_facts(ticks, (
+                    ("name", gone.get("name")), ("room", gone.get("room"))))))
         self._presence = set(current)
+        self._presence_names = {sim_id: {"name": item.get("name"), "room": item.get("room")}
+                                for sim_id, item in current.items()}
         # 2.17.0 (live 2026-10-06: the welcome wagon waited at her door while she stood at the
         # mirror): someone stepping onto the lot she is on wakes her, with the game situation
         # they are in. Walkbys on the street stay ordinary presence.
@@ -475,6 +481,7 @@ class Extractor:
             "open": self._open,
             "barrier": self._barrier,
             "presence": None if self._presence is None else sorted(self._presence),
+            "presence_names": self._presence_names,
             "on_lot": sorted(self._on_lot),
             "social": sorted(self._social),
             "asked": sorted(self._asked),
@@ -499,6 +506,7 @@ class Extractor:
         extractor._barrier = blob.get("barrier") or 0
         presence = blob.get("presence")
         extractor._presence = None if presence is None else set(presence)
+        extractor._presence_names = blob.get("presence_names") or {}
         extractor._on_lot = set(blob.get("on_lot") or [])
         extractor._social = set(blob.get("social") or [])
         extractor._asked = set(blob.get("asked") or [])
