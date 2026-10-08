@@ -1,10 +1,16 @@
 param(
     [Parameter(Mandatory = $true)][string]$SimsRoot,
-    [string]$Version = "2.3.1"
+    # Empty: the version the probe source declares (E1_PROBE_VERSION), so a bare install takes the current build.
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not $Version) {
+    $declared = Select-String -LiteralPath (Join-Path $repo "sims-e1\src\ashley_e1\__init__.py") -Pattern 'E1_PROBE_VERSION = "([0-9.]+)"'
+    if (-not $declared) { throw "E1_PROBE_VERSION not found" }
+    $Version = $declared.Matches[0].Groups[1].Value
+}
 $artifact = Join-Path $repo ("sims-e1\build\Domus_" + $Version + ".ts4script")
 $sidecar = $artifact + ".sha256"
 if (Get-Process -Name "TS4_x64" -ErrorAction SilentlyContinue) { throw "The Sims 4 must be closed" }

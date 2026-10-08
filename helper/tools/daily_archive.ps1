@@ -10,7 +10,7 @@ $env:PYTHONPATH = '.'
 $dataDir = & $python -c "from domus_helper.paths import Paths; print(Paths.from_env().data_dir)"
 New-Item -ItemType Directory -Force $dataDir | Out-Null
 $log = Join-Path $dataDir 'daily_archive.log'
-Add-Content -Path $log -Value ("== {0:u}" -f (Get-Date)) -Encoding utf8
+Add-Content -Path $log -Value ("== {0:u}" -f (Get-Date).ToUniversalTime()) -Encoding utf8
 & $python -m domus_helper.outcomes --all --write 2>&1 | Select-Object -Last 1 |
     Add-Content -Path $log -Encoding utf8
 & $python -m domus_helper.telemetry_archive --weekly-after-days 7 2>&1 |
