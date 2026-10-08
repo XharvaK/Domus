@@ -14,6 +14,7 @@ import json
 import logging
 import struct
 import threading
+import time
 import types
 import zlib
 
@@ -30,6 +31,8 @@ DPI_AWARENESS_PER_MONITOR_V2 = -4
 DIB_RGB_COLORS = 0
 BI_RGB = 0
 MAX_ID_LENGTH = 64
+# HE15: a picture that did not reach Ashley is tried once more after this long.
+RETRY_WAIT_S = 5
 
 # Ids this process has already captured and posted (or tried to post). Process-local by design.
 _HANDLED = set()
@@ -136,10 +139,26 @@ def _claim_new(snapshot_ids):
 
 def _post_all(snapshot_ids, client, capture, helper_session):
     for snapshot_id in snapshot_ids:
-        try:
-            client.post_snapshot(_body(snapshot_id, helper_session, capture))
-        except Exception as error:
-            log.warning("snapshot %s not sent: %s", snapshot_id, type(error).__name__)
+        body = _body(snapshot_id, helper_session, capture)
+        if _send(client, snapshot_id, body) == "sent":
+            continue
+        time.sleep(RETRY_WAIT_S)
+        kind = _send(client, snapshot_id, body)
+        if kind != "sent":
+            log.warning("snapshot %s not sent after a retry: %s", snapshot_id, kind)
+
+
+def _send(client, snapshot_id, body):
+    """One post. Returns the kind of the answer; a failure is logged by its kind, never its picture."""
+    try:
+        result = client.post_snapshot(body)
+    except Exception as error:
+        log.warning("snapshot %s not sent: %s", snapshot_id, type(error).__name__)
+        return "error"
+    kind = getattr(result, "kind", None) or "unknown"
+    if kind != "sent":
+        log.warning("snapshot %s not sent: %s", snapshot_id, kind)
+    return kind
 
 
 def _snapshot_id(item):
