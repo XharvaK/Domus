@@ -70,13 +70,20 @@ class PrivacyList:
         self._path = path
         self._stamp = None
         self._terms = []
+        self._missing = False
+
+    def missing(self):
+        """HE18: the User has not written the list. Nothing is invented in its place; the screen says so."""
+        self._load()
+        return self._missing
 
     def _load(self):
         try:
             stamp = self._path.stat().st_mtime_ns
         except OSError:
-            self._stamp, self._terms = None, []
+            self._stamp, self._terms, self._missing = None, [], True
             return
+        self._missing = False
         if stamp == self._stamp:
             return
         self._stamp = stamp
@@ -391,6 +398,7 @@ class Overlay:
                 moodlets.append({"text": text[:60], "mood": item.get("mood_type")})
         mood_name = mood.get("name") if isinstance(mood.get("name"), str) else None
         state.update({
+            "privacy_list": "missing" if self._privacy.missing() else "ok",
             "paused": game.get("paused") is True,
             "needs": [{"need": key, "value": needs[key].get("value"), "band": needs[key].get("band")}
                       for key in NEEDS if key in needs],

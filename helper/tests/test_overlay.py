@@ -192,6 +192,21 @@ def test_the_now_list_names_running_acts_in_the_games_words(tmp_path):
         spool.close()
 
 
+def test_a_missing_privacy_list_is_flagged_on_the_screen_and_never_invented(tmp_path):
+    # HE18: no file is a visible warning; the names are not made up in its place.
+    spool, view = made(tmp_path)
+    try:
+        view.on_row(snapshot(), NOW)
+        assert view.publish(NOW, attached=True)["privacy_list"] == "missing"
+        assert view._privacy.held("Sunny Lane") is False
+        (tmp_path / overlay.PRIVACY_FILE).write_text("Sunny Lane\n", encoding="utf-8")
+        assert view.publish(NOW + 1, attached=True)["privacy_list"] == "ok"
+        assert view._privacy.held("Sunny Lane") is True
+        assert 'id="privacy"' in PAGE and "state.privacy_list" in PAGE
+    finally:
+        spool.close()
+
+
 def test_whose_hand_started_it(tmp_path):
     spool, view = made(tmp_path)
     try:
