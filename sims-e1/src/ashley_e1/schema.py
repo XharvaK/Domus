@@ -106,7 +106,8 @@ EXPERIMENT_PHASES = (
 )
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
-            "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act", "camera", "talk")
+            "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act", "camera", "talk",
+            "pace")
 
 
 def _command_id(value):
@@ -124,7 +125,9 @@ def _command_issuer(value):
 # (shown to the User after all: unanswered in time, or at a stop).
 SPEED_PHASES = ("REQUEST_PUSHED", "REQUEST_REMOVED", "REJECT",
                 "RELEASED_ON_DISARM", "RELEASED_ON_STOP", "RELEASE_FAILED",
-                "DIALOG_HELD", "DIALOG_SHOWN", "SCREEN_WITHHELD", "UNKNOWN_SCREEN")
+                "DIALOG_HELD", "DIALOG_SHOWN", "SCREEN_WITHHELD", "UNKNOWN_SCREEN",
+                # 2.31.0 (W3p): the probe refused the game clock because another mod sets it.
+                "CLOCK_FOREIGN")
 LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED")
 CLAIM_KEYS = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
               "ATTRIBUTED", "MAINTAINED_10S", "FINISHED")
@@ -171,6 +174,8 @@ COMMON_KEYS = {
     "self",
     # 2.15.2 (schema 9): whose lot and what venue; the game's pop-ups; observation rows.
     "place", "dialogs",
+    # 2.31.0 (schema 14): her pace, as the probe applied it; observation rows only.
+    "pace",
 }
 MAX_OBJECT_EVENTS = 8
 MAX_REL_TRACKS = 4
@@ -905,6 +910,36 @@ def _validate_window(item):
             string_id(field["default_key"], "dialogs.text_input.default_key")
 
 
+# 2.31.0 (W3p, schema 14): the pace block of an observation row. need_drain and slow_time are the wanted
+# factors (1.0 is normal pace); drain_measured is the effective factor one motive shows (None when its
+# decay is not running); clock_scale is the value the game multiplies by (None when unread).
+PACE_KEYS = ("need_drain", "motives_modified", "drain_measured", "slow_time", "clock_scale", "clock_foreign")
+PACE_MEASURE_LIMIT = 100
+
+
+def _pace_factor(value, label):
+    _require(type(value) in (int, float) and 0.25 <= value <= 1.0, label)
+
+
+def _validate_pace(row):
+    """2.31.0 (schema 14): the probe's pace block, observation rows only."""
+    if "pace" not in row:
+        return
+    _observation_only(row, "pace", 14)
+    value = row["pace"]
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == set(PACE_KEYS), "pace shape")
+    _pace_factor(value["need_drain"], "pace.need_drain")
+    _pace_factor(value["slow_time"], "pace.slow_time")
+    _int_between(value["motives_modified"], 0, MAX_MOTIVES, "pace.motives_modified")
+    for key in ("drain_measured", "clock_scale"):
+        if value[key] is not None:
+            _require(type(value[key]) in (int, float) and 0 <= value[key] <= PACE_MEASURE_LIMIT,
+                     "pace.%s" % key)
+    _require(type(value["clock_foreign"]) is bool, "pace.clock_foreign")
+
+
 def _validate_dialogs(row):
     """2.15.2: the game's pop-ups. `open` lists those showing now (with the choices the
     game offers), `closed` those gone since the last sample, with the answer read from
@@ -1347,6 +1382,7 @@ def validate_record(row):
     _validate_self(row)
     _validate_place(row)
     _validate_dialogs(row)
+    _validate_pace(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
     _require(len(encoded) <= MAX_SERIALIZED_RECORD_BYTES, "serialized record exceeds the record limit")

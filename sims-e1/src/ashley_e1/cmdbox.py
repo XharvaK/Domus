@@ -4,7 +4,7 @@ import json
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
             'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
-            'cancel', 'camera', 'talk')
+            'cancel', 'camera', 'talk', 'pace')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -17,6 +17,11 @@ FIELD_NAME_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567
 def _digits(value):
     return (type(value) is str and 1 <= len(value) <= 20 and
             all(ch in '0123456789' for ch in value))
+
+
+def _pace_factor(value):
+    """2.31.0 (W3p): a pace factor is a number (not a bool) from 0.25 to 1.0; 1.0 is normal pace."""
+    return type(value) in (int, float) and 0.25 <= value <= 1.0
 
 
 def _answer_rows(rows):
@@ -133,6 +138,10 @@ def parse(raw_bytes, now_ms, used_ids):
                 1 <= len(text) <= 240 and text.strip() == text and
                 all(ch >= ' ' and ch != '\x7f' for ch in text) and
                 ('sim_id' not in args or _digits(args['sim_id'])))
+    elif good and name == 'pace':
+        # 2.31.0 (W3p): her needs drain and the game's clock, as fractions of normal pace (1.0 is off).
+        good = (set(args) == {'need_drain', 'slow_time'} and _pace_factor(args['need_drain']) and
+                _pace_factor(args['slow_time']))
     elif good:
         good = not args
     if not good:
