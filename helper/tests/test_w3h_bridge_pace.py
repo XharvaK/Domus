@@ -132,3 +132,20 @@ def test_her_portrait_context_carries_the_probe_block_and_its_pace_sentences(pat
     entry = bridge._obs_ctx(NOW)["pace"]
     assert entry == {"needs": "your needs drain at half the game's pace, by the User's choice.",
                      "clock": "the game's clock runs at half its normal speed."}
+
+
+def test_a_decision_sent_to_ashley_is_the_one_its_act_is_measured_from(paths, tmp_path, monkeypatch):
+    bridge, _ = _bridge(paths, tmp_path, monkeypatch)
+    bridge.client = object()
+    bridge._last_row = {"game": {"ticks": 40_000}, "telemetry_session_id": "s"}
+    bridge._last_body_row = bridge._last_row
+    monkeypatch.setattr(bridge_module, "build", lambda decision, ctx: {"observation_id": "s.1"})
+    monkeypatch.setattr(bridge_module, "run_scorer", lambda scorer, obs: None)
+    monkeypatch.setattr(bridge.spool, "enqueue_observation", lambda obs, now: None)
+    decision = type("D", (), {"fired": True, "percepts": [object()], "reason": "need",
+                              "theta": 1.0, "arousal": 0.0, "trace": []})()
+    bridge._on_decision(decision, [], NOW, NOW, None)
+    bridge._pace_log.received(["a" * 32])
+    bridge._pace_log.on_row({"event_kind": "act_event", "game": {"ticks": 41_500},
+                             "e2": {"act_id": "a" * 32, "phase": "PUSHED", "tuning_name": "x_Y"}})
+    assert bridge._pace_log.costs() == [{"interaction": "x_Y", "game_minutes": 1.0}]

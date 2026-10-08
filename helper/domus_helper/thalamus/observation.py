@@ -10,6 +10,8 @@ from ..windows import PORTRAIT_LIMIT as WINDOWS_SHOWN
 _LINEAGE = re.compile(r"[A-Z_]{1,32}")
 _FACTS_LIMIT = 2048
 _PORTRAIT_LIMIT = 8192
+# W3h (C9): real time, how long an observation is kept for her answer. At slow_time 0.5 the world
+# moves half as far in these ten minutes, so the observation is no staler in game terms than before.
 _WINDOW_MS = 600_000
 # The game's Days enum (tunable_time.Days, bytecode 1.128): SUNDAY = 0 ... SATURDAY = 6,
 # the same index DateAndTime.day() prints as "day:N".

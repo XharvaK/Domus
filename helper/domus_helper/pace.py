@@ -84,6 +84,18 @@ class PaceSettings(object):
         return self.values
 
 
+def configured_slow_time(data_dir):
+    """The slow_time setting (1.0 when there is none), for a helper tool that waits on game time."""
+    return read_config(data_dir / CONFIG)["slow_time"]
+
+
+def game_budget(real_seconds, slow_time):
+    """A real-time budget for a wait on something that takes game time. At slow_time 0.5 the
+    game spends twice the real time on the same game span, so the budget stretches by 1/slow_time
+    and covers the same game span as it did at normal pace."""
+    return real_seconds / slow_time
+
+
 def amount(factor):
     """A factor in words for her portrait: 0.5 -> "half", 0.4 -> "0.4 times"."""
     if factor in _WORDS:

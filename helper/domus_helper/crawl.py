@@ -6,12 +6,13 @@ import sys
 import time
 from pathlib import Path
 
-from . import atlas, relief_survey, telemetry
+from . import atlas, pace, relief_survey, telemetry
 from .crawl_protocol import PROTOCOL_SKIP, RETRY_CODES, name_blocked
 
 # Dialog-free food guids run only through `python -m domus_helper.food` (DA6D).
 FOOD_GUIDS = (13388, 13397)
 # A sleep at normal speed is about 8 real minutes; a slow-speed sleep is longer.
+# W3h: a game-time wait; drive() stretches it by slow_time (pace.game_budget).
 LEFT_RUNNING_MAX_S = 45 * 60
 from .vendor.schema import PROBE_VERSION
 from .mcp_server import CommandFailed, DomusTools, SafetyError
@@ -224,6 +225,7 @@ def matching_preflight(atlas_dir, tuned_path):
 
 # D22 (live 2026-10-04): a fixed 600 s wait met a 600 s preflight. Wait while the
 # partial file grows; give up after this long without growth, or at the hard cap.
+# W3h: real time on the probe's own scan (real-time alarm), not game time: unchanged at slow_time.
 PREFLIGHT_STALL_S = 120.0
 
 
@@ -296,6 +298,8 @@ def wait_left_running(read_rows, experiment_id, sleep, monotonic, timeout=None):
     until she is idle again and return the needs then: the relief telemetry."""
     if timeout is None:
         timeout = LEFT_RUNNING_MAX_S
+    # W3h (C9): the cleanup detail and the idle debounce are real seconds on the probe's real-time rows,
+    # so they mean the same at slow_time 0.5; only the game-time budget above is stretched.
     deadline = monotonic() + 5.0
     detail = None
     for _ in range(20):
@@ -476,7 +480,7 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
           dry_run=False, verdict_timeout_s=600, limit=10**9, readonly=False,
           sleep=time.sleep, monotonic=time.monotonic, telemetry_rows=None,
           session="none", skip=(), preflight_rows=None, use_preflight=True,
-          survey=False):
+          survey=False, slow_time=1.0):
     if not 1 <= per_hour <= 60:
         raise ValueError("per-hour")
     if max_trials < 1 or verdict_timeout_s <= 0:
@@ -579,7 +583,8 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
             sleep(15)
             continue
         if kind == "TRIAL_PUSHED":
-            deadline = monotonic() + verdict_timeout_s
+            # W3h: the verdict comes when the game finishes the trial, so the budget is game time.
+            deadline = monotonic() + pace.game_budget(verdict_timeout_s, slow_time)
             found = None
             while monotonic() < deadline:
                 source = telemetry_rows() if telemetry_rows else _live_rows(client.paths)
@@ -617,7 +622,7 @@ def drive(*, client, build, tuned_rows, atlas_db, per_hour=30, max_trials=200,
         if kind == "TRIAL_PUSHED" and found is not None:
             relief = wait_left_running(
                 (lambda: telemetry_rows() if telemetry_rows else _live_rows(client.paths)),
-                experiment_id, sleep, monotonic)
+                experiment_id, sleep, monotonic, timeout=pace.game_budget(LEFT_RUNNING_MAX_S, slow_time))
         payload = {
             "kind": "outcome", "n": recorded, "guid64": item["guid64"],
             "object_id": item["object_id"], "outcome": outcome, "code": code,
@@ -719,7 +724,7 @@ def main(argv=None):
             dry_run=args.dry_run, verdict_timeout_s=args.verdict_timeout_s,
             limit=args.limit, session=session, skip=tuple(args.skip),
             preflight_rows=preflight_rows, use_preflight=preflight_rows is not None,
-            survey=args.relief_survey)
+            survey=args.relief_survey, slow_time=pace.configured_slow_time(paths.data_dir))
     except CrawlStop as error:
         print(str(error))
         return 2

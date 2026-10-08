@@ -232,3 +232,70 @@ def test_over_the_limit_one_window_at_a_time_goes_before_the_pace_entry():
     assert 1 <= len(shed["windows"]) < len(windows)
     assert shed["windows"] == windows[-len(shed["windows"]):]
     assert _size(shed) <= limit
+
+
+def test_a_game_time_budget_is_stretched_by_the_slow_time_setting():
+    assert pace.game_budget(700.0, 1.0) == 700.0
+    assert pace.game_budget(700.0, 0.5) == 1400.0
+    assert pace.game_budget(600, 0.25) == 2400.0
+
+
+def test_the_tools_read_the_slow_time_setting_and_default_to_normal(tmp_path):
+    assert pace.configured_slow_time(tmp_path) == 1.0
+    (tmp_path / pace.CONFIG).write_text('{"slow_time": 0.5}', encoding="utf-8")
+    assert pace.configured_slow_time(tmp_path) == 0.5
+
+
+def test_a_food_eat_verdict_wait_covers_twice_the_real_time_at_half_speed(tmp_path, monkeypatch):
+    from pathlib import Path
+    from domus_helper import food
+    from domus_helper.paths import Paths
+
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path / "data"))
+
+    class Fake:
+        paths = Paths(tmp_path / "sims", tmp_path / "game")
+
+        def checked_status(self):
+            return type("R", (), {"result": {"state": "SAMPLING", "armed_name": "LAB_E1_FORK",
+                                             "calibrate": False, "designated_sim_id": "9"}})()
+
+        def command(self, name, args=None):
+            return type("R", (), {"result": {"ok": True, "lines": ["TRIAL_PUSHED exp-1 interaction 1"]}})()
+
+    monkeypatch.setattr(food, "latest_food", lambda folder: Path("food.jsonl"))
+    monkeypatch.setattr(food, "_rows", lambda path: [{"kind": "food_header", "sims_build": "1.1"}])
+    monkeypatch.setattr(food, "_newest_preflight", lambda folder: None)
+    monkeypatch.setattr(food, "choose", lambda rows, preflight: {
+        "object_id": "9", "guid64": 60, "name": "fridge_GrabLeftover", "food_route": "auto_pick"})
+    clock = {"t": 0.0}
+
+    def sleep(seconds):
+        clock["t"] += seconds
+
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path / "half"))
+    food.eat(Fake(), sleep=sleep, monotonic=lambda: clock["t"], telemetry_rows=lambda: [], slow_time=0.5)
+    assert clock["t"] == food.EAT_TIMEOUT_S * 2
+    clock["t"] = 0.0
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path / "normal"))
+    food.eat(Fake(), sleep=sleep, monotonic=lambda: clock["t"], telemetry_rows=lambda: [])
+    assert clock["t"] == food.EAT_TIMEOUT_S
+
+
+def test_a_crawl_verdict_wait_is_stretched_by_the_slow_time_setting(tmp_path):
+    from test_crawl import Clock, FakeTools, _import, _affordance, _drive, _tuned
+
+    def run(name, slow_time):
+        root = tmp_path / name
+        root.mkdir()
+        db = root / "atlas.db"
+        _import(db, "1.1", [_affordance(1, "sit")])
+        tools = FakeTools(root)
+        tools.replies = ["TRIAL_PUSHED exp interaction 1"]
+        tools.rows = []
+        clock = Clock()
+        _drive(tools, db, [_tuned(1, [1])], clock, max_trials=1, verdict_timeout_s=10, slow_time=slow_time)
+        return clock.t
+
+    # Both runs wait the same other way; only the verdict wait differs: 10 real seconds more at 0.5.
+    assert round(run("half", 0.5) - run("normal", 1.0), 2) == 10.0

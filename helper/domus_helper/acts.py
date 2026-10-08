@@ -9,11 +9,15 @@ from . import snapshot
 OPTIONS_LIMIT = 7800
 # Mint expires an act its helper never picked up after 90 s; a written act the probe never
 # answers about is unknown after this long.
+# W3h (C9): real time. The probe reads its inbox on a real-time alarm and writes the reply then,
+# not on the game clock, so 90 s means the same at slow_time 0.5.
 PROBE_REPLY_MS = 90_000
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
 ASKED_LIMIT = 8
 # A dialog that opened this soon before her pushed act was first seen is not its doing.
+# W3h (C9): real timestamps of the probe's own rows. At slow_time 0.5 an act stays queued longer in
+# real time, so a question that opens while it waits is matched over a longer span; the slack is unchanged.
 ASKED_SLACK_MS = 1_000
 _PHASES = {"ACCEPTED": "accepted", "REJECTED": "rejected", "PUSHED": "pushed",
            "FINISHED": "finished", "UNKNOWN": "unknown"}
