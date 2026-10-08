@@ -289,6 +289,17 @@ def test_a_check_wake_over_a_stale_row_is_skipped_and_logged_and_a_fresh_one_is_
     assert len(_payloads(bridge)) == before + 1
 
 
+def test_the_newest_row_is_kept_when_it_changes_and_at_most_every_30_seconds(paths, tmp_path, monkeypatch):
+    # HE17: last_row is written on a change, and not sooner than 30 s after its last write.
+    _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL})
+    assert bridge._row_due("last_row", "a", 0) is True
+    assert bridge._row_due("last_row", "a", 1_000) is False
+    assert bridge._row_due("last_row", "b", 1_000) is False
+    assert bridge._row_due("last_row", "b", 30_000) is True
+    assert bridge._row_due("last_row", "b", 60_000) is False
+
+
 def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatch):
     from domus_helper.contract import validate_observation as check
     data = _data(paths, tmp_path, monkeypatch)

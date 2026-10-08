@@ -40,6 +40,8 @@ _CAMERA_PROBE = (2, 21, 0)
 _TALK_PROBE = (2, 26, 0)
 # W3h: a pace command that could not be written is tried again after this long.
 PACE_RETRY_MS = 30_000
+# HE17: the newest row is kept in the spool when it changed, and at most this often.
+ROW_WRITE_EVERY_MS = 30_000
 # HE16: the wakes a quiet game makes (no new row), and the window an observation stays valid for.
 CLOCK_WAKES = ("check", "boredom")
 OBSERVATION_WINDOW_MS = 600_000
@@ -170,6 +172,7 @@ class Bridge:
         self._pace_sent = None
         self._pace_sent_ms = None
         self._pace_retry_ms = None
+        self._row_written = {}
 
     def tick(self, now):
         self._maybe_rebuild_procedures(now)
@@ -372,7 +375,7 @@ class Bridge:
         self._on_decision(decision, [], wall_ms, wall_ms, None)
         lineage = self._extractor.lineage_id
         self._thalamus = prune(self._thalamus, wall_ms, self._params, lineage)
-        self._persist_thalamus()
+        self._persist_thalamus(wall_ms)
 
     def _points(self):
         """H0.5: the live bridge wakes her at decision points. Before the first snapshot her body
@@ -544,21 +547,34 @@ class Bridge:
         self._notebook_quietly(lambda: self.notebook.rebuild_procedures(
             notebook.load_outcome_records(self.paths), now))
 
-    def _persist_thalamus(self):
-        self.spool.put_many_kv({
+    def _row_due(self, key, value, now_ms):
+        """HE17: a newest row is written when it changed since its last write, and no sooner than 30 s after it."""
+        last = self._row_written.get(key)
+        due = last is None or (last[0] != value and now_ms - last[1] >= ROW_WRITE_EVERY_MS)
+        if due:
+            self._row_written[key] = (value, now_ms)
+        return due
+
+    def _persist_thalamus(self, now_ms):
+        rows = {}
+        for key, row in (("last_row", self._last_row), ("last_body_row", self._last_body_row)):
+            value = json.dumps(row)
+            if self._row_due(key, value, now_ms):
+                rows[key] = value
+        values = {
             "thalamus_state": json.dumps(self._thalamus.to_dict()),
             "extractor_state": json.dumps(self._extractor.to_dict()),
             "last_rowid": str(self._last_rowid),
             "obs_seq": str(self._obs_seq),
-            "last_row": json.dumps(self._last_row),
-            "last_body_row": json.dumps(self._last_body_row),
             "act_menu": json.dumps(self._menu),
             "thalamus_fires": str(self._fires),
             "thalamus_enqueued": str(self._enqueued),
             "thalamus_last_reason": "" if self._last_fire_reason is None else self._last_fire_reason,
             "thalamus_last_wall_ms": "" if self._last_fire_wall_ms is None else str(self._last_fire_wall_ms),
             "thalamus_theta": str(self._theta),
-        })
+        }
+        values.update(rows)
+        self.spool.put_many_kv(values)
 
 
 def _helper_build():

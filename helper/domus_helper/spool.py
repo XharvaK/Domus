@@ -160,6 +160,10 @@ class Spool:
     def put_many_kv(self, items):
         with self._con:
             for key, value in items.items():
+                # HE17: a value that is already stored is not rewritten.
+                stored = self._con.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+                if stored is not None and stored["v"] == value:
+                    continue
                 self._con.execute(
                     """INSERT INTO kv (k, v) VALUES (?, ?)
                        ON CONFLICT(k) DO UPDATE SET v=excluded.v""",

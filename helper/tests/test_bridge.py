@@ -192,6 +192,21 @@ def test_load_credentials(paths, monkeypatch, tmp_path):
     assert override.url == "http://127.0.0.1:8" and override.token == "e" * 32
 
 
+def test_kv_is_written_only_when_its_value_changes(tmp_path):
+    # HE17: an unchanged value is not rewritten; a changed one is.
+    from domus_helper.spool import Spool
+    spool = Spool(tmp_path / "spool.db")
+    spool.put_kv("k", "v")
+    before = spool._con.total_changes
+    spool.put_kv("k", "v")
+    spool.put_many_kv({"k": "v"})
+    assert spool._con.total_changes == before
+    spool.put_many_kv({"k": "w", "j": "1"})
+    assert spool._con.total_changes == before + 2
+    assert spool.get_kv("k") == "w" and spool.get_kv("j") == "1"
+    spool.close()
+
+
 def test_outbox_idempotent_conflict_backoff_expiry_auth(tmp_path):
     spool = Spool(tmp_path / "spool.db")
     spool.enqueue_observation(sample(), NOW)
