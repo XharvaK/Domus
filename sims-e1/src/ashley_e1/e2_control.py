@@ -76,6 +76,11 @@ try:
 except ImportError:
     game_clock = None
 try:
+    # 2.31.0 (W3p): the milliseconds per sim second, read once for the clock preflight (CLOCK_RESEARCH §1).
+    import date_and_time
+except ImportError:
+    date_and_time = None
+try:
     # 2.23.0: the close message ui/ui_dialog_service._dialog_cancel_internal builds.
     from protocolbuffers import Consts_pb2, Dialog_pb2
 except ImportError:
@@ -88,6 +93,40 @@ except ImportError:
 CAMERA_MIN_GAP_S = 1.5
 # 2.26.0: social talk on the User's screen, at most one line each TALK_MIN_GAP_S.
 TALK_MIN_GAP_S = 2.0
+# 2.31.0 (W3p, DOMUS_DEEP_DESIGN §5a and §5): her pace. Her needs drain through the game's own decay-rate
+# modifier on each motive (lever D). The game clock runs at a slower normal speed through one class
+# attribute (lever A), only when the preflight finds the clock at the game's own defaults. 1.0 is normal
+# pace and changes nothing.
+PACE_LOWEST = 0.25
+PACE_NORMAL = 1.0
+CLOCK_DEFAULT_SPEED = 1
+CLOCK_DEFAULT_MS_PER_SIM_SECOND = 25
+
+
+def _factor(value):
+    """2.31.0: a pace factor: a finite number from PACE_LOWEST to PACE_NORMAL (a bool is not one), else None."""
+    if type(value) not in (int, float) or not PACE_LOWEST <= value <= PACE_NORMAL:
+        return None
+    return float(value)
+
+
+def _measure(value):
+    """2.31.0: a reading for the pace block: a number within the schema's bound, else None."""
+    if type(value) not in (int, float) or not 0 <= value <= schema.PACE_MEASURE_LIMIT:
+        return None
+    return float(value)
+
+
+def _capture_clock():
+    """2.31.0: the game clock's normal multiplier, read once at install, and whether the clock is foreign:
+    not the game's own defaults (or unreadable). A foreign clock is never touched. Returns (base, foreign)."""
+    try:
+        base = game_clock.GameClock.NORMAL_SPEED_MULTIPLIER
+        per_second = date_and_time.REAL_MILLISECONDS_PER_SIM_SECOND
+        foreign = not (base == CLOCK_DEFAULT_SPEED and per_second == CLOCK_DEFAULT_MS_PER_SIM_SECOND)
+    except Exception:
+        return None, True
+    return base, foreign
 # 2.27.0: a window her own act opened is hers to answer, so it is held back from the User's screen.
 # Unanswered after PICKER_HOLD_S, it is shown to the User (the fallback). 2.31.0: the same hold covers
 # every window and call she is offered (DOMUS_DEEP_DESIGN §4.2).
@@ -534,6 +573,12 @@ class E2Control:
         self.held = {}
         self._watchdog = None
         self._alarm_owner = _HoldAlarmOwner()
+        # 2.31.0 (W3p): her pace as the helper last sent it (kept for the session, saved nowhere); the motives
+        # the probe has slowed, by identity: {id: (commodity, the value it got)}; and the game clock as read at install.
+        self._pace = {"need_drain": PACE_NORMAL, "slow_time": PACE_NORMAL}
+        self._drained = {}
+        self._clock_base, self._clock_foreign = _capture_clock()
+        self._clock_applied = False
         self._reset_state()
 
     # ------------------------------------------------------------------ state
@@ -603,6 +648,7 @@ class E2Control:
         # 2.31.0 (PR8): the load path. Arming reads the world as it is loaded; an act an earlier
         # session left pushed is resolved as LOADED here, not dropped silently by the reset.
         self._resolve_pushed("LOADED")
+        self._pace_release()
         self._reset_state()
         if not self.available():
             return
@@ -624,6 +670,8 @@ class E2Control:
         # 2.31.0 (PR8): a zone change ends every act still pushed now, as UNKNOWN, not as a LEFT_QUEUE later.
         if reason == "ZONE_CHANGE":
             self._resolve_pushed("ZONE_CHANGE")
+        # 2.31.0 (W3p): her motives drain at their own pace again, and the clock is the game's, until she samples.
+        self._pace_release()
         for experiment in list(self.experiments.values()):
             if not experiment.closed:
                 self._close_experiment(experiment)
@@ -1436,6 +1484,156 @@ class E2Control:
             return False
 
     # ------------------------------------------------------------ windows (2.31.0)
+    # ------------------------------------------------------------------ pace (2.31.0, W3p)
+    def cmd_pace(self, need_drain, slow_time, connection):
+        """2.31.0 (W3p): the helper's pace, two fractions of normal pace (1.0 is off). The probe keeps the last
+        values for the session and applies them while she is sampling. Only the helper may send it."""
+        try:
+            issuer = connection.issuer
+        except AttributeError:
+            issuer = None
+        if issuer != "helper":
+            connection.code = "BAD_ISSUER"
+            self._say(connection, "PACE_REJECT BAD_ISSUER")
+            return False
+        need, slow = _factor(need_drain), _factor(slow_time)
+        if need is None or slow is None:
+            connection.code = "BAD_ARGS"
+            self._say(connection, "PACE_REJECT BAD_ARGS")
+            return False
+        self._pace = {"need_drain": need, "slow_time": slow}
+        self._pace_apply()
+        if self._clock_foreign and slow < PACE_NORMAL:
+            self._speed_event("CLOCK_FOREIGN", detail="another mod sets the game clock; the probe leaves it alone")
+        self._say(connection, "PACE_OK need_drain %g slow_time %g" % (need, slow))
+        return True
+
+    def pace_row(self, row):
+        """2.31.0 (W3p): called for each observation row before it is written. Checks her body (PR7), applies her
+        pace for this moment, and returns the pace block the row carries: what the probe applied."""
+        self._body_switch(row)
+        self._pace_apply()
+        return self.pace_block()
+
+    def pace_block(self):
+        """2.31.0 (W3p): the pace block of an observation row (schema PACE_KEYS). `drain_measured` is one
+        motive's effective factor, get_decay_rate() over get_decay_rate(False), when its decay is running."""
+        measured = None
+        for item, _ in list(self._drained.values())[:1]:
+            try:
+                plain = item.get_decay_rate(False)
+                if plain:
+                    measured = _measure(item.get_decay_rate() / plain)
+            except Exception:
+                measured = None
+        return {"need_drain": self._pace["need_drain"],
+                "motives_modified": min(len(self._drained), schema.MAX_MOTIVES),
+                "drain_measured": measured, "slow_time": self._pace["slow_time"],
+                "clock_scale": self._clock_scale(), "clock_foreign": bool(self._clock_foreign)}
+
+    def _pace_apply(self):
+        """Her pace now: applied while she is live (sampling, not a body switch, the zone running), else undone."""
+        live = self._live() and self._zone_running()
+        self._pace_drain(live)
+        self._pace_clock(live)
+
+    def _pace_release(self):
+        """Undo everything the probe changed for her pace: the modifiers and the clock (stop, disarm, arm)."""
+        self._pace_drain(False)
+        self._pace_clock(False)
+
+    def _pace_drain(self, live):
+        """Her motives drain at the wanted factor while live, each motive once (recorded by identity, so a second
+        tick never stacks). The modifier comes off each recorded motive when the factor changes or she is not live;
+        an entry whose motive left her tracker (travel or load rebuilt it) is dropped, and its new motive gets it."""
+        if not live:
+            self._undo_drain()
+            return
+        want = self._pace["need_drain"]
+        motives = self._motives()
+        if motives is None:
+            self._undo_drain()
+            return
+        present = set(id(item) for item in motives)
+        for key in [key for key in self._drained if key not in present]:
+            del self._drained[key]
+        if any(value != want for _, value in self._drained.values()):
+            self._undo_drain()
+        if want >= PACE_NORMAL:
+            return
+        for item in motives:
+            if id(item) in self._drained:
+                continue
+            try:
+                item.add_decay_rate_modifier(want)
+            except Exception:
+                continue
+            self._drained[id(item)] = (item, want)
+            try:
+                item.send_commodity_progress_msg()
+            except Exception:
+                pass
+
+    def _undo_drain(self):
+        """Take the modifier off each recorded motive (the value it got), send its progress, empty the record."""
+        for item, value in list(self._drained.values()):
+            try:
+                item.remove_decay_rate_modifier(value)
+            except Exception:
+                pass
+            try:
+                item.send_commodity_progress_msg()
+            except Exception:
+                pass
+        self._drained.clear()
+
+    def _motives(self):
+        """Her motive commodities (the guids in observers.MOTIVE_GUIDS), from her body's commodity tracker.
+        None when they cannot be read now."""
+        try:
+            sim_info, _ = observers.select_lab_body(
+                services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+            commodities = list(sim_info.commodity_tracker.get_all_commodities())
+        except Exception:
+            return None
+        return [item for item in commodities if observers._motive_guid(item) in observers.MOTIVE_GUIDS]
+
+    def _pace_clock(self, live):
+        """The game clock runs at the wanted scale while she is live: the class attribute is asserted on every tick,
+        and the client is told when the value changes. Otherwise the value read at install comes back. A clock
+        another mod owns, or one that cannot be read, is never touched."""
+        if self._clock_foreign or game_clock is None:
+            return
+        want = self._pace["slow_time"]
+        if live and want < PACE_NORMAL:
+            self._set_clock(want)
+            self._clock_applied = True
+        elif self._clock_applied:
+            self._set_clock(self._clock_base)
+            self._clock_applied = False
+
+    def _set_clock(self, value):
+        try:
+            before = game_clock.GameClock.NORMAL_SPEED_MULTIPLIER
+            game_clock.GameClock.NORMAL_SPEED_MULTIPLIER = value
+            if before != value:
+                services.game_clock_service()._sync_clock_and_broadcast_gameclock()
+        except Exception:
+            pass
+
+    def _clock_scale(self):
+        try:
+            return _measure(services.game_clock_service().current_clock_speed_scale())
+        except Exception:
+            return None
+
+    def _zone_running(self):
+        try:
+            zone = services.current_zone()
+            return zone is not None and bool(zone.is_zone_running)
+        except Exception:
+            return False
+
     def pass_by(self):
         """Every pass through a wrapper (a hook inside the distributor's own work) only drops held
         windows whose dialog is gone. It never sends: a window due for the User is shown from the probe

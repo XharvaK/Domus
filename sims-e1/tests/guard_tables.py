@@ -29,6 +29,7 @@ APPROVED_GAME_IMPORTS = {
 FORBIDDEN_CALL_NAMES = {
     "__import__",
     "add_buff",
+    "clear_decay_rate_modifiers",
     "add_selectable_sim_info",
     "advance_current_time",
     "cancel",

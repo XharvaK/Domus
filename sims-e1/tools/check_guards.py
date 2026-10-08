@@ -41,7 +41,10 @@ E2_CONTROL_ONLY_MODULES = frozenset(("protocolbuffers", "ui.ui_dialog", "ui.ui_d
                                      "ui.ui_dialog_picker", "objects.color.object_color_dialog",
                                      "sims.sim_dialogs"))
 # 2.31.0: dialog_cancel closes the map or apartment window she may not see (e2_control only).
-E2_CONTROL_ONLY_CALLS = frozenset(("dialog_cancel",))
+# 2.31.0 (W3p): her pace. The decay-rate modifier on each motive she has (added and removed, each followed by
+# its progress message), and the clock sync after the game clock's normal speed is set. e2_control only.
+E2_CONTROL_ONLY_CALLS = frozenset(("dialog_cancel", "add_decay_rate_modifier", "remove_decay_rate_modifier",
+                                   "send_commodity_progress_msg", "_sync_clock_and_broadcast_gameclock"))
 # 2.31.0 adds dialog_text_input (every text field) and dialog_pick_result_def_ids_and_counts (counted rows).
 # 2.23.0, cmd_answer only. Reviewed path: ui/ui_dialog_service._dialog_cancel_internal
 # (Dialog_pb2.UiDialogCloseRequest, Consts_pb2.MSG_UI_DIALOG_CLOSE, Distributor.add_event
@@ -66,6 +69,8 @@ E2_CONTROL_ASSIGNABLE = frozenset((
     "distributor.system.Distributor.add_event",
     "distributor.system.Distributor.add_op",
     "distributor.system.Distributor.add_op_with_no_owner",
+    # 2.31.0 (W3p): the game clock's normal speed, asserted while she samples at a slower pace (e2_control only).
+    "clock.GameClock.NORMAL_SPEED_MULTIPLIER",
 ))
 FORBIDDEN_IMPORT_ROOTS = {
     "http", "importlib", "s4cl", "shm", "socket", "ssl", "subprocess", "urllib",
@@ -89,6 +94,9 @@ ACTUATOR_FILE = "e2_actuator.py"
 PURE_FILES = {"e2_admission.py", "e2_lineage.py", "e2_registry.py", "e2_cards.py",
               "e2_trial.py", "writer.py", "schema.py", "snapshot.py", "cmdbox.py"}
 FORBIDDEN_CALL_NAMES = FORBIDDEN_CALL_NAMES | (ACTUATOR_ONLY_CALLS - {"push_super_affordance"})
+# 2.31.0 (W3p): clear_decay_rate_modifiers sets the list to None without recalculating, so the old rate stays
+# in force; the probe removes its own modifier instead. Forbidden everywhere.
+FORBIDDEN_CALL_NAMES = FORBIDDEN_CALL_NAMES | {"clear_decay_rate_modifiers"}
 
 
 def _root(name):
@@ -220,6 +228,10 @@ def _call_target(function):
         current = current.value
     if isinstance(current, ast.Name):
         parts.append(current.id)
+        return ".".join(reversed(parts))
+    # 2.31.0 (W3p): a call on a call's result (services.game_clock_service()._sync...()) keeps its attribute
+    # names, so a forbidden or e2_control-only name cannot hide behind a call in the chain.
+    if isinstance(current, ast.Call) and parts:
         return ".".join(reversed(parts))
     return None
 

@@ -50,5 +50,28 @@ class StaticGuardTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class PaceGuardTests(unittest.TestCase):
+    """2.31.0 (W3p): the decay-rate modifier, its progress message, the clock sync and the normal-speed
+    assignment belong to e2_control alone; clear_decay_rate_modifiers is nowhere."""
+
+    def test_the_pace_calls_are_e2_control_only(self):
+        for source in ("m.add_decay_rate_modifier(0.5)\n", "m.remove_decay_rate_modifier(0.5)\n",
+                       "m.send_commodity_progress_msg()\n",
+                       "services.game_clock_service()._sync_clock_and_broadcast_gameclock()\n"):
+            with self.subTest(source=source):
+                self.assertEqual(guards.scan_text(source, "e2_control.py"), [])
+                self.assertEqual(len(guards.scan_text(source, "probe.py")), 1)
+
+    def test_the_normal_speed_assignment_is_e2_control_only(self):
+        source = "import clock as game_clock\ngame_clock.GameClock.NORMAL_SPEED_MULTIPLIER = 0.5\n"
+        self.assertEqual(guards.scan_text(source, "e2_control.py"), [])
+        self.assertEqual(len(guards.scan_text(source, "probe.py")), 1)
+
+    def test_clear_is_forbidden_in_every_file(self):
+        for name in ("e2_control.py", "probe.py", "e2_trial.py"):
+            with self.subTest(name=name):
+                self.assertTrue(guards.scan_text("m.clear_decay_rate_modifiers()\n", name))
+
+
 if __name__ == "__main__":
     unittest.main()

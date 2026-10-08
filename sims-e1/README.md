@@ -25,6 +25,10 @@ Her dialog report (schema 14) says whether she holds each window, who it belongs
 purchase counts, and for a held text window each field's length and value limits. Her answer may pick several rows,
 counted purchase rows, or text for every field; the probe checks each against the held message and refuses with a
 code, and never logs her text.
+The helper sends her pace with `pace` (`need_drain` and `slow_time`, fractions of normal pace where 1.0 is off; nothing
+applies until it does). Her motives drain at `need_drain` through the game's own decay-rate modifier while she is
+sampling, and the modifier comes off at stop; `slow_time` slows the game clock the same way, only when the clock is at
+the game's defaults. Each observation's `pace` block says what the probe applied.
 
 ## Crawl (DA6)
 
