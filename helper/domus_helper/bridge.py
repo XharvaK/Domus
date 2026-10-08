@@ -31,7 +31,7 @@ from .thalamus.percepts import Extractor
 from .thalamus.scorer import load_scorer, run_scorer
 from .thalamus.types import Context, ThalamusState
 from .transport import AshleyClient, load_credentials
-from .windows import WindowLog
+from .windows import WindowLog, withheld_of
 
 _AUTO = object()
 HEARTBEAT_EVERY_MS = 60_000
@@ -212,7 +212,8 @@ class Bridge:
         count = sum(len(item["acts"]) for item in asked)
         room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
         listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
-                             people=people_names(row), start=count, limit=max(0, room))
+                             people=people_names(row), start=count, limit=max(0, room),
+                             withheld=self._withheld_names())
         return asked + listed
 
     def status(self):
@@ -305,6 +306,9 @@ class Bridge:
             if kind == "act_event" and self._acts is not None:
                 self._acts.on_row(record)
             self._windows.on_row(record, clock_ms)
+            held = withheld_of(record)
+            if held is not None:
+                self._notebook_quietly(lambda: self.notebook.observe_withheld(held[0], held[1], clock_ms))
             if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
                 self._acts.on_sample(record)
             self.overlay.on_row(record, wall_ms)
@@ -427,6 +431,12 @@ class Bridge:
             fn()
         except (sqlite3.Error, ValueError, TypeError, KeyError, OSError):
             pass
+
+    def _withheld_names(self):
+        try:
+            return self.notebook.withheld_names()
+        except (sqlite3.Error, ValueError, TypeError, KeyError):
+            return set()
 
     def _notebook_slice(self, wall_ms):
         try:

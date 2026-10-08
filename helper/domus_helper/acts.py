@@ -212,13 +212,15 @@ def people_names(row):
     return names
 
 
+OPENS_SCREEN = "a screen only the User's hands can use"
 NO_WAY = "the game sees no way for her to get there from where she is now"
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0):
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0, withheld=()):
     """The observation's options: nearest objects first, each act with a short ref (a1, a2,
     ...) unique in this observation, its guid64 and its text. Farthest objects are left out
-    until it fits the byte budget."""
+    until it fits the byte budget. W2h: an act whose interaction the notebook has seen end on a
+    screen only the User's hands can use stays listed, marked with what it opens."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
     result = []
@@ -237,8 +239,11 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
             count += 1
-            acts.append({"ref": "a%d" % count, "guid64": str(act["guid64"]),
-                         "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))})
+            listed = {"ref": "a%d" % count, "guid64": str(act["guid64"]),
+                      "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))}
+            if act.get("name") in withheld:
+                listed["opens"] = OPENS_SCREEN
+            acts.append(listed)
         if acts:
             entry = {"object": _object_name(item, resolve, catalog, people),
                      "object_id": str(item.get("object_id")), "where": where, "acts": acts}
