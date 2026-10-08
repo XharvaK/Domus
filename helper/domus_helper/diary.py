@@ -2,7 +2,8 @@
 (`domus_helper/outcomes.py`: `acts`, `sleep_onsets`, `day_frames`, `sessions`, `read_rows`). When her body starts a
 night's sleep, the helper sends Ashley the day it recorded, once, as a compact `day` object on one observation with a
 `sleep_onset` percept. The helper never writes what the day meant; it only lists what happened.
-Covers the current play session up to the onset (v1); earlier sessions of the same day are not re-read.
+HE10: a day can span several play sessions of one world; the diary reads every session of that world and
+takes the minutes since the last onset, so the earlier part of the day is not lost.
 """
 import json
 
@@ -11,6 +12,7 @@ from .thalamus.observation import _affordance_name
 
 CHECK_EVERY_MS = 120_000
 DAY_LIMIT = 12_288
+SAVE_SCAN_ROWS = 8
 NEED_MIN = 5
 KV_LAST = "diary_last_onset"
 KV_PENDING = "diary_pending"
@@ -150,15 +152,48 @@ def day_digest(records, from_minute, to_minute):
     return digest
 
 
+def _minute_key(record):
+    minute = record["span"]["start_minute"]
+    return (minute is None, minute or 0)
+
+
 class DiaryWatch:
     def __init__(self, spool, paths, read_records=None):
         self.spool = spool
         self.paths = paths
-        self.read_records = read_records or (
-            lambda session: outcomes.acts(
-                outcomes.read_rows(outcomes.sessions(paths).get(session, [])), session))
+        self.read_records = read_records or self._world_records
         self._checked_ms = None
         self._sleeping = False
+        self._worlds = {}
+
+    def _session_world(self, session, files):
+        """HE10: the world (save slot) a session was opened in, read from its first rows."""
+        if session in self._worlds:
+            return self._worlds[session]
+        world = None
+        rows = outcomes.read_rows(files[:1])
+        try:
+            for index, row in enumerate(rows):
+                save = row.get("save") if isinstance(row, dict) else None
+                if isinstance(save, dict) and save.get("slot_id") is not None:
+                    world = "slot%s" % save["slot_id"]
+                    break
+                if index >= SAVE_SCAN_ROWS:
+                    break
+        finally:
+            rows.close()
+        if world is not None:
+            self._worlds[session] = world
+        return world
+
+    def _world_records(self, world):
+        """HE10: every session of one world, in game-minute order."""
+        records = []
+        for session, files in outcomes.sessions(self.paths).items():
+            if self._session_world(session, files) == world:
+                records.extend(outcomes.acts(outcomes.read_rows(files), session))
+        records.sort(key=_minute_key)
+        return records
 
     def _json_kv(self, key):
         raw = self.spool.get_kv(key)
@@ -184,9 +219,8 @@ class DiaryWatch:
         else:
             return None
         self._checked_ms = now_ms
-        session = row.get("telemetry_session_id")
         try:
-            records = self.read_records(session)
+            records = self.read_records(world)
         except (OSError, ValueError, KeyError):
             return None
         last_map = self._json_kv(KV_LAST)

@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from domus_helper import outcomes
 from domus_helper.contract import ContractError, validate_observation
 from domus_helper.diary import CHECK_EVERY_MS, DAY_LIMIT, KV_LAST, KV_PENDING, DiaryWatch, asleep, day_digest
 
@@ -94,9 +95,9 @@ def test_watch_writes_pending_once_per_onset():
     spool = _Kv()
     calls = {"n": 0}
 
-    def read_records(session):
+    def read_records(world):
         calls["n"] += 1
-        assert session == "sess"
+        assert world == "slot1"
         return _sleep_records()
 
     watch = DiaryWatch(spool, None, read_records)
@@ -142,6 +143,32 @@ def test_onset_confirmed_only_after_the_sleep_is_sent_on_the_first_row_after_it(
     assert pending["onset_minute"] == 400
     assert pending["day"]["to_minute"] == 400
     assert watch.pending()["onset_minute"] == 400
+
+
+def test_day_reads_every_session_of_the_world(tmp_path, monkeypatch):
+    # HE10: a day split over two sessions of one world is read whole; another world's sessions are not.
+    sessions = {}
+    for name, slot in (("a", 1), ("b", 2), ("c", 1)):
+        path = tmp_path / ("ashley_e1_%s.jsonl" % name)
+        path.write_text(json.dumps({"event_kind": "session_open", "save": {"slot_id": slot}}) + "\n",
+                        encoding="utf-8")
+        sessions[name] = [path]
+    canned = {
+        "a": [_act("cook", 100), _act("chat", 300)],
+        "b": [_act("bed_sleep", 350, minutes=40, origin="body")],
+        "c": [_act("bed_sleep", 400, minutes=40, origin="body")],
+    }
+    monkeypatch.setattr(outcomes, "sessions", lambda paths: sessions)
+    monkeypatch.setattr(outcomes, "acts", lambda rows, session=None: canned[session])
+    spool = _Kv()
+    watch = DiaryWatch(spool, None)
+    records = watch._world_records("slot1")
+    assert [record["span"]["start_minute"] for record in records] == [100, 300, 400]
+    row = _row("bed_sleep")
+    row["telemetry_session_id"] = "c"
+    pending = watch.tick(1_000, row, "slot1")
+    assert pending["onset_minute"] == 400
+    assert [item["what"] for item in pending["day"]["acts"]] == ["cook", "chat", "bed_sleep"]
 
 
 def _observation(**extra):
