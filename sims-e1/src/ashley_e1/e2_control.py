@@ -120,6 +120,10 @@ SCREEN_MESSAGE_NAMES = (
 SCREEN_OP_NAMES = frozenset(("ShowBillsPanel", "ShowSocialMediaPanel", "ShowMatchmakingDialog",
                              "ShowClubInfoUI", "ShowHorseCompetitionSelector",
                              "ShowSimCompetitionSelector"))
+# 2.31.0 (§11): the answer shapes the probe accepts. Rows per answer. A restricted field takes only letters,
+# digits and spaces, because its restricted set is a localized string the probe cannot read (a conservative rule).
+ANSWER_ROWS_LIMIT = 16
+RESTRICTED_SAFE_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ")
 # controller: the E2Control the hooks report to (None: pass through). saved: the game's originals
 # while installed. events: watched message ids; screens: id -> name; ring: the phone ring's id.
 _HOLD = {"controller": None, "saved": None, "events": frozenset(), "screens": {}, "ring": None,
@@ -144,6 +148,71 @@ def _read(read):
         return read()
     except Exception:
         return None
+
+
+def _note_window(key, **facts):
+    """2.31.0 (§11): what the observers report about one window (cause, held, text fields). Never raises."""
+    try:
+        observers.note_window(key, **facts)
+    except Exception:
+        pass
+
+
+def _read_text_fields(message):
+    """2.31.0 (§4.4, §11): the text fields of a held message (observers.read_text_inputs), or None. Never raises."""
+    try:
+        return observers.read_text_inputs(message)
+    except Exception:
+        return None
+
+
+def _window_detail(kind, key, act_id):
+    """2.31.0: a speed event's detail: the kind, the dialog id when there is one, and "act <id>" only when
+    her act opened the window (helper windows.py reads that word pair; never "act None")."""
+    words = [kind] + ([key] if key else []) + (["act %s" % act_id] if act_id else [])
+    return " ".join(words)[:schema.MAX_DETAIL_LENGTH]
+
+
+def _held_message(kind, send_args, send_kwargs):
+    """2.31.0 (§4.4): the dialog message a held window sends: the dialog_msg of a distribute_dialog send, or
+    the dialog of a phone ring. None when it cannot be read."""
+    message = (send_args[2] if len(send_args) > 2
+               else send_kwargs.get("dialog_msg" if kind == "dialog" else "msg"))
+    if kind == "ring":
+        message = _read(lambda: message.dialog)
+    return message
+
+
+def _def_id_of(dialog, option):
+    """2.31.0 (§4.3): the definition id of a purchase row (PurchasePickerRow.def_id), found by its option id."""
+    for row in _read(lambda: list(dialog.picker_rows or ())) or []:
+        if _read(lambda: str(int(row.option_id))) == option:
+            return _read(lambda: int(row.def_id))
+    return None
+
+
+def _check_text(fields, text):
+    """2.31.0 (§4.4): every field of the held message gets a value (the game's order), each within its limits.
+    Returns (refusal, [(name, value)]). Her text never goes into a refusal, only a field name."""
+    if sorted(text) != sorted(field["name"] for field in fields):
+        return ("TEXT_INVALID", None), None
+    pairs = []
+    for field in fields:
+        name, value = field["name"], text[field["name"]]
+        if field["max_length"] is None or (field["numeric"] and (field["min_value"] is None or
+                                                                 field["max_value"] is None)):
+            return ("NO_LIMIT", name), None
+        if not all(ch.isprintable() for ch in value) or not field["min_length"] <= len(value) <= field["max_length"]:
+            return ("TEXT_INVALID", name), None
+        if field["numeric"]:
+            digits = value[1:] if value.startswith("-") else value
+            if not digits or not set(digits) <= set("0123456789") or not (
+                    field["min_value"] <= int(value) <= field["max_value"]):
+                return ("TEXT_INVALID", name), None
+        if field["restricted"] and not set(value) <= RESTRICTED_SAFE_CHARS:
+            return ("TEXT_INVALID", name), None
+        pairs.append((name, value))
+    return None, pairs
 
 
 def _same_id(obj, her):
@@ -981,9 +1050,11 @@ class E2Control:
             self._say(connection, "ACT_%s %s" % (phase, code))
             return False
 
-    def _answer_check(self, dialog_id, pick):
+    def _answer_check(self, dialog_id, pick, rows=None, text=None):
         """None when her answer may be given now, else (code, detail). The dialog must be open
-        and hers (or the game's own, with no owner); a row must be one it offers, enabled."""
+        and hers (or the game's own, with no owner); a row must be one it offers, enabled.
+        2.31.0 (§4.3, §4.4): rows, counts and text are checked by _answer_plan; the bound plan
+        says what cmd_answer sends (rows, counts, text fields), None for a button."""
         if self._state() != "SAMPLING":
             return ("NOT_SAMPLING", None), None
         if self.lineage_class == e2_lineage.BODY_MISMATCH:
@@ -1012,22 +1083,88 @@ class E2Control:
             interactions = []
         if self._identity_window(dialog, str(sim_info.id), interactions, []):
             return ("IDENTITY_USER", None), None
+        if rows is not None or text is not None:
+            refusal, plan = self._answer_plan(dialog, dialog_id, pick, rows, text)
+            if refusal is not None:
+                return refusal, None
+            return None, (service, dialog, plan, observers.RESPONSE_IDS["ok"])
         if pick.isdigit():
-            rows = [row for row in observers._dialog_rows(dialog) if row["option_id"] == pick]
-            if not rows:
+            offered_rows = [row for row in observers._dialog_rows(dialog) if row["option_id"] == pick]
+            if not offered_rows:
                 return ("NO_ROW", None), None
-            if not rows[0]["enabled"]:
+            if not offered_rows[0]["enabled"]:
                 return ("ROW_DISABLED", None), None
-            return None, (service, dialog, int(pick), observers.RESPONSE_IDS["ok"])
+            return None, (service, dialog, {"rows": [int(pick)], "counts": None, "text": None},
+                          observers.RESPONSE_IDS["ok"])
         response = observers.RESPONSE_IDS.get(pick)
         offered = [item["response"] for item in observers._dialog_responses(dialog)]
         if response is None or (pick not in offered and pick not in ("ok", "cancel")):
             return ("NO_RESPONSE", pick), None
         return None, (service, dialog, None, response)
 
-    def cmd_answer(self, act_id, dialog_id, pick, connection):
+    def _answer_plan(self, dialog, dialog_id, pick, rows, text):
+        """2.31.0 (§4.3, §4.4, §11): her rows, counts and text, checked against the live dialog and, for
+        text, the held message. Returns (refusal, plan); plan has "rows", "counts" and "text" (None each
+        when absent)."""
+        if pick != "ok":
+            return ("NO_RESPONSE", pick), None
+        plan = {"rows": None, "counts": None, "text": None}
+        if rows is not None:
+            refusal, found = self._check_rows(dialog, rows)
+            if refusal is not None:
+                return refusal, None
+            plan.update(found)
+        if text is not None:
+            item = self.held.get(str(int(dialog_id)))
+            fields = None
+            if item is not None:
+                fields = _read_text_fields(_held_message(item["kind"], item["send"][1], item["send"][2]))
+            if not fields:
+                return ("TEXT_NOT_HELD", None), None
+            refusal, pairs = _check_text(fields, text)
+            if refusal is not None:
+                return refusal, None
+            plan["text"] = pairs
+        return None, plan
+
+    def _check_rows(self, dialog, rows):
+        """2.31.0 (§4.3): each row is one the dialog offers and enables, the count is within its select, and
+        for a purchase picker each count is within its caps (a count of 1 is the only count elsewhere).
+        Returns (refusal, {"rows": [ids]} or {"counts": (def ids, object ids, counts)})."""
+        select = observers.select_of(dialog)
+        if select is None:
+            return ("NO_ROW", None), None
+        offered = dict((item["option_id"], item) for item in observers._dialog_rows(dialog))
+        options = [row["option_id"] for row in rows]
+        if len(set(options)) != len(options) or any(option not in offered for option in options):
+            return ("NO_ROW", None), None
+        if any(not offered[option]["enabled"] for option in options):
+            return ("ROW_DISABLED", None), None
+        high = select["max"] or ANSWER_ROWS_LIMIT
+        if not max(select["min"], 1) <= len(rows) <= min(high, ANSWER_ROWS_LIMIT):
+            return ("ROW_COUNT", None), None
+        counts = observers.counts_of(dialog)
+        if counts is None:
+            if any(row["count"] != 1 for row in rows):
+                return ("COUNT_INVALID", None), None
+            return None, {"rows": [int(option) for option in options]}
+        if counts["max_rows"] and len(rows) > counts["max_rows"]:
+            return ("COUNT_INVALID", None), None
+        if any(counts["max_in_row"] and row["count"] > counts["max_in_row"] for row in rows):
+            return ("COUNT_INVALID", None), None
+        def_ids = [_def_id_of(dialog, option) for option in options]
+        if any(def_id is None for def_id in def_ids):
+            return ("NO_ROW", None), None
+        # ASSUMPTION (not read from bytecode, confirm live): a purchase row has no object yet, so its
+        # object id is sent as 0; pick_definitions_ids_and_counts only checks the three lists' lengths.
+        return None, {"counts": (def_ids, [0] * len(rows), [row["count"] for row in rows])}
+
+    def cmd_answer(self, act_id, dialog_id, pick, connection, rows=None, text=None):
         """2.18.0: answer a game dialog as she chose, the way the client does: pick the row
-        (dialog_pick_result), then respond (dialog_respond). Once per act id."""
+        (dialog_pick_result), then respond (dialog_respond). Once per act id.
+        2.31.0 (§4.3, §4.4): rows (several, or counted for a purchase picker) and text fields are sent
+        first, in the client's order (every text field, the rows, then dialog_respond). Her text is never
+        logged: the act records only how many rows and fields she answered."""
         if act_id in self.act_ids:
             self._say(connection, "ACT_REJECT DUPLICATE")
             return False
@@ -1039,21 +1176,30 @@ class E2Control:
             return False
         accepted = False
         try:
-            refusal, bound = self._answer_check(dialog_id, pick)
+            refusal, bound = self._answer_check(dialog_id, pick, rows, text)
             if refusal is not None:
                 code, detail = refusal
                 self._act_event(act_id, "REJECTED", code=code,
                                 detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH], **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
-            service, dialog, row, response = bound
+            service, dialog, plan, response = bound
             kind = _tuning_name(dialog)
             # 2.27.0: a held window was never on the User's screen; it is hers alone now.
             held = self.held.pop(str(int(dialog_id)), None) is not None
+            _note_window(str(int(dialog_id)), held=False)
             self._act_event(act_id, "ACCEPTED", tuning_name=kind, **base)
             accepted = True
-            if row is not None:
-                service.dialog_pick_result(int(dialog_id), [row])
+            if plan is not None:
+                # 2.31.0 (§3.3): every text field, then the rows, then the response (the client's order).
+                for name, value in plan["text"] or []:
+                    service.dialog_text_input(int(dialog_id), name, value)
+                if plan["counts"] is not None:
+                    def_ids, object_ids, counts = plan["counts"]
+                    service.dialog_pick_result_def_ids_and_counts(
+                        int(dialog_id), def_ids, object_ids, counts, False)
+                elif plan["rows"]:
+                    service.dialog_pick_result(int(dialog_id), plan["rows"])
             service.dialog_respond(int(dialog_id), response)
             # 2.23.0: dialog_respond already accepted. Closing the window and lifting the
             # pause are separate; a failure of either never turns the answer into a rejection.
@@ -1113,8 +1259,17 @@ class E2Control:
             except Exception:
                 resumed = "failed"
             _send_queued_events()
+            # 2.31.0: an answer in the new shapes says how many rows and text fields she gave (counts only, never
+            # her text). A single row or a button keeps the detail it always had.
+            tokens = ["held"] if held else []
+            if rows is not None or text is not None:
+                shape = plan or {}
+                tokens += (["counts %d" % len(shape["counts"][0])] if shape.get("counts") is not None else
+                           (["rows %d" % len(shape["rows"])] if shape.get("rows") else []))
+                tokens += ["text %d" % len(shape["text"])] if shape.get("text") else []
             self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED",
-                            closed=closed, resumed=resumed, detail="held" if held else None, **base)
+                            closed=closed, resumed=resumed,
+                            detail=" ".join(tokens)[:schema.MAX_DETAIL_LENGTH] or None, **base)
             self._say(connection, "ACT_ANSWERED %s" % act_id)
             return True
         except Exception as error:
@@ -1294,10 +1449,11 @@ class E2Control:
         name = type(dialog).__name__
         key = str(int(dialog.dialog_id))
         if who == "identity_user":
-            self._speed_event("DIALOG_SHOWN", code="IDENTITY_USER",
-                              detail=("%s %s" % (kind, key))[:schema.MAX_DETAIL_LENGTH])
+            _note_window(key, cause="identity_user", held=False)
+            self._speed_event("DIALOG_SHOWN", code="IDENTITY_USER", detail=_window_detail(kind, key, None))
             return False
         if who != "hers":
+            _note_window(key, cause="user", held=False)
             return False
         names = _class_names(dialog)
         if names & WITHHELD_DIALOG_CLASSES:
@@ -1306,12 +1462,16 @@ class E2Control:
             return True
         act_id = None if act is None else act["act_id"]
         if names & NOT_ANSWERABLE_CLASSES:
+            _note_window(key, cause="hers", held=False)
             self._speed_event("DIALOG_SHOWN", code=("NOT_ANSWERABLE:%s" % name)[:schema.MAX_DETAIL_LENGTH],
-                              detail=("%s %s act %s" % (kind, key, act_id))[:schema.MAX_DETAIL_LENGTH])
+                              detail=_window_detail(kind, key, act_id))
             return False
         self.held[key] = {"act_id": act_id, "at": time.monotonic(), "kind": kind,
                           "send": (original, send_args, send_kwargs)}
-        self._speed_event("DIALOG_HELD", detail=("%s %s act %s" % (kind, key, act_id))[:schema.MAX_DETAIL_LENGTH])
+        # 2.31.0 (§11): the held message's text fields are read now, while the message is in hand.
+        _note_window(key, cause="hers", held=True,
+                     text_inputs=_read_text_fields(_held_message(kind, send_args, send_kwargs)))
+        self._speed_event("DIALOG_HELD", detail=_window_detail(kind, key, act_id))
         self._arm_watchdog()
         return True
 
@@ -1335,7 +1495,7 @@ class E2Control:
                             **act["base"])
         act_id = None if act is None else act["act_id"]
         self._speed_event("SCREEN_WITHHELD", code=name[:schema.MAX_DETAIL_LENGTH],
-                          detail=("%s act %s" % (kind, act_id))[:schema.MAX_DETAIL_LENGTH])
+                          detail=_window_detail(kind, "", act_id))
 
     def _window_owner(self, dialog):
         """§4.1 and Q3: (who, act), who "hers", "user" or "identity_user"; act is her pushed act's
@@ -1469,6 +1629,7 @@ class E2Control:
                 if not everything and now - item["at"] < PICKER_HOLD_S:
                     continue
                 del self.held[key]
+                _note_window(key, held=False)
                 function, args, kwargs = item["send"]
                 try:
                     function(*args, **kwargs)
@@ -1477,8 +1638,7 @@ class E2Control:
                 except Exception as error:
                     shown = ("FAILED:%s" % type(error).__name__)[:64]
                 self._speed_event("DIALOG_SHOWN", code=shown,
-                                  detail=("%s %s act %s" % (item["kind"], key, item["act_id"]))[
-                                      :schema.MAX_DETAIL_LENGTH])
+                                  detail=_window_detail(item["kind"], key, item["act_id"]))
         if not self.held:
             self._cancel_watchdog()
 

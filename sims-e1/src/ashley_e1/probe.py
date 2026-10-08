@@ -691,7 +691,8 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_e2_act(args['act_id'], args['object_id'], args['guid64'],
                                 _session_id=connection, owner=args.get('owner') is True)
     if name == 'answer':
-        return _E2.cmd_answer(args['act_id'], args['dialog_id'], args['pick'], connection)
+        return _E2.cmd_answer(args['act_id'], args['dialog_id'], args['pick'], connection,
+                              rows=args.get('rows'), text=args.get('text'))
     if name == 'cancel':
         return _E2.cmd_cancel(args['act_id'], args['interaction_id'], connection)
     if name == 'camera':

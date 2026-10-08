@@ -42,13 +42,15 @@ E2_CONTROL_ONLY_MODULES = frozenset(("protocolbuffers", "ui.ui_dialog", "ui.ui_d
                                      "sims.sim_dialogs"))
 # 2.31.0: dialog_cancel closes the map or apartment window she may not see (e2_control only).
 E2_CONTROL_ONLY_CALLS = frozenset(("dialog_cancel",))
+# 2.31.0 adds dialog_text_input (every text field) and dialog_pick_result_def_ids_and_counts (counted rows).
 # 2.23.0, cmd_answer only. Reviewed path: ui/ui_dialog_service._dialog_cancel_internal
 # (Dialog_pb2.UiDialogCloseRequest, Consts_pb2.MSG_UI_DIALOG_CLOSE, Distributor.add_event
 # with immediate=True). The dialog pause is released by clock.GameClock.pop_speed of the
 # UI_MODAL PAUSED request, the same release as server_commands/clock_commands.unrequest_pause.
 # If that request is absent, clock.GameClock.set_clock_speed, which is what
 # server_commands/clock_commands.set_speed calls.
-ANSWER_ONLY_CALLS = {"UiDialogCloseRequest", "add_event", "pop_speed", "set_clock_speed"}
+ANSWER_ONLY_CALLS = {"UiDialogCloseRequest", "add_event", "pop_speed", "set_clock_speed",
+                      "dialog_text_input", "dialog_pick_result_def_ids_and_counts"}
 ANSWER_ONLY_FILE = "e2_control.py"
 ANSWER_ONLY_FUNC = "cmd_answer"
 # 2.27.0: the first game attribute the probe replaced (e2_control's picker hold, now _install_holds).

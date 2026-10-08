@@ -9,11 +9,28 @@ CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
 KEYS = {'v', 'id', 'issued_at_ms', 'expires_at_ms', 'issuer', 'command', 'args'}
+# 2.31.0 (DOMUS_DEEP_DESIGN §11): the answer's arguments; rows and text are optional extras.
+ANSWER_KEYS = {'act_id', 'dialog_id', 'pick', 'rows', 'text'}
+FIELD_NAME_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-'
 
 
 def _digits(value):
     return (type(value) is str and 1 <= len(value) <= 20 and
             all(ch in '0123456789' for ch in value))
+
+
+def _answer_rows(rows):
+    """2.31.0: 1..16 picked rows, each {option_id: digits, count: 1..99}."""
+    return (type(rows) is list and 1 <= len(rows) <= 16 and all(
+        type(row) is dict and set(row) == {'option_id', 'count'} and _digits(row['option_id']) and
+        type(row['count']) is int and 1 <= row['count'] <= 99 for row in rows))
+
+
+def _answer_text(text):
+    """2.31.0: 1..8 text fields, each name 1..32 of [A-Za-z0-9_.-] and a value of at most 256 characters."""
+    return (type(text) is dict and 1 <= len(text) <= 8 and all(
+        type(name) is str and 1 <= len(name) <= 32 and all(ch in FIELD_NAME_CHARS for ch in name) and
+        type(value) is str and len(value) <= 256 for name, value in text.items()))
 
 
 def valid_hex(value, length):
@@ -91,11 +108,16 @@ def parse(raw_bytes, now_ms, used_ids):
                 _digits(args.get('guid64')) and ('owner' not in args or args['owner'] is True))
     elif good and name == 'answer':
         # 2.18.0: her answer to a game dialog: a picker row (digits) or a button by name.
+        # 2.31.0: optional rows (several picked rows, each with its count) and text (one value per
+        # field); with either, pick is ok.
         pick = args.get('pick')
-        good = (set(args) == {'act_id', 'dialog_id', 'pick'} and valid_hex(args.get('act_id'), 32) and
-                _digits(args.get('dialog_id')) and (_digits(pick) or (
+        good = (set(args) <= ANSWER_KEYS and {'act_id', 'dialog_id', 'pick'} <= set(args) and
+                valid_hex(args.get('act_id'), 32) and _digits(args.get('dialog_id')) and (_digits(pick) or (
                     type(pick) is str and 1 <= len(pick) <= 16 and
-                    all(ch in 'abcdefghijklmnopqrstuvwxyz_0123456789' for ch in pick))))
+                    all(ch in 'abcdefghijklmnopqrstuvwxyz_0123456789' for ch in pick))) and
+                (set(args) == {'act_id', 'dialog_id', 'pick'} or (
+                    pick == 'ok' and ('rows' not in args or _answer_rows(args['rows'])) and
+                    ('text' not in args or _answer_text(args['text'])))))
     elif good and name == 'cancel':
         # 2.20.0: she stops one of her own actions, as the client's X on her queue does.
         good = (set(args) == {'act_id', 'interaction_id'} and valid_hex(args.get('act_id'), 32) and

@@ -1165,6 +1165,108 @@ def _dialog_responses(dialog):
     return found
 
 
+# 2.31.0 (DOMUS_DEEP_DESIGN §11): how each window was attributed and sent, by dialog id key:
+# {"held", "cause", "text_inputs"}. e2_control writes it through note_window / forget_window (it imports
+# observers, never the reverse); read_dialogs only reads it, and drops the entries of dialogs that are gone.
+WINDOWS_KEPT = 32
+_WINDOWS = {}
+
+
+def note_window(key, **facts):
+    """2.31.0: facts about one window for the next sample. Bounded: the oldest entry goes first."""
+    entry = _WINDOWS.get(key)
+    if entry is None:
+        if len(_WINDOWS) >= WINDOWS_KEPT:
+            del _WINDOWS[next(iter(_WINDOWS))]
+        entry = _WINDOWS[key] = {}
+    entry.update(facts)
+
+
+def forget_window(key):
+    _WINDOWS.pop(key, None)
+
+
+def _value(read):
+    """2.31.0: one plain attribute read (a lambda, so no name-based lookup) that never raises; None when it
+    cannot be read."""
+    try:
+        return read()
+    except Exception:
+        return None
+
+
+def _clamp(value, high):
+    """2.31.0: a count the schema can carry (0 .. high); 0 keeps the game's no-limit meaning."""
+    return min(max(value, 0), high)
+
+
+def _optional_int(message, name, read):
+    """2.31.0: a set integer field of a protobuf message, else None. HasField(name) says whether it is set;
+    read is the plain attribute read of the same field."""
+    try:
+        if not message.HasField(name):
+            return None
+    except Exception:
+        # A field the message cannot say is set or not: a value above zero counts as set.
+        value = _value(read)
+        return value if type(value) is int and value > 0 else None
+    value = _value(read)
+    return value if type(value) is int else None
+
+
+def read_text_inputs(message):
+    """2.31.0 (DOMUS_DEEP_DESIGN §4.4, §11): the text fields of a held dialog message, one per field the
+    game built (UiDialogMessage.text_input; bytecode ui/ui_text_input.UiTextInput.build_msg): the field
+    name, its length and value limits, whether the game checks profanity, whether a restricted-character
+    set exists, and the string key of the default text. Numbers and flags only, never the text. None when
+    the message has no text field, or a field name is one the probe cannot name."""
+    try:
+        fields = list(message.text_input)
+    except Exception:
+        return None
+    if not fields:
+        return None
+    found = []
+    for field in fields[:schema.MAX_TEXT_INPUTS]:
+        name = _value(lambda: field.text_input_name)
+        if type(name) is not str or not 1 <= len(name) <= 32 or not set(name) <= schema.FIELD_NAME_CHARS:
+            return None
+        min_value = _optional_int(field, "min_value", lambda: field.min_value)
+        max_value = _optional_int(field, "max_value", lambda: field.max_value)
+        min_length = _optional_int(field, "min_length", lambda: field.min_length)
+        found.append({
+            "name": name, "min_length": 0 if min_length is None else min_length,
+            "max_length": _optional_int(field, "max_length", lambda: field.max_length),
+            "numeric": min_value is not None or max_value is not None,
+            "min_value": min_value, "max_value": max_value,
+            "profanity_checked": _value(lambda: field.check_profanity) is True,
+            "restricted": _string_key(_value(lambda: field.restricted_characters)) is not None,
+            "default_key": _string_key(_value(lambda: field.default_text))})
+    return found
+
+
+def select_of(dialog):
+    """2.31.0 (§11): a picker's selectable rows, from its own attributes (bytecode
+    ui/ui_dialog_picker.UiDialogObjectPicker.multi_select reads min_selectable and max_selectable_num).
+    None for a window that is not a picker. A max of 0 is the no-limit value multi_select tests for."""
+    low = _value(lambda: dialog.min_selectable)
+    high = _value(lambda: dialog.max_selectable_num)
+    if type(low) is not int or type(high) is not int:
+        return None
+    return {"min": _clamp(low, schema.MAX_DIALOG_ROWS), "max": _clamp(high, schema.MAX_DIALOG_ROWS)}
+
+
+def counts_of(dialog):
+    """2.31.0 (§11): a purchase picker's counted caps (bytecode ui/ui_dialog_picker.UiPurchasePicker.__init__
+    stores max_selectable_in_row and max_selectable_rows). None for a window without them."""
+    in_row = _value(lambda: dialog.max_selectable_in_row)
+    rows = _value(lambda: dialog.max_selectable_rows)
+    if type(in_row) is not int or type(rows) is not int:
+        return None
+    return {"max_in_row": _clamp(in_row, schema.MAX_WINDOW_COUNT),
+            "max_rows": _clamp(rows, schema.MAX_WINDOW_COUNT)}
+
+
 def _describe_dialog(dialog_id, dialog, auto):
     try:
         key = str(schema.string_id(int(dialog_id), "dialog_id"))
@@ -1188,6 +1290,13 @@ def _describe_dialog(dialog_id, dialog, auto):
             entry[field] = None
     entry["responses"] = _dialog_responses(dialog)
     entry["rows"] = _dialog_rows(dialog)
+    entry["select"] = select_of(dialog)
+    entry["counts"] = counts_of(dialog)
+    # 2.31.0 (§11): who holds the window, and its text fields only while she holds it.
+    facts = _WINDOWS.get(key, {})
+    entry["held"] = facts.get("held") is True
+    entry["cause"] = facts.get("cause")
+    entry["text_inputs"] = facts.get("text_inputs") if entry["held"] else None
     return entry
 
 
@@ -1267,6 +1376,8 @@ def read_dialogs():
                        "title_key": entry["title_key"], "text_key": entry["text_key"],
                        "response": response})
     _DIALOGS_OPEN = current
+    for stale in [key for key in _WINDOWS if key not in current]:
+        del _WINDOWS[stale]
     _remember_dialog_speeds(set(current))
     opened = [entry for _, entry in current.values()]
     truncated = (len(opened) > schema.MAX_DIALOGS or len(closed) > schema.MAX_DIALOGS)

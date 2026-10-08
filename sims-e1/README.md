@@ -21,6 +21,10 @@ her; the User sees it only after 180 s unanswered, and a late answer is then ref
 (colour, composite, map, apartment) is shown to the User at once. A window that renames her Sim or changes its traits
 is always the User's. A client screen her act opens (the event planner, the family tree, the bills panel) is
 withheld and her act records it. Other people's windows are untouched.
+Her dialog report (schema 14) says whether she holds each window, who it belongs to, how many rows she may pick, the
+purchase counts, and for a held text window each field's length and value limits. Her answer may pick several rows,
+counted purchase rows, or text for every field; the probe checks each against the held message and refuses with a
+code, and never logs her text.
 
 ## Crawl (DA6)
 
