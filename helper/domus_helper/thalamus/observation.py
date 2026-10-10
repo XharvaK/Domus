@@ -410,7 +410,8 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
                  "room": zone.get("room")},
         "time": game_time(game.get("calendar")),
         "clock_speed": game.get("clock_speed"),
-        "paused": game.get("paused") is True,
+        # 2.32.0 (PR10): build or buy mode is its own state; the game holds the clock paused in it.
+        "paused": game.get("paused") is True and game.get("build_mode") is not True,
         "mood": mood.get("name") if isinstance(mood, dict) else None,
         "moodlets": moodlets[:8],
         "company": company[:7],
@@ -418,6 +419,19 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         # W2h: what happened to windows that were or became not hers (newest last, 4 at most).
         "windows": [dict(item) for item in windows or [] if isinstance(item, dict)][-WINDOWS_SHOWN:],
     }
+    objects = row.get("objects")
+    if isinstance(objects, dict) and isinstance(objects.get("near_conditions"), list):
+        # 2.32.0 (HE7): what is wrong with the things near her (spoiled, dirty, broken), in the game's words.
+        portrait["near_conditions"] = [
+            {"object": humanize(item.get("class")),
+             "states": [humanize(state.get("value")) for state in item.get("states") or []
+                        if isinstance(state, dict)]}
+            for item in objects["near_conditions"][:8] if isinstance(item, dict)]
+    if game.get("build_mode") is True:
+        portrait["building"] = True
+    if game.get("fire") is True:
+        # 2.32.0 (PR11): a fire is burning on the lot (near her is not read: the game's fire position is unknown).
+        portrait["fire_on_lot"] = True
     if (row.get("body") or {}).get("is_selected") is False:
         # 2.32.0 (PR6): the User is playing another Sim of the household; her acts are refused meanwhile.
         portrait["user_plays_another"] = True

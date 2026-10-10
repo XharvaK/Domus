@@ -181,6 +181,9 @@ COMMON_KEYS = {
     "pace",
 }
 MAX_OBJECT_EVENTS = 8
+# 2.32.0 (HE7, schema 15): the notable states of one near object, and the near objects a sample names.
+MAX_NEAR_STATES = 4
+MAX_NEAR_CONDITIONS = 16
 MAX_REL_TRACKS = 4
 MAX_REL_LABELS = 6
 MAX_KNOWN_TRAITS = 6
@@ -319,7 +322,8 @@ def attestation(armed_name="UNARMED", armed_name_hash=None, snapshot_guid=None,
 
 
 def _default_game():
-    return {"ticks": None, "calendar": None, "clock_speed": None, "paused": None}
+    return {"ticks": None, "calendar": None, "clock_speed": None, "paused": None,
+            "build_mode": None, "fire": None}
 
 
 def _default_save():
@@ -1068,10 +1072,14 @@ def _validate_objects(row):
     value = row["objects"]
     if value is None:
         return
-    _require(isinstance(value, dict) and set(value) ==
-             {"baseline", "created", "destroyed", "changed", "truncated"}, "objects shape")
+    keys = {"baseline", "created", "destroyed", "changed", "truncated"}
+    if row["schema_version"] >= 15:
+        keys = keys | {"near_conditions"}
+    _require(isinstance(value, dict) and set(value) == keys, "objects shape")
     _require(type(value["baseline"]) is bool and type(value["truncated"]) is bool,
              "objects flags")
+    if "near_conditions" in value:
+        _validate_near_conditions(value["near_conditions"])
     shapes = {"created": {"object_id", "class", "definition_id"},
               "destroyed": {"object_id", "class"},
               "changed": {"object_id", "class", "state", "from", "to"}}
@@ -1087,6 +1095,23 @@ def _validate_objects(row):
             for text in ("class", "state", "from", "to"):
                 if item.get(text) is not None:
                     bounded_string(item[text], 128, "objects.%s" % text, False)
+
+
+def _validate_near_conditions(value):
+    """2.32.0 (HE7): each near object names its notable states (state and value, the game's own names)."""
+    _require(isinstance(value, list) and len(value) <= MAX_NEAR_CONDITIONS, "objects.near_conditions")
+    for item in value:
+        _require(isinstance(item, dict) and set(item) == {"object_id", "class", "states"},
+                 "objects.near_conditions entry")
+        string_id(item["object_id"], "objects.near_conditions.object_id")
+        bounded_string(item["class"], 128, "objects.near_conditions.class")
+        _require(isinstance(item["states"], list) and 1 <= len(item["states"]) <= MAX_NEAR_STATES,
+                 "objects.near_conditions.states")
+        for state in item["states"]:
+            _require(isinstance(state, dict) and set(state) == {"state", "value"},
+                     "objects.near_conditions.state entry")
+            bounded_string(state["state"], 128, "objects.near_conditions.state", False)
+            bounded_string(state["value"], 128, "objects.near_conditions.value", False)
 
 
 def _validate_presence(value, version=5):
@@ -1321,8 +1346,13 @@ def _validate_common(row):
     bounded_string(row.get("probe_version"), MAX_ID_LENGTH, "probe_version", False)
     bounded_string(row.get("sims_build"), MAX_ID_LENGTH, "sims_build", False)
     game = row.get("game")
+    # 2.32.0 (PR10, PR11, schema 15): build mode and a fire on the lot, each a bool or None.
     _require(isinstance(game, dict) and set(game) ==
-             {"ticks", "calendar", "clock_speed", "paused"}, "game")
+             {"ticks", "calendar", "clock_speed", "paused"} | (
+                 {"build_mode", "fire"} if row["schema_version"] >= 15 else set()), "game")
+    for field in ("build_mode", "fire"):
+        if game.get(field) is not None:
+            _require(type(game[field]) is bool, "game.%s" % field)
     if game["ticks"] is not None:
         _require(type(game["ticks"]) is int, "game.ticks")
     for field in ("calendar", "clock_speed"):

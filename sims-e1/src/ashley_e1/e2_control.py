@@ -1075,6 +1075,11 @@ class E2Control:
             return ("NOT_USER_DIRECTED", None), None
         ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context)
         if not ok:
+            # 2.32.0 (PR10, PR11): a refusal during a fire, or in build mode, is named as such.
+            if observers.fire_active() is True:
+                return ("FIRE_REFUSED", reason, reason_key), None
+            if observers.build_mode() is True:
+                return ("BUILD_MODE_REFUSED", reason, reason_key), None
             return ("GAME_REFUSED", reason, reason_key), None
         return None, (sim, obj, affordance, context)
 

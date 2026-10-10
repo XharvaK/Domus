@@ -53,6 +53,8 @@ def test_schema_13_observation_row_without_window_or_pace_still_passes(paths):
         dialog_id="1001", kind="PICKER", owner_id=None, title_key="0x1", text_key=None,
         responses=[], auto_respond=False, rows=[])], closed=[], truncated=False))
     row["schema_version"] = 13
+    # 2.32.0 (PR10, PR11): build_mode and fire are schema 15 fields of the game block.
+    row["game"] = {key: value for key, value in row["game"].items() if key not in ("build_mode", "fire")}
     path = session_file(paths, [opened(), row])
     assert len(list(telemetry.file_rows(path))) == 2
 

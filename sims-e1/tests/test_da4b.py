@@ -121,7 +121,9 @@ class SchemaDualTests(unittest.TestCase):
     def test_schema_4_and_5_validate_and_actor_id_is_required(self):
         current = self._base()
         self.schema.validate_row(current)
-        legacy = dict(current, schema_version=4)
+        # 2.32.0 (PR10, PR11): the game block of schema 15 has build_mode and fire; older rows never had them.
+        before_15 = {key: value for key, value in current["game"].items() if key not in ("build_mode", "fire")}
+        legacy = dict(current, schema_version=4, game=before_15)
         self.schema.validate_row(legacy)
         entry = _social_entry()
         with_actor = self._base()
@@ -133,7 +135,7 @@ class SchemaDualTests(unittest.TestCase):
             "native_override": None, "text_key": "123", "mood_type": "Mood_Sad",
             "visible": True, "reason_key": None, "minutes_left": None}]
         self.schema.validate_row(with_actor)
-        five = dict(current, schema_version=5)
+        five = dict(current, schema_version=5, game=before_15)
         self.schema.validate_row(five)
         missing = self._base()
         bare = dict(entry)

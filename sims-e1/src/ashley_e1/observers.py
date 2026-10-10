@@ -121,6 +121,25 @@ def _saved_world_ticks():
         return None
 
 
+def build_mode():
+    """2.32.0 (PR10): the zone is in build or buy mode (the game holds the clock paused then, and locks objects);
+    None when unreadable."""
+    try:
+        value = services.current_zone().is_in_build_buy
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
+def fire_active():
+    """2.32.0 (PR11): a fire is burning on the lot (FireService.fire_is_active); None when unreadable."""
+    try:
+        value = services.get_fire_service().fire_is_active()
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
 def _game_snapshot():
     time_service = services.time_service()
     sim_now = time_service.sim_now
@@ -132,7 +151,8 @@ def _game_snapshot():
     except AttributeError:
         pass
     return {"ticks": int(ticks), "calendar": str(sim_now),
-            "clock_speed": str(speed), "paused": speed == "PAUSED"}
+            "clock_speed": str(speed), "paused": speed == "PAUSED",
+            "build_mode": build_mode(), "fire": fire_active()}
 
 
 def _posture_snapshot(sim):
@@ -1982,6 +2002,34 @@ def _object_states(obj):
     return found
 
 
+# 2.32.0 (HE7): the game's state values worth a line in her portrait (the last word of the value's name), and the
+# words that negate them ("FireState_..._Not_Burning" is not burning). The helper's scene.NOTABLE, read the same way.
+NOTABLE_STATE_WORDS = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed", "Flooded", "Smelly")
+NEGATION_WORDS = ("Not", "No", "Non")
+
+
+def _notable_state(value):
+    if not isinstance(value, str):
+        return False
+    words = [word for word in value.replace(" ", "_").split("_") if word]
+    if not words or words[-1] not in NOTABLE_STATE_WORDS:
+        return False
+    return not any(word in NEGATION_WORDS for word in words)
+
+
+def _near_conditions(current, near_order, states):
+    """2.32.0 (HE7): the notable states of the 16 nearest objects (any distance), each sample: compact, only the
+    objects with a notable state. states: object id -> {state: value}, read for these objects."""
+    found = []
+    for plain in near_order[:NEAR_STATE_MAX]:
+        notable = [{"state": state, "value": value} for state, value in sorted(states[plain].items())
+                   if _notable_state(value)]
+        if notable:
+            found.append({"object_id": plain, "class": _object_class(current[plain]),
+                          "states": notable[:schema.MAX_NEAR_STATES]})
+    return found
+
+
 def read_object_events(zone_id, body_position, wall_ms):
     """Objects created and destroyed on the lot since the previous sample, and state
     changes of the objects within NEAR_STATE_METERS of her (nearest first). Plain
@@ -2001,18 +2049,27 @@ def read_object_events(zone_id, body_position, wall_ms):
         if plain is not None:
             current[plain] = obj
     near = []
+    by_distance = []
     for plain, obj in current.items():
         distance = _distance(_position(obj), body_position)
         if distance is not None and distance <= NEAR_STATE_METERS:
             near.append((distance, plain))
+        if distance is not None:
+            by_distance.append((distance, plain))
     near.sort()
+    by_distance.sort()
+    nearest_ids = [plain for _, plain in by_distance[:NEAR_STATE_MAX]]
     near_states = {plain: _object_states(current[plain]) for _, plain in near[:NEAR_STATE_MAX]}
+    # 2.32.0 (HE7): the 16 nearest objects' states are read each sample, for the notable conditions.
+    condition_states = {plain: (near_states[plain] if plain in near_states else _object_states(current[plain]))
+                        for plain in nearest_ids}
+    conditions = _near_conditions(current, nearest_ids, condition_states)
     classes = {plain: _object_class(obj) for plain, obj in current.items()}
     previous = _OBJECTS_PREV
     baseline = (previous["classes"] is None or previous["zone"] != zone_id or
                 previous["wall_ms"] is None or wall_ms - previous["wall_ms"] > OBJECT_BASELINE_GAP_MS)
     events = {"baseline": baseline, "created": [], "destroyed": [], "changed": [],
-              "truncated": False}
+              "truncated": False, "near_conditions": conditions}
     if not baseline:
         created = sorted(set(classes) - set(previous["classes"]))
         destroyed = sorted(set(previous["classes"]) - set(classes))

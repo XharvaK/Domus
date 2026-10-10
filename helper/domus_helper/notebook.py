@@ -37,7 +37,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   world TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('object_room', 'lives_here')),
+  kind TEXT NOT NULL CHECK (kind IN ('object_room', 'lives_here', 'object_condition')),
   subject TEXT NOT NULL,
   value TEXT NOT NULL,
   label TEXT,
@@ -68,6 +68,25 @@ CREATE TABLE IF NOT EXISTS procedures (
 _MIGRATIONS = (
     ("procedures", "first_ms", "ALTER TABLE procedures ADD COLUMN first_ms INTEGER"),
 )
+# 2.32.0 (HE7): a notebook made before the object_condition kind gets its facts table rebuilt (SQLite cannot
+# widen a CHECK in place). The rows keep their ids and their open and closed facts.
+_CONDITION_KIND = "object_condition"
+_FACTS_COLUMNS = ("id, world, kind, subject, value, label, valid_from_ms, valid_until_ms, seen_ms")
+_FACTS_TABLE = """CREATE TABLE facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  world TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('object_room', 'lives_here', 'object_condition')),
+  subject TEXT NOT NULL,
+  value TEXT NOT NULL,
+  label TEXT,
+  valid_from_ms INTEGER NOT NULL,
+  valid_until_ms INTEGER,
+  seen_ms INTEGER NOT NULL
+)"""
+_FACTS_OPEN = ("CREATE UNIQUE INDEX IF NOT EXISTS facts_open ON facts (world, kind, subject)"
+               " WHERE valid_until_ms IS NULL")
+# An object_condition fact closes when its object has not been named as notable for this long (wall ms).
+CONDITION_STALE_MS = 600_000
 
 
 class Notebook:
@@ -85,6 +104,16 @@ class Notebook:
                 with self._con:
                     self._con.execute(statement)
                     self._con.execute("UPDATE %s SET first_ms = updated_ms WHERE first_ms IS NULL" % table)
+        ddl = self._con.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'facts'").fetchone()
+        if ddl is not None and _CONDITION_KIND not in (ddl["sql"] or ""):
+            with self._con:
+                self._con.execute("ALTER TABLE facts RENAME TO facts_before_condition")
+                self._con.execute("DROP INDEX IF EXISTS facts_open")
+                self._con.execute(_FACTS_TABLE)
+                self._con.execute("INSERT INTO facts (%s) SELECT %s FROM facts_before_condition"
+                                  % (_FACTS_COLUMNS, _FACTS_COLUMNS))
+                self._con.execute("DROP TABLE facts_before_condition")
+                self._con.execute(_FACTS_OPEN)
 
     def close(self):
         self._con.close()
@@ -124,9 +153,32 @@ class Notebook:
                 continue
             self._assert(world, "object_room", object_id, room, family(obj.get("class")), now_ms)
 
+    def observe_conditions(self, world, row, now_ms):
+        """2.32.0 (HE7): a notable condition of a near object (spoiled, dirty, broken) is a fact about that object.
+        A fact closes once its object has not been named as notable for CONDITION_STALE_MS (it is no longer near,
+        or it was cleaned)."""
+        objects = row.get("objects") if isinstance(row, dict) else None
+        if not isinstance(objects, dict) or not isinstance(objects.get("near_conditions"), list):
+            return
+        with self._con:
+            self._con.execute(
+                "UPDATE facts SET valid_until_ms = ? WHERE world = ? AND kind = ? AND valid_until_ms IS NULL"
+                " AND seen_ms < ?", (now_ms, world, _CONDITION_KIND, now_ms - CONDITION_STALE_MS))
+        for item in objects["near_conditions"]:
+            if not isinstance(item, dict):
+                continue
+            object_id = item.get("object_id")
+            if not isinstance(object_id, str) or not object_id.isdigit():
+                continue
+            text = "; ".join("%s=%s" % (state.get("state"), state.get("value"))
+                             for state in item.get("states") or [] if isinstance(state, dict))
+            if text:
+                self._assert(world, _CONDITION_KIND, object_id, text[:256], family(item.get("class")), now_ms)
+
     def observe_presence(self, world, row, now_ms):
         if not isinstance(row, dict):
             return
+        self.observe_conditions(world, row, now_ms)
         place = row.get("place")
         if not isinstance(place, dict) or place.get("her_home") is not True:
             return

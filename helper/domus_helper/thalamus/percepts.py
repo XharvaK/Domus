@@ -35,6 +35,18 @@ def _text(value):
     return str(value)[:_TEXT_CAP]
 
 
+def _conditions_of(objects):
+    """2.32.0 (HE7): object id -> {class, states: [[state, value], ...]} from a sample's near_conditions."""
+    found = {}
+    for item in objects.get("near_conditions") or []:
+        if not isinstance(item, dict) or item.get("object_id") is None:
+            continue
+        states = sorted([str(state.get("state")), str(state.get("value"))]
+                        for state in item.get("states") or [] if isinstance(state, dict))
+        found[str(item["object_id"])] = {"class": item.get("class"), "states": states}
+    return found
+
+
 def _facts(ticks, pairs):
     items = []
     if type(ticks) is int:
@@ -210,6 +222,10 @@ class Extractor:
             motives[motive_id] = item
         percepts = []
         previous = self._prev
+        objects = row.get("objects")
+        # HE7: the notable conditions of the 16 nearest objects, when this sample names them.
+        conditions = (_conditions_of(objects) if isinstance(objects, dict) and "near_conditions" in objects
+                      else None)
         prior_running = {} if previous is None else previous["running"]
         percepts.extend(self._interactions(
             prior_running, running, observed, ticks, paused, sim_s))
@@ -222,6 +238,8 @@ class Extractor:
                     lineage=self.lineage_id, facts=_facts(ticks, ())))
             percepts.extend(self._zone(previous, zone, ticks))
             percepts.extend(self._room(previous, zone, ticks))
+            if conditions is not None:
+                percepts.extend(self._condition_percepts(previous.get("conditions") or {}, conditions, ticks))
         if "presence" in row:
             percepts.extend(self._presence_percepts(row.get("presence") or [], ticks))
         if "social" in row:
@@ -241,6 +259,8 @@ class Extractor:
             "room": zone.get("room"),
             "running": running,
             "motives": motives,
+            # HE7: the notable conditions of the near objects this sample named (kept when a sample names none).
+            "conditions": conditions if conditions is not None else (previous or {}).get("conditions"),
         }
         for identity, entry in running.items():
             span = self._open.get(identity)
@@ -362,6 +382,20 @@ class Extractor:
             "env", "zone", "" if zone_id is None else str(zone_id),
             "" if lot_id is None else str(lot_id), urgency="wake", lineage=self.lineage_id,
             facts=_facts(ticks, ()))]
+
+    def _condition_percepts(self, before, now, ticks):
+        """HE7: a near object's notable condition came, changed, or cleared (an empty state list)."""
+        found = []
+        for object_id in sorted(set(before) | set(now)):
+            was = (before.get(object_id) or {}).get("states") or []
+            is_now = (now.get(object_id) or {}).get("states") or []
+            if was == is_now:
+                continue
+            klass = ((now.get(object_id) or before.get(object_id) or {}).get("class")) or ""
+            text = "; ".join("%s=%s" % (state, value) for state, value in is_now)
+            found.append(Percept("env", "object_state", object_id, str(klass)[:64], lineage=self.lineage_id,
+                                 facts=_facts(ticks, (("states", text[:256]),))))
+        return found
 
     def _room(self, previous, zone, ticks):
         """DS3: her body moved to another room (schema 6 fills zone.room)."""
