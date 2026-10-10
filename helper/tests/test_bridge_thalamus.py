@@ -473,7 +473,8 @@ def test_ds3_portrait_has_time_room_company_moodlets():
     assert portrait["moodlets"][0]["text"] == "Hungry"
     assert observation._portrait(row)["moodlets"][0]["text"] is None
     assert portrait["time"]["weekday"] == "Sunday" and portrait["time"]["hour"] == 7
-    assert portrait["zone"]["room"] == "3"
+    # HE6: no room number reaches her portrait; the room is named in words when the notebook can.
+    assert "room" not in portrait["zone"] and portrait["zone"]["room_label"] is None
     assert [item["name"] for item in portrait["company"]] == ["Bella Goth"]
     assert [item["name"] for item in portrait["moodlets"]] == ["Buff_Hungry"]
     assert portrait["addressed_by"] == [{"by": "200", "interaction": "social_Chat"}]
@@ -612,7 +613,7 @@ def test_portrait_comes_from_the_body_sample_not_the_act_event(paths, tmp_path, 
     assert portrait["needs"]["hunger"] == {"value": 40, "band": "low"}
     assert portrait["mood"] == "Mood_Bright"
     assert portrait["posture"] == "sit"
-    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room": "4"}
+    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room_label": None}
     assert [item["name"] for item in portrait["company"]] == ["Nia Cole"]
     assert obs["source_time_ms"] == acted
     assert obs["snapshot"] == "4"
@@ -642,7 +643,7 @@ def test_a_session_checkpoint_never_replaces_her_body_sample(paths, tmp_path, mo
     bridge.tick(acted + 1_500)
     portrait = _payloads(bridge)[-1]["portrait"]
     assert portrait["posture"] == "sit"
-    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room": "4"}
+    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room_label": None}
     assert portrait["needs"]["hunger"] == {"value": 40, "band": "low"}
     assert bridge._last_body_row["written_sequence"] == 3
 

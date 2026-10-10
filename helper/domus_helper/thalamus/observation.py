@@ -121,6 +121,14 @@ SEEN_FLIP_SAMPLES = 2
 _HANDLE_BYTES = 12
 
 
+def _room_label(room, labels):
+    """HE6: the interim name of a room from the notebook (a number never reaches her), or None."""
+    if room is None or not labels:
+        return None
+    label = labels.get(str(room))
+    return label if isinstance(label, str) and label else None
+
+
 def _body_entry(row):
     for item in row.get("presence") or []:
         if isinstance(item, dict) and item.get("is_body"):
@@ -216,12 +224,13 @@ def _with_sentence(value, tuning, actors):
     return value
 
 
-def _company_seen(item, resolve):
-    """A Sim she can see: the same entry the portrait has always carried."""
+def _company_seen(item, resolve, labels=None):
+    """A Sim she can see: the same entry the portrait has always carried. HE6: where, in words, not a room number."""
     doing = item.get("doing")
     entry = {"id": str(item["id"]), "name": item.get("name"),
-             "room": item.get("room"), "distance_m": item.get("distance_m"),
-             "doing": _affordance_name(doing)}
+             "distance_m": item.get("distance_m"), "doing": _affordance_name(doing)}
+    if _room_label(item.get("room"), labels):
+        entry["room_label"] = _room_label(item.get("room"), labels)
     if item.get("is_pet") is True:
         # 2.32.0 (PR13): a pet is named as one; its species is the game's own name for it.
         entry["pet"] = True
@@ -265,10 +274,11 @@ def _company_seen(item, resolve):
     return entry
 
 
-def _company_heard(item, seen):
+def _company_heard(item, seen, labels=None):
     """On the lot, but not seen: a sound, not a person she can name. Its handle tells strangers apart."""
-    entry = {"heard": True, "handle": seen.handle(item["id"]), "room": item.get("room"),
-             "distance_m": item.get("distance_m")}
+    entry = {"heard": True, "handle": seen.handle(item["id"]), "distance_m": item.get("distance_m")}
+    if _room_label(item.get("room"), labels):
+        entry["room_label"] = _room_label(item.get("room"), labels)
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
     return entry
@@ -314,7 +324,8 @@ def _asked_answer_rules(item, resolve):
     return {"answer_rules": rules} if rules else {}
 
 
-def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_name=None, seen=None):
+def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_name=None, seen=None,
+              room_labels=None):
     """resolve: string key -> the game's own text (S0), or None when unknown.
     windows: W2h, the window facts of her session (windows.WindowLog.recent).
     pace: W3h, her pace entry (pace.portrait), or None.
@@ -370,11 +381,11 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
             continue
         if str(item["id"]) in seen_ids:
-            seen.append(_company_seen(item, resolve))
+            seen.append(_company_seen(item, resolve, room_labels))
         elif item.get("on_lot") is False:
             continue
         else:
-            heard.append(_company_heard(item, memory))
+            heard.append(_company_heard(item, memory, room_labels))
     heard.sort(key=lambda entry: (_meters(entry.get("distance_m")) is None,
                                   _meters(entry.get("distance_m")) or 0))
     company = (seen + heard)[:7]
@@ -407,7 +418,7 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         "queued": queued[:8],
         **({"doing_said": doing_said} if doing_said else {}),
         "zone": {"zone_id": zone.get("zone_id"), "lot_id": zone.get("lot_id"),
-                 "room": zone.get("room")},
+                 "room_label": _room_label(zone.get("room"), room_labels)},
         "time": game_time(game.get("calendar")),
         "clock_speed": game.get("clock_speed"),
         # 2.32.0 (PR10): build or buy mode is its own state; the game holds the clock paused in it.
@@ -592,6 +603,7 @@ def build(decision, ctx):
         "percepts": percepts,
         "portrait": _portrait(row, ctx.get("resolve_text"), notebook=ctx.get("notebook"),
                               windows=ctx.get("windows"), pace=ctx.get("pace"),
-                              act_name=ctx.get("act_name"), seen=ctx.get("seen")),
+                              act_name=ctx.get("act_name"), seen=ctx.get("seen"),
+                              room_labels=ctx.get("room_labels")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
     }

@@ -60,8 +60,8 @@ def test_same_room_is_a_full_entry_and_a_far_room_is_only_heard():
     assert testa["doing"] == "invented_wave"
     assert testa["relationship"]["met"] is True
     assert testa["situations"] == [{"situation": "situation_Visit", "role": "Guest"}]
-    assert set(quin) == {"heard", "handle", "room", "distance_m", "on_lot"}
-    assert quin["heard"] is True and quin["room"] == "yard" and quin["distance_m"] == 12.0
+    assert set(quin) == {"heard", "handle", "distance_m", "on_lot"}
+    assert quin["heard"] is True and quin["distance_m"] == 12.0
     assert "id" not in quin and "name" not in quin and "doing" not in quin
     assert "relationship" not in quin and "situations" not in quin
 
@@ -75,8 +75,7 @@ def test_a_sim_through_the_wall_within_four_metres_is_heard_and_addressing_does_
     ], social=[{"actor_id": "4", "affordance_text": "invented_wave"}])
     assert [item.get("name") for item in portrait["company"] if "name" in item] == []
     heard = [item for item in portrait["company"] if item.get("heard")]
-    assert [(item["room"], item["distance_m"]) for item in heard] == [("yard", 4.0), ("hall", 4.0),
-                                                                     ("yard", 30.0)]
+    assert [item["distance_m"] for item in heard] == [4.0, 4.0, 30.0]
     assert all(item.get("name") != "Bo Linn" and item.get("id") != "5" for item in portrait["company"])
     assert all(item.get("name") != "Nia Pell" for item in portrait["company"])
 
@@ -99,7 +98,7 @@ def test_an_unknown_lot_flag_is_still_heard_and_keeps_on_lot_only_when_known():
     ])
     company = portrait["company"]
     assert len(company) == 1 and company[0]["heard"] is True
-    assert company[0]["room"] == "yard" and company[0]["distance_m"] == 9.0
+    assert "room" not in company[0] and company[0]["distance_m"] == 9.0
     assert "on_lot" not in company[0] and "id" not in company[0]
 
 

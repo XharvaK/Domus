@@ -481,6 +481,7 @@ class Bridge:
             "event_row": self._last_row,
             "resolve_text": self._resolve_text,
             "act_name": self._act_names(),
+            "room_labels": self._room_labels(),
             "seen": self._seen,
             "options": self._options(body),
             "notebook": self._notebook_slice(wall_ms),
@@ -545,6 +546,13 @@ class Bridge:
             return self.notebook.withheld_names()
         except (sqlite3.Error, ValueError, TypeError, KeyError):
             return set()
+
+    def _room_labels(self):
+        """HE6: the interim room names of this world (room id -> label), or {} when the notebook cannot say."""
+        try:
+            return self.notebook.room_labels(self._world())
+        except (sqlite3.Error, ValueError, TypeError, KeyError):
+            return {}
 
     def _notebook_slice(self, wall_ms):
         try:
