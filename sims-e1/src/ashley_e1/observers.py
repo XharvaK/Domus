@@ -2032,6 +2032,14 @@ def _near_conditions(current, near_order, states):
     return found
 
 
+def _owner_of(obj):
+    """2.32.0 (PR15): the household that owns an object (GameObject.household_owner_id), as a plain id, or None."""
+    try:
+        return _plain_id(obj.household_owner_id)
+    except Exception:
+        return None
+
+
 def _in_use_or_carried(obj):
     """2.32.0 (HE5): an object someone holds (a reservation) or carries (its inventory item) is not moved by its own
     place; True when either is readable and holds, else False."""
@@ -2079,7 +2087,8 @@ def read_object_events(zone_id, body_position, wall_ms):
     places = {}
     for plain in nearest_ids:
         position = _position(current[plain])
-        places[plain] = {"position": position, "room": _room(current[plain], position)}
+        places[plain] = {"position": position, "room": _room(current[plain], position),
+                         "owner": _owner_of(current[plain])}
     near_rooms = [{"object_id": plain, "class": _object_class(current[plain]), "room": places[plain]["room"]}
                   for plain in nearest_ids if places[plain]["room"] is not None]
     near_states = {plain: _object_states(current[plain]) for _, plain in near[:NEAR_STATE_MAX]}
@@ -2092,7 +2101,8 @@ def read_object_events(zone_id, body_position, wall_ms):
     baseline = (previous["classes"] is None or previous["zone"] != zone_id or
                 previous["wall_ms"] is None or wall_ms - previous["wall_ms"] > OBJECT_BASELINE_GAP_MS)
     events = {"baseline": baseline, "created": [], "destroyed": [], "changed": [],
-              "truncated": False, "near_conditions": conditions, "near_rooms": near_rooms, "moved": []}
+              "truncated": False, "near_conditions": conditions, "near_rooms": near_rooms, "moved": [],
+              "owner_changed": []}
     if not baseline:
         created = sorted(set(classes) - set(previous["classes"]))
         destroyed = sorted(set(previous["classes"]) - set(classes))
@@ -2127,7 +2137,15 @@ def read_object_events(zone_id, body_position, wall_ms):
             if (moved_far or changed_room) and not _in_use_or_carried(current[plain]):
                 events["moved"].append({"object_id": plain, "class": classes[plain],
                                         "from_room": from_room, "to_room": to_room})
-        for key in ("created", "destroyed", "changed", "moved"):
+        # 2.32.0 (PR15): an object of the 16 nearest changed hands (a visitor or an NPC taking it, say).
+        for plain in nearest_ids:
+            before = before_places.get(plain)
+            if before is None or before.get("owner") is None or places[plain]["owner"] is None:
+                continue
+            if before["owner"] != places[plain]["owner"]:
+                events["owner_changed"].append({"object_id": plain, "class": classes[plain],
+                                                "from_owner": before["owner"], "to_owner": places[plain]["owner"]})
+        for key in ("created", "destroyed", "changed", "moved", "owner_changed"):
             if len(events[key]) > schema.MAX_OBJECT_EVENTS:
                 events[key] = events[key][:schema.MAX_OBJECT_EVENTS]
                 events["truncated"] = True

@@ -1075,7 +1075,7 @@ def _validate_objects(row):
         return
     keys = {"baseline", "created", "destroyed", "changed", "truncated"}
     if row["schema_version"] >= 15:
-        keys = keys | {"near_conditions", "near_rooms", "moved"}
+        keys = keys | {"near_conditions", "near_rooms", "moved", "owner_changed"}
     _require(isinstance(value, dict) and set(value) == keys, "objects shape")
     _require(type(value["baseline"]) is bool and type(value["truncated"]) is bool,
              "objects flags")
@@ -1092,6 +1092,17 @@ def _validate_objects(row):
                 if item[text] is not None:
                     string_id(item[text], "objects.moved.%s" % text)
             bounded_string(item["class"], 128, "objects.moved.class")
+    if "owner_changed" in value:
+        # 2.32.0 (PR15, schema 15): an object of the nearest changed household (plain household ids).
+        _require(isinstance(value["owner_changed"], list) and len(value["owner_changed"]) <= MAX_OBJECT_EVENTS,
+                 "objects.owner_changed")
+        for item in value["owner_changed"]:
+            _require(isinstance(item, dict) and set(item) == {"object_id", "class", "from_owner", "to_owner"},
+                     "objects.owner_changed entry")
+            string_id(item["object_id"], "objects.owner_changed.object_id")
+            string_id(item["from_owner"], "objects.owner_changed.from_owner")
+            string_id(item["to_owner"], "objects.owner_changed.to_owner")
+            bounded_string(item["class"], 128, "objects.owner_changed.class")
     if "near_rooms" in value:
         _require(isinstance(value["near_rooms"], list) and len(value["near_rooms"]) <= MAX_NEAR_CONDITIONS,
                  "objects.near_rooms")
