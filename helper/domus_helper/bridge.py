@@ -212,12 +212,13 @@ class Bridge:
             self._last_heartbeat_ms = now
             self._tried_inputs = inputs
             self._tried_attached = attached
-        if self.client is not None:
-            self.spool.flush(self.client, now)
+        # A9-2: the act round trip goes before the observation flush, so a slow Ashley backlog cannot push an act past its expiry.
         if self.client is not None and self._acts is not None and hasattr(self.client, "sync_acts"):
-            written = self._acts.tick(self.client, self.helper_session, now, self._state == "attached")
+            written = self._acts.tick(self.client, self.helper_session, now, self._state == "attached", probe=probe)
             self._pace_log.received(written)
             self.overlay.answered = self._acts.answered_dialogs
+        if self.client is not None:
+            self.spool.flush(self.client, now)
         self._pace_tick(now)
         self.overlay.poll(self.client, self.helper_session, now)
         self.overlay.act_name = self._act_names()
@@ -260,6 +261,7 @@ class Bridge:
             "telemetry_only": self._telemetry_only,
             "spool": {"rows": self.spool.row_count(), "gaps": len(self.spool.gaps())},
             "outbox": self.spool.outbox_counts(),
+            "refusals": self.spool.refusal_counts(),
             "last_heartbeat": self._last_heartbeat,
             "inputs": game_inputs.current(self.spool),
             "transport": transport,

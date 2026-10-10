@@ -16,6 +16,11 @@ PROBE_REPLY_MS = 90_000
 # after this backstop from her request. Long acts (a night's sleep, a painting) can run well past 15 real
 # minutes, so the backstop is generous: it must never call a running act unknown.
 ACT_CEILING_MS = 60 * 60_000
+# A9-1: how long the game may be detached before an act it began is written unknown (GAME_DETACHED).
+DETACH_GRACE_MS = 2 * 60_000
+# A9-9: the oldest probe that understands each command the helper sends. cancel 2.20.0 (her queue), answer 2.18.0
+# (her dialog answers, with the menu they come from), act 2.18.0 (the menu's acts), owner 2.24.0 (the User's act first).
+PROBE_NEEDS = {"cancel": (2, 20, 0), "answer": (2, 18, 0), "act": (2, 18, 0), "owner": (2, 24, 0)}
 _TERMINAL = ("finished", "rejected", "unknown")
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
@@ -310,6 +315,33 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     return result
 
 
+def _version(probe):
+    """A probe's version as a tuple of numbers, or None when it is not one."""
+    try:
+        return tuple(int(part) for part in str(probe).split("."))
+    except ValueError:
+        return None
+
+
+def _too_old(probe, need):
+    """True only when the helper knows the installed probe and it predates the command."""
+    have = _version(probe) if probe is not None else None
+    return have is not None and have < need
+
+
+def _needs(act, object_id):
+    """Which probe command an act of hers is sent as (PROBE_NEEDS key)."""
+    if object_id == QUEUE_OBJECT_ID:
+        return "cancel"
+    if object_id.startswith(DIALOG_PREFIX):
+        return "answer"
+    return "owner" if act.get("owner") is True else "act"
+
+
+class ProbeTooOld(ValueError):
+    """The installed probe predates the command this act needs (A9-9): it is refused, never sent."""
+
+
 class AnswerInvalid(ValueError):
     """Her answer to a dialog is not the shape the contract allows (never its values)."""
 
@@ -444,8 +476,9 @@ class ActCourier(object):
                 known["terminal"] = True
         self._save()
 
-    def tick(self, client, helper_session, now_ms, attached):
-        """One round trip: send what happened, receive what to do. Returns the acts written."""
+    def tick(self, client, helper_session, now_ms, attached, probe=None):
+        """One round trip: send what happened, receive what to do. Returns the acts written.
+        probe: the installed probe's version, when the helper knows it (A9-9 gates what it is sent)."""
         for act_id, known in self._known.items():
             if known.get("timed_out") or known.get("terminal"):
                 continue
@@ -453,10 +486,19 @@ class ActCourier(object):
                 if now_ms - known["written_ms"] >= PROBE_REPLY_MS:
                     known["timed_out"] = True
                     self._event(act_id, "unknown", now_ms, {"code": "NO_PROBE_REPLY"})
-            elif not attached or now_ms - known["written_ms"] >= ACT_CEILING_MS:
-                # GL8: the probe began it, and no end came: the game detached, or it never ended.
+            elif not attached:
+                # A9-1: a short detach (a zone load, a sleep, a stale telemetry stall) is not the end of an act
+                # the game may still finish; the verdict is a guess only after DETACH_GRACE_MS.
+                known.setdefault("detached_ms", now_ms)
+                if now_ms - known["detached_ms"] >= DETACH_GRACE_MS:
+                    known["timed_out"] = True
+                    self._event(act_id, "unknown", now_ms, {"code": "GAME_DETACHED"})
+            elif now_ms - known["written_ms"] >= ACT_CEILING_MS:
+                # GL8: the probe began it, and no end came.
                 known["timed_out"] = True
-                self._event(act_id, "unknown", now_ms, {"code": "GAME_DETACHED" if not attached else "NO_END_REPORTED"})
+                self._event(act_id, "unknown", now_ms, {"code": "NO_END_REPORTED"})
+            else:
+                known.pop("detached_ms", None)
         sending = list(self._events)
         response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": sending})
         if response is None:
@@ -476,6 +518,9 @@ class ActCourier(object):
                 continue
             try:
                 object_id = str(act.get("object_id"))
+                # A9-9: a probe older than the command needs would ignore it (or refuse it as unknown): say so, never send it.
+                if _too_old(probe, PROBE_NEEDS[_needs(act, object_id)]):
+                    raise ProbeTooOld(_needs(act, object_id))
                 if object_id == QUEUE_OBJECT_ID:
                     # 2.20.0: she stops one of her own actions.
                     self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
@@ -494,7 +539,8 @@ class ActCourier(object):
                     self._publish("act", args)
             except Exception as error:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
-                code = "ANSWER_INVALID" if isinstance(error, AnswerInvalid) else "INBOX_" + type(error).__name__[:40]
+                code = ("ANSWER_INVALID" if isinstance(error, AnswerInvalid) else "PROBE_TOO_OLD" if isinstance(error, ProbeTooOld)
+                        else "INBOX_" + type(error).__name__[:40])
                 self._event(act_id, "rejected", now_ms, {"code": code})
                 continue
             self._known[act_id] = {"written_ms": now_ms}

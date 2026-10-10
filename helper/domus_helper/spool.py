@@ -7,6 +7,10 @@ from .contract import validate_observation
 
 ROW_CAP = 200_000
 DROP_KINDS = frozenset({"dropped_summary"})
+# A9-2: one flush posts for at most this long; the rest of the due rows wait for the next tick, so the acts never wait behind them.
+FLUSH_BUDGET_S = 3.0
+# A9-4: a refusal for these reasons is retried with backoff (a clock that drifts, a key a newer helper sends), not final.
+RETRY_REFUSALS = frozenset({"clock_skew", "invalid_body"})
 
 
 class OutboxConflict(ValueError):
@@ -203,32 +207,52 @@ class Spool:
         row = self._con.execute("SELECT * FROM outbox WHERE observation_id=?", (observation_id,)).fetchone()
         return dict(row) if row else None
 
-    def flush(self, client, now_ms, batch=20):
+    def flush(self, client, now_ms, batch=20, budget_s=FLUSH_BUDGET_S, clock=time.monotonic):
         due = self._con.execute(
             """SELECT * FROM outbox WHERE state='pending' AND next_attempt_ms<=?
                ORDER BY created_ms, observation_id LIMIT ?""",
             (now_ms, batch)).fetchall()
+        started = clock()
         for row in due:
+            if clock() - started >= budget_s:
+                break
             if now_ms > row["expires_at_ms"]:
                 self._finish(row["observation_id"], "expired", row["attempts"], row["next_attempt_ms"], "expired")
                 continue
             result = client.post_observation(json.loads(row["payload_json"]), now_ms=now_ms)
             kind = result.kind
+            reason = getattr(result, "reason", None)
+            # A9-4: the server's reason is kept in last_status as refused:<reason>, so status can show it.
+            refused = f"refused:{reason}" if kind == "rejected" and reason else None
             if kind in ("admitted", "duplicate"):
                 self._finish(row["observation_id"], "acked", row["attempts"] + 1, row["next_attempt_ms"], kind)
             elif kind == "conflict":
                 self._finish(row["observation_id"], "conflict", row["attempts"] + 1, row["next_attempt_ms"], kind)
             elif kind == "expired":
                 self._finish(row["observation_id"], "expired", row["attempts"] + 1, row["next_attempt_ms"], kind)
+            elif kind == "rejected" and reason in RETRY_REFUSALS:
+                self._retry(row, now_ms, refused)
             elif kind in ("rejected", "too_large"):
-                self._finish(row["observation_id"], "rejected", row["attempts"] + 1, row["next_attempt_ms"], kind)
+                self._finish(row["observation_id"], "rejected", row["attempts"] + 1, row["next_attempt_ms"], refused or kind)
             elif kind == "unauthorized":
                 return "auth_failed"
             else:
-                attempts = row["attempts"]
-                delay = 300_000 if attempts >= 9 else 1000 * (2 ** attempts)
-                self._finish(row["observation_id"], "pending", attempts + 1, now_ms + delay, kind)
+                self._retry(row, now_ms, kind)
         return None
+
+    def _retry(self, row, now_ms, last_status):
+        attempts = row["attempts"]
+        delay = 300_000 if attempts >= 9 else 1000 * (2 ** attempts)
+        self._finish(row["observation_id"], "pending", attempts + 1, now_ms + delay, last_status)
+
+    def refusal_counts(self):
+        """A9-4: how many due or refused observations Ashley refused, by her reason (for the helper status)."""
+        counts = {}
+        for row in self._con.execute(
+            """SELECT last_status, COUNT(*) AS n FROM outbox
+               WHERE state IN ('pending', 'rejected') AND last_status LIKE 'refused:%' GROUP BY last_status"""):
+            counts[row["last_status"][len("refused:"):]] = row["n"]
+        return counts
 
     def _finish(self, observation_id, state, attempts, next_attempt_ms, last_status):
         with self._con:
