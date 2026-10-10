@@ -232,13 +232,15 @@ def _size(value):
 def test_over_the_limit_the_pace_entry_goes_whole_before_the_running_lists():
     limit = observation._PORTRAIT_LIMIT
     entry = pace.portrait({"need_drain": 0.5}, [{"interaction": "q" * 60, "game_minutes": 1.0}] * 3)
-    # A mood name adds exactly its length, so this mood fills the limit without the pace entry.
+    # A mood name adds exactly its length, so this mood fills the limit without the pace entry, and leaves
+    # room for the A9-7 shed marker that naming the cut takes.
     base = _size(observation._portrait(_row_with_mood(0)))
-    fits = _row_with_mood(limit - base)
-    assert _size(observation._portrait(fits)) == limit
+    fits = _row_with_mood(limit - base - 64)
+    assert _size(observation._portrait(fits)) == limit - 64
     shed = observation._portrait(fits, pace=entry)
     assert "pace" not in shed
     assert shed["running"] == ["bookshelf Read Book"]  # HE1: no menu here, so the name is humanized
+    assert shed["shed"] == [{"part": "pace", "dropped": 1}]
     assert _size(shed) <= limit
 
 

@@ -1,5 +1,6 @@
 """Ashley ingress client. Stdlib HTTPS with default certificate checks."""
 import json
+import logging
 import os
 import time
 import urllib.error
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 
 from .contract import ContractError, validate_heartbeat, validate_observation
 
+_log = logging.getLogger("domus.transport")
 # SNAPSHOT: a picture of up to 6 MiB, base64-encoded, can take longer than an act round trip.
 SNAPSHOT_TIMEOUT_S = 30
 
@@ -16,6 +18,8 @@ SNAPSHOT_TIMEOUT_S = 30
 class TransportResult:
     kind: str
     status: int | None
+    # A9-4: the server's own reason for a 400 (its "error" code, e.g. clock_skew), when it gave one.
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,15 +113,29 @@ class AshleyClient:
                 "X-Domus-Token": self._token,
             },
         )
+        reason = None
         try:
             with urllib.request.urlopen(request, timeout=self._timeout_s) as response:
                 status = response.status
                 response.read()
         except urllib.error.HTTPError as error:
             status = error.code
+            reason = _reason(error)
         except (urllib.error.URLError, TimeoutError, OSError):
             return TransportResult("unavailable", None)
-        return TransportResult(_kind(status, heartbeat), status)
+        if reason is not None and status == 400:
+            _log.warning("ashley refused a %s: %s", "heartbeat" if heartbeat else "observation", reason)
+        return TransportResult(_kind(status, heartbeat), status, reason if status == 400 else None)
+
+
+def _reason(error):
+    """A9-4: the error code of a refusal (a short word from the server, never the body). None when it has none."""
+    try:
+        payload = json.loads(error.read().decode("utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return None
+    code = payload.get("error") if isinstance(payload, dict) else None
+    return code if isinstance(code, str) and 0 < len(code) <= 32 else None
 
 
 def _kind(status, heartbeat):

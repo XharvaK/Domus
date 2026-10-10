@@ -255,8 +255,11 @@ def test_an_act_the_game_never_ends_becomes_unknown_once_it_detaches_or_passes_t
     courier.tick(client, "h", 2000, True)
     courier.tick(client, "h", 3000, False)
     courier.tick(client, "h", 4000, False)
+    # A9-1: a detach is only a guess after a grace of two minutes; a short one leaves the act open.
+    assert [e for body in client.bodies for e in body["events"] if e["phase"] == "unknown"] == []
+    courier.tick(client, "h", 3000 + 120_000, False)
     unknown = [e for body in client.bodies for e in body["events"] if e["phase"] == "unknown"]
-    assert unknown == [{"act_id": "a" * 32, "phase": "unknown", "at_ms": 3000,
+    assert unknown == [{"act_id": "a" * 32, "phase": "unknown", "at_ms": 123_000,
                         "detail": {"code": "GAME_DETACHED"}}]
     done = ActCourier(spool, lambda command, args: None)
     other = _Client([dict(ACT, act_id="b" * 32)])
