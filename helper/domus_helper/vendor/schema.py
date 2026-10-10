@@ -1074,12 +1074,32 @@ def _validate_objects(row):
         return
     keys = {"baseline", "created", "destroyed", "changed", "truncated"}
     if row["schema_version"] >= 15:
-        keys = keys | {"near_conditions"}
+        keys = keys | {"near_conditions", "near_rooms", "moved"}
     _require(isinstance(value, dict) and set(value) == keys, "objects shape")
     _require(type(value["baseline"]) is bool and type(value["truncated"]) is bool,
              "objects flags")
     if "near_conditions" in value:
         _validate_near_conditions(value["near_conditions"])
+    if "moved" in value:
+        # 2.32.0 (HE5, schema 15): an object moved (over 0.5 m, or into another room); rooms are the game's ids.
+        _require(isinstance(value["moved"], list) and len(value["moved"]) <= MAX_OBJECT_EVENTS, "objects.moved")
+        for item in value["moved"]:
+            _require(isinstance(item, dict) and set(item) == {"object_id", "class", "from_room", "to_room"},
+                     "objects.moved entry")
+            string_id(item["object_id"], "objects.moved.object_id")
+            for text in ("from_room", "to_room"):
+                if item[text] is not None:
+                    string_id(item[text], "objects.moved.%s" % text)
+            bounded_string(item["class"], 128, "objects.moved.class")
+    if "near_rooms" in value:
+        _require(isinstance(value["near_rooms"], list) and len(value["near_rooms"]) <= MAX_NEAR_CONDITIONS,
+                 "objects.near_rooms")
+        for item in value["near_rooms"]:
+            _require(isinstance(item, dict) and set(item) == {"object_id", "class", "room"},
+                     "objects.near_rooms entry")
+            string_id(item["object_id"], "objects.near_rooms.object_id")
+            string_id(item["room"], "objects.near_rooms.room")
+            bounded_string(item["class"], 128, "objects.near_rooms.class")
     shapes = {"created": {"object_id", "class", "definition_id"},
               "destroyed": {"object_id", "class"},
               "changed": {"object_id", "class", "state", "from", "to"}}

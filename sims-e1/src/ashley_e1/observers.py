@@ -1982,7 +1982,9 @@ def _own_careers(sim_info):
 NEAR_STATE_METERS = 4.0
 NEAR_STATE_MAX = 16
 OBJECT_BASELINE_GAP_MS = 5000
-_OBJECTS_PREV = {"zone": None, "wall_ms": None, "classes": None, "near": {}}
+_OBJECTS_PREV = {"zone": None, "wall_ms": None, "classes": None, "near": {}, "places": {}}
+# 2.32.0 (HE5): an object moved more than this far (metres) between two samples, or changed room.
+OBJECT_MOVED_METERS = 0.5
 
 
 def _object_class(obj):
@@ -2030,6 +2032,20 @@ def _near_conditions(current, near_order, states):
     return found
 
 
+def _in_use_or_carried(obj):
+    """2.32.0 (HE5): an object someone holds (a reservation) or carries (its inventory item) is not moved by its own
+    place; True when either is readable and holds, else False."""
+    try:
+        if obj._reservation_handlers:
+            return True
+    except Exception:
+        pass
+    try:
+        return obj.inventory_item.is_in_inventory() is True
+    except Exception:
+        return False
+
+
 def read_object_events(zone_id, body_position, wall_ms):
     """Objects created and destroyed on the lot since the previous sample, and state
     changes of the objects within NEAR_STATE_METERS of her (nearest first). Plain
@@ -2059,6 +2075,13 @@ def read_object_events(zone_id, body_position, wall_ms):
     near.sort()
     by_distance.sort()
     nearest_ids = [plain for _, plain in by_distance[:NEAR_STATE_MAX]]
+    # 2.32.0 (HE5): where each of the 16 nearest objects is now, and in which room.
+    places = {}
+    for plain in nearest_ids:
+        position = _position(current[plain])
+        places[plain] = {"position": position, "room": _room(current[plain], position)}
+    near_rooms = [{"object_id": plain, "class": _object_class(current[plain]), "room": places[plain]["room"]}
+                  for plain in nearest_ids if places[plain]["room"] is not None]
     near_states = {plain: _object_states(current[plain]) for _, plain in near[:NEAR_STATE_MAX]}
     # 2.32.0 (HE7): the 16 nearest objects' states are read each sample, for the notable conditions.
     condition_states = {plain: (near_states[plain] if plain in near_states else _object_states(current[plain]))
@@ -2069,7 +2092,7 @@ def read_object_events(zone_id, body_position, wall_ms):
     baseline = (previous["classes"] is None or previous["zone"] != zone_id or
                 previous["wall_ms"] is None or wall_ms - previous["wall_ms"] > OBJECT_BASELINE_GAP_MS)
     events = {"baseline": baseline, "created": [], "destroyed": [], "changed": [],
-              "truncated": False, "near_conditions": conditions}
+              "truncated": False, "near_conditions": conditions, "near_rooms": near_rooms, "moved": []}
     if not baseline:
         created = sorted(set(classes) - set(previous["classes"]))
         destroyed = sorted(set(previous["classes"]) - set(classes))
@@ -2092,9 +2115,21 @@ def read_object_events(zone_id, body_position, wall_ms):
                     events["changed"].append({"object_id": plain, "class": classes[plain],
                                               "state": state, "from": before.get(state),
                                               "to": after.get(state)})
-        for key in ("created", "destroyed", "changed"):
+        before_places = previous.get("places") or {}
+        for plain in nearest_ids:
+            before = before_places.get(plain)
+            if before is None or before.get("position") is None or places[plain]["position"] is None:
+                continue
+            step = _distance(before["position"], places[plain]["position"])
+            from_room, to_room = before.get("room"), places[plain]["room"]
+            moved_far = step is not None and step > OBJECT_MOVED_METERS
+            changed_room = from_room is not None and to_room is not None and from_room != to_room
+            if (moved_far or changed_room) and not _in_use_or_carried(current[plain]):
+                events["moved"].append({"object_id": plain, "class": classes[plain],
+                                        "from_room": from_room, "to_room": to_room})
+        for key in ("created", "destroyed", "changed", "moved"):
             if len(events[key]) > schema.MAX_OBJECT_EVENTS:
                 events[key] = events[key][:schema.MAX_OBJECT_EVENTS]
                 events["truncated"] = True
-    _OBJECTS_PREV.update(zone=zone_id, wall_ms=wall_ms, classes=classes, near=near_states)
+    _OBJECTS_PREV.update(zone=zone_id, wall_ms=wall_ms, classes=classes, near=near_states, places=places)
     return events

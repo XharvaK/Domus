@@ -142,16 +142,30 @@ class Notebook:
             return "changed"
 
     def observe_menu(self, world, payload, now_ms):
-        if not isinstance(payload, dict) or payload.get("room") is None:
+        """HE5: a menu no longer sets where things are. Object rooms come from the 16 nearest objects of the
+        sample (observe_near_rooms), not from the four objects a menu offers."""
+        return None
+
+    def observe_near_rooms(self, world, row, now_ms):
+        """HE5 (schema 15): where the 16 nearest objects are. A moved object closes its old room fact and opens
+        the new one; an object that did not move keeps its fact (seen again)."""
+        objects = row.get("objects") if isinstance(row, dict) else None
+        if not isinstance(objects, dict):
             return
-        room = str(payload.get("room"))
-        for obj in payload.get("objects") or []:
-            if not isinstance(obj, dict) or obj.get("same_room") is not True:
+        for item in objects.get("moved") or []:
+            if not isinstance(item, dict) or not isinstance(item.get("object_id"), str):
                 continue
-            object_id = obj.get("object_id")
-            if not isinstance(object_id, str) or not object_id.isdigit():
+            with self._con:
+                self._con.execute(
+                    "UPDATE facts SET valid_until_ms = ? WHERE world = ? AND kind = 'object_room'"
+                    " AND subject = ? AND valid_until_ms IS NULL", (now_ms, world, item["object_id"]))
+        for item in objects.get("near_rooms") or []:
+            if not isinstance(item, dict):
                 continue
-            self._assert(world, "object_room", object_id, room, family(obj.get("class")), now_ms)
+            object_id, room = item.get("object_id"), item.get("room")
+            if not isinstance(object_id, str) or not object_id.isdigit() or not isinstance(room, str):
+                continue
+            self._assert(world, "object_room", object_id, room, family(item.get("class")), now_ms)
 
     def observe_conditions(self, world, row, now_ms):
         """2.32.0 (HE7): a notable condition of a near object (spoiled, dirty, broken) is a fact about that object.
@@ -179,6 +193,7 @@ class Notebook:
         if not isinstance(row, dict):
             return
         self.observe_conditions(world, row, now_ms)
+        self.observe_near_rooms(world, row, now_ms)
         place = row.get("place")
         if not isinstance(place, dict) or place.get("her_home") is not True:
             return

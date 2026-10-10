@@ -422,18 +422,18 @@ def test_status_thalamus_block_without_secrets(paths, tmp_path, monkeypatch):
 def test_act_menu_then_fire_puts_notebook_on_portrait(paths, tmp_path, monkeypatch):
     _data(paths, tmp_path, monkeypatch)
 
-    def menu(room, seq, wall):
-        return {
-            "event_kind": "act_menu", "written_sequence": seq, "wall_timestamp_ms": wall,
-            "telemetry_session_id": "sess-1",
-            "e2": {"menu_rev": 1, "room": room, "objects": [{
-                "object_id": "501", "class": "object_fridge_X", "same_room": True, "acts": []}]},
-        }
+    def near(room, seq, wall):
+        # 2.32.0 (HE5): object rooms come from the 16 nearest objects of a sample, not from a menu.
+        row = _snap(seq, "ok", wall, 10)
+        row["objects"] = {"baseline": False, "created": [], "destroyed": [], "changed": [],
+                          "truncated": False, "near_conditions": [], "moved": [],
+                          "near_rooms": [{"object_id": "501", "class": "object_fridge_X", "room": room}]}
+        return row
 
     _append(paths, [
         _lineage(1, WALL),
-        menu("7", 2, WALL),
-        menu("9", 3, WALL + 1),
+        near("7", 2, WALL),
+        near("9", 3, WALL + 1),
         _snap(4, "ok", WALL + 2, 10),
         _snap(5, "low", WALL + 3, 20),
     ])
