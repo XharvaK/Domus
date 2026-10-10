@@ -1032,6 +1032,11 @@ class E2Control:
         armed = (self._armed_snapshot() or {}).get("sim_id")
         if armed is not None and str(sim_info.id) != str(armed):
             return ("BODY_MISMATCH", None), None
+        # 2.32.0 (PR6, User ruling): the User plays another household Sim; her acts are refused, never
+        # the User's Sim's. Not sticky: the refusal ends when the client plays her Sim again.
+        active = observers.active_sim_id()
+        if active is not None and active != str(sim_info.id):
+            return ("BODY_MISMATCH", "NOT_ACTIVE"), None
         if object_id in EXCLUDED_OBJECT_IDS:
             return (e2_admission.OBJECT_EXCLUDED, None), None
         obj = e2_actuator.find_object(object_id)

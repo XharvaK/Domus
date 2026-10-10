@@ -26,6 +26,36 @@ class LabIdentityAmbiguous(RuntimeError):
         self.eligible_count = eligible_count
 
 
+# 2.32.0 (PR6): the armed Sim, her body. When several household Sims are selectable, the body is the armed
+# one (set by prefer_body when she is armed; None before that, then the client's active Sim is used).
+_PREFERRED_BODY = {"sim_id": None}
+
+
+def prefer_body(sim_id):
+    _PREFERRED_BODY["sim_id"] = None if sim_id is None else str(sim_id)
+
+
+def active_sim_id():
+    """2.32.0 (PR6): the id of the Sim the User's client is playing, or None when it cannot be read."""
+    try:
+        info = services.active_sim_info()
+    except Exception:
+        return None
+    if info is None:
+        return None
+    try:
+        return _plain_id(info.id)
+    except Exception:
+        return None
+
+
+def _info_id(info):
+    try:
+        return _plain_id(info.id)
+    except Exception:
+        return None
+
+
 def select_lab_body(candidates, hidden_flags):
     eligible = []
     for si in candidates:
@@ -45,9 +75,18 @@ def select_lab_body(candidates, hidden_flags):
             raise SelectabilityReadFailure("SELECTABILITY_READ_FAILURE")
         if selectable is True:
             eligible.append((si, sim))
-    if len(eligible) != 1:
-        raise LabIdentityAmbiguous(len(eligible))
-    return eligible[0]
+    if len(eligible) == 1:
+        return eligible[0]
+    # 2.32.0 (PR6): several selectable Sims (the User plays another household member). Her body is the armed
+    # Sim; before she is armed, the one the client is playing. Anything else stays ambiguous.
+    wanted = _PREFERRED_BODY["sim_id"]
+    if wanted is None:
+        wanted = active_sim_id()
+    if wanted is not None:
+        for si, sim in eligible:
+            if _info_id(si) == wanted:
+                return si, sim
+    raise LabIdentityAmbiguous(len(eligible))
 
 
 def _monotonic_ns():
@@ -690,6 +729,14 @@ def seen_here(room, level, distance, body_room, body_level):
     if body_room is not None and body_room != "0":
         return room is not None and room == body_room
     return type(distance) in (int, float) and distance <= SEEN_METERS
+
+
+def _is_selected(sim_id):
+    """2.32.0 (PR6): whether her body is the Sim the User's client is playing; None when unreadable."""
+    active = active_sim_id()
+    if active is None or sim_id is None:
+        return None
+    return active == sim_id
 
 
 def _distance(a, b):
@@ -1589,7 +1636,7 @@ def poll_once(telemetry_session_id, armed_name,
     raw_sim_id = sim_info.id
     sim_id = None if raw_sim_id is None else str(raw_sim_id)
     body = {"sim_id": sim_id, "instantiated": True, "is_selectable": True,
-            "is_selected": None, "posture": _posture_snapshot(sim)}
+            "is_selected": _is_selected(sim_id), "posture": _posture_snapshot(sim)}
     complete = snapshot.interactions_complete(
         queue_truncated, running_truncated, capture_complete)
     if social_truncated:

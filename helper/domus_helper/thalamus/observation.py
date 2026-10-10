@@ -410,6 +410,9 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         # W2h: what happened to windows that were or became not hers (newest last, 4 at most).
         "windows": [dict(item) for item in windows or [] if isinstance(item, dict)][-WINDOWS_SHOWN:],
     }
+    if (row.get("body") or {}).get("is_selected") is False:
+        # 2.32.0 (PR6): the User is playing another Sim of the household; her acts are refused meanwhile.
+        portrait["user_plays_another"] = True
     if "presence" in (row.get("missingness") or {}):
         # D40: the company list missed someone this sample.
         portrait["company_complete"] = False

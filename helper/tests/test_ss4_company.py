@@ -203,6 +203,14 @@ def test_shedding_drops_heard_before_a_sim_she_can_see():
     assert heard_left == [10.0, 11.0, 12.0]
 
 
+def test_the_portrait_says_when_the_user_plays_another_household_sim():
+    row = {"zone": {"room": "hall"}, "presence": [_body()], "body": {"is_selected": False}}
+    assert observation._portrait(row)["user_plays_another"] is True
+    row["body"]["is_selected"] = True
+    assert "user_plays_another" not in observation._portrait(row)
+    assert "user_plays_another" not in observation._portrait({"presence": [_body()]})
+
+
 def test_household_here_names_only_the_members_she_sees():
     row = {"zone": {"room": "hall"}, "place": {"owner_household_id": "h1", "her_home": False},
            "presence": [_body(),

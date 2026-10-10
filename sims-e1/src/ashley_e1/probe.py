@@ -1542,6 +1542,7 @@ def _STATE_RESET():
     _CALIBRATE = False
     _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
+    observers.prefer_body(None)  # 2.32.0 (PR6)
     _TELEMETRY_SESSION_ID = None
     _ALARM_HANDLE = None
     _WRITER = None
@@ -1687,6 +1688,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
     _CALIBRATE = False
     _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
+    observers.prefer_body(None)  # 2.32.0 (PR6)
     _SESSION_OPENED = False
     _LAST_CAPTURE_COUNTERS = None
     _DIR_WARNED = False
@@ -1778,6 +1780,7 @@ def _cmd_disarm(_connection=None) -> bool:
     _CALIBRATE = False
     _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
+    observers.prefer_body(None)  # 2.32.0 (PR6)
     _SESSION_OPENED = False
     return True
 
@@ -1822,6 +1825,7 @@ def _session_open_from(row):
                        "sim_id": snapshot_sim,
                        "wall_ms": row["wall_timestamp_ms"],
                        "monotonic_ns": row["monotonic_ns"]}
+    observers.prefer_body(snapshot_sim)  # 2.32.0 (PR6): her body when several Sims are selectable
     return schema.make_record(
         "session_open", telemetry_session_id=_TELEMETRY_SESSION_ID,
         wall_timestamp_ms=row["wall_timestamp_ms"], monotonic_ns=row["monotonic_ns"],
