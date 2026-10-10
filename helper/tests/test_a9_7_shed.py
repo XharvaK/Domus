@@ -24,7 +24,7 @@ def test_a_portrait_cut_to_fit_names_the_parts_it_shed_and_how_many(monkeypatch)
 
 
 def test_the_marker_counts_the_notebook_it_drops_and_stays_within_the_limit():
-    note = {"procedures": [{"interaction": "fridge_Grab_Snack", "n": 3, "needs": {"hunger": 25}}]}
+    note = {"procedures": [{"interaction": "invented_snack", "n": 3, "needs": {"hunger": 25}}]}
     with_note = observation._portrait(_busy_row(), None, notebook=note)
     assert "notebook" not in with_note
     assert {"part": "notebook", "dropped": 1} in with_note["shed"]
