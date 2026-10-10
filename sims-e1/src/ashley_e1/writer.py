@@ -25,6 +25,13 @@ MAX_LEDGER_BYTES = 2 * 1024 * 1024
 LEDGER_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY")
 
 
+def _drop_detail(row, error):
+    """2.32.0 (PR18): the row kind and the failing field (the validator's message names it), for a drop summary."""
+    kind = row.get("event_kind") if isinstance(row, dict) else None
+    text = str(error) or type(error).__name__
+    return ("%s: %s" % (kind, text))[:120]
+
+
 def derive_telemetry_root(module_path):
     """Return the telemetry directory for an installed Mods/AshleyE1 path."""
     if not isinstance(module_path, str):
@@ -137,6 +144,7 @@ class TelemetryWriter:
         self._close_written = False
         self._pre_disarm_requested = False
         self._pending_drop_reason = None
+        self._pending_drop_detail = None  # 2.32.0 (PR18): the row kind and failing field of the latest serialize drop
         self._shutdown_deadline_drops = 0
         self._shutdown_flush_attempted = False
         self._last_drop_summary = 0.0
@@ -277,9 +285,10 @@ class TelemetryWriter:
             return False
         try:
             schema.validate_record(row)
-        except (schema.SchemaError, TypeError, ValueError):
+        except (schema.SchemaError, TypeError, ValueError) as error:
             self.counters["dropped_serialize"] += 1
             self._pending_drop_reason = "SERIALIZE_FAILURE"
+            self._pending_drop_detail = _drop_detail(row, error)
             return False
         try:
             self._queue.put_nowait(row)
@@ -451,9 +460,10 @@ class TelemetryWriter:
     def _serialize_or_account(self, row):
         try:
             return schema.serialize_record(row)
-        except (schema.SchemaError, TypeError, ValueError):
+        except (schema.SchemaError, TypeError, ValueError) as error:
             self.counters["dropped_serialize"] += 1
             self._pending_drop_reason = "SERIALIZE_FAILURE"
+            self._pending_drop_detail = _drop_detail(row, error)
             return None
 
     def _write_diagnostic(self, kind, reason):
@@ -572,11 +582,13 @@ class TelemetryWriter:
                 wall_timestamp_ms=int(now * 1000), monotonic_ns=time.perf_counter_ns(),
                 reason=self._pending_drop_reason, counters=dict(self.counters),
                 writer={"state": self.state, "rotation_index": self.rotation_index},
+                drop_detail=self._pending_drop_detail,
             )
             summary_written = self._write_direct(summary)
             if summary_written:
                 self._last_drop_summary = now
                 self._pending_drop_reason = None
+                self._pending_drop_detail = None
             elif self.state != "OK":
                 return False
         row = dict(row)

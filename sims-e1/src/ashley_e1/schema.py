@@ -166,7 +166,7 @@ AVAILABILITY = ("AVAILABLE", "UNAVAILABLE_DEFERRED")
 COMMON_KEYS = {
     "schema_version", "telemetry_session_id", "boot_id", "written_sequence",
     "wall_timestamp_ms", "monotonic_ns", "game", "probe_version", "sims_build",
-    "event_kind", "reason", "checkpoint_reason", "close_reason",
+    "event_kind", "reason", "checkpoint_reason", "close_reason", "drop_detail",
     "observation_complete", "attestation", "save", "zone", "body",
     "interactions", "motives", "sim_signals", "presence", "social", "mood",
     "missingness", "unsupported",
@@ -371,6 +371,7 @@ def make_record(event_kind, telemetry_session_id=None, boot_id=None,
         "reason": None,
         "checkpoint_reason": None,
         "close_reason": None,
+        "drop_detail": None,
         "observation_complete": None,
         "attestation": attestation(),
         "save": _default_save(),
@@ -1516,6 +1517,10 @@ def validate_record(row):
     if kind == "dropped_summary":
         _require(row.get("reason") in ("QUEUE_SATURATION", "SAMPLER_OVERRUN", "SERIALIZE_FAILURE"),
                  "drop reason")
+        # 2.32.0 (PR18): a serialize drop names its row kind and the field that failed (optional).
+        bounded_string(row.get("drop_detail"), MAX_REASON_LENGTH, "drop_detail")
+    else:
+        _require(row.get("drop_detail") is None, "drop_detail outside a dropped_summary")
     if kind in ("cap_reached", "writer_failed"):
         expected = "CAP_REACHED" if kind == "cap_reached" else "FAILED_STICKY"
         _require(row.get("writer", {}).get("state") == expected, "diagnostic writer state")

@@ -2015,12 +2015,17 @@ class E2Control:
         her queue, so an alias that stays keeps the act; it is gone when none of them is."""
         if not self.pushed:
             return
-        observed = ((row.get("interactions") or {}).get("observed")) or []
+        interactions = row.get("interactions") or {}
+        observed = interactions.get("observed") or []
         present = set(str(entry.get("interaction_id")) for entry in observed if isinstance(entry, dict))
+        # 2.32.0 (PR17): a truncated or incomplete queue read cannot show an act gone; it counts no miss.
+        whole = interactions.get("queue_truncated") is not True and interactions.get("observation_complete") is not False
         for item in self._pushed_records():
             keys = self._pushed_keys(item)
             if any(key in present for key in keys):
                 item["seen"], item["misses"] = True, 0
+                continue
+            if not whole:
                 continue
             item["misses"] += 1
             if item["misses"] < LEFT_QUEUE_SAMPLES:
