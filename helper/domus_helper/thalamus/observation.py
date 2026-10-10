@@ -317,6 +317,17 @@ def _drop_one(items, key):
     items.pop()
 
 
+def _note_shed(portrait, part):
+    """A9-7: a cut portrait names what it left out, by part and count (portrait.shed). The note is in the
+    portrait before the next size check, so the limit holds with the note in it."""
+    shed = portrait.setdefault("shed", [])
+    for item in shed:
+        if item["part"] == part:
+            item["dropped"] += 1
+            return
+    shed.append({"part": part, "dropped": 1})
+
+
 def _asked_answer_rules(item, resolve):
     """W2h, W4 (F6): the rules a question puts on her answer. One source of truth with her options: acts.answer_rules
     decides which rules exist, so the portrait and the options never disagree. Nothing when the game gave no rules."""
@@ -543,17 +554,20 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
     # Then the least essential: the notebook, then queued, the window facts, her pace, running
     # lists, then moodlets, then company.
     while _bytes(portrait) > _PORTRAIT_LIMIT and _shed_sentence(portrait):
-        pass
+        _note_shed(portrait, "sentences")
     if "notebook" in portrait and _bytes(portrait) > _PORTRAIT_LIMIT:
         del portrait["notebook"]
+        _note_shed(portrait, "notebook")
     for key in ("queued", "windows", "pace", "running", "moodlets", "company"):
         if key == "pace":
             # W3h: the pace entry goes whole, not item by item.
-            if _bytes(portrait) > _PORTRAIT_LIMIT:
+            if _bytes(portrait) > _PORTRAIT_LIMIT and "pace" in portrait:
                 portrait.pop("pace", None)
+                _note_shed(portrait, "pace")
             continue
         while portrait[key] and _bytes(portrait) > _PORTRAIT_LIMIT:
             _drop_one(portrait[key], key)
+            _note_shed(portrait, key)
     return portrait
 
 
