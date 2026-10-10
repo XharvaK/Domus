@@ -5,7 +5,7 @@ This directory contains the owner-commanded Sims 4 Embodiment probe.
 ## Current build: 2.32.0 (every window her act opens is hers)
 
 The source is version `2.32.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 13, schema 4 to 12 rows still validate). It is no longer read-only:
+`src/ashley_e1/schema.py`; observation schema 15, schema 4 to 14 rows still validate). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
 The file the game lists is `Domus_<version>.ts4script`. The package inside stays `ashley_e1`.
@@ -15,6 +15,17 @@ Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
 with an interaction card. Sit and sit_trial are unchanged. After the verdict the probe
 cancels only the interaction it pushed for that trial, so the next trial finds an idle body (A25).
+
+2.32.0 (schema 15, W5d) adds to the observation row. `presence` carries `is_pet`, `species` and `occult_kinds`
+(each None when unreadable). `self.life` carries the age stage, `pregnant`, `sick`, `dead`, `ghost` and `npc`.
+`body.is_selected` says whether the Sim the client plays is her body; while it is not, her acts are refused with
+BODY_MISMATCH (NOT_ACTIVE). `game` carries `build_mode` and `fire`; a refusal during a fire or in build mode is
+named FIRE_REFUSED or BUILD_MODE_REFUSED. `objects` carries `near_conditions` (the notable states of the 16 nearest),
+`near_rooms`, `moved` (from and to room) and `owner_changed` (from and to household). A death writes one
+`lineage_event` with record BODY_GONE and a `reason` (DEAD or GHOST), then sampling stops. A `dropped_summary` carries
+`drop_detail` (the row kind and the field that failed). The camera takes an `unfollow` op (look at her, not follow).
+Seen Sims: a Sim is seen within her room and level (outdoors, within 4 m on her level); the helper names only those.
+Not yet read: the game build (PR14 stays a constant), the owner of objects beyond the 16 nearest, a fire's distance.
 
 2.32.0 takes over every window her act or her game opens. A dialog or a phone call she can answer is held for
 her; the User sees it only after 180 s unanswered, and a late answer is then refused. A window she cannot answer

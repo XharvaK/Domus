@@ -88,6 +88,14 @@ and the same level as her body; outdoors, within 4 m on the same level. A Sim sh
 it is stable across samples and restarts, never the id, and it is never logged. A heard Sim's seen
 state changes only after two samples in a row that agree. Addressing her from another room is heard.
 
+Portrait facts of 2.32.0 (schema 15, W5d): `self.life` (age stage, pregnant, sick, dead, ghost, npc);
+`near_conditions` (the notable states of the near objects, no ids); `building` while in build or buy mode (not
+"paused"); `fire_on_lot`; `user_plays_another` when the User plays another household Sim (her acts are refused
+meanwhile); `zone.room_label` and `room_label` on company entries, the room named by the object families in it
+("the room with the fridge and the stove"), never a room number. A company entry for a pet carries `pet`, `species`
+and, for an occult form, `occult`. A BODY_GONE record reaches her as a lineage percept with its `reason` fact.
+Object conditions reach the notebook as `object_condition` facts; object rooms come from the 16 nearest objects.
+
 Game-only inputs: `python -m domus_helper.inputs game-only` keeps the User's
 conversations out of Ashley's game passes; `full` lifts it and `show` prints the
 state. The switch travels in the heartbeat (`inputs: game_only`, sent at once on a
