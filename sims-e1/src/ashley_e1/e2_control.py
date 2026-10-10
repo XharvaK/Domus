@@ -1471,13 +1471,14 @@ class E2Control:
             self._say(connection, "CAMERA_REJECT TOO_SOON")
             return False
         try:
-            if op == "follow_sim":
+            if op in ("follow_sim", "unfollow"):
                 sim_info = services.sim_info_manager().get(int(target_id))
                 sim = sim_info.get_sim_instance() if sim_info is not None else None
                 if sim is None:
                     self._say(connection, "CAMERA_REJECT NO_TARGET")
                     return False
-                focus_on_sim(sim=sim, follow=True)
+                # 2.32.0 (HE14): unfollow looks at her Sim without following it (follow=False, the same call).
+                focus_on_sim(sim=sim, follow=op == "follow_sim")
             else:
                 obj = services.object_manager().get(int(target_id))
                 if obj is None:
