@@ -94,7 +94,7 @@ class WantsTests(unittest.TestCase):
         self.lab._whim_tracker = types.SimpleNamespace(
             _whim_slots=[_slot(FakeWant_ReadBook, _Goal(0x8001, 0x8101, expiry=_TimeOfDay(9, 0)))])
         row = ds3.PollOnceTests.row(self)
-        self.assertEqual(row["schema_version"], 14)
+        self.assertEqual(row["schema_version"], 15)
         self.assertEqual(row["self"]["wants"][0]["until"], [9, 0])
         self.probe.schema.validate_record(row)
         for bad in ({"fear": "yes"}, {"until": [24, 0]}, {"extra": 1}, {"done": 1.5}):

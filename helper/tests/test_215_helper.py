@@ -32,10 +32,10 @@ def _v8(index, minute, running, summer=10.0, travis=-12.6, funds=18000, charisma
                           "romantic_preference": False, "net_worth": None},
                 "sentiments": []}
     row["presence"] = [
-        {"id": "1", "is_body": True, "name": "E1 Proband", "relationship": None, "on_lot": True},
-        {"id": "2", "is_body": False, "name": "Summer Holiday", "on_lot": True,
+        {"id": "1", "level": 0, "is_body": True, "name": "E1 Proband", "relationship": None, "on_lot": True},
+        {"id": "2", "level": 0, "is_body": False, "name": "Summer Holiday", "on_lot": True,
          "distance_m": 1.0, "relationship": rel(summer, learned)},
-        {"id": "3", "is_body": False, "name": "Travis Scott", "on_lot": True,
+        {"id": "3", "level": 0, "is_body": False, "name": "Travis Scott", "on_lot": True,
          "distance_m": 1.0, "relationship": rel(travis)}]
     row["objects"] = {"baseline": False, "created": [], "destroyed": [], "changed": [],
                       "truncated": False}

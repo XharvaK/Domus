@@ -238,11 +238,14 @@ def dialog_options(row, resolve=None, start=0):
     return result
 
 
-def people_names(row):
-    """{sim id: name} from a presence row: who her menu's people are."""
+def people_names(row, seen_ids=None):
+    """{sim id: name} from a presence row: who her menu's people are. SS4-v2: with seen_ids, only the
+    Sims she can see are named (the rest are someone she hears, and her menu does not offer them)."""
     names = {}
     for item in (row or {}).get("presence") or []:
         if isinstance(item, dict) and item.get("id") is not None and isinstance(item.get("name"), str):
+            if seen_ids is not None and str(item["id"]) not in seen_ids and item.get("is_body") is not True:
+                continue
             names[str(item["id"])] = item["name"]
     return names
 
@@ -275,6 +278,9 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     count = start
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
+            continue
+        if item.get("class") == "sim" and people is not None and str(item.get("object_id")) not in people:
+            # SS4-v2 (PR3): a person she cannot see is not offered; the menu names only seen Sims.
             continue
         distance = item.get("distance_m")
         where = _where(item, menu.get("room"), room)

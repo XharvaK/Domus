@@ -373,6 +373,10 @@ class MenuSenseTests(unittest.TestCase):
         self.things = [_Thing(11, 2.0, [ReadBook, AutonomousOnly, Greet]), _Thing(12, 30.0, [ReadBook]),
                        types.SimpleNamespace(is_sim=True, id=13)]
         self.probe._lot_snapshot = lambda: (list(self.things), None)
+        self.rooms = {}
+        room_of = self.base.probe.observers._room
+        self.addCleanup(setattr, self.base.probe.observers, "_room", room_of)
+        self.base.probe.observers._room = lambda obj, position: self.rooms.get(getattr(obj, "id", None))
         self.row = {"event_kind": "presence_snapshot",
                     "zone": {"position": {"x": 0.0, "y": 0.0, "z": 0.0, "level": 0}, "room": "4"}}
 
@@ -412,12 +416,39 @@ class MenuSenseTests(unittest.TestCase):
         lamp = _Thing(33, 3.0, [ReadBook])
         self.things = [neighbour, passerby, lamp]
         self.allowed = {int(GUID), 4345}
+        # 2.32.0 (SS4-v2): the neighbour is in her room, so she sees them.
+        self.rooms = {31: "4"}
         jobs, _room = self.probe._menu_jobs(self.row)
         # The neighbour comes first, as a person, greeting and all; the lamp after.
         self.assertEqual((jobs[0]["object_id"], jobs[0]["class"], jobs[0]["guid64"]), ("31", "sim", GUID))
         self.assertEqual(jobs[-1]["object_id"], "33")
         self.assertNotIn("32", [job["object_id"] for job in jobs])
         self.assertNotIn("4345", [job["guid64"] for job in jobs if job["object_id"] == "31"])
+
+    def test_a_person_she_cannot_see_is_not_offered(self):
+        # 2.32.0 (PR3, SS4-v2): a Sim in another room, or on another level, is heard, not offered.
+        through_wall = _Thing(41, 3.0, [Greet])
+        through_wall.is_sim = True
+        through_wall.is_on_active_lot = lambda: True
+        other_level = _Thing(42, 2.0, [Greet])
+        other_level.is_sim = True
+        other_level.is_on_active_lot = lambda: True
+        other_level.level = 1
+        self.things = [through_wall, other_level]
+        self.rooms = {41: "5", 42: "4"}
+        self.allowed = {int(GUID)}
+        jobs, _room = self.probe._menu_jobs(self.row)
+        self.assertEqual(jobs, [])
+
+    def test_a_pet_on_the_lot_is_a_person_in_her_menu_not_an_object(self):
+        # 2.32.0 (PR13): a pet is offered as a person (the helper names it from her presence), in her room.
+        pet = _Thing(51, 2.0, [ReadBook])
+        pet.sim_info = types.SimpleNamespace(is_pet=True)
+        pet.is_on_active_lot = lambda: True
+        self.things = [pet]
+        self.rooms = {51: "4"}
+        jobs, _room = self.probe._menu_jobs(self.row)
+        self.assertEqual([(job["object_id"], job["class"]) for job in jobs], [("51", "sim")])
 
     def test_an_unreadable_lot_is_no_menu_not_an_empty_one(self):
         self.probe._lot_snapshot = lambda: (None, "TUNED_NO_LOT")

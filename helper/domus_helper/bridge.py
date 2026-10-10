@@ -2,6 +2,7 @@
 import argparse
 import dataclasses
 import json
+import secrets
 import sqlite3
 import time
 import uuid
@@ -26,7 +27,7 @@ from .paths import Paths
 from .spool import OutboxConflict, Spool
 from .thalamus.core import decide, prune
 from .thalamus.log import DecisionLog
-from .thalamus.observation import build
+from .thalamus.observation import SeenMemory, build
 from .thalamus.parameters import Parameters
 from .thalamus.percepts import Extractor
 from .thalamus.scorer import load_scorer, run_scorer
@@ -129,6 +130,7 @@ class Bridge:
         self._obs_seq = 0
         self._last_row = None
         self._last_body_row = None
+        self._seen = None  # SS4-v2: who she sees, by handle (set when the thalamus state loads)
         self._fires = 0
         self._enqueued = 0
         self._last_fire_reason = None
@@ -244,7 +246,7 @@ class Bridge:
         count = sum(len(item["acts"]) for item in asked)
         room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
         listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
-                             people=people_names(row), start=count, limit=max(0, room),
+                             people=people_names(row, self._seen_ids()), start=count, limit=max(0, room),
                              withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"))
         return asked + listed
 
@@ -297,6 +299,7 @@ class Bridge:
         raw = self.spool.get_kv("extractor_state")
         if raw:
             self._extractor = Extractor.from_dict(json.loads(raw))
+        self._seen = SeenMemory(self._heard_key())
         self._last_rowid = int(self.spool.get_kv("last_rowid") or 0)
         self._obs_seq = int(self.spool.get_kv("obs_seq") or 0)
         raw = self.spool.get_kv("last_row")
@@ -313,6 +316,19 @@ class Bridge:
         theta = self.spool.get_kv("thalamus_theta")
         if theta is not None:
             self._theta = float(theta)
+
+    def _heard_key(self):
+        """SS4-v2: the per-install key of the handles of the Sims she hears. Made once, kept in the spool."""
+        key = self.spool.get_kv("heard_key")
+        if not key:
+            key = secrets.token_hex(32)
+            self.spool.put_kv("heard_key", key)
+        return key
+
+    def _seen_ids(self):
+        """SS4-v2: the presence ids she sees at her body's latest sample (None before the state loads)."""
+        self._load_thalamus()
+        return self._seen.seen_ids if self._seen is not None else None
 
     def _advance_thalamus(self, wall_ms):
         # D50: one clock for the thalamus, the wall clock. Rows carry the wall time they were
@@ -366,6 +382,7 @@ class Bridge:
             self._last_row = record
             if _body_sample(record):
                 self._last_body_row = record
+                self._seen.observe(record)
             self._last_rowid = rowid
             seq = record.get("written_sequence") if isinstance(record, dict) else None
             self._on_decision(decision, percepts, wall_ms, clock_ms, seq if type(seq) is int else None)
@@ -464,6 +481,8 @@ class Bridge:
             "event_row": self._last_row,
             "resolve_text": self._resolve_text,
             "act_name": self._act_names(),
+            "room_labels": self._room_labels(),
+            "seen": self._seen,
             "options": self._options(body),
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
@@ -527,6 +546,13 @@ class Bridge:
             return self.notebook.withheld_names()
         except (sqlite3.Error, ValueError, TypeError, KeyError):
             return set()
+
+    def _room_labels(self):
+        """HE6: the interim room names of this world (room id -> label), or {} when the notebook cannot say."""
+        try:
+            return self.notebook.room_labels(self._world())
+        except (sqlite3.Error, ValueError, TypeError, KeyError):
+            return {}
 
     def _notebook_slice(self, wall_ms):
         try:

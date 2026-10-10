@@ -422,18 +422,18 @@ def test_status_thalamus_block_without_secrets(paths, tmp_path, monkeypatch):
 def test_act_menu_then_fire_puts_notebook_on_portrait(paths, tmp_path, monkeypatch):
     _data(paths, tmp_path, monkeypatch)
 
-    def menu(room, seq, wall):
-        return {
-            "event_kind": "act_menu", "written_sequence": seq, "wall_timestamp_ms": wall,
-            "telemetry_session_id": "sess-1",
-            "e2": {"menu_rev": 1, "room": room, "objects": [{
-                "object_id": "501", "class": "object_fridge_X", "same_room": True, "acts": []}]},
-        }
+    def near(room, seq, wall):
+        # 2.32.0 (HE5): object rooms come from the 16 nearest objects of a sample, not from a menu.
+        row = _snap(seq, "ok", wall, 10)
+        row["objects"] = {"baseline": False, "created": [], "destroyed": [], "changed": [],
+                          "truncated": False, "near_conditions": [], "moved": [],
+                          "near_rooms": [{"object_id": "501", "class": "object_fridge_X", "room": room}]}
+        return row
 
     _append(paths, [
         _lineage(1, WALL),
-        menu("7", 2, WALL),
-        menu("9", 3, WALL + 1),
+        near("7", 2, WALL),
+        near("9", 3, WALL + 1),
         _snap(4, "ok", WALL + 2, 10),
         _snap(5, "low", WALL + 3, 20),
     ])
@@ -457,8 +457,8 @@ def test_ds3_portrait_has_time_room_company_moodlets():
         "game": {"calendar": "07:05:00.000 day:0 week:2", "clock_speed": "NORMAL",
                  "paused": False},
         "zone": {"zone_id": "1", "lot_id": "2", "room": "3", "position": None},
-        "presence": [{"id": "100", "is_body": True, "name": "E1 Proband"},
-                     {"id": "200", "is_body": False, "name": "Bella Goth", "room": "3",
+        "presence": [{"id": "100", "level": 0, "is_body": True, "name": "E1 Proband"},
+                     {"id": "200", "level": 0, "is_body": False, "name": "Bella Goth", "room": "3",
                       "distance_m": 1.0, "doing": "<class 'social_Chat'>"}],
         "sim_signals": [
             {"kind": "MOODLET", "tuning_id": "902", "tuning_name": "Buff_Hungry",
@@ -473,7 +473,8 @@ def test_ds3_portrait_has_time_room_company_moodlets():
     assert portrait["moodlets"][0]["text"] == "Hungry"
     assert observation._portrait(row)["moodlets"][0]["text"] is None
     assert portrait["time"]["weekday"] == "Sunday" and portrait["time"]["hour"] == 7
-    assert portrait["zone"]["room"] == "3"
+    # HE6: no room number reaches her portrait; the room is named in words when the notebook can.
+    assert "room" not in portrait["zone"] and portrait["zone"]["room_label"] is None
     assert [item["name"] for item in portrait["company"]] == ["Bella Goth"]
     assert [item["name"] for item in portrait["moodlets"]] == ["Buff_Hungry"]
     assert portrait["addressed_by"] == [{"by": "200", "interaction": "social_Chat"}]
@@ -586,8 +587,8 @@ def _body(seq, band, wall, ticks):
     row["zone"] = {"zone_id": 7, "lot_id": 9, "room": "4"}
     row["body"]["posture"] = {"posture_name": "sit", "target_id": "stool"}
     row["presence"] = [
-        {"id": "1", "is_body": True, "name": "Ada Quill"},
-        {"id": "2", "is_body": False, "name": "Nia Cole", "room": "4"},
+        {"id": "1", "level": 0, "is_body": True, "name": "Ada Quill", "room": "4"},
+        {"id": "2", "level": 0, "is_body": False, "name": "Nia Cole", "room": "4"},
     ]
     return row
 
@@ -612,7 +613,7 @@ def test_portrait_comes_from_the_body_sample_not_the_act_event(paths, tmp_path, 
     assert portrait["needs"]["hunger"] == {"value": 40, "band": "low"}
     assert portrait["mood"] == "Mood_Bright"
     assert portrait["posture"] == "sit"
-    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room": "4"}
+    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room_label": None}
     assert [item["name"] for item in portrait["company"]] == ["Nia Cole"]
     assert obs["source_time_ms"] == acted
     assert obs["snapshot"] == "4"
@@ -642,7 +643,7 @@ def test_a_session_checkpoint_never_replaces_her_body_sample(paths, tmp_path, mo
     bridge.tick(acted + 1_500)
     portrait = _payloads(bridge)[-1]["portrait"]
     assert portrait["posture"] == "sit"
-    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room": "4"}
+    assert portrait["zone"] == {"zone_id": 7, "lot_id": 9, "room_label": None}
     assert portrait["needs"]["hunger"] == {"value": 40, "band": "low"}
     assert bridge._last_body_row["written_sequence"] == 3
 

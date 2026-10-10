@@ -76,12 +76,13 @@ def test_people_in_her_menu_are_named_as_her_senses_name_them():
                          "same_room": False, "acts": [{"guid64": "77", "name": "social_Greet_Neighbor", "text_key": None}]},
                         {"object_id": "301", "definition_id": None, "class": "sim", "distance_m": 7.0,
                          "same_room": False, "acts": [{"guid64": "78", "name": "sim_InviteIn", "text_key": None}]}]}
-    row = {"presence": [{"id": "300", "name": "Dennis Kim"}, {"id": 100, "is_body": True, "name": "Her"}, "x"]}
+    row = {"presence": [{"id": "300", "name": "Dennis Kim"}, {"id": 100, "level": 0, "is_body": True, "name": "Her"}, "x"]}
     names = people_names(row)
     assert names == {"300": "Dennis Kim", "100": "Her"}
     result = options(menu, people=names)
+    # SS4-v2 (PR3): the person she cannot see (301, not on the presence row) is not offered at all.
     assert [(o["object"], o["acts"][0]["text"]) for o in result] == [
-        ("Dennis Kim", "social Greet Neighbor"), ("someone", "sim Invite In")]
+        ("Dennis Kim", "social Greet Neighbor")]
 
 
 PHONE_MENU = {"menu_rev": 4, "room": "4", "tested": 3, "refused": 1, "build_ms": 2.0, "objects": [
@@ -101,7 +102,7 @@ def test_her_own_phone_is_an_option_named_your_phone():
     assert [entry["object"] for entry in result] == ["object bookshelf", "your phone"]
 
 
-DIALOG_ROW = {"presence": [{"id": "100", "is_body": True, "name": "Her"}], "dialogs": {"open": [
+DIALOG_ROW = {"presence": [{"id": "100", "level": 0, "is_body": True, "name": "Her"}], "dialogs": {"open": [
     {"dialog_id": "555", "kind": "UiRecipePicker", "owner_id": "100", "title_key": "1", "text_key": None,
      "auto_respond": False, "held": True, "responses": [{"response": "ok", "text_key": "2"}, {"response": "cancel", "text_key": "3"}],
      "rows": [{"option_id": "11", "name_key": "4", "enabled": True, "price": 5},
@@ -385,7 +386,7 @@ def _dialog(dialog_id, **extra):
     return dialog
 
 
-BODY = [{"id": "100", "is_body": True, "name": "Her"}]
+BODY = [{"id": "100", "level": 0, "is_body": True, "name": "Her"}]
 TEXTS = {"1": "Pick some", "2": "OK", "3": "Cancel", "4": "Blue Vase", "5": "Red Vase", "9": "Tip Amount"}
 
 

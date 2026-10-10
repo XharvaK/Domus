@@ -65,6 +65,17 @@ class CameraTests(unittest.TestCase):
         self.assertIs(obj, self.case.base.objects[CHAIR])
         self.assertFalse(follow)
 
+    def test_unfollow_keeps_the_view_on_her_and_stops_the_follow(self):
+        # 2.32.0 (HE14): the User's hand on the controls: the view stays on her Sim, not following it.
+        self.case.ready()
+        ok, connection = self.camera("unfollow", HER)
+        self.assertTrue(ok, connection.lines)
+        self.assertEqual(connection.lines[-1], "CAMERA_OK unfollow %s" % HER)
+        sim, follow = self.followed[-1]
+        self.assertIs(sim, self.case.base.sim)
+        self.assertFalse(follow)
+        self.assertEqual(self.case.events(), [])
+
     def test_one_op_per_gap(self):
         self.case.ready()
         self.assertTrue(self.camera("follow_sim", HER)[0])
@@ -104,6 +115,7 @@ class CameraTests(unittest.TestCase):
             return cmdbox.parse(json.dumps(dict(base, args=args)).encode("utf-8"), 1500, set())[1]
 
         self.assertIsNone(check({"op": "follow_sim", "target_id": "123"}))
+        self.assertIsNone(check({"op": "unfollow", "target_id": "123"}))
         for bad in ({"op": "walls_up", "target_id": "123"},
                     {"op": "follow_sim", "target_id": "12x"},
                     {"op": "follow_sim"},

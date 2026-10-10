@@ -129,7 +129,8 @@ def parse(raw_bytes, now_ms, used_ids):
                 _digits(args.get('interaction_id')))
     elif good and name == 'camera':
         # 2.21.0: the overlay's camera follows her Sim or looks at one object; never the world.
-        good = (set(args) == {'op', 'target_id'} and args.get('op') in ('follow_sim', 'focus_object') and
+        # 2.32.0 (HE14): unfollow keeps the view on her Sim and stops the game's follow (the User's hand on the controls).
+        good = (set(args) == {'op', 'target_id'} and args.get('op') in ('follow_sim', 'focus_object', 'unfollow') and
                 _digits(args.get('target_id')))
     elif good and name == 'talk':
         # 2.26.0: one line of social talk for the User's screen; text only, never an act.

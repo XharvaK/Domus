@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 14
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v14"
-PROBE_VERSION = "2.31.0"
+OBSERVATION_SCHEMA_VERSION = 15
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v15"
+PROBE_VERSION = "2.32.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -68,8 +68,9 @@ E2_PAYLOAD_KEYS = {
                          "interaction_id", "claims", "finishing_type", "detail",
                          "guid64", "card_class", "tuning_name", "ambiguous"),
     "speed_event": ("phase", "code", "detail"),
+    # 2.32.0 (schema 15): reason, for BODY_GONE (her body died); None on every other record.
     "lineage_event": ("record", "guid", "slot_id", "sim_id", "ticks",
-                      "loaded_from_slot_id", "lineage_class", "session_uuid"),
+                      "loaded_from_slot_id", "lineage_class", "session_uuid", "reason"),
     # 2.16.0 (schema 10): Ashley's own acts (8f) and what she can do near her body.
     # 2.22.0: reason_key is optional (None when the tooltip has no string key).
     # 2.23.0: closed and resumed are optional on FINISHED (None on earlier rows
@@ -130,7 +131,7 @@ SPEED_PHASES = ("REQUEST_PUSHED", "REQUEST_REMOVED", "REJECT",
                 # 2.31.0 (W4): the probe could not read the game clock (its own reason), and a held window
                 # that vanished or was dropped by a zone change (ids only).
                 "CLOCK_FOREIGN", "CLOCK_UNREADABLE", "DIALOG_DROPPED")
-LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED")
+LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED", "BODY_GONE")
 CLAIM_KEYS = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
               "ATTRIBUTED", "MAINTAINED_10S", "FINISHED")
 MISSINGNESS_STATUSES = ("MISSING", "ABSENT", "UNSUPPORTED", "UNKNOWN")
@@ -165,7 +166,7 @@ AVAILABILITY = ("AVAILABLE", "UNAVAILABLE_DEFERRED")
 COMMON_KEYS = {
     "schema_version", "telemetry_session_id", "boot_id", "written_sequence",
     "wall_timestamp_ms", "monotonic_ns", "game", "probe_version", "sims_build",
-    "event_kind", "reason", "checkpoint_reason", "close_reason",
+    "event_kind", "reason", "checkpoint_reason", "close_reason", "drop_detail",
     "observation_complete", "attestation", "save", "zone", "body",
     "interactions", "motives", "sim_signals", "presence", "social", "mood",
     "missingness", "unsupported",
@@ -180,12 +181,17 @@ COMMON_KEYS = {
     "pace",
 }
 MAX_OBJECT_EVENTS = 8
+# 2.32.0 (HE7, schema 15): the notable states of one near object, and the near objects a sample names.
+MAX_NEAR_STATES = 4
+MAX_NEAR_CONDITIONS = 16
 MAX_REL_TRACKS = 4
 MAX_REL_LABELS = 6
 MAX_KNOWN_TRAITS = 6
 MAX_SENTIMENTS = 3
 MAX_SELF_TRAITS = 12
 MAX_SELF_SKILLS = 12
+# 2.32.0 (PR13, schema 15): the occult types a presence entry names (a form of her own or another Sim's).
+MAX_OCCULT_KINDS = 4
 MAX_SELF_CAREERS = 4
 MAX_SELF_WANTS = 8
 MAX_SITUATIONS = 3
@@ -316,7 +322,8 @@ def attestation(armed_name="UNARMED", armed_name_hash=None, snapshot_guid=None,
 
 
 def _default_game():
-    return {"ticks": None, "calendar": None, "clock_speed": None, "paused": None}
+    return {"ticks": None, "calendar": None, "clock_speed": None, "paused": None,
+            "build_mode": None, "fire": None}
 
 
 def _default_save():
@@ -364,6 +371,7 @@ def make_record(event_kind, telemetry_session_id=None, boot_id=None,
         "reason": None,
         "checkpoint_reason": None,
         "close_reason": None,
+        "drop_detail": None,
         "observation_complete": None,
         "attestation": attestation(),
         "save": _default_save(),
@@ -567,6 +575,10 @@ def _validate_e2(row):
                     item["reach"] = None
                 if "phone" not in item:
                     item["phone"] = None
+    elif kind == "lineage_event" and isinstance(payload, dict):
+        # 2.32.0: reason is optional; rows before schema 15 omit it.
+        if "reason" not in payload:
+            payload["reason"] = None
     elif kind == "act_event" and isinstance(payload, dict):
         # 2.22.0 / 2.23.0: optional. Older act rows omit them.
         if "reason_key" not in payload:
@@ -665,6 +677,7 @@ def _validate_e2(row):
                 string_id(payload[key], "lineage %s" % key)
         if payload["ticks"] is not None:
             _require(type(payload["ticks"]) is int, "lineage ticks")
+        bounded_string(payload.get("reason"), MAX_REASON_LENGTH, "lineage reason")
 
 
 def _validate_menu(payload):
@@ -725,6 +738,8 @@ PRESENCE_V6 = {"id", "active_household", "level", "is_body", "household_id", "na
 PRESENCE_V7 = PRESENCE_V6 | {"relationship"}
 PRESENCE_V8 = PRESENCE_V7 | {"on_lot"}
 PRESENCE_V9 = PRESENCE_V8 | {"situations"}
+# 2.32.0 (PR13, schema 15): a pet flag, the species name and the occult types of the Sim (None when unreadable).
+PRESENCE_V15 = PRESENCE_V9 | {"is_pet", "species", "occult_kinds"}
 
 
 def _number_or_none(value, label):
@@ -777,6 +792,15 @@ def _validate_knows(value):
         _require(type(value["net_worth"]) is int, "knows.net_worth")
 
 
+def _validate_life(value):
+    """2.32.0 (PR12, schema 15): her life state. Each flag is a bool or None (unreadable); age is a stage name or None."""
+    _require(isinstance(value, dict) and set(value) == {"age", "pregnant", "sick", "dead", "ghost", "npc"},
+             "self.life shape")
+    bounded_string(value["age"], 128, "self.life.age")
+    for key in ("pregnant", "sick", "dead", "ghost", "npc"):
+        _require(value[key] is None or type(value[key]) is bool, "self.life.%s" % key)
+
+
 def _validate_self(row):
     """2.15.0 (schema 8 presence_snapshot only): her traits, skills and money."""
     if "self" not in row:
@@ -787,8 +811,11 @@ def _validate_self(row):
     if value is None:
         return
     keys = ({"traits", "skills", "funds"} | ({"careers"} if row["schema_version"] >= 12 else set()) |
-            ({"wants"} if row["schema_version"] >= 13 else set()))
+            ({"wants"} if row["schema_version"] >= 13 else set()) |
+            ({"life"} if row["schema_version"] >= 15 else set()))
     _require(isinstance(value, dict) and set(value) == keys, "self shape")
+    if "life" in value:
+        _validate_life(value["life"])
     if value["traits"] is not None:
         _validate_named(value["traits"], "trait", MAX_SELF_TRAITS, "self.traits")
         for item in value["traits"]:
@@ -1046,10 +1073,45 @@ def _validate_objects(row):
     value = row["objects"]
     if value is None:
         return
-    _require(isinstance(value, dict) and set(value) ==
-             {"baseline", "created", "destroyed", "changed", "truncated"}, "objects shape")
+    keys = {"baseline", "created", "destroyed", "changed", "truncated"}
+    if row["schema_version"] >= 15:
+        keys = keys | {"near_conditions", "near_rooms", "moved", "owner_changed"}
+    _require(isinstance(value, dict) and set(value) == keys, "objects shape")
     _require(type(value["baseline"]) is bool and type(value["truncated"]) is bool,
              "objects flags")
+    if "near_conditions" in value:
+        _validate_near_conditions(value["near_conditions"])
+    if "moved" in value:
+        # 2.32.0 (HE5, schema 15): an object moved (over 0.5 m, or into another room); rooms are the game's ids.
+        _require(isinstance(value["moved"], list) and len(value["moved"]) <= MAX_OBJECT_EVENTS, "objects.moved")
+        for item in value["moved"]:
+            _require(isinstance(item, dict) and set(item) == {"object_id", "class", "from_room", "to_room"},
+                     "objects.moved entry")
+            string_id(item["object_id"], "objects.moved.object_id")
+            for text in ("from_room", "to_room"):
+                if item[text] is not None:
+                    string_id(item[text], "objects.moved.%s" % text)
+            bounded_string(item["class"], 128, "objects.moved.class")
+    if "owner_changed" in value:
+        # 2.32.0 (PR15, schema 15): an object of the nearest changed household (plain household ids).
+        _require(isinstance(value["owner_changed"], list) and len(value["owner_changed"]) <= MAX_OBJECT_EVENTS,
+                 "objects.owner_changed")
+        for item in value["owner_changed"]:
+            _require(isinstance(item, dict) and set(item) == {"object_id", "class", "from_owner", "to_owner"},
+                     "objects.owner_changed entry")
+            string_id(item["object_id"], "objects.owner_changed.object_id")
+            string_id(item["from_owner"], "objects.owner_changed.from_owner")
+            string_id(item["to_owner"], "objects.owner_changed.to_owner")
+            bounded_string(item["class"], 128, "objects.owner_changed.class")
+    if "near_rooms" in value:
+        _require(isinstance(value["near_rooms"], list) and len(value["near_rooms"]) <= MAX_NEAR_CONDITIONS,
+                 "objects.near_rooms")
+        for item in value["near_rooms"]:
+            _require(isinstance(item, dict) and set(item) == {"object_id", "class", "room"},
+                     "objects.near_rooms entry")
+            string_id(item["object_id"], "objects.near_rooms.object_id")
+            string_id(item["room"], "objects.near_rooms.room")
+            bounded_string(item["class"], 128, "objects.near_rooms.class")
     shapes = {"created": {"object_id", "class", "definition_id"},
               "destroyed": {"object_id", "class"},
               "changed": {"object_id", "class", "state", "from", "to"}}
@@ -1067,11 +1129,29 @@ def _validate_objects(row):
                     bounded_string(item[text], 128, "objects.%s" % text, False)
 
 
+def _validate_near_conditions(value):
+    """2.32.0 (HE7): each near object names its notable states (state and value, the game's own names)."""
+    _require(isinstance(value, list) and len(value) <= MAX_NEAR_CONDITIONS, "objects.near_conditions")
+    for item in value:
+        _require(isinstance(item, dict) and set(item) == {"object_id", "class", "states"},
+                 "objects.near_conditions entry")
+        string_id(item["object_id"], "objects.near_conditions.object_id")
+        bounded_string(item["class"], 128, "objects.near_conditions.class")
+        _require(isinstance(item["states"], list) and 1 <= len(item["states"]) <= MAX_NEAR_STATES,
+                 "objects.near_conditions.states")
+        for state in item["states"]:
+            _require(isinstance(state, dict) and set(state) == {"state", "value"},
+                     "objects.near_conditions.state entry")
+            bounded_string(state["state"], 128, "objects.near_conditions.state", False)
+            bounded_string(state["value"], 128, "objects.near_conditions.value", False)
+
+
 def _validate_presence(value, version=5):
     _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
     for item in value:
         _require(isinstance(item, dict), "presence entry must be an object")
-        _require(set(item) == (PRESENCE_V9 if version >= 9 else
+        _require(set(item) == (PRESENCE_V15 if version >= 15 else
+                               PRESENCE_V9 if version >= 9 else
                                PRESENCE_V8 if version >= 8 else
                                PRESENCE_V7 if version >= 7 else
                                PRESENCE_V6 if version >= 6 else
@@ -1079,6 +1159,15 @@ def _validate_presence(value, version=5):
                  "presence shape")
         if version >= 8 and item.get("on_lot") is not None:
             _require(type(item["on_lot"]) is bool, "presence.on_lot must be bool")
+        if version >= 15:
+            _require(item["is_pet"] is None or type(item["is_pet"]) is bool, "presence.is_pet must be bool")
+            if item["species"] is not None:
+                bounded_string(item["species"], 128, "presence.species", False)
+            if item["occult_kinds"] is not None:
+                _require(isinstance(item["occult_kinds"], list) and len(item["occult_kinds"]) <= MAX_OCCULT_KINDS,
+                         "presence.occult_kinds")
+                for name in item["occult_kinds"]:
+                    bounded_string(name, 128, "presence.occult_kinds", False)
         if version >= 9:
             _validate_situations(item["situations"])
         if version >= 7:
@@ -1289,8 +1378,13 @@ def _validate_common(row):
     bounded_string(row.get("probe_version"), MAX_ID_LENGTH, "probe_version", False)
     bounded_string(row.get("sims_build"), MAX_ID_LENGTH, "sims_build", False)
     game = row.get("game")
+    # 2.32.0 (PR10, PR11, schema 15): build mode and a fire on the lot, each a bool or None.
     _require(isinstance(game, dict) and set(game) ==
-             {"ticks", "calendar", "clock_speed", "paused"}, "game")
+             {"ticks", "calendar", "clock_speed", "paused"} | (
+                 {"build_mode", "fire"} if row["schema_version"] >= 15 else set()), "game")
+    for field in ("build_mode", "fire"):
+        if game.get(field) is not None:
+            _require(type(game[field]) is bool, "game.%s" % field)
     if game["ticks"] is not None:
         _require(type(game["ticks"]) is int, "game.ticks")
     for field in ("calendar", "clock_speed"):
@@ -1416,7 +1510,7 @@ def validate_record(row):
         _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM",
                                                    "SAMPLER_RESTARTED", "ZONE_RESUMED",
                                                    "AUTOSTARTED", "WAITING_FOR_BODY",
-                                                   "TELEMETRY_DIR_75"),
+                                                   "TELEMETRY_DIR_75", "BODY_GONE"),
                  "checkpoint_reason")
     if kind == "session_close":
         _require(row.get("telemetry_session_id") is not None, "close session id")
@@ -1434,6 +1528,10 @@ def validate_record(row):
     if kind == "dropped_summary":
         _require(row.get("reason") in ("QUEUE_SATURATION", "SAMPLER_OVERRUN", "SERIALIZE_FAILURE"),
                  "drop reason")
+        # 2.32.0 (PR18): a serialize drop names its row kind and the field that failed (optional).
+        bounded_string(row.get("drop_detail"), MAX_REASON_LENGTH, "drop_detail")
+    else:
+        _require(row.get("drop_detail") is None, "drop_detail outside a dropped_summary")
     if kind in ("cap_reached", "writer_failed"):
         expected = "CAP_REACHED" if kind == "cap_reached" else "FAILED_STICKY"
         _require(row.get("writer", {}).get("state") == expected, "diagnostic writer state")

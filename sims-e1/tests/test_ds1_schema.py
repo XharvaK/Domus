@@ -48,6 +48,7 @@ def full_presence(index=0):
             "position": {"x": 1.25, "y": 0.0, "z": -3.5, "level": 2 ** 30},
             "room": "2" * 64, "posture": "p" * 160, "doing": "d" * 160,
             "doing_target": "3" * 64, "distance_m": 12.3,
+            "is_pet": True, "species": "s" * 64, "occult_kinds": ["k" * 64] * 4,
             "relationship": {"known": True,
                              "tracks": [{"track": "t" * 128, "value": -100.0}] * 4,
                              "labels": [{"label": "l" * 128, "text_key": "4294967295"}] * 6,
@@ -70,13 +71,15 @@ def full_self():
             "careers": [{"career": "c" * 64, "text_key": "4294967295", "title_key": "4294967295",
                          "level": 10, "at_work": True}] * 4,
             "wants": [{"want": "w" * 128, "text_key": "4294967295", "tip_key": "4294967295", "fear": True,
-                       "locked": True, "done": 2 ** 31, "of": 2 ** 31, "until": [23, 59]}] * 8}
+                       "locked": True, "done": 2 ** 31, "of": 2 ** 31, "until": [23, 59]}] * 8,
+            "life": {"age": "a" * 40, "pregnant": True, "sick": False, "dead": False,
+                     "ghost": False, "npc": None}}
 
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 14)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v14")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 15)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v15")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -84,7 +87,8 @@ class SchemaV4Tests(unittest.TestCase):
 
     def test_presence_snapshot_carries_senses(self):
         row = presence_row(
-            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True, "situations": None}],
+            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True, "situations": None,
+                        "is_pet": False, "species": "HUMAN", "occult_kinds": []}],
             social=[],
             mood={"type": "123", "intensity": 5, "name": None},
             motives=[{"id": "hunger", "value": 50, "band": "ok",

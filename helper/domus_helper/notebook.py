@@ -37,7 +37,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   world TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('object_room', 'lives_here')),
+  kind TEXT NOT NULL CHECK (kind IN ('object_room', 'lives_here', 'object_condition')),
   subject TEXT NOT NULL,
   value TEXT NOT NULL,
   label TEXT,
@@ -68,6 +68,25 @@ CREATE TABLE IF NOT EXISTS procedures (
 _MIGRATIONS = (
     ("procedures", "first_ms", "ALTER TABLE procedures ADD COLUMN first_ms INTEGER"),
 )
+# 2.32.0 (HE7): a notebook made before the object_condition kind gets its facts table rebuilt (SQLite cannot
+# widen a CHECK in place). The rows keep their ids and their open and closed facts.
+_CONDITION_KIND = "object_condition"
+_FACTS_COLUMNS = ("id, world, kind, subject, value, label, valid_from_ms, valid_until_ms, seen_ms")
+_FACTS_TABLE = """CREATE TABLE facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  world TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('object_room', 'lives_here', 'object_condition')),
+  subject TEXT NOT NULL,
+  value TEXT NOT NULL,
+  label TEXT,
+  valid_from_ms INTEGER NOT NULL,
+  valid_until_ms INTEGER,
+  seen_ms INTEGER NOT NULL
+)"""
+_FACTS_OPEN = ("CREATE UNIQUE INDEX IF NOT EXISTS facts_open ON facts (world, kind, subject)"
+               " WHERE valid_until_ms IS NULL")
+# An object_condition fact closes when its object has not been named as notable for this long (wall ms).
+CONDITION_STALE_MS = 600_000
 
 
 class Notebook:
@@ -85,6 +104,16 @@ class Notebook:
                 with self._con:
                     self._con.execute(statement)
                     self._con.execute("UPDATE %s SET first_ms = updated_ms WHERE first_ms IS NULL" % table)
+        ddl = self._con.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'facts'").fetchone()
+        if ddl is not None and _CONDITION_KIND not in (ddl["sql"] or ""):
+            with self._con:
+                self._con.execute("ALTER TABLE facts RENAME TO facts_before_condition")
+                self._con.execute("DROP INDEX IF EXISTS facts_open")
+                self._con.execute(_FACTS_TABLE)
+                self._con.execute("INSERT INTO facts (%s) SELECT %s FROM facts_before_condition"
+                                  % (_FACTS_COLUMNS, _FACTS_COLUMNS))
+                self._con.execute("DROP TABLE facts_before_condition")
+                self._con.execute(_FACTS_OPEN)
 
     def close(self):
         self._con.close()
@@ -113,20 +142,58 @@ class Notebook:
             return "changed"
 
     def observe_menu(self, world, payload, now_ms):
-        if not isinstance(payload, dict) or payload.get("room") is None:
+        """HE5: a menu no longer sets where things are. Object rooms come from the 16 nearest objects of the
+        sample (observe_near_rooms), not from the four objects a menu offers."""
+        return None
+
+    def observe_near_rooms(self, world, row, now_ms):
+        """HE5 (schema 15): where the 16 nearest objects are. A moved object closes its old room fact and opens
+        the new one; an object that did not move keeps its fact (seen again)."""
+        objects = row.get("objects") if isinstance(row, dict) else None
+        if not isinstance(objects, dict):
             return
-        room = str(payload.get("room"))
-        for obj in payload.get("objects") or []:
-            if not isinstance(obj, dict) or obj.get("same_room") is not True:
+        for item in objects.get("moved") or []:
+            if not isinstance(item, dict) or not isinstance(item.get("object_id"), str):
                 continue
-            object_id = obj.get("object_id")
+            with self._con:
+                self._con.execute(
+                    "UPDATE facts SET valid_until_ms = ? WHERE world = ? AND kind = 'object_room'"
+                    " AND subject = ? AND valid_until_ms IS NULL", (now_ms, world, item["object_id"]))
+        for item in objects.get("near_rooms") or []:
+            if not isinstance(item, dict):
+                continue
+            object_id, room = item.get("object_id"), item.get("room")
+            if not isinstance(object_id, str) or not object_id.isdigit() or not isinstance(room, str):
+                continue
+            self._assert(world, "object_room", object_id, room, family(item.get("class")), now_ms)
+
+    def observe_conditions(self, world, row, now_ms):
+        """2.32.0 (HE7): a notable condition of a near object (spoiled, dirty, broken) is a fact about that object.
+        A fact closes once its object has not been named as notable for CONDITION_STALE_MS (it is no longer near,
+        or it was cleaned)."""
+        objects = row.get("objects") if isinstance(row, dict) else None
+        if not isinstance(objects, dict) or not isinstance(objects.get("near_conditions"), list):
+            return
+        with self._con:
+            self._con.execute(
+                "UPDATE facts SET valid_until_ms = ? WHERE world = ? AND kind = ? AND valid_until_ms IS NULL"
+                " AND seen_ms < ?", (now_ms, world, _CONDITION_KIND, now_ms - CONDITION_STALE_MS))
+        for item in objects["near_conditions"]:
+            if not isinstance(item, dict):
+                continue
+            object_id = item.get("object_id")
             if not isinstance(object_id, str) or not object_id.isdigit():
                 continue
-            self._assert(world, "object_room", object_id, room, family(obj.get("class")), now_ms)
+            text = "; ".join("%s=%s" % (state.get("state"), state.get("value"))
+                             for state in item.get("states") or [] if isinstance(state, dict))
+            if text:
+                self._assert(world, _CONDITION_KIND, object_id, text[:256], family(item.get("class")), now_ms)
 
     def observe_presence(self, world, row, now_ms):
         if not isinstance(row, dict):
             return
+        self.observe_conditions(world, row, now_ms)
+        self.observe_near_rooms(world, row, now_ms)
         place = row.get("place")
         if not isinstance(place, dict) or place.get("her_home") is not True:
             return
@@ -214,6 +281,19 @@ class Notebook:
                 " updated_ms = excluded.updated_ms",
                 rows)
         return len(rows)
+
+    def room_labels(self, world):
+        """HE6: an interim name for each room, from the object families of its open object_room facts: "the room
+        with the fridge and the stove". The game's own room names are not read (UNKNOWN whether it exposes them).
+        A room with no known object has no label."""
+        families = {}
+        for row in self._con.execute(
+                "SELECT value, label FROM facts WHERE world = ? AND kind = 'object_room'"
+                " AND valid_until_ms IS NULL", (world,)).fetchall():
+            if row["label"]:
+                families.setdefault(row["value"], set()).add(row["label"])
+        return {room: "the room with the " + " and the ".join(sorted(names)[:3])
+                for room, names in families.items()}
 
     def slice(self, world, payload, now_ms):
         offered = set()

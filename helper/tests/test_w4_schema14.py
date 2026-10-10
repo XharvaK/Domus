@@ -26,8 +26,9 @@ def _observation(seq=1, **payload):
 
 
 def test_schema_14_is_accepted_by_the_vendored_validator():
-    assert schema.OBSERVATION_SCHEMA_VERSION == 14
-    assert 14 in schema.ACCEPTED_SCHEMA_VERSIONS
+    # 2.32.0 (W5d): the helper accepts schema 13 to 15 (15 adds her life block and the BODY_GONE reason).
+    assert schema.OBSERVATION_SCHEMA_VERSION == 15
+    assert {13, 14, 15} <= set(schema.ACCEPTED_SCHEMA_VERSIONS)
     assert 13 in schema.ACCEPTED_SCHEMA_VERSIONS
 
 
@@ -36,7 +37,7 @@ def test_schema_14_presence_row_with_dialog_and_pace_passes_validation(paths):
     assert schema.validate_record(row) is row
     path = session_file(paths, [opened(), row])
     rows = list(telemetry.file_rows(path))
-    assert rows[1]["schema_version"] == 14
+    assert rows[1]["schema_version"] == 15
     assert rows[1]["pace"]["need_drain"] == 0.5
     assert rows[1]["dialogs"]["open"][0]["held"] is True
 
@@ -52,6 +53,8 @@ def test_schema_13_observation_row_without_window_or_pace_still_passes(paths):
         dialog_id="1001", kind="PICKER", owner_id=None, title_key="0x1", text_key=None,
         responses=[], auto_respond=False, rows=[])], closed=[], truncated=False))
     row["schema_version"] = 13
+    # 2.32.0 (PR10, PR11): build_mode and fire are schema 15 fields of the game block.
+    row["game"] = {key: value for key, value in row["game"].items() if key not in ("build_mode", "fire")}
     path = session_file(paths, [opened(), row])
     assert len(list(telemetry.file_rows(path))) == 2
 

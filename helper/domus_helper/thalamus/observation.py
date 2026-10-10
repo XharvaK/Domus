@@ -1,10 +1,13 @@
 """She knows who is in her room or close by; others on the lot are someone she hears."""
+import hashlib
+import hmac
 import json
+import os
 import re
 
 from .. import lang
 from ..acts import answer_rules, body_id, dialog_is_hers, humanize
-from ..scene import NEAR_METERS as SEEN_DISTANCE_M
+from ..scene import seen_here
 from ..windows import PORTRAIT_LIMIT as WINDOWS_SHOWN
 from .percepts import _IDLE_SOURCES
 
@@ -113,23 +116,73 @@ def _meters(value):
     return value
 
 
-def _addressing_ids(row):
-    found = set()
-    for item in row.get("social") or []:
-        if isinstance(item, dict) and item.get("actor_id") is not None:
-            found.add(str(item["actor_id"]))
-    return found
+# SS4-v2: a change of seen state takes effect after this many samples in a row that agree with it.
+SEEN_FLIP_SAMPLES = 2
+_HANDLE_BYTES = 12
 
 
-def _seen(item, zone_room, addressing):
-    """Same room as her body, within the near radius, or addressing her right now."""
-    room = item.get("room")
-    if room is not None and zone_room is not None and room == zone_room:
-        return True
-    distance = _meters(item.get("distance_m"))
-    if distance is not None and distance <= SEEN_DISTANCE_M:
-        return True
-    return str(item.get("id")) in addressing
+def _room_label(room, labels):
+    """HE6: the interim name of a room from the notebook (a number never reaches her), or None."""
+    if room is None or not labels:
+        return None
+    label = labels.get(str(room))
+    return label if isinstance(label, str) and label else None
+
+
+def _body_entry(row):
+    for item in row.get("presence") or []:
+        if isinstance(item, dict) and item.get("is_body"):
+            return item
+    return None
+
+
+class SeenMemory:
+    """SS4-v2: who she sees, held per Sim by a keyed handle (never the presence id, never logged).
+    A Sim's seen state changes only after SEEN_FLIP_SAMPLES samples in a row disagree with the state held,
+    so a Sim on a room edge does not flicker. The key is per install: a handle is stable across samples and restarts."""
+
+    def __init__(self, key):
+        self._key = key if isinstance(key, bytes) else str(key).encode("utf-8")
+        self._held = {}
+        self._flips = {}
+        self.seen_ids = set()
+
+    def handle(self, presence_id):
+        digest = hmac.new(self._key, str(presence_id).encode("utf-8"), hashlib.sha256).hexdigest()
+        return digest[:2 * _HANDLE_BYTES]
+
+    def observe(self, row):
+        """One presence sample (her body's sample). Returns the presence ids she sees now."""
+        row = row or {}
+        body = _body_entry(row)
+        found = {}
+        for item in row.get("presence") or []:
+            if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
+                continue
+            found[self.handle(item["id"])] = (str(item["id"]), seen_here(item, body))
+        held, flips = {}, {}
+        for key, (_, raw) in found.items():
+            before = self._held.get(key)
+            if before is None or raw == before:
+                held[key] = raw
+            elif self._flips.get(key, 0) + 1 >= SEEN_FLIP_SAMPLES:
+                held[key] = raw
+            else:
+                held[key] = before
+                flips[key] = self._flips.get(key, 0) + 1
+        self._held, self._flips = held, flips
+        self.seen_ids = {presence_id for key, (presence_id, _) in found.items() if held[key]}
+        return self.seen_ids
+
+
+def _seen_memory(row, seen):
+    """The memory the portrait reads: the bridge's (kept across samples), or one sample's view with a
+    key of this process alone (talk and tests)."""
+    if seen is not None:
+        return seen
+    memory = SeenMemory(os.urandom(_HANDLE_BYTES))
+    memory.observe(row)
+    return memory
 
 
 def _named(who, names):
@@ -171,12 +224,21 @@ def _with_sentence(value, tuning, actors):
     return value
 
 
-def _company_seen(item, resolve):
-    """A Sim she can see: the same entry the portrait has always carried."""
+def _company_seen(item, resolve, labels=None):
+    """A Sim she can see: the same entry the portrait has always carried. HE6: where, in words, not a room number."""
     doing = item.get("doing")
     entry = {"id": str(item["id"]), "name": item.get("name"),
-             "room": item.get("room"), "distance_m": item.get("distance_m"),
-             "doing": _affordance_name(doing)}
+             "distance_m": item.get("distance_m"), "doing": _affordance_name(doing)}
+    if _room_label(item.get("room"), labels):
+        entry["room_label"] = _room_label(item.get("room"), labels)
+    if item.get("is_pet") is True:
+        # 2.32.0 (PR13): a pet is named as one; its species is the game's own name for it.
+        entry["pet"] = True
+        if isinstance(item.get("species"), str) and item["species"]:
+            entry["species"] = item["species"]
+    if isinstance(item.get("occult_kinds"), list) and item["occult_kinds"]:
+        # 2.32.0 (PR13): an occult form (a werewolf, a vampire) by the game's type names.
+        entry["occult"] = [kind for kind in item["occult_kinds"] if isinstance(kind, str)]
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
     if item.get("situations"):
@@ -212,9 +274,11 @@ def _company_seen(item, resolve):
     return entry
 
 
-def _company_heard(item):
-    """On the lot, but not seen: a sound, not a person she can name."""
-    entry = {"heard": True, "room": item.get("room"), "distance_m": item.get("distance_m")}
+def _company_heard(item, seen, labels=None):
+    """On the lot, but not seen: a sound, not a person she can name. Its handle tells strangers apart."""
+    entry = {"heard": True, "handle": seen.handle(item["id"]), "distance_m": item.get("distance_m")}
+    if _room_label(item.get("room"), labels):
+        entry["room_label"] = _room_label(item.get("room"), labels)
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
     return entry
@@ -260,26 +324,24 @@ def _asked_answer_rules(item, resolve):
     return {"answer_rules": rules} if rules else {}
 
 
-def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_name=None):
+def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_name=None, seen=None,
+              room_labels=None):
     """resolve: string key -> the game's own text (S0), or None when unknown.
     windows: W2h, the window facts of her session (windows.WindowLog.recent).
     pace: W3h, her pace entry (pace.portrait), or None.
-    act_name: HE1, tuning name -> the game's own words for the act (humanized when unknown)."""
+    act_name: HE1, tuning name -> the game's own words for the act (humanized when unknown).
+    seen: SS4-v2, the SeenMemory the bridge keeps (observed on this body sample), or None."""
     name_of = act_name or humanize
     row = row or {}
     zone = row.get("zone") or {}
-    addressing = _addressing_ids(row)
-    zone_room = zone.get("room")
-    seen_ids = set()
+    memory = _seen_memory(row, seen)
+    seen_ids = set(memory.seen_ids)
     unseen_ids = set()
     for item in row.get("presence") or []:
         if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
             continue
-        key = str(item["id"])
-        if _seen(item, zone_room, addressing):
-            seen_ids.add(key)
-        else:
-            unseen_ids.add(key)
+        if str(item["id"]) not in seen_ids:
+            unseen_ids.add(str(item["id"]))
     names, her = _sim_names(row, seen_ids)
     needs = {}
     for item in row.get("motives") or []:
@@ -319,11 +381,11 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
             continue
         if str(item["id"]) in seen_ids:
-            seen.append(_company_seen(item, resolve))
+            seen.append(_company_seen(item, resolve, room_labels))
         elif item.get("on_lot") is False:
             continue
         else:
-            heard.append(_company_heard(item))
+            heard.append(_company_heard(item, memory, room_labels))
     heard.sort(key=lambda entry: (_meters(entry.get("distance_m")) is None,
                                   _meters(entry.get("distance_m")) or 0))
     company = (seen + heard)[:7]
@@ -356,10 +418,11 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         "queued": queued[:8],
         **({"doing_said": doing_said} if doing_said else {}),
         "zone": {"zone_id": zone.get("zone_id"), "lot_id": zone.get("lot_id"),
-                 "room": zone.get("room")},
+                 "room_label": _room_label(zone.get("room"), room_labels)},
         "time": game_time(game.get("calendar")),
         "clock_speed": game.get("clock_speed"),
-        "paused": game.get("paused") is True,
+        # 2.32.0 (PR10): build or buy mode is its own state; the game holds the clock paused in it.
+        "paused": game.get("paused") is True and game.get("build_mode") is not True,
         "mood": mood.get("name") if isinstance(mood, dict) else None,
         "moodlets": moodlets[:8],
         "company": company[:7],
@@ -367,6 +430,22 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
         # W2h: what happened to windows that were or became not hers (newest last, 4 at most).
         "windows": [dict(item) for item in windows or [] if isinstance(item, dict)][-WINDOWS_SHOWN:],
     }
+    objects = row.get("objects")
+    if isinstance(objects, dict) and isinstance(objects.get("near_conditions"), list):
+        # 2.32.0 (HE7): what is wrong with the things near her (spoiled, dirty, broken), in the game's words.
+        portrait["near_conditions"] = [
+            {"object": humanize(item.get("class")),
+             "states": [humanize(state.get("value")) for state in item.get("states") or []
+                        if isinstance(state, dict)]}
+            for item in objects["near_conditions"][:8] if isinstance(item, dict)]
+    if game.get("build_mode") is True:
+        portrait["building"] = True
+    if game.get("fire") is True:
+        # 2.32.0 (PR11): a fire is burning on the lot (near her is not read: the game's fire position is unknown).
+        portrait["fire_on_lot"] = True
+    if (row.get("body") or {}).get("is_selected") is False:
+        # 2.32.0 (PR6): the User is playing another Sim of the household; her acts are refused meanwhile.
+        portrait["user_plays_another"] = True
     if "presence" in (row.get("missingness") or {}):
         # D40: the company list missed someone this sample.
         portrait["company_complete"] = False
@@ -423,6 +502,10 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
             [{"skill": _resolve(resolve, item.get("text_key")) or item.get("skill"),
               "level": item.get("level")} for item in own["skills"] if isinstance(item, dict)],
             "funds": own.get("funds")}
+        if isinstance(own.get("life"), dict):
+            # 2.32.0 (PR12): her life state: age stage, pregnant, sick, dead, ghost, npc (None when unreadable).
+            portrait["self"]["life"] = {key: own["life"].get(key)
+                                        for key in ("age", "pregnant", "sick", "dead", "ghost", "npc")}
         if isinstance(own.get("careers"), list):
             # 2.19.0: her jobs, in the game's words; at_work while her shift runs.
             portrait["self"]["jobs"] = [
@@ -520,6 +603,7 @@ def build(decision, ctx):
         "percepts": percepts,
         "portrait": _portrait(row, ctx.get("resolve_text"), notebook=ctx.get("notebook"),
                               windows=ctx.get("windows"), pace=ctx.get("pace"),
-                              act_name=ctx.get("act_name")),
+                              act_name=ctx.get("act_name"), seen=ctx.get("seen"),
+                              room_labels=ctx.get("room_labels")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
     }

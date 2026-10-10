@@ -13,6 +13,11 @@ def _menu(room, object_id="501", same_room=True, acts=None):
     return {"menu_rev": 1, "room": room, "objects": [obj]}
 
 
+def _near(room, object_id="501", klass="object_fridge_X"):
+    """HE5: the 16 nearest objects of a sample name their room (schema 15 objects.near_rooms)."""
+    return {"objects": {"near_rooms": [{"object_id": object_id, "class": klass, "room": room}], "moved": []}}
+
+
 def _records(name, deltas, origins=None):
     origins = origins or ["counter"] * len(deltas)
     return [{
@@ -26,22 +31,21 @@ def _records(name, deltas, origins=None):
 
 def test_object_room_closes_and_opens(tmp_path):
     book = Notebook(tmp_path / "notebook.db")
-    book.observe_menu("slot1", _menu("7"), 1000)
+    book.observe_near_rooms("slot1", _near("7"), 1000)
     rows = book._con.execute("SELECT * FROM facts").fetchall()
     assert len(rows) == 1 and rows[0]["value"] == "7" and rows[0]["label"] == "fridge"
     assert rows[0]["valid_until_ms"] is None
-    book.observe_menu("slot1", _menu("7"), 2000)
+    book.observe_near_rooms("slot1", _near("7"), 2000)
     rows = book._con.execute("SELECT * FROM facts").fetchall()
     assert len(rows) == 1 and rows[0]["seen_ms"] == 2000
-    book.observe_menu("slot1", _menu("9"), 3000)
+    book.observe_near_rooms("slot1", _near("9"), 3000)
     rows = book._con.execute(
         "SELECT value, valid_until_ms FROM facts ORDER BY id").fetchall()
     assert len(rows) == 2
     assert rows[0]["value"] == "7" and rows[0]["valid_until_ms"] == 3000
     assert rows[1]["value"] == "9" and rows[1]["valid_until_ms"] is None
-    book.observe_menu("slot1", _menu("9", same_room=False), 4000)
-    book.observe_menu("slot1", {"menu_rev": 1, "room": None, "objects": [
-        {"object_id": "9", "class": "object_fridge_X", "same_room": True, "acts": []}]}, 4000)
+    book.observe_near_rooms("slot1", _near("9"), 4000)
+    book.observe_menu("slot1", _menu("3"), 4000)  # a menu sets no room any more
     assert book._con.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 2
     book.close()
 
@@ -64,8 +68,8 @@ def test_facts_are_never_deleted(tmp_path):
     source = Path(notebook.__file__).read_text(encoding="utf-8")
     assert "DELETE FROM facts" not in source
     book = Notebook(tmp_path / "notebook.db")
-    book.observe_menu("slot1", _menu("7"), 1000)
-    book.observe_menu("slot1", _menu("9"), 3000)
+    book.observe_near_rooms("slot1", _near("7"), 1000)
+    book.observe_near_rooms("slot1", _near("9"), 3000)
     closed = book._con.execute(
         "SELECT value FROM facts WHERE valid_until_ms IS NOT NULL").fetchone()
     assert closed["value"] == "7"
@@ -124,8 +128,8 @@ def test_a_development_trial_never_teaches_a_procedure(tmp_path):
 
 def test_slice_offers_moves_and_trims(tmp_path):
     book = Notebook(tmp_path / "notebook.db")
-    book.observe_menu("slot1", _menu("7"), 1_000)
-    book.observe_menu("slot1", _menu("9"), 2_000)
+    book.observe_near_rooms("slot1", _near("7"), 1_000)
+    book.observe_near_rooms("slot1", _near("9"), 2_000)
     book.rebuild_procedures(_records("fridge_Grab_Snack", [
         {"hunger": 20}, {"hunger": 25}, {"hunger": 30}]), 2_000)
     offered = _menu("9", acts=[{"name": "fridge_Grab_Snack"}])

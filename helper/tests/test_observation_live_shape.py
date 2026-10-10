@@ -7,8 +7,8 @@ REPR = "<class 'sims4.tuning.instances.sim-stand'>"
 def test_actions_read_as_tuning_names():
     row = {
         "interactions": {"observed": [{"affordance_text": REPR, "membership": "RUNNING"}]},
-        "presence": [{"id": "1", "is_body": True, "doing": REPR},
-                     {"id": "2", "name": "Bella", "room": "3", "distance_m": 2.0,
+        "presence": [{"id": "1", "level": 0, "is_body": True, "doing": REPR},
+                     {"id": "2", "level": 0, "name": "Bella", "room": "3", "distance_m": 2.0,
                       "doing": "<class 'sims4.tuning.instances.social_Chat'>"}],
         "social": [{"actor_id": "2", "affordance_text": "<class 'sims4.tuning.instances.social_Chat'>"}],
         "game": {"calendar": "02:31:21.960 day:2 week:0"},

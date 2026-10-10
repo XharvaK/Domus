@@ -17,8 +17,8 @@ def _row(running=("invented_wave",), queued=(), social=("invented_greet",)):
     return {
         "motives": [],
         "body": {"sim_id": "1"},
-        "presence": [{"id": "1", "is_body": True, "name": "Ada"},
-                     {"id": "2", "is_body": False, "name": "Bea", "distance_m": 1.0}],
+        "presence": [{"id": "1", "level": 0, "is_body": True, "name": "Ada"},
+                     {"id": "2", "level": 0, "is_body": False, "name": "Bea", "distance_m": 1.0}],
         "social": [{"actor_id": "2", "affordance_text": name} for name in social],
         "interactions": {"observed": observed},
     }

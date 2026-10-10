@@ -37,6 +37,7 @@ import zipfile
 from pathlib import Path
 
 from .paths import Paths
+from .scene import seen_here
 from .thalamus.observation import _affordance_name, game_time
 
 OUTCOME_VERSION = 1
@@ -77,6 +78,14 @@ def game_minute(calendar):
     return (time["week"] * 7 + time["day_index"]) * 1440 + time["hour"] * 60 + time["minute"]
 
 
+def company_names(row):
+    """PR19 / SS4-v2: the Sims she can see (never her body), by name. Heard and off-lot Sims are not kept."""
+    presence = [item for item in (row or {}).get("presence") or [] if isinstance(item, dict)]
+    body = next((item for item in presence if item.get("is_body")), None)
+    return sorted({str(item.get("name") or item.get("id")) for item in presence
+                   if not item.get("is_body") and seen_here(item, body)})
+
+
 def _origin(source):
     return _ORIGINS.get(source, "game")
 
@@ -98,8 +107,7 @@ def _sample(row):
     company = None
     relationships = None
     if (row.get("schema_version") or 0) >= 6 and isinstance(row.get("presence"), list):
-        company = sorted({str(item.get("name") or item.get("id")) for item in row["presence"]
-                          if isinstance(item, dict) and not item.get("is_body")})
+        company = company_names(row)
     if (row.get("schema_version") or 0) >= 7 and isinstance(row.get("presence"), list):
         relationships = {}
         for item in row["presence"]:

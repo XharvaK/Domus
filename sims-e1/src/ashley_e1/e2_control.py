@@ -144,8 +144,10 @@ NOT_ANSWERABLE_CLASSES = frozenset(("UiMultiPicker", "UiDialogObjectColorPicker"
 # 2.31.0: client-drawn pickers (§4.2): never sent; the dialog is cancelled instead.
 WITHHELD_DIALOG_CLASSES = frozenset(("UiMapViewPicker", "UiApartmentPicker"))
 # 2.31.0: interactions that rename or retrait her own Sim: always the User's (User ruling Q3).
+# 2.32.0 (PR5, User ruling): the death window on her own Sim (keep, reincarnate, leave) is the User's.
 IDENTITY_CLASSES = frozenset(("ChangeSimNameInteraction", "TraitTypePickerSuperInteraction",
-                              "TraitPickerSuperInteraction", "MatchmakingTraitPickerSuperInteraction"))
+                              "TraitPickerSuperInteraction", "MatchmakingTraitPickerSuperInteraction",
+                              "DeathSuperInteraction"))
 # 2.31.0: the message that rings her phone; dialog_show sends it instead of distribute_dialog (§3.1 R2).
 RING_MESSAGE_NAME = "MSG_UI_PHONE_RING"
 # 2.31.0: client screens she may not open by message (§4.5, R4), Consts_pb2 names, resolved at install.
@@ -637,6 +639,12 @@ class E2Control:
         payload["session_uuid"] = self._session_id()
         return self._event("lineage_event", payload)
 
+    def body_gone(self, reason, sim_id):
+        """2.32.0 (PR5): her body is gone (her Sim died). One BODY_GONE lineage record, with the reason."""
+        armed = self._armed_snapshot() or {}
+        return self._lineage_event("BODY_GONE", guid=armed.get("guid"), slot_id=armed.get("slot_id"),
+                                   sim_id=sim_id, ticks=None, lineage_class="BODY_GONE", reason=reason)
+
     def _say(self, connection, text):
         try:
             self._output(text, connection)
@@ -1032,6 +1040,11 @@ class E2Control:
         armed = (self._armed_snapshot() or {}).get("sim_id")
         if armed is not None and str(sim_info.id) != str(armed):
             return ("BODY_MISMATCH", None), None
+        # 2.32.0 (PR6, User ruling): the User plays another household Sim; her acts are refused, never
+        # the User's Sim's. Not sticky: the refusal ends when the client plays her Sim again.
+        active = observers.active_sim_id()
+        if active is not None and active != str(sim_info.id):
+            return ("BODY_MISMATCH", "NOT_ACTIVE"), None
         if object_id in EXCLUDED_OBJECT_IDS:
             return (e2_admission.OBJECT_EXCLUDED, None), None
         obj = e2_actuator.find_object(object_id)
@@ -1062,6 +1075,11 @@ class E2Control:
             return ("NOT_USER_DIRECTED", None), None
         ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context)
         if not ok:
+            # 2.32.0 (PR10, PR11): a refusal during a fire, or in build mode, is named as such.
+            if observers.fire_active() is True:
+                return ("FIRE_REFUSED", reason, reason_key), None
+            if observers.build_mode() is True:
+                return ("BUILD_MODE_REFUSED", reason, reason_key), None
             return ("GAME_REFUSED", reason, reason_key), None
         return None, (sim, obj, affordance, context)
 
@@ -1453,13 +1471,14 @@ class E2Control:
             self._say(connection, "CAMERA_REJECT TOO_SOON")
             return False
         try:
-            if op == "follow_sim":
+            if op in ("follow_sim", "unfollow"):
                 sim_info = services.sim_info_manager().get(int(target_id))
                 sim = sim_info.get_sim_instance() if sim_info is not None else None
                 if sim is None:
                     self._say(connection, "CAMERA_REJECT NO_TARGET")
                     return False
-                focus_on_sim(sim=sim, follow=True)
+                # 2.32.0 (HE14): unfollow looks at her Sim without following it (follow=False, the same call).
+                focus_on_sim(sim=sim, follow=op == "follow_sim")
             else:
                 obj = services.object_manager().get(int(target_id))
                 if obj is None:
@@ -1996,12 +2015,17 @@ class E2Control:
         her queue, so an alias that stays keeps the act; it is gone when none of them is."""
         if not self.pushed:
             return
-        observed = ((row.get("interactions") or {}).get("observed")) or []
+        interactions = row.get("interactions") or {}
+        observed = interactions.get("observed") or []
         present = set(str(entry.get("interaction_id")) for entry in observed if isinstance(entry, dict))
+        # 2.32.0 (PR17): a truncated or incomplete queue read cannot show an act gone; it counts no miss.
+        whole = interactions.get("queue_truncated") is not True and interactions.get("observation_complete") is not False
         for item in self._pushed_records():
             keys = self._pushed_keys(item)
             if any(key in present for key in keys):
                 item["seen"], item["misses"] = True, 0
+                continue
+            if not whole:
                 continue
             item["misses"] += 1
             if item["misses"] < LEFT_QUEUE_SAMPLES:

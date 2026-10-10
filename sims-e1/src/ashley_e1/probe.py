@@ -1542,6 +1542,7 @@ def _STATE_RESET():
     _CALIBRATE = False
     _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
+    observers.prefer_body(None)  # 2.32.0 (PR6)
     _TELEMETRY_SESSION_ID = None
     _ALARM_HANDLE = None
     _WRITER = None
@@ -1687,6 +1688,7 @@ def _cmd_arm(arm_name: str, _connection=None) -> bool:
     _CALIBRATE = False
     _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
+    observers.prefer_body(None)  # 2.32.0 (PR6)
     _SESSION_OPENED = False
     _LAST_CAPTURE_COUNTERS = None
     _DIR_WARNED = False
@@ -1778,6 +1780,7 @@ def _cmd_disarm(_connection=None) -> bool:
     _CALIBRATE = False
     _CAL_SPEED = None
     _ARMED_SNAPSHOT = None
+    observers.prefer_body(None)  # 2.32.0 (PR6)
     _SESSION_OPENED = False
     return True
 
@@ -1822,6 +1825,7 @@ def _session_open_from(row):
                        "sim_id": snapshot_sim,
                        "wall_ms": row["wall_timestamp_ms"],
                        "monotonic_ns": row["monotonic_ns"]}
+    observers.prefer_body(snapshot_sim)  # 2.32.0 (PR6): her body when several Sims are selectable
     return schema.make_record(
         "session_open", telemetry_session_id=_TELEMETRY_SESSION_ID,
         wall_timestamp_ms=row["wall_timestamp_ms"], monotonic_ns=row["monotonic_ns"],
@@ -1940,7 +1944,7 @@ def _menu_jobs(row):
     items = []
     for obj in objects:
         try:
-            person = obj.is_sim is True
+            person = obj.is_sim is True or observers._is_pet_object(obj)  # 2.32.0 (PR13): pets are persons
         except Exception:
             continue
         if person and obj is sim:
@@ -1954,8 +1958,10 @@ def _menu_jobs(row):
         # The room lookup is only worth it for objects of this lot or near her.
         room = (observers._room(obj, position)
                 if on_lot is True or (distance is not None and distance <= 20.0) else None)
-        if person and on_lot is not True and (distance is None or distance > act_menu.PEOPLE_NEAR_M):
-            continue  # 2.17.0: people she could reach: on this lot or close by, not the street
+        if person and not observers.seen_here(room, None if position is None else position.get("level"),
+                                              distance, body_room,
+                                              None if body_position is None else body_position.get("level")):
+            continue  # 2.32.0 (SS4-v2, PR3): a person she cannot see is not offered (2.17.0: the same test, wider)
         items.append({
             "object_id": object_id, "obj": obj, "distance_m": distance, "on_lot": on_lot,
             "room": room, "person": person,
@@ -2065,6 +2071,25 @@ def _poll_tick(alarm_handle=None):
         _POLL_BUSY = False
 
 
+def _body_gone_stop():
+    """2.32.0 (PR5): True when her body is dead, after writing its BODY_GONE record and stopping sampling."""
+    armed = _ARMED_SNAPSHOT or {}
+    sim_id = armed.get("sim_id")
+    if sim_id is None:
+        return False
+    life = observers.body_life(sim_id)
+    if life is None or life.get("dead") is not True:
+        return False
+    reason = "GHOST" if life.get("ghost") is True else "DEAD"
+    _E2.body_gone(reason, sim_id)
+    _emit(schema.make_record(
+        "session_checkpoint", telemetry_session_id=_TELEMETRY_SESSION_ID,
+        wall_timestamp_ms=int(time.time() * 1000), monotonic_ns=time.perf_counter_ns(),
+        checkpoint_reason="BODY_GONE"))
+    _cmd_stop()
+    return True
+
+
 def _poll_tick_body():
     global _SESSION_OPENED, _LAST_CAPTURE_COUNTERS, _ZERO_BODY_TICKS, _MENU_FAILURES
     try:
@@ -2077,6 +2102,10 @@ def _poll_tick_body():
         _cmd_stop()
         return
     except observers.LabIdentityAmbiguous as error:
+        if error.eligible_count == 0 and _body_gone_stop():
+            # 2.32.0 (PR5): a death removes her from the selectable Sims. Her Sim info still says so: one
+            # BODY_GONE record names the reason, and sampling ends cleanly (no wait, no unexplained stop).
+            return
         if error.eligible_count == 0 and _RESUME_SAMPLING:
             # D41: a loading screen has no selectable body; wait it out (no rows).
             # 2.15.2: a first load after a relaunch (D47) can take longer than a

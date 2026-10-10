@@ -26,6 +26,36 @@ class LabIdentityAmbiguous(RuntimeError):
         self.eligible_count = eligible_count
 
 
+# 2.32.0 (PR6): the armed Sim, her body. When several household Sims are selectable, the body is the armed
+# one (set by prefer_body when she is armed; None before that, then the client's active Sim is used).
+_PREFERRED_BODY = {"sim_id": None}
+
+
+def prefer_body(sim_id):
+    _PREFERRED_BODY["sim_id"] = None if sim_id is None else str(sim_id)
+
+
+def active_sim_id():
+    """2.32.0 (PR6): the id of the Sim the User's client is playing, or None when it cannot be read."""
+    try:
+        info = services.active_sim_info()
+    except Exception:
+        return None
+    if info is None:
+        return None
+    try:
+        return _plain_id(info.id)
+    except Exception:
+        return None
+
+
+def _info_id(info):
+    try:
+        return _plain_id(info.id)
+    except Exception:
+        return None
+
+
 def select_lab_body(candidates, hidden_flags):
     eligible = []
     for si in candidates:
@@ -45,9 +75,18 @@ def select_lab_body(candidates, hidden_flags):
             raise SelectabilityReadFailure("SELECTABILITY_READ_FAILURE")
         if selectable is True:
             eligible.append((si, sim))
-    if len(eligible) != 1:
-        raise LabIdentityAmbiguous(len(eligible))
-    return eligible[0]
+    if len(eligible) == 1:
+        return eligible[0]
+    # 2.32.0 (PR6): several selectable Sims (the User plays another household member). Her body is the armed
+    # Sim; before she is armed, the one the client is playing. Anything else stays ambiguous.
+    wanted = _PREFERRED_BODY["sim_id"]
+    if wanted is None:
+        wanted = active_sim_id()
+    if wanted is not None:
+        for si, sim in eligible:
+            if _info_id(si) == wanted:
+                return si, sim
+    raise LabIdentityAmbiguous(len(eligible))
 
 
 def _monotonic_ns():
@@ -82,6 +121,25 @@ def _saved_world_ticks():
         return None
 
 
+def build_mode():
+    """2.32.0 (PR10): the zone is in build or buy mode (the game holds the clock paused then, and locks objects);
+    None when unreadable."""
+    try:
+        value = services.current_zone().is_in_build_buy
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
+def fire_active():
+    """2.32.0 (PR11): a fire is burning on the lot (FireService.fire_is_active); None when unreadable."""
+    try:
+        value = services.get_fire_service().fire_is_active()
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
 def _game_snapshot():
     time_service = services.time_service()
     sim_now = time_service.sim_now
@@ -93,7 +151,8 @@ def _game_snapshot():
     except AttributeError:
         pass
     return {"ticks": int(ticks), "calendar": str(sim_now),
-            "clock_speed": str(speed), "paused": speed == "PAUSED"}
+            "clock_speed": str(speed), "paused": speed == "PAUSED",
+            "build_mode": build_mode(), "fire": fire_active()}
 
 
 def _posture_snapshot(sim):
@@ -678,6 +737,28 @@ def _room(obj, position):
     return str(room)
 
 
+# 2.32.0 (SS4-v2): outdoors, a Sim is seen within this many metres on her level (the helper's scene.seen_here).
+SEEN_METERS = 4.0
+
+
+def seen_here(room, level, distance, body_room, body_level):
+    """2.32.0 (SS4-v2): is this Sim one she can see? Indoors (her room real) the same room and level;
+    outdoors (her room None or "0") within SEEN_METERS on her level. Addressing does not make her seen."""
+    if type(level) is not int or level != body_level:
+        return False
+    if body_room is not None and body_room != "0":
+        return room is not None and room == body_room
+    return type(distance) in (int, float) and distance <= SEEN_METERS
+
+
+def _is_selected(sim_id):
+    """2.32.0 (PR6): whether her body is the Sim the User's client is playing; None when unreadable."""
+    active = active_sim_id()
+    if active is None or sim_id is None:
+        return None
+    return active == sim_id
+
+
 def _distance(a, b):
     if a is None or b is None:
         return None
@@ -972,6 +1053,9 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
     except Exception:
         on_lot = None
     return {"id": entry_id,
+            "is_pet": _flag(lambda: sim_info.is_pet),
+            "species": _species_name(sim_info),
+            "occult_kinds": _occult_kinds(sim_info),
             "on_lot": on_lot if type(on_lot) is bool else None,
             "active_household": household_id is not None and own_household == household_id,
             "level": level,
@@ -1575,7 +1659,7 @@ def poll_once(telemetry_session_id, armed_name,
     raw_sim_id = sim_info.id
     sim_id = None if raw_sim_id is None else str(raw_sim_id)
     body = {"sim_id": sim_id, "instantiated": True, "is_selectable": True,
-            "is_selected": None, "posture": _posture_snapshot(sim)}
+            "is_selected": _is_selected(sim_id), "posture": _posture_snapshot(sim)}
     complete = snapshot.interactions_complete(
         queue_truncated, running_truncated, capture_complete)
     if social_truncated:
@@ -1663,6 +1747,74 @@ def _mechanical_trait(trait):
         return False
 
 
+def _flag(read):
+    try:
+        value = read()
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
+def _species_name(sim_info):
+    """2.32.0 (PR13): the name of her Sim info's species (SimInfoBaseWrapper.species), or None."""
+    try:
+        return _bounded_name(sim_info.species.name, "species")
+    except Exception:
+        return None
+
+
+def _occult_kinds(sim_info):
+    """2.32.0 (PR13): the occult types she is in now, by name (a werewolf or vampire form), sorted; None when
+    unreadable, [] for an ordinary Sim. Reads OccultTracker.get_current_occult_types only."""
+    try:
+        types = list(sim_info.occult_tracker.get_current_occult_types())
+    except Exception:
+        return None
+    names = []
+    for item in types:
+        try:
+            name = _bounded_name(item.name, "occult")
+        except Exception:
+            name = None
+        if name is not None:
+            names.append(name)
+    return sorted(names)[:schema.MAX_OCCULT_KINDS]
+
+
+def _is_pet_object(obj):
+    """2.32.0 (PR13): a pet on the lot is a person in her menu (named by the helper), not an object."""
+    try:
+        return obj.sim_info.is_pet is True
+    except Exception:
+        return False
+
+
+def read_life(sim_info):
+    """2.32.0 (PR12): her life state, plain reads: the age stage (the name of SimInfoBaseWrapper.age, an Age
+    enum), pregnant, sick, dead, ghost and npc (SimInfo.is_pregnant, is_sick, is_dead, is_ghost, is_npc). A value
+    that cannot be read is None. Never raises."""
+    try:
+        age = _bounded_name(sim_info.age.name, "age")
+    except Exception:
+        age = None
+    return {"age": age, "pregnant": _flag(lambda: sim_info.is_pregnant),
+            "sick": _flag(lambda: sim_info.is_sick), "dead": _flag(lambda: sim_info.is_dead),
+            "ghost": _flag(lambda: sim_info.is_ghost), "npc": _flag(lambda: sim_info.is_npc)}
+
+
+def body_life(sim_id):
+    """2.32.0 (PR5): her life state when her body is no longer selectable (a death removes her from the
+    selectable Sims, but her Sim info stays). None when no Sim info with that id can be read."""
+    try:
+        infos = list(services.sim_info_manager().get_all())
+    except Exception:
+        return None
+    for info in infos:
+        if _info_id(info) == sim_id:
+            return read_life(info)
+    return None
+
+
 def read_self(sim_info):
     """2.15.0: what she is like and has: her traits (personality first), her skills
     (highest first) and her household's money. Plain reads: trait_tracker
@@ -1722,7 +1874,8 @@ def read_self(sim_info):
         funds = money
     return {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
             "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
-            "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info)}
+            "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info),
+            "life": read_life(sim_info)}
 
 
 def _own_wants(sim_info):
@@ -1829,7 +1982,9 @@ def _own_careers(sim_info):
 NEAR_STATE_METERS = 4.0
 NEAR_STATE_MAX = 16
 OBJECT_BASELINE_GAP_MS = 5000
-_OBJECTS_PREV = {"zone": None, "wall_ms": None, "classes": None, "near": {}}
+_OBJECTS_PREV = {"zone": None, "wall_ms": None, "classes": None, "near": {}, "places": {}}
+# 2.32.0 (HE5): an object moved more than this far (metres) between two samples, or changed room.
+OBJECT_MOVED_METERS = 0.5
 
 
 def _object_class(obj):
@@ -1847,6 +2002,56 @@ def _object_states(obj):
         if key is not None:
             found[key[:96]] = (_type_name(value) or "")[:96] or None
     return found
+
+
+# 2.32.0 (HE7): the game's state values worth a line in her portrait (the last word of the value's name), and the
+# words that negate them ("FireState_..._Not_Burning" is not burning). The helper's scene.NOTABLE, read the same way.
+NOTABLE_STATE_WORDS = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed", "Flooded", "Smelly")
+NEGATION_WORDS = ("Not", "No", "Non")
+
+
+def _notable_state(value):
+    if not isinstance(value, str):
+        return False
+    words = [word for word in value.replace(" ", "_").split("_") if word]
+    if not words or words[-1] not in NOTABLE_STATE_WORDS:
+        return False
+    return not any(word in NEGATION_WORDS for word in words)
+
+
+def _near_conditions(current, near_order, states):
+    """2.32.0 (HE7): the notable states of the 16 nearest objects (any distance), each sample: compact, only the
+    objects with a notable state. states: object id -> {state: value}, read for these objects."""
+    found = []
+    for plain in near_order[:NEAR_STATE_MAX]:
+        notable = [{"state": state, "value": value} for state, value in sorted(states[plain].items())
+                   if _notable_state(value)]
+        if notable:
+            found.append({"object_id": plain, "class": _object_class(current[plain]),
+                          "states": notable[:schema.MAX_NEAR_STATES]})
+    return found
+
+
+def _owner_of(obj):
+    """2.32.0 (PR15): the household that owns an object (GameObject.household_owner_id), as a plain id, or None."""
+    try:
+        return _plain_id(obj.household_owner_id)
+    except Exception:
+        return None
+
+
+def _in_use_or_carried(obj):
+    """2.32.0 (HE5): an object someone holds (a reservation) or carries (its inventory item) is not moved by its own
+    place; True when either is readable and holds, else False."""
+    try:
+        if obj._reservation_handlers:
+            return True
+    except Exception:
+        pass
+    try:
+        return obj.inventory_item.is_in_inventory() is True
+    except Exception:
+        return False
 
 
 def read_object_events(zone_id, body_position, wall_ms):
@@ -1868,18 +2073,36 @@ def read_object_events(zone_id, body_position, wall_ms):
         if plain is not None:
             current[plain] = obj
     near = []
+    by_distance = []
     for plain, obj in current.items():
         distance = _distance(_position(obj), body_position)
         if distance is not None and distance <= NEAR_STATE_METERS:
             near.append((distance, plain))
+        if distance is not None:
+            by_distance.append((distance, plain))
     near.sort()
+    by_distance.sort()
+    nearest_ids = [plain for _, plain in by_distance[:NEAR_STATE_MAX]]
+    # 2.32.0 (HE5): where each of the 16 nearest objects is now, and in which room.
+    places = {}
+    for plain in nearest_ids:
+        position = _position(current[plain])
+        places[plain] = {"position": position, "room": _room(current[plain], position),
+                         "owner": _owner_of(current[plain])}
+    near_rooms = [{"object_id": plain, "class": _object_class(current[plain]), "room": places[plain]["room"]}
+                  for plain in nearest_ids if places[plain]["room"] is not None]
     near_states = {plain: _object_states(current[plain]) for _, plain in near[:NEAR_STATE_MAX]}
+    # 2.32.0 (HE7): the 16 nearest objects' states are read each sample, for the notable conditions.
+    condition_states = {plain: (near_states[plain] if plain in near_states else _object_states(current[plain]))
+                        for plain in nearest_ids}
+    conditions = _near_conditions(current, nearest_ids, condition_states)
     classes = {plain: _object_class(obj) for plain, obj in current.items()}
     previous = _OBJECTS_PREV
     baseline = (previous["classes"] is None or previous["zone"] != zone_id or
                 previous["wall_ms"] is None or wall_ms - previous["wall_ms"] > OBJECT_BASELINE_GAP_MS)
     events = {"baseline": baseline, "created": [], "destroyed": [], "changed": [],
-              "truncated": False}
+              "truncated": False, "near_conditions": conditions, "near_rooms": near_rooms, "moved": [],
+              "owner_changed": []}
     if not baseline:
         created = sorted(set(classes) - set(previous["classes"]))
         destroyed = sorted(set(previous["classes"]) - set(classes))
@@ -1902,9 +2125,29 @@ def read_object_events(zone_id, body_position, wall_ms):
                     events["changed"].append({"object_id": plain, "class": classes[plain],
                                               "state": state, "from": before.get(state),
                                               "to": after.get(state)})
-        for key in ("created", "destroyed", "changed"):
+        before_places = previous.get("places") or {}
+        for plain in nearest_ids:
+            before = before_places.get(plain)
+            if before is None or before.get("position") is None or places[plain]["position"] is None:
+                continue
+            step = _distance(before["position"], places[plain]["position"])
+            from_room, to_room = before.get("room"), places[plain]["room"]
+            moved_far = step is not None and step > OBJECT_MOVED_METERS
+            changed_room = from_room is not None and to_room is not None and from_room != to_room
+            if (moved_far or changed_room) and not _in_use_or_carried(current[plain]):
+                events["moved"].append({"object_id": plain, "class": classes[plain],
+                                        "from_room": from_room, "to_room": to_room})
+        # 2.32.0 (PR15): an object of the 16 nearest changed hands (a visitor or an NPC taking it, say).
+        for plain in nearest_ids:
+            before = before_places.get(plain)
+            if before is None or before.get("owner") is None or places[plain]["owner"] is None:
+                continue
+            if before["owner"] != places[plain]["owner"]:
+                events["owner_changed"].append({"object_id": plain, "class": classes[plain],
+                                                "from_owner": before["owner"], "to_owner": places[plain]["owner"]})
+        for key in ("created", "destroyed", "changed", "moved", "owner_changed"):
             if len(events[key]) > schema.MAX_OBJECT_EVENTS:
                 events[key] = events[key][:schema.MAX_OBJECT_EVENTS]
                 events["truncated"] = True
-    _OBJECTS_PREV.update(zone=zone_id, wall_ms=wall_ms, classes=classes, near=near_states)
+    _OBJECTS_PREV.update(zone=zone_id, wall_ms=wall_ms, classes=classes, near=near_states, places=places)
     return events

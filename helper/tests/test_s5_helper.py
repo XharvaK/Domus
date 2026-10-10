@@ -9,8 +9,8 @@ TEXT = {"11": "Friends", "21": "Nauseous", "22": "From Eating Spoiled Food"}
 def _v7(row, friendship=10.0, labels=(), objects=None):
     row = dict(row, schema_version=7)
     row["presence"] = [
-        {"id": "1", "is_body": True, "name": "E1 Proband", "relationship": None},
-        {"id": "2", "is_body": False, "name": "Bella Goth", "room": "3", "distance_m": 2.0,
+        {"id": "1", "level": 0, "is_body": True, "name": "E1 Proband", "relationship": None},
+        {"id": "2", "level": 0, "is_body": False, "name": "Bella Goth", "room": "3", "distance_m": 2.0,
          "doing": "<class 'sims4.tuning.instances.social_Chat'>",
          "relationship": {"known": True,
                           "tracks": [{"track": "LTR_Friendship_Main", "value": friendship}],

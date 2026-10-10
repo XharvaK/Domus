@@ -248,7 +248,7 @@ class SchemaTests(unittest.TestCase):
     def test_objects_only_on_schema_7_observations(self):
         events = {"baseline": False, "created": [], "destroyed": [],
                   "changed": [{"object_id": "1", "class": "c", "state": "s", "from": None,
-                               "to": "t"}], "truncated": False}
+                               "to": "t"}], "truncated": False, "near_conditions": [], "near_rooms": [], "moved": [], "owner_changed": [], "owner_changed": []}
         row = self._row()
         row["objects"] = events
         self.schema.validate_record(row)
@@ -277,7 +277,7 @@ class SchemaTests(unittest.TestCase):
                         sim_signals=[full_signal() for _ in range(16)])
         row["self"] = full_self()
         long = "x" * 128
-        row["objects"] = {"baseline": False, "truncated": False,
+        row["objects"] = {"baseline": False, "truncated": False, "near_conditions": [], "near_rooms": [], "moved": [], "owner_changed": [],
                           "created": [{"object_id": "9" * 20, "class": long,
                                        "definition_id": "9" * 20}] * 8,
                           "destroyed": [{"object_id": "9" * 20, "class": long}] * 8,

@@ -176,7 +176,9 @@ class SelfTests(unittest.TestCase):
 
     def test_unreadable_parts_are_none(self):
         own = self.probe.observers.read_self(CreatingTrackers())
-        self.assertEqual(own, {"traits": None, "skills": None, "funds": None, "careers": None, "wants": None})
+        self.assertEqual(own, {"traits": None, "skills": None, "funds": None, "careers": None, "wants": None,
+                               "life": {"age": None, "pregnant": None, "sick": None, "dead": None,
+                                        "ghost": None, "npc": None}})
 
     def test_poll_row_carries_self_and_validates(self):
         ds3.PollOnceTests.setUp(self)
@@ -184,7 +186,7 @@ class SelfTests(unittest.TestCase):
         lab.trait_tracker = self._sim_info().trait_tracker
         lab.household = types.SimpleNamespace(_funds=types.SimpleNamespace(_funds=500))
         row = ds3.PollOnceTests.row(self)
-        self.assertEqual(row["schema_version"], 14)
+        self.assertEqual(row["schema_version"], 15)
         self.assertEqual(row["self"]["funds"], 500)
         self.assertEqual(row["self"]["traits"][0]["trait"], "trait_Cheerful")
         self.assertEqual([item["on_lot"] for item in row["presence"]], [True, True, True])
