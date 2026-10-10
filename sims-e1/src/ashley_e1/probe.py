@@ -1350,14 +1350,48 @@ def _inbox_tick(alarm_handle=None):
         _INBOX_BUSY = False
 
 
+_INBOX_SCAN = 64
+
+
+def _issued_key(path, name):
+    """2.33.0 (A9-11): (no readable issue time, issue time, name). A command read from its envelope sorts by when it was issued."""
+    try:
+        raw = read_command_file(path)
+        envelope = cmdbox.decode(raw) if len(raw) <= 4096 else None
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        envelope = None
+    issued = envelope.get('issued_at_ms') if type(envelope) is dict else None
+    issued_ok = type(issued) is int
+    return (not issued_ok, issued if issued_ok else 0, name)
+
+
+def _expired_act_event(identity):
+    """2.33.0 (A9-11): an act that came too late is refused as an act: Ashley hears REJECTED, code EXPIRED, for its id,
+    not only a command reply (the helper never hears the reply)."""
+    args = identity.get('args')
+    act_id = args.get('act_id') if type(args) is dict else None
+    if not isinstance(act_id, str) or not act_id or len(act_id) > 64 or _WRITER is None or _WRITER_IDLE:
+        return False
+    body = dict((key, None) for key in schema.E2_PAYLOAD_KEYS['act_event'])
+    body.update(act_id=act_id, phase='REJECTED', code='EXPIRED')
+    try:
+        row = schema.make_record('act_event', telemetry_session_id=_TELEMETRY_SESSION_ID,
+                                 wall_timestamp_ms=int(time.time() * 1000), monotonic_ns=time.perf_counter_ns(), e2=body)
+    except schema.SchemaError:
+        return False
+    return _emit(row)
+
+
 def _inbox_tick_body():
     global _INBOX_ERRORS
     root = os.path.join(_TELEMETRY_ROOT, 'cmd')
     inbox = os.path.join(root, 'inbox')
     try:
-        names = sorted(name for name in os.listdir(inbox) if name.endswith('.json'))[:4]
+        names = sorted(name for name in os.listdir(inbox) if name.endswith('.json'))[:_INBOX_SCAN]
     except OSError:
         return
+    # 2.33.0 (A9-11): the oldest command goes first, by when it was issued, not by its random file name.
+    names = sorted(names, key=lambda name: _issued_key(os.path.join(inbox, name), name))[:4]
     for name in names:
         path = os.path.join(inbox, name)
         taken = path + '.taken'
@@ -1383,6 +1417,8 @@ def _inbox_tick_body():
                 command_id = identity['id']
             else:
                 command_id = uuid.uuid4().hex
+            if cmd is None and code == 'EXPIRED' and type(identity) is dict and identity.get('command') == 'act':
+                _expired_act_event(identity)
             done = os.path.join(root, 'done', command_id + '.json')
             persistent_replay = os.path.exists(done)
             if persistent_replay:
