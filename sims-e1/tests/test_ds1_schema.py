@@ -70,13 +70,15 @@ def full_self():
             "careers": [{"career": "c" * 64, "text_key": "4294967295", "title_key": "4294967295",
                          "level": 10, "at_work": True}] * 4,
             "wants": [{"want": "w" * 128, "text_key": "4294967295", "tip_key": "4294967295", "fear": True,
-                       "locked": True, "done": 2 ** 31, "of": 2 ** 31, "until": [23, 59]}] * 8}
+                       "locked": True, "done": 2 ** 31, "of": 2 ** 31, "until": [23, 59]}] * 8,
+            "life": {"age": "a" * 40, "pregnant": True, "sick": False, "dead": False,
+                     "ghost": False, "npc": None}}
 
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 14)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v14")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 15)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v15")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)

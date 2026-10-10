@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 14
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v14"
-PROBE_VERSION = "2.31.0"
+OBSERVATION_SCHEMA_VERSION = 15
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v15"
+PROBE_VERSION = "2.32.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -68,8 +68,9 @@ E2_PAYLOAD_KEYS = {
                          "interaction_id", "claims", "finishing_type", "detail",
                          "guid64", "card_class", "tuning_name", "ambiguous"),
     "speed_event": ("phase", "code", "detail"),
+    # 2.32.0 (schema 15): reason, for BODY_GONE (her body died); None on every other record.
     "lineage_event": ("record", "guid", "slot_id", "sim_id", "ticks",
-                      "loaded_from_slot_id", "lineage_class", "session_uuid"),
+                      "loaded_from_slot_id", "lineage_class", "session_uuid", "reason"),
     # 2.16.0 (schema 10): Ashley's own acts (8f) and what she can do near her body.
     # 2.22.0: reason_key is optional (None when the tooltip has no string key).
     # 2.23.0: closed and resumed are optional on FINISHED (None on earlier rows
@@ -130,7 +131,7 @@ SPEED_PHASES = ("REQUEST_PUSHED", "REQUEST_REMOVED", "REJECT",
                 # 2.31.0 (W4): the probe could not read the game clock (its own reason), and a held window
                 # that vanished or was dropped by a zone change (ids only).
                 "CLOCK_FOREIGN", "CLOCK_UNREADABLE", "DIALOG_DROPPED")
-LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED")
+LINEAGE_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY", "CLASSIFIED", "BODY_GONE")
 CLAIM_KEYS = ("REQUEST_ACCEPTED", "ENQUEUED", "STARTED", "EFFECT_OBSERVED",
               "ATTRIBUTED", "MAINTAINED_10S", "FINISHED")
 MISSINGNESS_STATUSES = ("MISSING", "ABSENT", "UNSUPPORTED", "UNKNOWN")
@@ -567,6 +568,10 @@ def _validate_e2(row):
                     item["reach"] = None
                 if "phone" not in item:
                     item["phone"] = None
+    elif kind == "lineage_event" and isinstance(payload, dict):
+        # 2.32.0: reason is optional; rows before schema 15 omit it.
+        if "reason" not in payload:
+            payload["reason"] = None
     elif kind == "act_event" and isinstance(payload, dict):
         # 2.22.0 / 2.23.0: optional. Older act rows omit them.
         if "reason_key" not in payload:
@@ -665,6 +670,7 @@ def _validate_e2(row):
                 string_id(payload[key], "lineage %s" % key)
         if payload["ticks"] is not None:
             _require(type(payload["ticks"]) is int, "lineage ticks")
+        bounded_string(payload.get("reason"), MAX_REASON_LENGTH, "lineage reason")
 
 
 def _validate_menu(payload):
@@ -777,6 +783,15 @@ def _validate_knows(value):
         _require(type(value["net_worth"]) is int, "knows.net_worth")
 
 
+def _validate_life(value):
+    """2.32.0 (PR12, schema 15): her life state. Each flag is a bool or None (unreadable); age is a stage name or None."""
+    _require(isinstance(value, dict) and set(value) == {"age", "pregnant", "sick", "dead", "ghost", "npc"},
+             "self.life shape")
+    bounded_string(value["age"], 128, "self.life.age")
+    for key in ("pregnant", "sick", "dead", "ghost", "npc"):
+        _require(value[key] is None or type(value[key]) is bool, "self.life.%s" % key)
+
+
 def _validate_self(row):
     """2.15.0 (schema 8 presence_snapshot only): her traits, skills and money."""
     if "self" not in row:
@@ -787,8 +802,11 @@ def _validate_self(row):
     if value is None:
         return
     keys = ({"traits", "skills", "funds"} | ({"careers"} if row["schema_version"] >= 12 else set()) |
-            ({"wants"} if row["schema_version"] >= 13 else set()))
+            ({"wants"} if row["schema_version"] >= 13 else set()) |
+            ({"life"} if row["schema_version"] >= 15 else set()))
     _require(isinstance(value, dict) and set(value) == keys, "self shape")
+    if "life" in value:
+        _validate_life(value["life"])
     if value["traits"] is not None:
         _validate_named(value["traits"], "trait", MAX_SELF_TRAITS, "self.traits")
         for item in value["traits"]:
@@ -1416,7 +1434,7 @@ def validate_record(row):
         _require(row.get("checkpoint_reason") in ("PERIODIC_60S", "ROTATION", "PRE_DISARM",
                                                    "SAMPLER_RESTARTED", "ZONE_RESUMED",
                                                    "AUTOSTARTED", "WAITING_FOR_BODY",
-                                                   "TELEMETRY_DIR_75"),
+                                                   "TELEMETRY_DIR_75", "BODY_GONE"),
                  "checkpoint_reason")
     if kind == "session_close":
         _require(row.get("telemetry_session_id") is not None, "close session id")

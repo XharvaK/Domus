@@ -469,6 +469,10 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
             [{"skill": _resolve(resolve, item.get("text_key")) or item.get("skill"),
               "level": item.get("level")} for item in own["skills"] if isinstance(item, dict)],
             "funds": own.get("funds")}
+        if isinstance(own.get("life"), dict):
+            # 2.32.0 (PR12): her life state: age stage, pregnant, sick, dead, ghost, npc (None when unreadable).
+            portrait["self"]["life"] = {key: own["life"].get(key)
+                                        for key in ("age", "pregnant", "sick", "dead", "ghost", "npc")}
         if isinstance(own.get("careers"), list):
             # 2.19.0: her jobs, in the game's words; at_work while her shift runs.
             portrait["self"]["jobs"] = [

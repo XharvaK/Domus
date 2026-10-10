@@ -1724,6 +1724,40 @@ def _mechanical_trait(trait):
         return False
 
 
+def _flag(read):
+    try:
+        value = read()
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
+def read_life(sim_info):
+    """2.32.0 (PR12): her life state, plain reads: the age stage (the name of SimInfoBaseWrapper.age, an Age
+    enum), pregnant, sick, dead, ghost and npc (SimInfo.is_pregnant, is_sick, is_dead, is_ghost, is_npc). A value
+    that cannot be read is None. Never raises."""
+    try:
+        age = _bounded_name(sim_info.age.name, "age")
+    except Exception:
+        age = None
+    return {"age": age, "pregnant": _flag(lambda: sim_info.is_pregnant),
+            "sick": _flag(lambda: sim_info.is_sick), "dead": _flag(lambda: sim_info.is_dead),
+            "ghost": _flag(lambda: sim_info.is_ghost), "npc": _flag(lambda: sim_info.is_npc)}
+
+
+def body_life(sim_id):
+    """2.32.0 (PR5): her life state when her body is no longer selectable (a death removes her from the
+    selectable Sims, but her Sim info stays). None when no Sim info with that id can be read."""
+    try:
+        infos = list(services.sim_info_manager().get_all())
+    except Exception:
+        return None
+    for info in infos:
+        if _info_id(info) == sim_id:
+            return read_life(info)
+    return None
+
+
 def read_self(sim_info):
     """2.15.0: what she is like and has: her traits (personality first), her skills
     (highest first) and her household's money. Plain reads: trait_tracker
@@ -1783,7 +1817,8 @@ def read_self(sim_info):
         funds = money
     return {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
             "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
-            "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info)}
+            "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info),
+            "life": read_life(sim_info)}
 
 
 def _own_wants(sim_info):

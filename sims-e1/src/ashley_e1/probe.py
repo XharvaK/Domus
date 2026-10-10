@@ -2071,6 +2071,25 @@ def _poll_tick(alarm_handle=None):
         _POLL_BUSY = False
 
 
+def _body_gone_stop():
+    """2.32.0 (PR5): True when her body is dead, after writing its BODY_GONE record and stopping sampling."""
+    armed = _ARMED_SNAPSHOT or {}
+    sim_id = armed.get("sim_id")
+    if sim_id is None:
+        return False
+    life = observers.body_life(sim_id)
+    if life is None or life.get("dead") is not True:
+        return False
+    reason = "GHOST" if life.get("ghost") is True else "DEAD"
+    _E2.body_gone(reason, sim_id)
+    _emit(schema.make_record(
+        "session_checkpoint", telemetry_session_id=_TELEMETRY_SESSION_ID,
+        wall_timestamp_ms=int(time.time() * 1000), monotonic_ns=time.perf_counter_ns(),
+        checkpoint_reason="BODY_GONE"))
+    _cmd_stop()
+    return True
+
+
 def _poll_tick_body():
     global _SESSION_OPENED, _LAST_CAPTURE_COUNTERS, _ZERO_BODY_TICKS, _MENU_FAILURES
     try:
@@ -2083,6 +2102,10 @@ def _poll_tick_body():
         _cmd_stop()
         return
     except observers.LabIdentityAmbiguous as error:
+        if error.eligible_count == 0 and _body_gone_stop():
+            # 2.32.0 (PR5): a death removes her from the selectable Sims. Her Sim info still says so: one
+            # BODY_GONE record names the reason, and sampling ends cleanly (no wait, no unexplained stop).
+            return
         if error.eligible_count == 0 and _RESUME_SAMPLING:
             # D41: a loading screen has no selectable body; wait it out (no rows).
             # 2.15.2: a first load after a relaunch (D47) can take longer than a

@@ -144,8 +144,10 @@ NOT_ANSWERABLE_CLASSES = frozenset(("UiMultiPicker", "UiDialogObjectColorPicker"
 # 2.31.0: client-drawn pickers (§4.2): never sent; the dialog is cancelled instead.
 WITHHELD_DIALOG_CLASSES = frozenset(("UiMapViewPicker", "UiApartmentPicker"))
 # 2.31.0: interactions that rename or retrait her own Sim: always the User's (User ruling Q3).
+# 2.32.0 (PR5, User ruling): the death window on her own Sim (keep, reincarnate, leave) is the User's.
 IDENTITY_CLASSES = frozenset(("ChangeSimNameInteraction", "TraitTypePickerSuperInteraction",
-                              "TraitPickerSuperInteraction", "MatchmakingTraitPickerSuperInteraction"))
+                              "TraitPickerSuperInteraction", "MatchmakingTraitPickerSuperInteraction",
+                              "DeathSuperInteraction"))
 # 2.31.0: the message that rings her phone; dialog_show sends it instead of distribute_dialog (§3.1 R2).
 RING_MESSAGE_NAME = "MSG_UI_PHONE_RING"
 # 2.31.0: client screens she may not open by message (§4.5, R4), Consts_pb2 names, resolved at install.
@@ -636,6 +638,12 @@ class E2Control:
         payload["record"] = record
         payload["session_uuid"] = self._session_id()
         return self._event("lineage_event", payload)
+
+    def body_gone(self, reason, sim_id):
+        """2.32.0 (PR5): her body is gone (her Sim died). One BODY_GONE lineage record, with the reason."""
+        armed = self._armed_snapshot() or {}
+        return self._lineage_event("BODY_GONE", guid=armed.get("guid"), slot_id=armed.get("slot_id"),
+                                   sim_id=sim_id, ticks=None, lineage_class="BODY_GONE", reason=reason)
 
     def _say(self, connection, text):
         try:

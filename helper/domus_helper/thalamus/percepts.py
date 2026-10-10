@@ -169,7 +169,10 @@ class Extractor:
         slot = "" if e2.get("slot_id") is None else str(e2.get("slot_id"))
         guid = "" if e2.get("guid") is None else str(e2.get("guid"))
         lineage_class = "" if e2.get("lineage_class") is None else str(e2.get("lineage_class"))
-        percept = Percept("lineage", slot, guid, lineage_class, urgency="wake", lineage="")
+        # 2.32.0 (PR5): a BODY_GONE record says why (her Sim died); the reason is a fact of the percept.
+        reason = e2.get("reason")
+        facts = (("reason", str(reason)[:64]),) if isinstance(reason, str) and reason else ()
+        percept = Percept("lineage", slot, guid, lineage_class, urgency="wake", lineage="", facts=facts)
         self.slot_id = e2.get("slot_id")
         self.guid = e2.get("guid")
         self.lineage_class = lineage_class
