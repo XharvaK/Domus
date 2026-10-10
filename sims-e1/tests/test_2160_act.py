@@ -440,6 +440,16 @@ class MenuSenseTests(unittest.TestCase):
         jobs, _room = self.probe._menu_jobs(self.row)
         self.assertEqual(jobs, [])
 
+    def test_a_pet_on_the_lot_is_a_person_in_her_menu_not_an_object(self):
+        # 2.32.0 (PR13): a pet is offered as a person (the helper names it from her presence), in her room.
+        pet = _Thing(51, 2.0, [ReadBook])
+        pet.sim_info = types.SimpleNamespace(is_pet=True)
+        pet.is_on_active_lot = lambda: True
+        self.things = [pet]
+        self.rooms = {51: "4"}
+        jobs, _room = self.probe._menu_jobs(self.row)
+        self.assertEqual([(job["object_id"], job["class"]) for job in jobs], [("51", "sim")])
+
     def test_an_unreadable_lot_is_no_menu_not_an_empty_one(self):
         self.probe._lot_snapshot = lambda: (None, "TUNED_NO_LOT")
         self.assertIsNone(self.probe._menu_jobs(self.row)[0])

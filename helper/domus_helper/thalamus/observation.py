@@ -222,6 +222,14 @@ def _company_seen(item, resolve):
     entry = {"id": str(item["id"]), "name": item.get("name"),
              "room": item.get("room"), "distance_m": item.get("distance_m"),
              "doing": _affordance_name(doing)}
+    if item.get("is_pet") is True:
+        # 2.32.0 (PR13): a pet is named as one; its species is the game's own name for it.
+        entry["pet"] = True
+        if isinstance(item.get("species"), str) and item["species"]:
+            entry["species"] = item["species"]
+    if isinstance(item.get("occult_kinds"), list) and item["occult_kinds"]:
+        # 2.32.0 (PR13): an occult form (a werewolf, a vampire) by the game's type names.
+        entry["occult"] = [kind for kind in item["occult_kinds"] if isinstance(kind, str)]
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
     if item.get("situations"):

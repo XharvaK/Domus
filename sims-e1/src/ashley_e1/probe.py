@@ -1944,7 +1944,7 @@ def _menu_jobs(row):
     items = []
     for obj in objects:
         try:
-            person = obj.is_sim is True
+            person = obj.is_sim is True or observers._is_pet_object(obj)  # 2.32.0 (PR13): pets are persons
         except Exception:
             continue
         if person and obj is sim:

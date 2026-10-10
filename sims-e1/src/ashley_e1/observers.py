@@ -1033,6 +1033,9 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
     except Exception:
         on_lot = None
     return {"id": entry_id,
+            "is_pet": _flag(lambda: sim_info.is_pet),
+            "species": _species_name(sim_info),
+            "occult_kinds": _occult_kinds(sim_info),
             "on_lot": on_lot if type(on_lot) is bool else None,
             "active_household": household_id is not None and own_household == household_id,
             "level": level,
@@ -1730,6 +1733,40 @@ def _flag(read):
     except Exception:
         return None
     return value if type(value) is bool else None
+
+
+def _species_name(sim_info):
+    """2.32.0 (PR13): the name of her Sim info's species (SimInfoBaseWrapper.species), or None."""
+    try:
+        return _bounded_name(sim_info.species.name, "species")
+    except Exception:
+        return None
+
+
+def _occult_kinds(sim_info):
+    """2.32.0 (PR13): the occult types she is in now, by name (a werewolf or vampire form), sorted; None when
+    unreadable, [] for an ordinary Sim. Reads OccultTracker.get_current_occult_types only."""
+    try:
+        types = list(sim_info.occult_tracker.get_current_occult_types())
+    except Exception:
+        return None
+    names = []
+    for item in types:
+        try:
+            name = _bounded_name(item.name, "occult")
+        except Exception:
+            name = None
+        if name is not None:
+            names.append(name)
+    return sorted(names)[:schema.MAX_OCCULT_KINDS]
+
+
+def _is_pet_object(obj):
+    """2.32.0 (PR13): a pet on the lot is a person in her menu (named by the helper), not an object."""
+    try:
+        return obj.sim_info.is_pet is True
+    except Exception:
+        return False
 
 
 def read_life(sim_info):

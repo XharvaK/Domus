@@ -187,6 +187,8 @@ MAX_KNOWN_TRAITS = 6
 MAX_SENTIMENTS = 3
 MAX_SELF_TRAITS = 12
 MAX_SELF_SKILLS = 12
+# 2.32.0 (PR13, schema 15): the occult types a presence entry names (a form of her own or another Sim's).
+MAX_OCCULT_KINDS = 4
 MAX_SELF_CAREERS = 4
 MAX_SELF_WANTS = 8
 MAX_SITUATIONS = 3
@@ -731,6 +733,8 @@ PRESENCE_V6 = {"id", "active_household", "level", "is_body", "household_id", "na
 PRESENCE_V7 = PRESENCE_V6 | {"relationship"}
 PRESENCE_V8 = PRESENCE_V7 | {"on_lot"}
 PRESENCE_V9 = PRESENCE_V8 | {"situations"}
+# 2.32.0 (PR13, schema 15): a pet flag, the species name and the occult types of the Sim (None when unreadable).
+PRESENCE_V15 = PRESENCE_V9 | {"is_pet", "species", "occult_kinds"}
 
 
 def _number_or_none(value, label):
@@ -1089,7 +1093,8 @@ def _validate_presence(value, version=5):
     _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
     for item in value:
         _require(isinstance(item, dict), "presence entry must be an object")
-        _require(set(item) == (PRESENCE_V9 if version >= 9 else
+        _require(set(item) == (PRESENCE_V15 if version >= 15 else
+                               PRESENCE_V9 if version >= 9 else
                                PRESENCE_V8 if version >= 8 else
                                PRESENCE_V7 if version >= 7 else
                                PRESENCE_V6 if version >= 6 else
@@ -1097,6 +1102,15 @@ def _validate_presence(value, version=5):
                  "presence shape")
         if version >= 8 and item.get("on_lot") is not None:
             _require(type(item["on_lot"]) is bool, "presence.on_lot must be bool")
+        if version >= 15:
+            _require(item["is_pet"] is None or type(item["is_pet"]) is bool, "presence.is_pet must be bool")
+            if item["species"] is not None:
+                bounded_string(item["species"], 128, "presence.species", False)
+            if item["occult_kinds"] is not None:
+                _require(isinstance(item["occult_kinds"], list) and len(item["occult_kinds"]) <= MAX_OCCULT_KINDS,
+                         "presence.occult_kinds")
+                for name in item["occult_kinds"]:
+                    bounded_string(name, 128, "presence.occult_kinds", False)
         if version >= 9:
             _validate_situations(item["situations"])
         if version >= 7:

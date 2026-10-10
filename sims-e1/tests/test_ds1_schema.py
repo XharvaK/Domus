@@ -48,6 +48,7 @@ def full_presence(index=0):
             "position": {"x": 1.25, "y": 0.0, "z": -3.5, "level": 2 ** 30},
             "room": "2" * 64, "posture": "p" * 160, "doing": "d" * 160,
             "doing_target": "3" * 64, "distance_m": 12.3,
+            "is_pet": True, "species": "s" * 64, "occult_kinds": ["k" * 64] * 4,
             "relationship": {"known": True,
                              "tracks": [{"track": "t" * 128, "value": -100.0}] * 4,
                              "labels": [{"label": "l" * 128, "text_key": "4294967295"}] * 6,
@@ -86,7 +87,8 @@ class SchemaV4Tests(unittest.TestCase):
 
     def test_presence_snapshot_carries_senses(self):
         row = presence_row(
-            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True, "situations": None}],
+            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True, "situations": None,
+                        "is_pet": False, "species": "HUMAN", "occult_kinds": []}],
             social=[],
             mood={"type": "123", "intensity": 5, "name": None},
             motives=[{"id": "hunger", "value": 50, "band": "ok",
