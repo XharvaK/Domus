@@ -97,7 +97,7 @@ class PhoneMenuTests(unittest.TestCase):
         return build.payload(1, room)
 
     def test_version(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.33.0")
+        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.34.0")
 
     def test_the_phone_entry_lists_only_allowed_and_test_passing_phone_acts(self):
         payload = self._payload()
@@ -190,9 +190,10 @@ class PhoneMenuTests(unittest.TestCase):
 
     def test_phone_rows_validate_and_the_phone_key_is_optional(self):
         schema = self.probe.schema
-        payload = {"menu_rev": 1, "room": None, "tested": 1, "refused": 0, "build_ms": 1.0, "objects": [
+        payload = {"menu_rev": 1, "room": None, "tested": 1, "refused": 0, "build_ms": 1.0, "part": 0, "parts": 1,
+                   "objects": [
             {"object_id": "1", "definition_id": None, "class": "c", "distance_m": 1.0, "same_room": True,
-             "reach": True, "acts": [{"guid64": "1", "name": "n", "text_key": None}]}]}
+             "reach": True, "room": None, "acts": [{"guid64": "1", "name": "n", "text_key": None}]}]}
         row = schema.make_record("act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1,
                                  e2=payload)
         schema.validate_record(row)

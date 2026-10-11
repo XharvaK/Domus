@@ -6,7 +6,11 @@ import re
 
 from . import snapshot
 
-OPTIONS_LIMIT = 7800
+# N8 (F4): the options of one view: at most 160 objects and 32,768 bytes (contract.py takes the same).
+OPTIONS_LIMIT = 32768
+OPTIONS_OBJECTS_LIMIT = 160
+# N8 (F4): an object within this many metres of her is near, as one in her room is.
+NEAR_M = 4.0
 # Mint expires an act its helper never picked up after 90 s; a written act the probe never
 # answers about is unknown after this long.
 # W3h (C9): real time. The probe reads its inbox on a real-time alarm and writes the reply then,
@@ -34,6 +38,49 @@ _PHASES = {"ACCEPTED": "accepted", "REJECTED": "rejected", "PUSHED": "pushed",
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 
+class MenuParts(object):
+    """N8 (F4): the probe writes a menu in parts, one act_menu row each, with the same menu_rev and each part's
+    index of the count. take() returns the whole menu once all of its parts have come, else None. A row without
+    parts (an older probe) is a whole menu. A menu whose parts are not all in is never shown part-way."""
+
+    def __init__(self):
+        self._key = None
+        self._pieces = {}
+
+    def take(self, session, e2):
+        parts = e2.get("parts") if type(e2.get("parts")) is int else 1
+        part = e2.get("part") if type(e2.get("part")) is int else 0
+        if not 1 <= parts <= 64 or not 0 <= part < parts:
+            return None
+        key = (session, e2.get("menu_rev"))
+        if key != self._key:
+            self._key, self._pieces = key, {}
+        self._pieces[part] = e2
+        if len(self._pieces) < parts:
+            return None
+        objects = []
+        for index in range(parts):
+            objects.extend(self._pieces[index].get("objects") or [])
+        self._key, self._pieces = None, {}
+        return dict(e2, objects=objects, part=0, parts=1)
+
+
+class RefBook(object):
+    """N8 (F3): the refs of one helper session (one attachment). The first time a key is listed it gets the next
+    free number; it keeps that ref in every later view, and a number is never given to another key."""
+
+    def __init__(self):
+        self._numbers = {}
+        self._next = 1
+
+    def ref(self, key):
+        number = self._numbers.get(key)
+        if number is None:
+            number = self._numbers[key] = self._next
+            self._next += 1
+        return "a%d" % number
+
+
 def _bytes(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
@@ -45,14 +92,40 @@ def humanize(name):
     return " ".join(_CAMEL.sub(" ", word) for word in words if word).strip()[:80] or "unnamed"
 
 
-def _text(resolve, key):
+_TOKEN = re.compile(r"\{([^{}]*)\}")
+
+
+def clean_text(text, person=None):
+    """N8 (F10): a game sentence with its string tokens resolved, never with braces. A token that names the
+    target (index 1 or more) is filled with the person's name when the target is a person (a first-name field
+    gets the first name, a last-name field the last name, anything else the full name); every other token is
+    dropped. Then the spaces are tidied. None when nothing is left."""
+    def fill(match):
+        index, _dot, field = match.group(1).partition(".")
+        if not person or index == "0" or not index.isdigit():
+            return ""
+        if "FirstName" in field:
+            return person.split()[0]
+        if "LastName" in field:
+            return person.split()[-1]
+        return person
+    text = _TOKEN.sub(fill, text).replace("{", "").replace("}", "")
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    return text or None
+
+
+def _text(resolve, key, person=None):
     if resolve is None or key is None:
         return None
     try:
         text = resolve(key)
     except Exception:
         return None
-    return text.strip()[:80] if isinstance(text, str) and text.strip() else None
+    if not isinstance(text, str):
+        return None
+    cleaned = clean_text(text, person)
+    return cleaned[:80] if cleaned else None
 
 
 def act_names(menu, resolve=None):
@@ -81,10 +154,15 @@ def _sentence(resolve, key):
         return None
     if not isinstance(text, str):
         return None
-    text = text.strip()
-    if not text:
+    text = clean_text(text)
+    return text[:200] if text else None
+
+
+def _person_name(item, people):
+    """N8 (F10): the name of the person an act is on, when the object is a person she can name, else None."""
+    if item.get("class") != "sim":
         return None
-    return text[:200]
+    return (people or {}).get(str(item.get("object_id")))
 
 
 def _object_name(item, resolve, catalog, people=None):
@@ -114,12 +192,13 @@ _NOT_HERS_TO_STOP = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_
 _CLASS_REPR = re.compile(r"^<class '([^']+)'>$")
 
 
-def queue_options(row, start=0, act_name=None):
+def queue_options(row, refs=None, act_name=None):
     """2.20.0 (live 2026-10-06: her meal waited behind an open-ended piano song she had no
     way to stop): what her body is doing and has queued, each one hers to stop, the way the
-    client's X on her queue is. Refs continue from start. HE1: act_name gives the game's words."""
+    client's X on her queue is. N8 (F3): refs are stable per interaction (refs is a RefBook).
+    HE1: act_name gives the game's words."""
+    refs = RefBook() if refs is None else refs
     acts = []
-    count = start
     for entry in ((row or {}).get("interactions") or {}).get("observed") or []:
         if not isinstance(entry, dict) or entry.get("source_raw") in _NOT_HERS_TO_STOP:
             continue
@@ -131,8 +210,7 @@ def queue_options(row, start=0, act_name=None):
         match = _CLASS_REPR.match(text)
         tuning = match.group(1).rsplit(".", 1)[-1] if match else text
         name = (act_name or humanize)(tuning)
-        count += 1
-        acts.append({"ref": "a%d" % count, "guid64": iid,
+        acts.append({"ref": refs.ref(("queue", iid)), "guid64": iid,
                      "text": ("Cancel (queued): %s" if membership == "QUEUED" else "Stop: %s") % name})
         if len(acts) >= QUEUE_SHOWN:
             break
@@ -201,16 +279,16 @@ def answer_rules(dialog, resolve=None):
     return rules or None
 
 
-def dialog_options(row, resolve=None, start=0):
+def dialog_options(row, resolve=None, refs=None):
     """2.18.0: the game's open dialogs that are hers, as options she answers: a picker's enabled
     rows (with price), then its buttons. W2h: a dialog with more than one selectable row, counts
-    or text fields carries answer_rules, and its ok button is listed with the rows. Refs continue
-    from start."""
+    or text fields carries answer_rules, and its ok button is listed with the rows. N8 (F3): refs
+    are stable per dialog row and button (refs is a RefBook)."""
     dialogs = ((row or {}).get("dialogs") or {}).get("open") or []
     body = body_id(row)
     version = (row or {}).get("schema_version")
+    refs = RefBook() if refs is None else refs
     result = []
-    count = start
     for dialog in dialogs:
         if not isinstance(dialog, dict) or not dialog.get("dialog_id"):
             continue
@@ -223,14 +301,13 @@ def dialog_options(row, resolve=None, start=0):
             text = _text(resolve, entry.get("name_key")) or "choice %s" % entry.get("option_id")
             if isinstance(entry.get("price"), int):
                 text = "%s (§%d)" % (text, entry["price"])
-            count += 1
-            acts.append({"ref": "a%d" % count, "guid64": str(entry["option_id"]), "text": text})
+            acts.append({"ref": refs.ref(("dialog", str(dialog["dialog_id"]), "row", str(entry["option_id"]))),
+                         "guid64": str(entry["option_id"]), "text": text})
         for response in dialog.get("responses") or []:
             name = response.get("response") if isinstance(response, dict) else None
             if not isinstance(name, str) or (acts and name == "ok" and rules is None):
                 continue  # with rows, picking a row is the ok (unless her answer has rules)
-            count += 1
-            acts.append({"ref": "a%d" % count, "guid64": name,
+            acts.append({"ref": refs.ref(("dialog", str(dialog["dialog_id"]), "response", name)), "guid64": name,
                          "text": _text(resolve, response.get("text_key")) or name})
         if acts:
             title = _text(resolve, dialog.get("title_key")) or _text(resolve, dialog.get("text_key"))
@@ -256,7 +333,23 @@ def people_names(row, seen_ids=None):
 
 
 OPENS_SCREEN = "a screen only the User's hands can use"
-NO_WAY = "the game sees no way for her to get there from where she is now"
+# N8 (F2): interactions that open such a screen, so they are marked before the notebook has seen one end on it:
+# the event planner (phone), Create a Sim (terrain, every age and sex), Change Sim, outfit planning and try-on.
+# Tuning names as the game's atlas lists them; the notebook adds to this list, it never removes from it.
+WITHHELD_SEED = (
+    "phone_PlanEvent",
+    "terrain-createsim_female-adult", "terrain-createsim_female-baby", "terrain-createsim_female-child",
+    "terrain-createsim_female-elder", "terrain-createsim_female-infant", "terrain-createsim_female-teen",
+    "terrain-createsim_female-toddler", "terrain-createsim_female-youngadult",
+    "terrain-createsim_male-adult", "terrain-createsim_male-baby", "terrain-createsim_male-child",
+    "terrain-createsim_male-elder", "terrain-createsim_male-infant", "terrain-createsim_male-teen",
+    "terrain-createsim_male-toddler", "terrain-createsim_male-youngadult",
+    "dresser_ChangeSim",
+    "PlanOutfit", "PlanOutfit_Mirror", "tent_PlanOutfit", "vanityTable_planOutfit", "planOutfit_Styleboard",
+    "planOutfit_Mirror_toddler", "planOutfit_Toddler",
+    "dresser_TryOnOutfits_Start", "dresser_TryOnOutfits_End",
+    "Dresser_TryOnOutfit_00", "Dresser_TryOnOutfit_01", "Dresser_TryOnOutfit_02", "Dresser_TryOnOutfit_03")
+NO_WAY ="the game sees no way for her to get there from where she is now"
 
 
 def _where(item, menu_room, room):
@@ -271,16 +364,44 @@ def _where(item, menu_room, room):
     return "elsewhere" if same is True else "nearby"
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0, withheld=(), room=None):
-    """The observation's options: nearest objects first, each act with a short ref (a1, a2,
-    ...) unique in this observation, its guid64 and its text. Farthest objects are left out
-    until it fits the byte budget. W2h: an act whose interaction the notebook has seen end on a
-    screen only the User's hands can use stays listed, marked with what it opens. HE12: room is
-    the room she is in now (the zone's), and the menu's own room comes with the menu."""
+def _in_her_room(item, room):
+    """N8 (F4): whether an object is in the room she is in now. The probe's room id for the object decides
+    when both are known; an older menu without one is judged by the probe's same_room flag."""
+    object_room = item.get("room")
+    if object_room is not None and room is not None:
+        return str(object_room) == str(room)
+    return item.get("same_room") is True
+
+
+def _near(item, room):
+    distance = item.get("distance_m")
+    close = isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance <= NEAR_M
+    return item.get("phone") is True or close or _in_her_room(item, room)
+
+
+def _room_label(item, room_labels):
+    """N8 (F4): the room's label when it is known; None when it is not (the object then names no room)."""
+    object_room = item.get("room")
+    if object_room is None:
+        return None
+    return (room_labels or {}).get(str(object_room))
+
+
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
+            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT):
+    """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
+    (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
+    of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
+    each object names its room (room_labels gives the label, when known) and whether it is near. Farthest
+    objects are left out until it fits the byte budget and the object limit; cut (a dict, filled in) names
+    how many were left out and in which rooms. W2h: an act whose interaction the notebook has seen end on a
+    screen only the User's hands can use stays listed, marked with what it opens. HE12: room is the room she
+    is in now (the zone's), and the menu's own room comes with the menu."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
+    refs = RefBook() if refs is None else refs
     result = []
-    count = start
+    left_out = []
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
@@ -294,25 +415,39 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         if item.get("phone") is True:
             where = "with her"  # 2.29.0: her phone is on her, so no distance and no room.
         acts = []
+        texts = set()
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
-            count += 1
-            listed = {"ref": "a%d" % count, "guid64": str(act["guid64"]),
-                      "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))}
-            if act.get("name") in withheld:
+            text = _text(resolve, act.get("text_key"), _person_name(item, people)) or humanize(act.get("name"))
+            if text in texts:
+                continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
+            texts.add(text)
+            listed = {"ref": refs.ref(("act", str(item.get("object_id")), str(act["guid64"]))),
+                      "guid64": str(act["guid64"]), "text": text}
+            if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
             acts.append(listed)
         if acts:
             entry = {"object": _object_name(item, resolve, catalog, people),
-                     "object_id": str(item.get("object_id")), "where": where, "acts": acts}
+                     "object_id": str(item.get("object_id")), "where": where, "acts": acts,
+                     "near": _near(item, room)}
+            label = _room_label(item, room_labels)
+            if label:
+                entry["room"] = label[:64]
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
-            result.append(entry)
-    while result and _bytes(result) > limit:
-        result.pop()
-    return result
+            # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
+            where_named = label or (str(item["room"])[:64] if item.get("room") is not None else None)
+            result.append((entry, where_named))
+    result.sort(key=lambda pair: pair[0]["near"] is not True)  # near first; the rest keep the menu's order
+    while result and (len(result) > objects_limit or _bytes([pair[0] for pair in result]) > limit):
+        left_out.append(result.pop()[1])
+    if cut is not None and left_out:
+        cut["objects"] = len(left_out)
+        cut["rooms"] = sorted({name for name in left_out if name})[:16]
+    return [pair[0] for pair in result]
 
 
 def _version(probe):

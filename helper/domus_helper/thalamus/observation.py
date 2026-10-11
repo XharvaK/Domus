@@ -620,4 +620,5 @@ def build(decision, ctx):
                               act_name=ctx.get("act_name"), seen=ctx.get("seen"),
                               room_labels=ctx.get("room_labels")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
+        **({"options_cut": ctx["options_cut"]} if ctx.get("options_cut") else {}),
     }

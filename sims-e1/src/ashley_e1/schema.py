@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 15
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v15"
-PROBE_VERSION = "2.33.0"
+OBSERVATION_SCHEMA_VERSION = 16
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v16"
+PROBE_VERSION = "2.34.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -84,7 +84,7 @@ E2_PAYLOAD_KEYS = {
     "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
                   "tuning_name", "finishing_type", "detail", "reason_key",
                   "closed", "resumed", "owner", "started", "aliases"),
-    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms"),
+    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms", "part", "parts"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
 # 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
@@ -93,11 +93,13 @@ ACT_MAX_ALIASES = 4
 RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
                   "other_dialog_open", "failed")
 # 2.19.0: 12 left the kitchen and the bedroom out of a nine-room house.
-MENU_MAX_OBJECTS = 24
+# 2.34.0 (N8, F4): every object on the lot with acts for her (the probe keeps rows under the record limit in parts).
+MENU_MAX_OBJECTS = 256
+MENU_MAX_PARTS = 64
 MENU_MAX_ACTS = 8
 # 2.25.0: reach (the game's own connectivity check from her to the object; None when unread).
 # 2.29.0: phone (True on her own phone's entry, None on every other object) is optional the same way.
-MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "reach", "acts", "phone")
+MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "room", "reach", "acts", "phone")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
@@ -689,11 +691,16 @@ def _validate_menu(payload):
         _require(type(payload[key]) is int and payload[key] >= 0, "menu %s" % key)
     _number_or_none(payload["build_ms"], "menu build_ms")
     objects = payload["objects"]
+    _require(type(payload["part"]) is int and type(payload["parts"]) is int, "menu part")
+    _require(0 <= payload["part"] < payload["parts"] <= MENU_MAX_PARTS, "menu part range")
     _require(isinstance(objects, list) and len(objects) <= MENU_MAX_OBJECTS, "menu objects")
     for item in objects:
         _require(isinstance(item, dict) and set(item) == set(MENU_OBJECT_KEYS), "menu object shape")
         _require(isinstance(item["object_id"], str), "menu object_id")
         string_id(item["object_id"], "menu object_id")
+        if item["room"] is not None:
+            _require(isinstance(item["room"], str), "menu object room")
+            string_id(item["room"], "menu object room")
         if item["definition_id"] is not None:
             _require(isinstance(item["definition_id"], str), "menu definition_id")
             string_id(item["definition_id"], "menu definition_id")

@@ -9,7 +9,7 @@ BODY_LIMIT = 64 * 1024
 
 OBSERVATION_KEYS = frozenset({
     "v", "observation_id", "world", "branch", "session", "attachment", "body", "snapshot",
-    "seq", "source_time_ms", "expires_at_ms", "lineage_class", "percepts", "portrait", "options", "day",
+    "seq", "source_time_ms", "expires_at_ms", "lineage_class", "percepts", "portrait", "options", "options_cut", "day",
 })
 HEARTBEAT_KEYS = frozenset({"v", "helper_session", "sent_at_ms", "attached", "world", "probe_version", "inputs"})
 PERCEPT_KEYS = frozenset({"kind", "salience", "facts"})
@@ -47,6 +47,18 @@ def _json_object(value, max_bytes):
     if not _record(value) or _json_bytes(value) > max_bytes:
         raise ContractError("invalid_body")
     return value
+
+
+def _options_cut(value):
+    """N8 (F4): what the view's options left out: {"objects": count, "rooms": [labels]}, nothing else."""
+    if not _record(value) or set(value) != {"objects", "rooms"}:
+        raise ContractError("invalid_body")
+    rooms = value.get("rooms")
+    if type(value.get("objects")) is not int or value["objects"] < 1 or not isinstance(rooms, list) or len(rooms) > 16:
+        raise ContractError("invalid_body")
+    for name in rooms:
+        _text(name, 1, 64)
+    return {"objects": value["objects"], "rooms": list(rooms)}
 
 
 def validate_observation(body, now_ms):
@@ -102,11 +114,14 @@ def validate_observation(body, now_ms):
     if "portrait" in body:
         normalized["portrait"] = _json_object(body.get("portrait"), 8192)
     if "options" in body:
+        # N8 (F4): a lot's options take up to 160 objects and 32,768 bytes; a cut is named in options_cut.
         options = body.get("options")
-        if (not isinstance(options, list) or len(options) > 32 or not all(_record(item) for item in options)
-                or len(json.dumps(options, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 8192):
+        if (not isinstance(options, list) or len(options) > 160 or not all(_record(item) for item in options)
+                or len(json.dumps(options, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 32768):
             raise ContractError("invalid_body")
         normalized["options"] = options
+    if "options_cut" in body:
+        normalized["options_cut"] = _options_cut(body.get("options_cut"))
     if "day" in body:
         normalized["day"] = _json_object(body.get("day"), 16384)
     if expires_at_ms <= source_time_ms or expires_at_ms - source_time_ms > MAX_WINDOW_MS:
