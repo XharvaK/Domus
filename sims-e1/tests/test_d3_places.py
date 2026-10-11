@@ -191,5 +191,178 @@ class SpotIdTests(unittest.TestCase):
         self.assertIsNone(ids.id_for("new", 0, "room"))
 
 
+class _FakePoint(object):
+    id = 9001
+
+    def __init__(self, location):
+        self.location = location
+
+
+class _FakeLocation(object):
+    def __init__(self, transform, surface):
+        self.transform, self.surface = transform, surface
+
+
+class _FakeTransform(object):
+    def __init__(self, position, orientation):
+        self.position, self.orientation = position, orientation
+
+
+class _FakePick(object):
+    def __init__(self, pick_type, target, location, routing_surface):
+        self.pick_type, self.target, self.location, self.routing_surface = pick_type, target, location, routing_surface
+
+
+class _Refused(object):
+    """A preflight refusal: falsy, with the game's tooltip (its string key is what the probe reads)."""
+
+    def __bool__(self):
+        return False
+
+    tooltip = types.SimpleNamespace(_string_id=4711)
+
+
+class SpotActTests(unittest.TestCase):
+    """2.35.0 (D3, P2): an act that names a spot is Go Here at the spot's point, with the game's pick, through
+    the same checks and push as any other act."""
+
+    def setUp(self):
+        self.base = test_e2.ControlFlowTests()
+        self.base.setUp()
+        self.probe = self.base.probe
+        self.actuator = self.probe.e2_actuator
+        self.zone = object()
+        self.probe._current_zone = lambda: self.zone
+        self.pool = False
+        self.allowed = True
+        self.refusal = None
+        self.tested = []
+        self.actuator.terrain_object = lambda: _Terrain()
+        self.actuator.TerrainPoint = _FakePoint
+        self.actuator.Location = _FakeLocation
+        self.actuator.Transform = _FakeTransform
+        self.actuator.PickInfo = _FakePick
+        self.actuator.PickType = types.SimpleNamespace(PICK_TERRAIN="PICK_TERRAIN", PICK_POOL_SURFACE="PICK_POOL_SURFACE")
+        self.actuator.is_location_pool = lambda position, level: self.pool
+        self.spot = {"position": "P1", "orientation": "O1", "routing_surface": "S1", "level": 1, "room": "4",
+                     "kind": "room"}
+        self.probe._E2.publish_spots(self.zone, {"1": self.spot})
+
+        def test_super_affordance(affordance, target, context):
+            self.tested.append((affordance.guid64, target, context))
+            return self.refusal if self.refusal is not None else self.allowed
+        self.base.sim.test_super_affordance = test_super_affordance
+
+    def tearDown(self):
+        writer = self.base.LedgerWriter.instances[-1] if self.base.LedgerWriter.instances else None
+        if writer is not None:
+            writer.finish()
+
+    def ready(self):
+        self.base.LedgerWriter.records = [self.base.continuing()[0]]
+        self.assertTrue(self.probe._cmd_arm("HOME"))
+        self.assertTrue(self.probe._cmd_start())
+        self.base.tick()
+        self.probe._E2.publish_spots(self.zone, {"1": self.spot})  # arming clears the session's spots
+
+    def act(self, object_id="1", guid64=str(GO_HERE_GUID)):
+        self.acts = getattr(self, "acts", 0) + 1
+        act_id = "%032x" % self.acts
+        connection = self.probe._InboxReply("helper")
+        ok = self.probe._inbox_dispatch(
+            {"command": "act", "args": {"act_id": act_id, "object_id": object_id, "guid64": guid64}}, connection)
+        self.last_act_id = act_id
+        return ok, connection
+
+    def events(self):
+        return self.base.e2("act_event")
+
+    def test_an_act_on_a_spot_is_go_here_at_its_point_with_the_games_pick(self):
+        self.ready()
+        ok, connection = self.act()
+        self.assertTrue(ok)
+        self.assertTrue(connection.lines[-1].startswith("ACT_PUSHED " + self.last_act_id))
+        guid, point, context = self.base.pushes[-1]
+        self.assertEqual((guid, point), (GO_HERE_GUID, 9001))
+        self.assertIsInstance(context.pick, _FakePick)
+        self.assertEqual(context.pick.pick_type, "PICK_TERRAIN")
+        self.assertIs(context.pick.target, self.tested[-1][1])  # the game's pick names the same point it targets
+        self.assertEqual(context.pick.location, "P1")
+        self.assertEqual(context.pick.routing_surface, "S1")
+        self.assertEqual(self.tested[-1][0], GO_HERE_GUID)
+        self.assertEqual(self.tested[-1][1].location.transform.position, "P1")
+        self.assertEqual(self.tested[-1][1].location.transform.orientation, "O1")
+        self.assertEqual(self.tested[-1][1].location.surface, "S1")
+        phases = [(e["phase"], e["object_id"], e["guid64"], e["tuning_name"]) for e in self.events()]
+        self.assertEqual(phases, [("ACCEPTED", "1", str(GO_HERE_GUID), "terrain-gohere"),
+                                  ("PUSHED", "1", str(GO_HERE_GUID), "terrain-gohere")])
+
+    def test_a_pool_spot_takes_the_pool_pick(self):
+        self.pool = True
+        self.ready()
+        self.assertTrue(self.act()[0])
+        self.assertEqual(self.base.pushes[-1][2].pick.pick_type, "PICK_POOL_SURFACE")
+
+    def test_an_act_on_a_spot_the_newest_build_does_not_hold_is_no_object(self):
+        self.ready()
+        ok, connection = self.act(object_id="2")
+        self.assertFalse(ok)
+        self.assertEqual(connection.lines[-1], "ACT_REJECT NO_OBJECT")
+        self.probe._E2.publish_spots(self.zone, {})
+        ok, connection = self.act(object_id="1")
+        self.assertEqual(connection.lines[-1], "ACT_REJECT NO_OBJECT")
+        self.assertEqual(self.base.pushes, [])
+
+    def test_a_spot_of_another_zone_is_no_object(self):
+        self.ready()
+        self.probe._current_zone = lambda: object()
+        ok, connection = self.act()
+        self.assertEqual(connection.lines[-1], "ACT_REJECT NO_OBJECT")
+
+    def test_an_act_that_is_not_go_here_at_a_spot_is_not_offered(self):
+        self.ready()
+        ok, connection = self.act(guid64="4242")
+        self.assertEqual(connection.lines[-1], "ACT_REJECT NOT_OFFERED")
+        self.assertEqual(self.base.pushes, [])
+
+    def test_the_game_refusing_go_here_is_a_refusal_with_its_reason(self):
+        self.refusal = _Refused()
+        self.ready()
+        ok, connection = self.act()
+        self.assertFalse(ok)
+        self.assertEqual(connection.lines[-1], "ACT_REJECT GAME_REFUSED")
+        rejected = [e for e in self.events() if e["phase"] == "REJECTED"][-1]
+        self.assertEqual((rejected["code"], rejected["reason_key"]), ("GAME_REFUSED", "4711"))
+        self.assertEqual(self.base.pushes, [])
+
+    def test_the_spot_the_newest_menu_build_found_is_the_one_the_act_names(self):
+        bed = types.SimpleNamespace(id=11, zone_id=1, routing_surface="S0", level=0, is_sim=False,
+                                    position=types.SimpleNamespace(x=2.0, y=0.0, z=0.0, room="4"),
+                                    definition=types.SimpleNamespace(id=511),
+                                    super_affordances=lambda context=None: iter([]), is_on_active_lot=lambda: True)
+        row = {"event_kind": "presence_snapshot",
+               "zone": {"position": {"x": 0.0, "y": 0.0, "z": 0.0, "level": 0}, "room": "4"}}
+        self.base.sim.test_super_affordance = lambda affordance, target, context: True
+        self.ready()  # armed and sampling first; the lot is read by the menu only
+        self.probe._E2.publish_spots(self.zone, {})  # only the menu's own build may supply the spot
+        self.probe._lot_snapshot = lambda: ([bed], None)
+        self.probe.observers._room = lambda obj, position: obj.position.room
+        self.actuator.front_door = lambda: None
+        self.actuator.spot_start = lambda obj, kind: obj.position
+        self.actuator.standable_spot = lambda sim, start, surface: (
+            types.SimpleNamespace(x=start.x, y=0.0, z=start.z, room=start.room), "facing")
+        self.actuator.room_at = lambda obj, position, level: position.room
+        self.actuator.spot_target = lambda sim, spot, owner=False: (
+            _FakePoint(_FakeLocation(_FakeTransform(spot["position"], spot["orientation"]), spot["routing_surface"])),
+            "context")
+        self.probe._menu_tick(row)  # starts the build
+        self.probe._menu_tick(row)  # finishes it: its spots are the ones an act may name
+        self.assertEqual(sorted(self.probe._E2.spots), ["1"])
+        self.assertEqual(self.probe._E2.spots["1"]["room"], "4")
+        ok, connection = self.act(object_id="1")
+        self.assertTrue(ok, connection.lines)
+        self.assertEqual(self.base.pushes[-1][0], GO_HERE_GUID)
+
+
 if __name__ == "__main__":
     unittest.main()

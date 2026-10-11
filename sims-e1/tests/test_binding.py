@@ -151,9 +151,10 @@ def install_stubs():
     sys.modules["interactions"] = interactions
     context = types.ModuleType("interactions.context")
     class InteractionContext:
-        def __init__(self, sim, source, priority, insert_strategy=None):
+        def __init__(self, sim, source, priority, insert_strategy=None, pick=None):
             self.sim, self.source, self.priority = sim, source, priority
             self.insert_strategy = insert_strategy
+            self.pick = pick  # 2.35.0 (D3): the game's pick, keyword only, as InteractionContext takes it
 
     context.InteractionContext = InteractionContext
     context.SOURCE_SCRIPT = "SCRIPT"
