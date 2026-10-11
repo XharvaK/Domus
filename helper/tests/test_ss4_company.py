@@ -130,7 +130,8 @@ def test_a_heard_sims_running_social_says_someone(monkeypatch):
         "affordance_text": "invented_wave", "membership": "RUNNING", "target_id": "9"}]}}
     portrait = observation._portrait(row)
     assert portrait["doing_said"] == [{
-        "interaction": "invented_wave", "sentence": "invented_wave:Ada someone", "state": "running"}]
+        "interaction": "invented_wave", "name": "invented wave", "sentence": "invented_wave:Ada someone",
+        "state": "running"}]
     assert "Testa" not in portrait["doing_said"][0]["sentence"]
     addressed = observation._portrait({
         "zone": {"room": "hall"},

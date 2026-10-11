@@ -92,7 +92,8 @@ def test_an_addressed_sentence_says_you_for_her_and_her_own_act_keeps_her_name(m
     assert portrait["addressed_by"] == [{
         "by": "2", "interaction": "invented_ask", "sentence": "invented_ask:Bob you"}]
     assert portrait["doing_said"] == [{
-        "interaction": "invented_wave", "sentence": "invented_wave:Ada Bob", "state": "running"}]
+        "interaction": "invented_wave", "name": "invented wave", "sentence": "invented_wave:Ada Bob",
+        "state": "running"}]
 
 
 def test_company_said_is_shed_after_her_own_sentences_and_before_the_ones_to_her(monkeypatch):

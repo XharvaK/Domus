@@ -441,10 +441,12 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
             continue
         if len(bucket) >= 8:
             continue
-        bucket.append(name_of(tuning))
+        shown = name_of(tuning)
+        bucket.append(shown)
         text = _sentence(tuning, actors)
         if text is not None:
-            doing_said.append({"interaction": tuning, "sentence": text, "state": state})
+            # The name is the one in running/queued, so the view can show the sentence in place of that name.
+            doing_said.append({"interaction": tuning, "name": shown, "sentence": text, "state": state})
     game = row.get("game") or {}
     # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
     # Seen first, in row order. Heard after that, nearest first. Off the lot and unseen: gone.
