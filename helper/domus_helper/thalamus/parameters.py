@@ -6,4 +6,6 @@ DECISION_LOG_QUOTA_BYTES = 50 * 1024 * 1024
 KINDS = (
     "need", "interaction", "posture", "presence", "social",
     "moodlet", "env", "lineage", "gap", "look",
+    # 2.36.0 (D6): a notice the game showed her (title and text), and a change to her own self (one thing).
+    "notice", "self",
 )

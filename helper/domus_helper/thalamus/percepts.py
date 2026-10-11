@@ -66,9 +66,118 @@ def _entry_id(entry):
     return str(identity)
 
 
+def _words(resolve, key):
+    """2.36.0 (D6): the game's text for a string key, capped; None when there is no key or no text."""
+    if resolve is None or key is None:
+        return None
+    try:
+        text = resolve(key)
+    except Exception:
+        return None
+    return text[:_TEXT_CAP] if isinstance(text, str) and text else None
+
+
+def _money(value):
+    return "§{:,}".format(value)
+
+
+def _self_things(own, resolve):
+    """2.36.0 (D6, H1): her self as things that can change, each keyed by what it is (skill:<name>, job:<career>,
+    want:<name>, bills:owed ...). Values are plain: numbers, flags, or {level, text} / {done, text} for named things."""
+    things = {}
+    if type(own.get("funds")) is int:
+        things["funds"] = own["funds"]
+    for item in own.get("skills") or []:
+        if isinstance(item, dict) and isinstance(item.get("skill"), str) and type(item.get("level")) is int:
+            text = _words(resolve, item.get("text_key")) or item["skill"]
+            things["skill:" + item["skill"]] = {"level": item["level"], "text": text}
+    for item in own.get("traits") or []:
+        if isinstance(item, dict) and isinstance(item.get("trait"), str):
+            things["trait:" + item["trait"]] = _words(resolve, item.get("text_key")) or item["trait"]
+    for item in own.get("wants") or []:
+        if isinstance(item, dict) and isinstance(item.get("want"), str):
+            kind = "fear" if item.get("fear") is True else "want"
+            things[kind + ":" + item["want"]] = _words(resolve, item.get("text_key")) or item["want"]
+    for item in own.get("careers") or []:
+        if isinstance(item, dict) and isinstance(item.get("career"), str):
+            level = item.get("level") if type(item.get("level")) is int else None
+            text = _words(resolve, item.get("title_key")) or _words(resolve, item.get("text_key")) or item["career"]
+            things["job:" + item["career"]] = {"level": level, "text": text}
+    aspiration = own.get("aspiration")
+    if isinstance(aspiration, dict):
+        name = _words(resolve, aspiration.get("name_key"))
+        if name is not None:
+            things["aspiration"] = name
+        for item in aspiration.get("objectives") or []:
+            if isinstance(item, dict) and item.get("text_key") is not None:
+                things["objective:" + str(item["text_key"])] = {
+                    "done": item.get("done") is True, "text": _words(resolve, item.get("text_key"))}
+    bills = own.get("bills")
+    if isinstance(bills, dict):
+        if type(bills.get("owed")) is int:
+            things["bills:owed"] = bills["owed"]
+        things["bills:delivered"] = bills.get("delivered") is True
+        things["bills:late"] = bills.get("late") is True
+    life = own.get("life")
+    if isinstance(life, dict):
+        for flag in ("pregnant", "sick", "ghost"):
+            if type(life.get(flag)) is bool:
+                things["life:" + flag] = life[flag]
+    return things
+
+
+_LIFE_WORDS = {"pregnant": "pregnant", "sick": "sick", "ghost": "a ghost"}
+_BOOK = {"want": "wants", "fear": "fears"}
+
+
+def _self_sentence(thing, value, old):
+    """2.36.0 (D6, H1): the one plain sentence for a change to one thing, or None when it is not news."""
+    head, _, name = thing.partition(":")
+    if thing == "funds":
+        return "Money: %s%s." % (_money(value), "" if old is None else " (was %s)" % _money(old))
+    if head == "skill":
+        return "Skill: %s %d%s." % (value["text"], value["level"],
+                                    "" if old is None else " (was %d)" % old["level"])
+    if head == "job":
+        if value["level"] is None:
+            return None if old is not None and old.get("text") == value["text"] else "Job: %s." % value["text"]
+        return "Job: %s, level %d%s." % (value["text"], value["level"],
+                                         "" if old is None or old.get("level") is None
+                                         else " (was %d)" % old["level"])
+    if head == "want" and old is None:
+        return "New want: %s." % value
+    if head == "fear" and old is None:
+        return "New fear: %s." % value
+    if head == "trait" and old is None:
+        return "New trait: %s." % value
+    if thing == "aspiration":
+        return "Aspiration: %s%s." % (value, "" if old is None else " (was %s)" % old)
+    if head == "objective" and value["done"] and value["text"] and not (old or {}).get("done"):
+        return "Aspiration step done: %s." % value["text"]
+    if thing == "bills:owed":
+        return "Bills: %s owed%s." % (_money(value), "" if old is None else " (was %s)" % _money(old))
+    if thing == "bills:delivered" and value and old is not True:
+        return "The bills came in the mail."
+    if thing == "bills:late":
+        if value and old is not True:
+            return "A utility bill is late."
+        if not value and old is True:
+            return "No utility bill is late."
+    if head == "life" and name in _LIFE_WORDS:
+        if value and old is not True:
+            return "Life: now %s." % _LIFE_WORDS[name]
+        if not value and old is True:
+            return "Life: no longer %s." % _LIFE_WORDS[name]
+    return None
+
+
 class Extractor:
-    def __init__(self, owner_sim_id=None):
+    def __init__(self, owner_sim_id=None, resolve=None):
         self.owner_sim_id = owner_sim_id
+        # 2.36.0 (D6): the game's text for string keys (notices and her self), set by the bridge; never saved.
+        self.resolve = resolve
+        # 2.36.0 (D6): her self as it was at the last sample; None until the first one (a baseline, no news).
+        self._self_seen = None
         self.lineage_id = ""
         self.slot_id = None
         self.guid = None
@@ -130,6 +239,7 @@ class Extractor:
                 self.lineage_id = f"{slot}:{guid}"
         self._prev = None
         self._presence = None
+        self._self_seen = None
         self._on_lot = set()
         self._social = set()
         self._asked = set()
@@ -228,6 +338,10 @@ class Extractor:
             percepts.extend(self._social_percepts(row.get("social") or [], sim_s, ticks))
         if "dialogs" in row:
             percepts.extend(self._dialog_percepts(row.get("dialogs") or {}, sim_s, ticks))
+        if "notices" in row:
+            percepts.extend(self._notice_percepts(row.get("notices"), sim_s))
+        if isinstance(row.get("self"), dict):
+            percepts.extend(self._self_percepts(row["self"], sim_s))
         percepts.extend(self._decision_points(observed, row.get("mood"), sim_s, ticks))
         self._prev = {
             "sim": sim,
@@ -418,6 +532,44 @@ class Extractor:
         self._asked = open_now
         return percepts
 
+    def _notice_percepts(self, items, sim_s):
+        """2.36.0 (D6, P2): each game notice about her, once, in the game's words: its title (when it has one) and its
+        text. The probe sends a notice once, in the row after it was shown."""
+        percepts = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            facts = [("text", _words(self.resolve, item.get("text_key")) or "The game showed a notice.")]
+            title = _words(self.resolve, item.get("title_key"))
+            if title is not None:
+                facts.append(("title", title))
+            percepts.append(Percept(
+                "notice", sim_s, "%s:%s" % (item.get("title_key"), item.get("text_key")), "",
+                lineage=self.lineage_id, facts=tuple(facts)))
+        return percepts
+
+    def _self_percepts(self, own, sim_s):
+        """2.36.0 (D6, H1): a change to her self between samples, one percept per thing that changed, named in one
+        plain sentence ("Skill: Cooking 4 (was 3)."). The first sample only sets the baseline."""
+        now = _self_things(own, self.resolve)
+        before, self._self_seen = self._self_seen, now
+        if before is None:
+            return []
+        percepts = []
+        for thing, value in now.items():
+            if before.get(thing) == value:
+                continue
+            sentence = _self_sentence(thing, value, before.get(thing))
+            if sentence is not None:
+                percepts.append(Percept("self", sim_s, thing, "", lineage=self.lineage_id,
+                                        facts=(("text", sentence),)))
+        for thing, value in before.items():
+            if thing not in now and thing.partition(":")[0] in _BOOK:
+                percepts.append(Percept("self", sim_s, thing, "", lineage=self.lineage_id,
+                                        facts=(("text", "Gone from her %s: %s." % (
+                                            _BOOK[thing.partition(":")[0]], value)),)))
+        return percepts
+
     def _social_percepts(self, items, sim_s, ticks):
         percepts = []
         seen = set()
@@ -460,11 +612,13 @@ class Extractor:
             "asked": sorted(self._asked),
             "busy": self._busy,
             "mood": self._mood,
+            "self_seen": self._self_seen,
         }
 
     @classmethod
-    def from_dict(cls, blob):
-        extractor = cls(owner_sim_id=blob.get("owner_sim_id"))
+    def from_dict(cls, blob, resolve=None):
+        extractor = cls(owner_sim_id=blob.get("owner_sim_id"), resolve=resolve)
+        extractor._self_seen = blob.get("self_seen")
         extractor.lineage_id = blob.get("lineage_id") or ""
         extractor.slot_id = blob.get("slot_id")
         extractor.guid = blob.get("guid")

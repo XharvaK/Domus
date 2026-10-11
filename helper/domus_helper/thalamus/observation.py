@@ -328,6 +328,43 @@ def _note_shed(portrait, part):
     shed.append({"part": part, "dropped": 1})
 
 
+_INNER_PARTS = ("inventory", "aspiration", "bills", "weather", "season")
+
+
+def _inner_life(own, resolve):
+    """2.36.0 (D6, H1): her aspiration, her bills and what she carries, in the game's words. A key is there only
+    when the probe sent it (an unreadable sense is absent, never empty)."""
+    found = {}
+    aspiration = own.get("aspiration")
+    if isinstance(aspiration, dict):
+        found["aspiration"] = {
+            "name": _resolve(resolve, aspiration.get("name_key")),
+            "objectives": [{"text": _resolve(resolve, item.get("text_key")), "done": item.get("done") is True}
+                           for item in aspiration.get("objectives") or [] if isinstance(item, dict)]}
+    bills = own.get("bills")
+    if isinstance(bills, dict):
+        found["bills"] = {"owed": bills.get("owed") if type(bills.get("owed")) is int else None,
+                          "delivered": bills.get("delivered") is True, "late": bills.get("late") is True}
+    inventory = own.get("inventory")
+    if isinstance(inventory, list):
+        found["inventory"] = [{"item": item["name"], "count": item["count"]} for item in inventory
+                              if isinstance(item, dict) and isinstance(item.get("name"), str)
+                              and type(item.get("count")) is int]
+    return found
+
+
+def _shed_inner(portrait, part):
+    """2.36.0 (D6): one whole inner-life part out of the portrait (its own key, or the top level). True when it was there."""
+    own = portrait.get("self")
+    if isinstance(own, dict) and part in own:
+        del own[part]
+        return True
+    if part in portrait:
+        del portrait[part]
+        return True
+    return False
+
+
 def _asked_answer_rules(item, resolve):
     """W2h, W4 (F6): the rules a question puts on her answer. One source of truth with her options: acts.answer_rules
     decides which rules exist, so the portrait and the options never disagree. Nothing when the game gave no rules."""
@@ -544,6 +581,13 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
                     want["until"] = "%02d:%02d" % (until[0], until[1])
                 wants.append(want)
             portrait["self"]["wants"] = wants
+        portrait["self"].update(_inner_life(own, resolve))
+    weather = row.get("weather")
+    if isinstance(weather, dict):
+        # 2.36.0 (D6, P1): the weather now (its type names) and the season; a key is there only when known.
+        if isinstance(weather.get("types"), list):
+            portrait["weather"] = [name for name in weather["types"] if isinstance(name, str)]
+        portrait["season"] = weather.get("season") if isinstance(weather.get("season"), str) else None
     if pace:
         # W3h: facts about her pace (the drain, the clock, what her last decisions cost in game time).
         portrait["pace"] = dict(pace)
@@ -553,6 +597,12 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
     # before anything that was already in the portrait.
     # Then the least essential: the notebook, then queued, the window facts, her pace, running
     # lists, then moodlets, then company.
+    # 2.36.0 (D6): her inner life and the weather go first, one whole part at a time, before anything else is cut.
+    for part in _INNER_PARTS:
+        if _bytes(portrait) <= _PORTRAIT_LIMIT:
+            break
+        if _shed_inner(portrait, part):
+            _note_shed(portrait, part)
     while _bytes(portrait) > _PORTRAIT_LIMIT and _shed_sentence(portrait):
         _note_shed(portrait, "sentences")
     if "notebook" in portrait and _bytes(portrait) > _PORTRAIT_LIMIT:
