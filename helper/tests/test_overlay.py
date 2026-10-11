@@ -35,15 +35,33 @@ def made(tmp_path, game_only=True):
     return spool, overlay.Overlay(spool, tmp_path, NOW - overlay.HUMAN_HAND_MS - 1)
 
 
-def test_nothing_of_hers_while_the_switch_is_off(tmp_path):
+def test_the_feed_is_polled_whatever_the_inputs_switch_says(tmp_path):
+    # O1: the old game-only switch no longer gates the overlay; a line she chose reaches it either way.
     spool, view = made(tmp_path, game_only=False)
     try:
-        feed = Feed([{"inputs": "game_only", "line": "Toast smells good."}])
+        feed = Feed([{"inputs": "chosen", "pass": "p1", "line": "Toast smells good."}])
         view.on_row(snapshot(), NOW)
         view.poll(feed, "h1", NOW)
         state = view.publish(NOW, attached=True)
-        assert feed.calls == 0
-        assert state == {"v": 1, "mode": "off", "card": {"day": None, "time": "Tuesday 14:05", "label": "AI-controlled"}}
+        assert feed.calls == 1
+        assert state["mode"] == "live"
+        assert state["passes"] == [{"at_ms": None, "line": "Toast smells good."}]
+    finally:
+        spool.close()
+
+
+def test_only_a_line_she_chose_is_accepted(tmp_path):
+    # O1: game_only is the old stamp (refused now); a pass with no stamp or another stamp is refused and counted.
+    spool, view = made(tmp_path, game_only=False)
+    try:
+        feed = Feed([{"inputs": "chosen", "pass": "p1", "line": "Toast smells good."},
+                     {"inputs": "game_only", "line": "Stamped with the old switch."},
+                     {"line": "No stamp at all."},
+                     {"inputs": "full", "line": "Stamped full."}])
+        view.poll(feed, "h1", NOW)
+        state = view.publish(NOW, attached=True)
+        assert state["passes"] == [{"at_ms": None, "line": "Toast smells good."}]
+        assert state["feed"] == {"ok": True, "refused": 3}
     finally:
         spool.close()
 
@@ -51,11 +69,11 @@ def test_nothing_of_hers_while_the_switch_is_off(tmp_path):
 def test_a_pass_without_the_stamp_is_refused_and_the_feed_is_paced(tmp_path):
     spool, view = made(tmp_path)
     try:
-        feed = Feed([{"inputs": "game_only", "line": "Toast smells good.", "act": {"label": "Cook (Stove)", "state": "pushed"},
+        feed = Feed([{"inputs": "chosen", "line": "Toast smells good.", "act": {"label": "Cook (Stove)", "state": "pushed"},
                       "plan": [{"label": "Eat (Plate)", "state": "planned"}]},
                      {"line": "No stamp on this one."},
                      {"inputs": "full", "line": "Nor this."},
-                     {"inputs": "game_only", "quiet": True}])
+                     {"inputs": "chosen", "quiet": True}])
         view.on_row(snapshot(), NOW)
         view.poll(feed, "h1", NOW)
         view.poll(feed, "h1", NOW + 1_000)
@@ -73,7 +91,8 @@ def test_a_pass_without_the_stamp_is_refused_and_the_feed_is_paced(tmp_path):
         assert feed.calls == 2
         inputs.set_mode(spool, tmp_path, inputs.FULL, NOW + 9_000)
         view.poll(feed, "h1", NOW + 2 * overlay.FEED_EVERY_MS)
-        assert view.publish(NOW, attached=True)["mode"] == "off" and view._items == []
+        assert feed.calls == 3
+        assert view.publish(NOW, attached=True)["mode"] == "live" and len(view._items) == 2
     finally:
         spool.close()
 
@@ -92,10 +111,10 @@ def test_a_learned_save_name_is_held_and_her_own_name_is_shown(tmp_path):
     try:
         view.on_row(_named_row({"name": "Testa Zubrin"}, {"name": "Ann"}, her="Ada"), NOW)
         feed = Feed([
-            {"inputs": "game_only", "line": "Testa came by the lot."},
-            {"inputs": "game_only", "line": "Ada cooked.", "act": {"label": "Chat (Testa)", "state": "done"}},
-            {"inputs": "game_only", "line": "Annual report is ready."},
-            {"inputs": "game_only", "line": "Ann left."},
+            {"inputs": "chosen", "line": "Testa came by the lot."},
+            {"inputs": "chosen", "line": "Ada cooked.", "act": {"label": "Chat (Testa)", "state": "done"}},
+            {"inputs": "chosen", "line": "Annual report is ready."},
+            {"inputs": "chosen", "line": "Ann left."},
         ])
         view.poll(feed, "h1", NOW)
         view.on_row(snapshot(
@@ -138,7 +157,7 @@ def test_save_names_persist_and_a_broken_file_is_empty(tmp_path, monkeypatch, ca
 
     spool, again = made(tmp_path)
     try:
-        feed = Feed([{"inputs": "game_only", "line": "Quin waved."}])
+        feed = Feed([{"inputs": "chosen", "line": "Quin waved."}])
         again.poll(feed, "h1", NOW)
         assert again.publish(NOW, attached=True)["passes"] == [{"at_ms": None, "held": True}]
     finally:
@@ -148,7 +167,7 @@ def test_save_names_persist_and_a_broken_file_is_empty(tmp_path, monkeypatch, ca
     spool, broken = made(tmp_path)
     try:
         assert broken._save_names.count == 0
-        feed = Feed([{"inputs": "game_only", "line": "Quin waved."}])
+        feed = Feed([{"inputs": "chosen", "line": "Quin waved."}])
         broken.poll(feed, "h1", NOW)
         assert broken.publish(NOW, attached=True)["passes"] == [{"at_ms": None, "line": "Quin waved."}]
     finally:
@@ -159,11 +178,11 @@ def test_the_privacy_list_holds_lines_and_labels(tmp_path):
     spool, view = made(tmp_path)
     try:
         (tmp_path / overlay.PRIVACY_FILE).write_text("# names\nMarrowind\nOld Harbour Street\n", encoding="utf-8")
-        feed = Feed([{"inputs": "game_only", "line": "I miss marrowind today."},
-                     {"inputs": "game_only", "line": "Walked past old harbour street."},
-                     {"inputs": "game_only", "line": "Marrowindy weather.", "act": {"label": "Chat (Marrowind)", "state": "finished"}},
-                     {"inputs": "game_only", "line": "Ping @someone_here please."},
-                     {"inputs": "game_only", "held": True}])
+        feed = Feed([{"inputs": "chosen", "line": "I miss marrowind today."},
+                     {"inputs": "chosen", "line": "Walked past old harbour street."},
+                     {"inputs": "chosen", "line": "Marrowindy weather.", "act": {"label": "Chat (Marrowind)", "state": "finished"}},
+                     {"inputs": "chosen", "line": "Ping @someone_here please."},
+                     {"inputs": "chosen", "held": True}])
         view.poll(feed, "h1", NOW)
         passes = view.publish(NOW, attached=True)["passes"]
         assert [item.get("line", "held" if item.get("held") else "") for item in passes] == [

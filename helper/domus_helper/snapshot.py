@@ -2,7 +2,7 @@
 
 Each acts round trip can hand back snapshot requests from Mint. Every id this helper process has
 not handled yet is captured once and posted to POST /domus/snapshot: the PNG, or the reason there
-is none (game_minimized, no_game_window, capture_failed). Only the game's top-level window is
+is none (minimized, not_front, no_game_window, capture_failed). Only the game's top-level window is
 captured, never the whole screen or another window. Windows only; stdlib and ctypes only.
 
 Run: python -m domus_helper.snapshot test <out.png>
@@ -83,8 +83,10 @@ def _chunk(kind, data):
     return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
 
-def capture_game_window(pid=None):
-    """PNG bytes of the game's own top-level window. Raises SnapshotFailed with the reason."""
+def capture_game_window(pid=None, *, is_iconic=None, foreground_window=None):
+    """PNG bytes of the game's own top-level window. Raises SnapshotFailed with the reason.
+    F8: a window that is minimized, or not the front window, still holds its last frame, so none is taken.
+    is_iconic(hwnd) and foreground_window() are the two Win32 reads; None reads the real ones."""
     if pid is None:
         held = fingerprint_reader._process()
         if held is None:
@@ -97,6 +99,8 @@ def capture_game_window(pid=None):
         hwnd = _game_window(win, pid)
         if hwnd is None:
             raise SnapshotFailed("no_game_window")
+        _only_of_now(hwnd, is_iconic or win.user32.IsIconic,
+                     foreground_window or win.user32.GetForegroundWindow)
         return _window_png(win, hwnd)
     finally:
         if previous:
@@ -180,12 +184,18 @@ def _body(snapshot_id, helper_session, capture):
     return body
 
 
+def _only_of_now(hwnd, is_iconic, foreground_window):
+    """F8: a picture is taken only of the game as it is on screen now. Minimized is checked first."""
+    if is_iconic(hwnd):
+        raise SnapshotFailed("minimized")
+    if foreground_window() != hwnd:
+        raise SnapshotFailed("not_front")
+
+
 def _window_png(win, hwnd):
     import ctypes
     from ctypes import wintypes
 
-    if win.user32.IsIconic(hwnd):
-        raise SnapshotFailed("game_minimized")
     rect = wintypes.RECT()
     win.user32.GetClientRect(hwnd, ctypes.byref(rect))
     w, h = rect.right - rect.left, rect.bottom - rect.top

@@ -121,7 +121,7 @@ def test_a_requested_picture_is_posted_once_with_its_png_as_base64():
 def test_each_capture_failure_is_posted_with_its_reason():
     client = FakeClient()
     outcomes = {
-        "s-min": SnapshotFailed("game_minimized"),
+        "s-min": SnapshotFailed("minimized"),
         "s-none": SnapshotFailed("no_game_window"),
         "s-bad": RuntimeError("boom"),
         "s-empty": b"",
@@ -138,7 +138,7 @@ def test_each_capture_failure_is_posted_with_its_reason():
     for snapshot_id in outcomes:
         handle_requests([snapshot_id], client, capture_for(snapshot_id), helper_session="sess")
     assert [(body["snapshot_id"], body["failed"]) for body in client.bodies] == [
-        ("s-min", "game_minimized"), ("s-none", "no_game_window"),
+        ("s-min", "minimized"), ("s-none", "no_game_window"),
         ("s-bad", "capture_failed"), ("s-empty", "capture_failed"),
     ]
     assert all("png_base64" not in body for body in client.bodies)
@@ -180,6 +180,67 @@ def test_no_game_process_is_no_game_window(monkeypatch):
     assert failed.value.code == "no_game_window"
 
 
+GAME = 4242
+
+
+@pytest.fixture
+def game_window(monkeypatch):
+    """F8: the game's window is GAME; the Win32 setup and the pixels are fakes, the two reads a test
+    asks about (minimized, front) are passed in by the test."""
+    pixels = []
+    monkeypatch.setattr(snapshot, "_win32", lambda: None)
+    monkeypatch.setattr(snapshot, "_dpi_aware", lambda win: None)
+    monkeypatch.setattr(snapshot, "_game_window", lambda win, pid: GAME)
+
+    def window_png(win, hwnd):
+        pixels.append(hwnd)
+        return PNG
+    monkeypatch.setattr(snapshot, "_window_png", window_png)
+    return pixels
+
+
+def test_a_minimized_game_is_refused_before_anything_is_drawn(game_window):
+    with pytest.raises(SnapshotFailed) as failed:
+        snapshot.capture_game_window(7, is_iconic=lambda hwnd: True, foreground_window=lambda: GAME)
+    assert failed.value.code == "minimized"
+    assert game_window == []
+
+
+def test_a_game_behind_another_window_is_refused_as_not_front(game_window):
+    with pytest.raises(SnapshotFailed) as failed:
+        snapshot.capture_game_window(7, is_iconic=lambda hwnd: False, foreground_window=lambda: 999)
+    assert failed.value.code == "not_front"
+    assert game_window == []
+
+
+def test_no_foreground_window_at_all_is_not_front(game_window):
+    with pytest.raises(SnapshotFailed) as failed:
+        snapshot.capture_game_window(7, is_iconic=lambda hwnd: False, foreground_window=lambda: None)
+    assert failed.value.code == "not_front"
+
+
+def test_minimized_is_the_reason_when_both_are_true(game_window):
+    with pytest.raises(SnapshotFailed) as failed:
+        snapshot.capture_game_window(7, is_iconic=lambda hwnd: True, foreground_window=lambda: 999)
+    assert failed.value.code == "minimized"
+
+
+def test_the_front_game_window_is_captured(game_window):
+    png = snapshot.capture_game_window(7, is_iconic=lambda hwnd: False, foreground_window=lambda: GAME)
+    assert png == PNG and game_window == [GAME]
+
+
+def test_a_refused_picture_is_posted_as_failed_through_the_capture_failure_path(game_window):
+    client = FakeClient()
+
+    def capture():
+        return snapshot.capture_game_window(7, is_iconic=lambda hwnd: False, foreground_window=lambda: 999)
+
+    handle_requests([{"snapshot_id": "s-1"}], client, capture, helper_session="sess")
+    assert client.bodies == [{"v": 1, "helper_session": "sess", "snapshot_id": "s-1", "failed": "not_front"}]
+    assert game_window == []
+
+
 def test_the_cli_writes_the_picture_here_or_prints_the_reason(tmp_path, monkeypatch, capsys):
     out = tmp_path / "house.png"
     monkeypatch.setattr(snapshot, "capture_game_window", lambda: PNG)
@@ -188,13 +249,13 @@ def test_the_cli_writes_the_picture_here_or_prints_the_reason(tmp_path, monkeypa
     assert json.loads(capsys.readouterr().out) == {"bytes": len(PNG)}
 
     def minimised():
-        raise SnapshotFailed("game_minimized")
+        raise SnapshotFailed("minimized")
 
     monkeypatch.setattr(snapshot, "capture_game_window", minimised)
     missing = tmp_path / "none.png"
     assert snapshot.main(["test", str(missing)]) == 1
     assert not missing.exists()
-    assert json.loads(capsys.readouterr().out) == {"failed": "game_minimized"}
+    assert json.loads(capsys.readouterr().out) == {"failed": "minimized"}
 
 
 class FakeResponse:

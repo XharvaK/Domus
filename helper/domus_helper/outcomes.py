@@ -351,6 +351,8 @@ def acts(rows, session=None):
                             "target_id": entry.get("target_id")},
             "origin": "experiment" if key in experiments else _origin(entry.get("source_raw")),
             "source_raw": entry.get("source_raw"),
+            # D7b: the wall time the act was first recorded (the memory answer says when).
+            "wall_ms": samples[first]["wall_ms"],
             "span": {"start": samples[first]["calendar"], "end": samples[last]["calendar"],
                      "start_minute": start, "end_minute": end,
                      "game_minutes": None if start is None or end is None else end - start,

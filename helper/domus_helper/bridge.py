@@ -19,6 +19,7 @@ from .director import Director
 from .talk import Talk
 from . import notebook
 from .diary import DiaryWatch
+from . import memory
 from .proof import Trace
 from .contract import ContractError
 from .cursor import TelemetryCursor
@@ -119,7 +120,7 @@ class Bridge:
         self._catalog = None
         self._acts = None if self.client is None else ActCourier(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
-            resolve=self._resolve_text)
+            resolve=self._resolve_text, memory=self._answer_memory)
         # E3: the overlay pages' state (served by main() on this PC only).
         self.overlay = overlay_pages.Overlay(self.spool, self.paths.data_dir, int(time.time() * 1000), self._resolve_text,
                                              trace=Trace(self.spool, self.paths.data_dir), helper_build=_helper_build())
@@ -501,6 +502,11 @@ class Bridge:
     def _world(self):
         slot = self._extractor.slot_id
         return "unknown" if slot is None else "slot%s" % slot
+
+    def _answer_memory(self, asks, client, helper_session):
+        """D7b: her questions to the game's memory, answered off the tick from the records of this world."""
+        memory.handle_asks_in_background(asks, client, helper_session=helper_session, world=self._world(),
+                                         read_records=self.diary.read_records)
 
     def _notebook_quietly(self, fn):
         try:

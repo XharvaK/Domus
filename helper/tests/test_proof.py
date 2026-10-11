@@ -78,7 +78,7 @@ def test_the_overlay_traces_a_pass_once_and_only_when_shown(tmp_path):
         trace = proof.Trace(spool, tmp_path)
         view = overlay.Overlay(spool, tmp_path, NOW - overlay.HUMAN_HAND_MS - 1, trace=trace, helper_build="h123")
         view.on_row({"event_kind": "presence_snapshot", "probe_version": "2.20.1", "game": {}}, NOW)
-        view.poll(Feed([{"inputs": "game_only", "pass": "journal:1", "line": "Toast.",
+        view.poll(Feed([{"inputs": "chosen", "pass": "journal:1", "line": "Toast.",
                          "regime": {"build": "b1", "model": "m", "request_id": "r1"}}]), "h1", NOW)
         state = view.publish(NOW, attached=False)
         assert state["mode"] == "curtain" and not (tmp_path / proof.DIR).exists()
@@ -88,7 +88,7 @@ def test_the_overlay_traces_a_pass_once_and_only_when_shown(tmp_path):
         traced = [json.loads(line) for line in lines(next((tmp_path / proof.DIR).glob("trace-*.jsonl")))]
         assert len(traced) == 1
         assert traced[0]["pass"] == "journal:1" and traced[0]["shown"] == {"at_ms": None, "line": "Toast."}
-        assert traced[0]["regime"] == {"build": "b1", "model": "m", "request_id": "r1", "inputs": "game_only",
+        assert traced[0]["regime"] == {"build": "b1", "model": "m", "request_id": "r1", "inputs": "chosen",
                                        "helper_build": "h123", "probe_version": "2.20.1"}
     finally:
         spool.close()

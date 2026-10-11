@@ -549,10 +549,12 @@ class ActCourier(object):
     One push per act id: an id written once is never written again, across restarts
     (the spool keeps them). Events to Mint are kept until Mint answered the round trip."""
 
-    def __init__(self, spool, publish, resolve=None):
+    def __init__(self, spool, publish, resolve=None, memory=None):
         self._spool = spool
         self._publish = publish
         self._resolve = resolve
+        # D7b: called with each sync answer's memory asks, the client and the helper session; it answers off the tick.
+        self._memory = memory
         raw = spool.get_kv("acts_known")
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
@@ -728,4 +730,7 @@ class ActCourier(object):
         # SNAPSHOT: after the acts, on its own thread, so a picture never delays one. Never raises.
         snapshot.handle_requests_in_background(response.get("snapshots") or [], client,
                                                helper_session=helper_session)
+        # D7b: her questions to the game's memory; the search runs on its own thread, never on this one.
+        if self._memory is not None:
+            self._memory(response.get("memory") or [], client, helper_session)
         return written
