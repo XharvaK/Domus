@@ -375,7 +375,7 @@ class Overlay:
         else:
             mode = "live"
         state = {"v": 1, "mode": mode, "card": card}
-        needs ={str(item.get("id")): item for item in row.get("motives") or [] if isinstance(item, dict)}
+        needs = {str(item.get("id")): item for item in row.get("motives") or [] if isinstance(item, dict)}
         mood = row.get("mood") if isinstance(row.get("mood"), dict) else {}
         moodlets = []
         for item in row.get("sim_signals") or []:
