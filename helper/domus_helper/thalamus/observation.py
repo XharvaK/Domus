@@ -224,6 +224,23 @@ def _with_sentence(value, tuning, actors):
     return value
 
 
+def _company_actors(item, names, body, unseen=()):
+    """SS4-v3: the actors of a seen Sim's own act, in words. Their name first; then whoever it is aimed at:
+    "you" for her, the name of a Sim she sees, "someone" for a Sim she only hears. An object, or nobody, is not named."""
+    name = _named(item.get("id"), names)
+    target = item.get("doing_target")
+    if target is None:
+        return [name]
+    key = str(target)
+    if body is not None and key == body:
+        return [name, "you"]
+    if key in names:
+        return [name, names[key]]
+    if key in unseen:
+        return [name, "someone"]
+    return [name]
+
+
 def _company_seen(item, resolve, labels=None):
     """A Sim she can see: the same entry the portrait has always carried. HE6: where, in words, not a room number."""
     doing = item.get("doing")
@@ -285,13 +302,20 @@ def _company_heard(item, seen, labels=None):
 
 
 def _shed_sentence(portrait):
-    """Drop one sentence: her own (last first), then one addressed to her."""
+    """Drop one sentence: her own (last first), then what a Sim she sees is doing (last first), then one addressed to her."""
     said = portrait.get("doing_said")
     if isinstance(said, list) and said:
         said.pop()
         if not said:
             del portrait["doing_said"]
         return True
+    company = portrait.get("company")
+    if isinstance(company, list):
+        for index in range(len(company) - 1, -1, -1):
+            item = company[index]
+            if isinstance(item, dict) and "said" in item:
+                del item["said"]
+                return True
     items = portrait.get("addressed_by")
     if isinstance(items, list):
         for index in range(len(items) - 1, -1, -1):
@@ -425,11 +449,18 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
     # DS3 (schema 6): who else is here, how she feels in game terms, who addresses her.
     # Seen first, in row order. Heard after that, nearest first. Off the lot and unseen: gone.
     seen, heard = [], []
+    her_id = body_id(row)
     for item in row.get("presence") or []:
         if not isinstance(item, dict) or item.get("is_body") or item.get("id") is None:
             continue
         if str(item["id"]) in seen_ids:
-            seen.append(_company_seen(item, resolve, room_labels))
+            entry = _company_seen(item, resolve, room_labels)
+            if entry.get("doing"):
+                # SS4-v3: what a Sim she sees is doing, in a sentence, aimed at whoever it is aimed at.
+                text = _sentence(entry["doing"], _company_actors(item, names, her_id, unseen_ids))
+                if text is not None:
+                    entry["said"] = text
+            seen.append(entry)
         elif item.get("on_lot") is False:
             continue
         else:
@@ -457,7 +488,7 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
             tuning = _affordance_name(text)
             addressed.append(_with_sentence(
                 {"by": item.get("actor_id"), "interaction": tuning},
-                tuning, [_named(item.get("actor_id"), names), her]))
+                tuning, [_named(item.get("actor_id"), names), "you"]))
     mood = row.get("mood") or {}
     portrait = {
         "needs": needs,
@@ -621,6 +652,22 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
     return portrait
 
 
+def _social_facts(facts, percept, names):
+    """SS4-v3: a social percept in words. Who (by: a Sim she sees by name, else someone), what (the tuning name),
+    and what it says (a dictionary sentence to her). The raw ids of the speaker and the act never reach her."""
+    text = facts.pop("affordance_text", None)
+    by = _named(percept.subject, names)
+    found = {"by": by}
+    tuning = _affordance_name(text)
+    if tuning:
+        found["interaction"] = tuning
+        sentence = _sentence(tuning, [by, "you"])
+        if sentence is not None:
+            found["sentence"] = sentence
+    found["bucket"] = percept.bucket
+    return found
+
+
 def build(decision, ctx):
     # row draws the portrait. event_row, when present, is the row this decision is about.
     row = ctx.get("row") or {}
@@ -632,6 +679,7 @@ def build(decision, ctx):
     if not isinstance(lineage, str) or _LINEAGE.fullmatch(lineage) is None:
         lineage = "PENDING"
     percepts = []
+    names = None
     for percept, salience in decision.percepts[:32]:
         try:
             score = float(salience)
@@ -644,11 +692,16 @@ def build(decision, ctx):
         # HE11: the wake mechanics (ticks, urgency) are not sent; the facts are the world.
         facts = dict(percept.facts)
         facts.pop("ticks", None)
-        facts.update({
-            "subject": percept.subject,
-            "object": percept.object,
-            "bucket": percept.bucket,
-        })
+        if percept.kind == "social":
+            if names is None:
+                names, _ = _sim_names(row, set(_seen_memory(row, ctx.get("seen")).seen_ids))
+            facts = _social_facts(facts, percept, names)
+        else:
+            facts.update({
+                "subject": percept.subject,
+                "object": percept.object,
+                "bucket": percept.bucket,
+            })
         percepts.append({"kind": percept.kind, "salience": score, "facts": _fit_strings(facts)})
     seq = ctx["obs_seq"]
     return {

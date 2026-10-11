@@ -139,7 +139,7 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
     monkeypatch.setattr(lang, "phrases", lambda: book)
     portrait = observation._portrait(_row())
     assert portrait["addressed_by"] == [{
-        "by": "2", "interaction": "invented_address", "sentence": "PLAIN invented_address Bea Ada"}]
+        "by": "2", "interaction": "invented_address", "sentence": "PLAIN invented_address Bea you"}]
     assert portrait["running"] == ["invented running"]
     assert portrait["queued"] == ["invented queued", "invented solo"]
     assert portrait["doing_said"] == [

@@ -137,7 +137,7 @@ def test_a_heard_sims_running_social_says_someone(monkeypatch):
         "presence": [_body(), _sim("4", "Nia Pell", "yard", 30.0)],
         "social": [{"actor_id": "4", "affordance_text": "invented_wave"}],
     })
-    assert addressed["addressed_by"][0]["sentence"] == "invented_wave:someone Ada"
+    assert addressed["addressed_by"][0]["sentence"] == "invented_wave:someone you"
 
 
 def test_a_handle_is_stable_per_sim_never_the_id_and_distinct_between_strangers():
