@@ -219,7 +219,7 @@ class FarCacheUnitTests(unittest.TestCase):
         first = self.menu.parts(payload)[0]
         self.assertEqual((len(first["refused_phone"]), len(first["excluded_phone"])), (64, 64))
 
-    def test_the_probe_version_is_2_37_0_and_the_schema_is_19(self):
+    def test_the_probe_version_is_2_37_1_and_the_schema_is_19(self):
         self.assertEqual(self.schema.PROBE_VERSION, "2.37.1")
         self.assertEqual(self.schema.OBSERVATION_SCHEMA_VERSION, 19)
         self.assertIn(18, self.schema.ACCEPTED_SCHEMA_VERSIONS)
@@ -303,7 +303,7 @@ class W10MenuTests(unittest.TestCase):
         self.phone([named("PhoneW10Ring"),
                     named("PhoneW10PieMenu"),
                     named("PhoneW10VisitLot"),
-                    named("phone_Burglar_CallPolice", guid64=8101),
+                    named("phone_Cheat_CallPolice", guid64=8101),
                     named("PhoneW10Idle", allow_user_directed=False, guid64=8102),
                     named("PhoneW10Tidy", cheat=True, guid64=8103)])
         self.things = []
@@ -317,7 +317,7 @@ class W10MenuTests(unittest.TestCase):
         self.assertEqual(payload["excluded_phone"], [
             {"name": "PhoneW10PieMenu", "why": "pie_picker"},
             {"name": "PhoneW10VisitLot", "why": "travel"},
-            {"name": "phone_Burglar_CallPolice", "why": "deny_name"},
+            {"name": "phone_Cheat_CallPolice", "why": "deny_name"},
             {"name": "PhoneW10Idle", "why": "not_user_directed"},
             {"name": "PhoneW10Tidy", "why": "hidden"}])
         self.assertEqual([act["name"] for act in payload["objects"][0]["acts"]], ["PhoneW10Ring"])

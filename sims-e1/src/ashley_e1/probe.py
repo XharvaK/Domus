@@ -2253,7 +2253,8 @@ def _menu_tick(row):
     if _MENU is not None and not _MENU.done:
         _MENU.step()
         # 2.37.1: the first build in a zone writes what it has so far, so the house reaches her as it is tested.
-        if (_MENU_FIRST and not _MENU.done and _MENU_PARTIAL_S is not None
+        # Only in the zone it was built for: a zone she has left never gets her menu written (the done branch's rule).
+        if (_MENU_FIRST and not _MENU.done and _MENU_PARTIAL_S is not None and _MENU_ZONE is _current_zone()
                 and now - _MENU_PARTIAL_S >= act_menu.FIRST_PARTIAL_S):
             _MENU_PARTIAL_S = now
             _menu_near_part(_MENU)

@@ -27,6 +27,10 @@ class sim_delete_item(object):
     guid64 = int(GUID)
 
 
+class sim_cheat_item(object):
+    guid64 = int(GUID)
+
+
 class _Offer:
     def __init__(self, object_id, affordances):
         self.id = int(object_id)
@@ -107,7 +111,8 @@ class TrialCheckTests(unittest.TestCase):
     def test_excluded_picker_social_and_deny_name(self):
         self.assertEqual(self.actuator.excluded(SeatPicker), "picker")
         self.assertEqual(self.actuator.excluded(Greet), "social")
-        self.assertEqual(self.actuator.excluded(sim_delete_item), "deny_name")
+        self.assertEqual(self.actuator.excluded(sim_cheat_item), "deny_name")
+        self.assertIsNone(self.actuator.excluded(sim_delete_item))  # 2.37.1: delete is hers to choose
         self.assertIsNone(self.actuator.excluded(WatchTV))
 
 
@@ -154,7 +159,7 @@ class TrialCommandTests(unittest.TestCase):
         self.assertEqual(connection.lines[-1], "TRIAL_REJECT TRIAL_EXCLUDED")
         self.base.objects[CHAIR] = _Offer(CHAIR, [Greet])
         self.assertEqual(self.trial()[1].lines[-1], "TRIAL_REJECT TRIAL_EXCLUDED")
-        self.base.objects[CHAIR] = _Offer(CHAIR, [sim_delete_item])
+        self.base.objects[CHAIR] = _Offer(CHAIR, [sim_cheat_item])
         self.assertEqual(self.trial()[1].lines[-1], "TRIAL_REJECT TRIAL_EXCLUDED")
         self.base.objects[CHAIR] = _Offer(CHAIR, [WatchTV])
 
