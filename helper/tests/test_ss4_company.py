@@ -130,14 +130,15 @@ def test_a_heard_sims_running_social_says_someone(monkeypatch):
         "affordance_text": "invented_wave", "membership": "RUNNING", "target_id": "9"}]}}
     portrait = observation._portrait(row)
     assert portrait["doing_said"] == [{
-        "interaction": "invented_wave", "sentence": "invented_wave:Ada someone", "state": "running"}]
+        "interaction": "invented_wave", "name": "invented wave", "sentence": "invented_wave:Ada someone",
+        "state": "running"}]
     assert "Testa" not in portrait["doing_said"][0]["sentence"]
     addressed = observation._portrait({
         "zone": {"room": "hall"},
         "presence": [_body(), _sim("4", "Nia Pell", "yard", 30.0)],
         "social": [{"actor_id": "4", "affordance_text": "invented_wave"}],
     })
-    assert addressed["addressed_by"][0]["sentence"] == "invented_wave:someone Ada"
+    assert addressed["addressed_by"][0]["sentence"] == "invented_wave:someone you"
 
 
 def test_a_handle_is_stable_per_sim_never_the_id_and_distinct_between_strangers():

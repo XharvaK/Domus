@@ -10,7 +10,7 @@ import json
 
 from .paths import Paths
 from .spool import Spool
-from .thalamus.observation import _portrait
+from .thalamus.observation import _named, _portrait, _seen_memory, _sentence, _sim_names
 
 MIN_GAP_MS = 2_100
 FORGET_MS = 60_000
@@ -38,16 +38,19 @@ def _digits(value):
 
 def sentences(row):
     """(key, text, sim_id) for each social sentence on this body sample: her running acts first,
-    then what others do to her."""
+    then what others do to her. The User reads these lines, so her name stays in them (the portrait
+    says "you" for Ashley)."""
     portrait = _portrait(row)
     her = _digits((row.get("body") or {}).get("sim_id"))
     found = []
     for item in portrait.get("doing_said") or []:
         if item.get("state") == "running":
             found.append((item.get("interaction"), item.get("sentence"), her))
+    names, her_name = _sim_names(row, set(_seen_memory(row, None).seen_ids))
     for item in portrait.get("addressed_by") or []:
         if item.get("sentence"):
-            found.append((item.get("interaction"), item.get("sentence"), _digits(item.get("by"))))
+            text = _sentence(item.get("interaction"), [_named(item.get("by"), names), her_name])
+            found.append((item.get("interaction"), text, _digits(item.get("by"))))
     out = []
     for interaction, sentence, sim_id in found:
         text = _line(sentence)

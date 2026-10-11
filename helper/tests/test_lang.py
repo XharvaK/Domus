@@ -139,15 +139,16 @@ def test_portrait_adds_sentence_and_sheds_it_first(monkeypatch):
     monkeypatch.setattr(lang, "phrases", lambda: book)
     portrait = observation._portrait(_row())
     assert portrait["addressed_by"] == [{
-        "by": "2", "interaction": "invented_address", "sentence": "PLAIN invented_address Bea Ada"}]
+        "by": "2", "interaction": "invented_address", "sentence": "PLAIN invented_address Bea you"}]
     assert portrait["running"] == ["invented running"]
     assert portrait["queued"] == ["invented queued", "invented solo"]
     assert portrait["doing_said"] == [
-        {"interaction": "invented_running", "sentence": "PLAIN invented_running Ada Bea",
-         "state": "running"},
-        {"interaction": "invented_queued", "sentence": "PLAIN invented_queued Ada Bea",
-         "state": "queued"},
-        {"interaction": "invented_solo", "sentence": "PLAIN invented_solo Ada", "state": "queued"},
+        {"interaction": "invented_running", "name": "invented running",
+         "sentence": "PLAIN invented_running Ada Bea", "state": "running"},
+        {"interaction": "invented_queued", "name": "invented queued",
+         "sentence": "PLAIN invented_queued Ada Bea", "state": "queued"},
+        {"interaction": "invented_solo", "name": "invented solo",
+         "sentence": "PLAIN invented_solo Ada", "state": "queued"},
     ]
     assert book.calls[0] == ("invented_running", ["Ada", "Bea"])
 
