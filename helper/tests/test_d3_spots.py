@@ -84,3 +84,14 @@ def test_spots_are_listed_with_their_room_and_are_never_cut_before_the_objects_o
     assert [entry["room"] for entry in result] == ["the back room with the table"] * 2
     assert cut["objects"] == 3
     assert cut["rooms"] == ["the back room with the table", "the hall"]
+
+
+def test_a_cut_names_a_long_room_label_within_the_contract_limit():
+    # Live 2026-10-12: a room label over 64 characters in options_cut made every view fail the contract.
+    from domus_helper import contract
+    long_label = "the room with the Lamp and the TableNightstand and the bedSingleWide and the rug"
+    objects = [thing("o1", "4"), thing("o2", "5", distance=8.0, same=False)]
+    cut = {}
+    options(menu(*objects), room="4", room_labels={"4": "the back room", "5": long_label}, cut=cut, objects_limit=1)
+    assert cut["rooms"] == [long_label[:64]]
+    assert contract._options_cut(cut) == {"objects": 1, "rooms": [long_label[:64]]}

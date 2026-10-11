@@ -467,7 +467,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
-            where_named = label or (str(item["room"])[:64] if item.get("room") is not None else None)
+            where_named = label[:64] if label else (str(item["room"])[:64] if item.get("room") is not None else None)
             room_id = None if item.get("room") is None else str(item["room"])
             result.append((entry, where_named, room_id, is_spot))
     # Near first; then the rooms in the menu's order, and a spot before the objects of its own room, so a cut takes
