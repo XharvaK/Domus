@@ -5,7 +5,6 @@ observers/e2_actuator read helpers; all file I/O through the writer queue.
 The host supplies emit/state callables so this module never imports probe.
 """
 
-import contextlib
 import sys
 import time
 
@@ -908,8 +907,11 @@ class E2Control:
             self.experiment_counter += 1
             experiment_id = "%s-%d" % (self._session_id()[:8], self.experiment_counter)
             pushed_ns = time.perf_counter_ns()
-            with self._pushing_for_her(None):
+            self._push_mark(None)
+            try:
                 interaction, detail = e2_actuator.push_sit(sim, obj, offers[0], context)
+            finally:
+                self.pushing = None
             if interaction is None:
                 self._experiment_event("PUSH_FAILED", experiment_id=experiment_id,
                                        token=token, object_id=object_id,
@@ -958,9 +960,12 @@ class E2Control:
             self.experiment_counter += 1
             experiment_id = "%s-%d" % (self._session_id()[:8], self.experiment_counter)
             pushed_ns = time.perf_counter_ns()
-            with self._pushing_for_her(None):
+            self._push_mark(None)
+            try:
                 interaction, detail, kind = e2_actuator.push_affordance(
                     sim, obj, offers[0], context)
+            finally:
+                self.pushing = None
             if interaction is None and kind == "refused":
                 reason = (detail or "")[:schema.MAX_DETAIL_LENGTH]
                 self._experiment_event("PUSH_REFUSED", experiment_id=experiment_id,
@@ -1119,10 +1124,12 @@ class E2Control:
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
             accepted = True
             queued_before = _queued_interactions(sim)
-            with self._pushing_for_her({"act_id": act_id, "interaction_id": None, "tuning_name": tuning_name,
-                                        "base": base}):
+            self._push_mark({"act_id": act_id, "interaction_id": None, "tuning_name": tuning_name, "base": base})
+            try:
                 interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
                     sim, obj, affordance, context)
+            finally:
+                self.pushing = None
             # 2.28.0 (live 2026-10-08: a picker's push returned 704 while her queue gained 703, and
             # 704 never appeared): whatever the push put in her queue or running list is this act too.
             born = {}
@@ -2086,15 +2093,10 @@ class E2Control:
     def _pushed_keys(self, item):
         return [key for key, value in self.pushed.items() if value is item]
 
-    @contextlib.contextmanager
-    def _pushing_for_her(self, act):
-        """2.34.0 (F1): the mark for one push of her act. act is her act's record (None for a sit or a trial).
-        The mark is cleared in finally, so a push that raises leaves nothing marked."""
+    def _push_mark(self, act):
+        """2.34.0 (F1): the mark for one push of her act, set just before the push. act is her act's record (None
+        for a sit or a trial). The caller clears it in a finally, so a push that raises leaves nothing marked."""
         self.pushing = {"act": act}
-        try:
-            yield
-        finally:
-            self.pushing = None
 
     def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction, aliases=None):
         """2.28.0: the act is tracked under its returned interaction and under each alias (the
