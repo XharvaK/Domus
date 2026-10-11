@@ -2011,9 +2011,14 @@ def _menu_jobs(row):
                       "same_room": None, "on_lot": None, "distance_m": None, "room": None})
 
     def offers(item):
-        if item.get("phone") is True:
-            return _menu_phone_offers(item, sim, context)
-        return _menu_offers(item, sim, context)
+        # 2.34.0: a build reads objects across ticks, and an object can go meanwhile; one that cannot be read
+        # offers nothing in this build, and the rest of the lot is still listed.
+        try:
+            if item.get("phone") is True:
+                return _menu_phone_offers(item, sim, context)
+            return _menu_offers(item, sim, context)
+        except Exception:
+            return []
 
     for item in ordered:
         if item["person"]:

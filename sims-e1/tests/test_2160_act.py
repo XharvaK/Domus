@@ -452,6 +452,19 @@ class MenuSenseTests(unittest.TestCase):
                          [("11", GUID, "ReadBook"), ("12", GUID, "ReadBook")])
         self.assertEqual((jobs[0]["distance_m"], jobs[0]["definition_id"], jobs[0]["room"]), (2.0, "511", "4"))
 
+    def test_an_object_that_cannot_be_read_mid_build_offers_nothing_and_the_rest_is_listed(self):
+        self.rooms = {11: "4", 12: "5"}
+        real = self.probe._menu_offers
+        self.addCleanup(setattr, self.probe, "_menu_offers", real)
+
+        def offers(item, sim, context):
+            if item["object_id"] == "11":
+                raise RuntimeError("gone")
+            return real(item, sim, context)
+        self.probe._menu_offers = offers
+        jobs, _room = self._jobs(self.row)
+        self.assertEqual([job["object_id"] for job in jobs], ["12"])
+
     def test_cheat_and_debug_acts_are_hidden(self):
         self.things = [_Thing(11, 2.0, [PowerConsumption, DebugOnly, ReadBook])]
         jobs, _room = self._jobs(self.row)
