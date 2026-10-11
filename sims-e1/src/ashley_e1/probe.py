@@ -2026,12 +2026,12 @@ def _menu_jobs(row):
         except Exception:
             item["definition_id"] = None
         item["class"] = situation._name(type(item["obj"])) or ""
-    return _job_stream(act_menu.iter_pick(phone + ordered, offers)), body_room
+    return _lazy_jobs(act_menu.iter_pick(phone + ordered, offers)), body_room
 
 
-def _job_stream(pairs):
+def _lazy_jobs(pairs):
     """2.34.0 (F4): the jobs of each (item, acts) pair, read one object at a time as the build asks for
-    them (a lazy stream, so a full lot is stepped across ticks and never read in one)."""
+    them (a lazy sequence, so a full lot is stepped across ticks and never read in one)."""
     reach = {}
     for item, acts in pairs:
         for job in acts:

@@ -270,11 +270,11 @@ class MenuBuildTests(unittest.TestCase):
             reads.append(item["object_id"])
             return ["act"]
 
-        stream = self.menu.iter_pick(items, offers)
+        pairs = self.menu.iter_pick(items, offers)
         self.assertEqual(reads, [])
-        next(stream)
+        next(pairs)
         self.assertEqual(reads, ["0"])
-        next(stream)
+        next(pairs)
         self.assertEqual(reads, ["0", "1"])
 
     def test_every_object_is_listed_grouped_by_room_with_fixtures_last(self):
@@ -370,14 +370,14 @@ class MenuBuildTests(unittest.TestCase):
         items = [{"object_id": str(i), "definition_id": str(i), "class": "object_c", "room": str(i % 8),
                   "on_lot": True, "same_room": False, "distance_m": float(i)} for i in range(150)]
 
-        def job_stream():
+        def job_list():
             for item, acts in self.menu.iter_pick(items, offers_clock):
                 for act in acts:
                     yield dict(act, object_id=item["object_id"], definition_id=item["definition_id"],
                                distance_m=item["distance_m"], same_room=item["same_room"], room=item["room"],
                                name="object_c_Act", text_key=None)
 
-        build = self.menu.MenuBuild(job_stream(), lambda job: True, budget_ms=8.0, max_per_chunk=80,
+        build = self.menu.MenuBuild(job_list(), lambda job: True, budget_ms=8.0, max_per_chunk=80,
                                     clock=lambda: clock["t"])
         steps = 0
         while not build.done:
@@ -439,7 +439,7 @@ class MenuSenseTests(unittest.TestCase):
             writer.finish()
 
     def _jobs(self, row):
-        """2.34.0 (F4): the menu's jobs as a list (the probe hands them over as a lazy stream)."""
+        """2.34.0 (F4): the menu's jobs as a list (the probe hands them over as a lazy sequence)."""
         jobs, room = self.probe._menu_jobs(row)
         return (None if jobs is None else list(jobs)), room
 
