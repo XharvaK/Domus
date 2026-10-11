@@ -364,5 +364,104 @@ class W10MenuTests(unittest.TestCase):
         self.assertEqual(self.tested.count("11"), 2)
 
 
+class FarKindTests(unittest.TestCase):
+    """2.38.0 (W11 P3): a far candidate's outcome is also kept by (definition id, guid64), so identical far objects
+    share one test per kind of act; reach is still asked per object; near candidates are never shared."""
+
+    def setUp(self):
+        test_e2._load_pure()
+        from ashley_e1 import act_menu
+        self.menu = act_menu
+        self.clock = FakeClock(100.0)
+
+    build = FarCacheUnitTests.build
+    run_all = FarCacheUnitTests.run_all
+
+    def kind_job(self, object_id, guid, definition=7, same_room=False):
+        value = job(object_id, guid, same_room=same_room)
+        value["definition_id"] = definition
+        return value
+
+    def test_fifty_identical_far_objects_with_three_acts_cost_three_real_tests(self):
+        cache = self.menu.FarCache(clock=self.clock)
+        tested = []
+        jobs = [self.kind_job(str(number), guid) for number in range(1, 51) for guid in ("71", "72", "73")]
+
+        def runner(candidate):
+            tested.append((candidate["definition_id"], candidate["guid64"]))
+            return True
+        build = self.run_all(self.build(jobs, runner, cache))
+        self.assertEqual(sorted(tested), [(7, "71"), (7, "72"), (7, "73")])
+        self.assertEqual((build.tested, build.cached), (3, 147))
+        self.assertEqual(len(build._kept), 150)
+
+    def test_a_definition_hit_in_a_later_build_is_not_tested_again(self):
+        cache = self.menu.FarCache(clock=self.clock)
+        self.run_all(self.build([self.kind_job("1", "71")], lambda candidate: True, cache))
+        self.clock.now = 150.0
+        second = self.run_all(self.build([self.kind_job("2", "71")], lambda candidate: self.fail("tested"), cache))
+        self.assertEqual((second.tested, second.cached), (0, 1))
+        self.assertEqual([kept["object_id"] for kept in second._kept], ["2"])
+
+    def test_a_definition_outcome_lapses_with_the_same_120_seconds(self):
+        cache = self.menu.FarCache(clock=self.clock)
+        cache.put(self.kind_job("1", "71"), True)
+        self.clock.now = 219.0
+        self.assertIsNotNone(cache.get(self.kind_job("2", "71")))
+        self.clock.now = 220.0
+        self.assertIsNone(cache.get(self.kind_job("2", "71")))
+
+    def test_another_definition_or_guid_is_tested_on_its_own(self):
+        cache = self.menu.FarCache(clock=self.clock)
+        tested = []
+        jobs = [self.kind_job("1", "71", definition=7), self.kind_job("2", "71", definition=8),
+                self.kind_job("3", "72", definition=7)]
+        self.run_all(self.build(jobs, lambda candidate: tested.append(candidate["object_id"]) or True, cache))
+        self.assertEqual(tested, ["1", "2", "3"])
+
+    def test_an_object_without_a_definition_is_only_kept_by_its_own_id(self):
+        cache = self.menu.FarCache(clock=self.clock)
+        tested = []
+        jobs = [self.kind_job("1", "71", definition=None), self.kind_job("2", "71", definition=None)]
+        self.run_all(self.build(jobs, lambda candidate: tested.append(candidate["object_id"]) or True, cache))
+        self.assertEqual(tested, ["1", "2"])
+
+    def test_near_objects_with_one_definition_are_each_tested(self):
+        cache = self.menu.FarCache(clock=self.clock)
+        tested = []
+        jobs = [self.kind_job("1", "71", same_room=True), self.kind_job("2", "71", same_room=True)]
+        build = self.run_all(self.build(jobs, lambda candidate: tested.append(candidate["object_id"]) or True, cache))
+        self.assertEqual(tested, ["1", "2"])
+        self.assertEqual((build.tested, build.cached), (2, 0))
+
+    def test_reach_is_asked_for_each_object_even_when_its_outcome_is_cached(self):
+        cache = self.menu.FarCache(clock=self.clock)
+        asked = []
+
+        def reach(candidate):
+            asked.append(candidate["object_id"])
+            candidate["reach"] = "R" + candidate["object_id"]
+        def runner(candidate):
+            reach(candidate)  # the probe's runner asks reach first, then the game's test
+            return True
+        self.run_all(self.build([self.kind_job("1", "71")], runner, cache, reach=reach))
+        self.clock.now = 150.0
+        second = self.run_all(self.build([self.kind_job("2", "71")], lambda candidate: self.fail("tested"),
+                                         cache, reach=reach))
+        self.assertEqual(asked, ["1", "2"])
+        payload = second.payload(1, "5")
+        self.assertEqual([(item["object_id"], item["reach"]) for item in payload["objects"]], [("2", "R2")])
+
+    def test_a_cached_refusal_by_definition_stays_refused_for_the_next_object(self):
+        cache = self.menu.FarCache(clock=self.clock)
+
+        def runner(candidate):
+            candidate["refused"], candidate["reason_key"] = True, "KEY_NO_WAY"
+            return False
+        self.run_all(self.build([self.kind_job("1", "71")], runner, cache))
+        second = self.run_all(self.build([self.kind_job("2", "71")], lambda candidate: self.fail("tested"), cache))
+        self.assertEqual((second.tested, second.cached, second.refused), (0, 1, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
