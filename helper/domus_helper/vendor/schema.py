@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 16
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v16"
-PROBE_VERSION = "2.34.0"
+OBSERVATION_SCHEMA_VERSION = 17
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v17"
+PROBE_VERSION = "2.35.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -84,7 +84,8 @@ E2_PAYLOAD_KEYS = {
     "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
                   "tuning_name", "finishing_type", "detail", "reason_key",
                   "closed", "resumed", "owner", "started", "aliases"),
-    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms", "part", "parts"),
+    # 2.35.0 (D3): refused_phone is on part 0 (None on the other parts, and on older rows).
+    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms", "part", "parts", "refused_phone"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
 # 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
@@ -99,7 +100,13 @@ MENU_MAX_PARTS = 64
 MENU_MAX_ACTS = 8
 # 2.25.0: reach (the game's own connectivity check from her to the object; None when unread).
 # 2.29.0: phone (True on her own phone's entry, None on every other object) is optional the same way.
-MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "room", "reach", "acts", "phone")
+# 2.35.0 (D3): spot and level are the spot's kind ("room" or "front_door") and its level; None on every object.
+MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "room", "reach", "acts", "phone",
+                    "spot", "level")
+MENU_SPOT_KINDS = ("room", "front_door")
+# 2.35.0 (D3): the phone's offers the game's preflight refuses, by tuning name and reason key (a diagnostic; at most 16).
+MENU_MAX_REFUSED_PHONE = 16
+MENU_REFUSED_KEYS = ("name", "reason_key")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
@@ -570,13 +577,20 @@ def _validate_e2(row):
             if key not in payload:
                 payload[key] = None
     elif kind == "act_menu" and isinstance(payload, dict):
-        # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone.
+        # 2.35.0: refused_phone is optional; rows before schema 17 omit it.
+        if "refused_phone" not in payload:
+            payload["refused_phone"] = None
+        # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone. 2.35.0: so are spot and level.
         for item in payload.get("objects") or ():
             if isinstance(item, dict):
                 if "reach" not in item:
                     item["reach"] = None
                 if "phone" not in item:
                     item["phone"] = None
+                if "spot" not in item:
+                    item["spot"] = None
+                if "level" not in item:
+                    item["level"] = None
     elif kind == "lineage_event" and isinstance(payload, dict):
         # 2.32.0: reason is optional; rows before schema 15 omit it.
         if "reason" not in payload:
@@ -693,6 +707,15 @@ def _validate_menu(payload):
     objects = payload["objects"]
     _require(type(payload["part"]) is int and type(payload["parts"]) is int, "menu part")
     _require(0 <= payload["part"] < payload["parts"] <= MENU_MAX_PARTS, "menu part range")
+    refused = payload["refused_phone"]
+    if refused is not None:
+        _require(type(refused) is list and len(refused) <= MENU_MAX_REFUSED_PHONE, "menu refused_phone")
+        for item in refused:
+            _require(isinstance(item, dict) and set(item) == set(MENU_REFUSED_KEYS), "menu refused shape")
+            bounded_string(item["name"], 128, "menu refused name", False)
+            if item["reason_key"] is not None:
+                _require(isinstance(item["reason_key"], str), "menu refused reason_key")
+                string_id(item["reason_key"], "menu refused reason_key")
     _require(isinstance(objects, list) and len(objects) <= MENU_MAX_OBJECTS, "menu objects")
     for item in objects:
         _require(isinstance(item, dict) and set(item) == set(MENU_OBJECT_KEYS), "menu object shape")
@@ -709,6 +732,9 @@ def _validate_menu(payload):
         _require(item["same_room"] in (True, False, None), "menu same_room")
         _require(item["reach"] in (True, False, None), "menu reach")
         _require(item["phone"] in (True, False, None), "menu phone")
+        _require(item["spot"] in MENU_SPOT_KINDS + (None,), "menu spot")
+        _require(item["level"] is None or type(item["level"]) is int, "menu level")
+        _require(item["spot"] is None or item["class"] == "spot", "menu spot class")
         acts = item["acts"]
         _require(isinstance(acts, list) and 1 <= len(acts) <= MENU_MAX_ACTS, "menu acts")
         for act in acts:

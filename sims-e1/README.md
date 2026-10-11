@@ -19,7 +19,7 @@ are looked at, then four are read per tick). An act that is past its time is ref
 REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the command reply.
 
 The source is version `2.35.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 17; the helper's vendored copy follows it). It is no longer read-only:
+`src/ashley_e1/schema.py`; observation schema 17; the helper accepts schema 4 to 17). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
 The file the game lists is `Domus_<version>.ts4script`. The package inside stays `ashley_e1`.
