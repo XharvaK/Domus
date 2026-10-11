@@ -441,14 +441,15 @@ class PhoneRefusalTests(unittest.TestCase):
         payload = self._payload()
         self.assertEqual([item["name"] for item in payload["refused_phone"]], ["PhoneSampleUntested"])
 
-    def test_at_most_sixteen_phone_refusals_are_named_and_the_menu_is_unchanged(self):
+    def test_at_most_sixty_four_phone_refusals_are_named_and_the_menu_is_unchanged(self):
+        # 2.37.0 (W10 P3): the phone's candidates are no longer capped at 16; the refusals are named up to 64.
         classes = [type("PhoneRefusal%d" % number, (object,), {"guid64": 6000 + number, "allow_user_directed": True})
                    for number in range(20)]
         self.case.base.sim._phone_affordances = classes
         for number in range(20):
             self.refusals[6000 + number] = _RefusedWithoutKey()
         payload = self._payload()
-        self.assertEqual(len(payload["refused_phone"]), 16)  # the menu offers at most 16 phone acts to test
+        self.assertEqual(len(payload["refused_phone"]), 20)  # every phone act the game refuses is named (at most 64)
         self.assertEqual(payload["objects"], [])  # every phone act is refused: her phone has no entry
 
     def test_part_zero_carries_the_refusals_and_later_parts_none(self):

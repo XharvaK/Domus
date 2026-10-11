@@ -14,6 +14,9 @@ OTHER = "4242"
 PET = "5555"
 OPENER = 900
 ACT_ID = "a" * 32
+# 2.37.0 (W10 P1): the game's interaction sources that make a window on her Sim hers (every source but the two the User drives).
+HER_SOURCES = ("AUTONOMY", "SCRIPT", "REACTION", "SOCIAL_ADJUSTMENT", "POSTURE_GRAPH", "GET_COMFORTABLE",
+               "BODY_CANCEL_AOP", "CARRY_CANCEL_AOP", "VEHCILE_CANCEL_AOP", "UNIT_TEST")
 CHAIR = test_e2.CHAIR
 RING = 7001
 SCREEN = 7002
@@ -264,6 +267,39 @@ class WindowTests(unittest.TestCase):
         window = self.window(owner=OTHER, interaction=None)
         window.distribute_dialog("T", "m")
         self.assertEqual(len(window.sent), 1)
+        self.assertEqual(self.control.held, {})
+
+    # 2.37.0 (W10 P1): the first interaction's source decides a window on her Sim. The game's own script,
+    # reflex and cancel acts are hers; a pie menu or a hand at the controls (SCRIPT_WITH_USER_INTENT) is the User's.
+    def test_a_window_from_any_game_source_on_her_sim_is_hers_and_held(self):
+        for number, source in enumerate(HER_SOURCES):
+            dialog_id = 700 + number
+            window = self.window(dialog_id=dialog_id, interaction=self.her_interaction(
+                780 + number, source="InteractionSource." + source))
+            window.distribute_dialog("T", "m")
+            self.assertEqual(window.sent, [], source)
+            self.assertIsNone(self.control.held[str(dialog_id)]["act_id"], source)
+
+    def test_a_pie_menu_or_hand_on_the_controls_on_her_sim_is_the_users(self):
+        for number, source in enumerate(("PIE_MENU", "SCRIPT_WITH_USER_INTENT")):
+            window = self.window(dialog_id=720 + number, interaction=self.her_interaction(
+                790 + number, source="InteractionSource." + source))
+            window.distribute_dialog("T", "m")
+            self.assertEqual(window.sent, [("T", "m", False)], source)
+        self.assertEqual(self.control.held, {})
+
+    def test_a_script_act_on_another_sim_is_the_users(self):
+        window = self.window(dialog_id=730, interaction=self.her_interaction(
+            795, sim=OTHER, source="InteractionSource.SCRIPT"), owner=OTHER)
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
+        self.assertEqual(self.control.held, {})
+
+    def test_a_window_from_an_unknown_source_on_her_sim_is_the_users(self):
+        window = self.window(dialog_id=731, interaction=self.her_interaction(
+            796, source="InteractionSource.NOT_A_SOURCE"))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
         self.assertEqual(self.control.held, {})
 
     # shapes (§3.2, §4.2)

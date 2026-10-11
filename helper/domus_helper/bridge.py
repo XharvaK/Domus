@@ -21,11 +21,12 @@ from . import notebook
 from .diary import DiaryWatch
 from . import memory
 from .proof import Trace
-from .contract import ContractError
+from .contract import ContractError, options_why, refusal_text
 from .cursor import TelemetryCursor
 from .paths import Paths
 from .spool import OutboxConflict, Spool
 from . import coalesce
+from . import tokens
 from .thalamus.log import DecisionLog
 from .thalamus.observation import SeenMemory, build
 from .thalamus.percepts import Extractor
@@ -85,7 +86,8 @@ class Bridge:
         self.monitor = AttachmentMonitor(self.detected_build)
         # S0: moodlet names in the game's own words (local string index; None if absent).
         from .strings import Resolver
-        self._resolve_text = Resolver(self.paths)
+        # 2.37.0 (W10 H3): every game text for her view is in words (her names, no tokens); see tokens.Words.
+        self._resolve_text = tokens.Words(Resolver(self.paths))
         creds = load_credentials(self.paths)
         if client is _AUTO:
             self.client = None if creds.disabled else AshleyClient(creds.url, creds.token)
@@ -223,7 +225,8 @@ class Bridge:
             except Exception:
                 self._catalog = False
         room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
-        listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
+        # 2.37.0 (W10 H3): act texts keep their tokens here; clean_text fills a person's name or drops them.
+        listed = act_options(menu.get("payload"), self._resolve_text.raw, self._catalog or None,
                              people=people_names(row, self._seen_ids()), refs=self._refs, limit=max(0, room),
                              withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"),
                              room_labels=self._room_labels(), cut=cut,
@@ -285,6 +288,7 @@ class Bridge:
         self._last_row = json.loads(raw) if raw else None
         raw = self.spool.get_kv("last_body_row")
         self._last_body_row = json.loads(raw) if raw else None
+        self._set_her(self._last_body_row)
         raw = self.spool.get_kv("act_menu")
         self._menu = json.loads(raw) if raw else None
         self._fires = int(self.spool.get_kv("thalamus_fires") or 0)
@@ -351,6 +355,7 @@ class Bridge:
             self._last_row = record
             if _body_sample(record):
                 self._last_body_row = record
+                self._set_her(record)
                 self._seen.observe(record)
             self._last_rowid = rowid
         self._send_diary(wall_ms)
@@ -364,6 +369,16 @@ class Bridge:
             return
         percepts, self._coalesced = coalesce.take(self._coalesced)
         self._send_view(percepts, reason, wall_ms)
+
+    def _set_her(self, row):
+        """2.37.0 (W10 H3): her names, from the presence row of her body (the probe's is_body entry), for the words of
+        her view. None until a body row names her."""
+        display = None
+        for item in (row.get("presence") or []) if isinstance(row, dict) else []:
+            if isinstance(item, dict) and item.get("is_body") is True:
+                display = item.get("name")
+                break
+        self._resolve_text.her = tokens.names_of(display)
 
     def _send_look(self, wall_ms):
         """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;
@@ -385,19 +400,30 @@ class Bridge:
         enqueued = False
         observation_id = None
         error = None
+        ctx = self._obs_ctx(wall_ms, event)
         decision = SimpleNamespace(percepts=[(percept, 0.0) for percept in percepts], reason=trigger)
-        obs = build(decision, self._obs_ctx(wall_ms, event))
+        obs = build(decision, ctx)
+        dropped = None
         if self.client is not None and not self._telemetry_only:
-            try:
-                self.spool.enqueue_observation(obs, wall_ms)
-            except (ContractError, OutboxConflict) as exc:
-                error = type(exc).__name__
-            else:
+            refusal = self._enqueue_view(obs, wall_ms)
+            if isinstance(refusal, ContractError) and refusal.where in ("options", "options_cut"):
+                # 2.37.0 (W10 H2): her choices are left out of this view, never the whole view. It is sent again at once
+                # without options and without a cut, and a percept says her choices are missing and why.
+                dropped = options_why(ctx.get("options"), refusal.where)
+                percept = Percept("options_dropped", "self", "", "normal", facts=(("why", dropped),))
+                decision = SimpleNamespace(percepts=[(item, 0.0) for item in list(percepts) + [percept]],
+                                           reason=trigger)
+                obs = build(decision, dict(ctx, options=[], options_cut={}))
+                refusal = self._enqueue_view(obs, wall_ms)
+            if refusal is None:
                 enqueued = True
                 self._pace_log.observed(_ticks(self._last_body_row or self._last_row))
                 observation_id = obs["observation_id"]
                 self._obs_seq += 1
                 self._enqueued += 1
+            else:
+                # 2.37.0 (W10 H1): the log says what was refused and on which key, not only the class's name.
+                error = refusal_text(refusal) if isinstance(refusal, ContractError) else type(refusal).__name__
         line = {
             "wall_ms": wall_ms,
             "trigger": trigger,
@@ -406,9 +432,19 @@ class Bridge:
             "enqueued": enqueued,
             "observation_id": observation_id,
         }
+        if dropped is not None:
+            line["options_dropped"] = dropped
         if error is not None:
             line["error"] = error
         self._log.write(line)
+
+    def _enqueue_view(self, obs, wall_ms):
+        """2.37.0 (W10 H1): the spool takes the view (None) or refuses it (the ContractError or OutboxConflict)."""
+        try:
+            self.spool.enqueue_observation(obs, wall_ms)
+        except (ContractError, OutboxConflict) as exc:
+            return exc
+        return None
 
     def _send_diary(self, wall_ms):
         if self.diary is None or self.client is None or self._telemetry_only or self._last_row is None:
@@ -497,7 +533,8 @@ class Bridge:
 
     def _act_names(self):
         """HE1: the game's own words for her acts, from the newest menu's text keys (humanized as fallback)."""
-        return act_names(self._menu.get("payload") if isinstance(self._menu, dict) else None, self._resolve_text)
+        # 2.37.0 (W10 H3): act texts keep their tokens here; clean_text drops them (an act's words never say her name).
+        return act_names(self._menu.get("payload") if isinstance(self._menu, dict) else None, self._resolve_text.raw)
 
     def _world(self):
         slot = self._extractor.slot_id

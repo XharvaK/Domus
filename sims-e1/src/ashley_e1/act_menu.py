@@ -10,12 +10,17 @@ the nearest few. Each object keeps its room. The build is stepped across samplin
 reading the offers of one object at a time, and the menu is written in parts small
 enough for one record.
 """
+import json
 import time
 
 from . import schema
 
 REBUILD_S = 20.0
 CANDIDATE_ACTS = 16
+# 2.37.0 (W10 P3): her phone's candidates have their own cap (its scan is probe-side: e2_actuator.PHONE_SCAN_LIMIT).
+PHONE_CANDIDATES = 96
+# 2.37.0 (W10 P2): a far candidate's test outcome is kept this long (seconds), then tested again; cleared on a zone change.
+FAR_CACHE_S = 120.0
 # Lights, candles, doors and windows come last within their room: ordering only; nothing is hidden.
 FIXTURE_PARTS = ("light", "candle", "door", "window", "gate")
 # 2.34.0 (N8, F4): the menu's objects per written part (a part is one act_menu record, under 48 KiB).
@@ -43,6 +48,52 @@ class SpotIds(object):
                 return None
             self._ids[key] = len(self._ids) + 1
         return self._ids[key]
+
+
+def is_far(job):
+    """2.37.0 (W10 P2): a candidate the far cache may hold: not in her room, not her phone and not a Sim."""
+    return job.get("same_room") is not True and job.get("phone") is not True and job.get("person") is not True
+
+
+class FarCache(object):
+    """2.37.0 (W10 P2): the test outcomes of far candidates, by (object id, guid64). An outcome is kept for FAR_CACHE_S
+    seconds on the clock given, and is never a near candidate's (see is_far). clear() when the zone changes."""
+
+    def __init__(self, clock=time.monotonic, ttl_s=FAR_CACHE_S):
+        self._clock = clock
+        self._ttl_s = ttl_s
+        self._entries = {}
+
+    @staticmethod
+    def _key(job):
+        return (job.get("object_id"), job.get("guid64"))
+
+    def get(self, job):
+        """The stored outcome {ok, fields} of this candidate, or None when it has none or it is too old."""
+        key = self._key(job)
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        stamp, outcome = entry
+        if self._clock() - stamp >= self._ttl_s:
+            self._entries.pop(key, None)
+            return None
+        return outcome
+
+    def put(self, job, ok):
+        """Keeps what the test said of this candidate: whether it passed, and the fields the test set on it."""
+        fields = dict((name, job[name]) for name in ("refused", "reason_key", "reach") if name in job)
+        self._entries[self._key(job)] = (self._clock(), {"ok": ok, "fields": fields})
+
+    def clear(self):
+        self._entries = {}
+
+
+def note_excluded(kept, name, why):
+    """2.37.0 (W10 P3): one phone act the guard excluded before its test, named with why; at most
+    schema.MENU_MAX_EXCLUDED_PHONE, the first ones (a diagnostic, shown with the menu)."""
+    if len(kept) < schema.MENU_MAX_EXCLUDED_PHONE:
+        kept.append({"name": (name or "")[:128], "why": why})
 
 
 def ordered(objects):
@@ -117,7 +168,8 @@ class MenuBuild(object):
     budget_ms and max_per_chunk. jobs may be a generator: its offers are read inside the steps too.
     failed is set when reading the jobs raised; a failed build publishes nothing."""
 
-    def __init__(self, jobs, runner, budget_ms=8.0, max_per_chunk=80, clock=time.perf_counter, spots=None):
+    def __init__(self, jobs, runner, budget_ms=8.0, max_per_chunk=80, clock=time.perf_counter, spots=None,
+                 far=None, excluded_phone=None, on_near=None):
         self._jobs = iter(jobs)
         self._runner = runner
         self.budget_ms = budget_ms
@@ -128,11 +180,38 @@ class MenuBuild(object):
         self.spots = {} if spots is None else spots
         # 2.35.0 (D3): her phone's offers the game refused, {name, reason_key}, at most schema.MENU_MAX_REFUSED_PHONE.
         self.refused_phone = []
+        # 2.37.0 (W10 P3): her phone's acts the guard excluded before the test, {name, why} (a list the probe fills).
+        self.excluded_phone = [] if excluded_phone is None else excluded_phone
+        # 2.37.0 (W10 P2): the far cache (FarCache) and the hand-over of the near part (on_near(build), once).
+        self._far = far
+        self._on_near = on_near
+        self._near_done = False
         self.tested = 0
+        self.cached = 0
         self.refused = 0
         self.build_ms = 0.0
         self.done = False
         self.failed = False
+
+    def _outcome(self, job):
+        """2.37.0 (W10 P2): whether the job's act is on the menu. A far candidate the cache holds is not tested again;
+        only a real test counts as tested. A candidate whose test raised is not kept in the cache."""
+        far = self._far is not None and is_far(job)
+        if far:
+            hit = self._far.get(job)
+            if hit is not None:
+                self.cached += 1
+                job.update(hit["fields"])
+                return hit["ok"]
+        self.tested += 1
+        try:
+            ok = self._runner(job)
+        except Exception:
+            ok = False
+            far = False
+        if far:
+            self._far.put(job, ok)
+        return ok
 
     def step(self):
         if self.done:
@@ -151,11 +230,12 @@ class MenuBuild(object):
                 self.failed = self.done = True
                 break
             processed += 1
-            self.tested += 1
-            try:
-                ok = self._runner(job)
-            except Exception:
-                ok = False
+            if not self._near_done and is_far(job):
+                # 2.37.0 (W10 P2): every near candidate has been tested by now; the near part can be written.
+                self._near_done = True
+                if self._on_near is not None:
+                    self._on_near(self)
+            ok = self._outcome(job)
             if ok:
                 self._kept.append(job)
             else:
@@ -184,14 +264,17 @@ class MenuBuild(object):
                     "spot": job.get("spot"), "level": job.get("level"), "acts": []}
                 order.append(key)
             acts = by_object[key]["acts"]
-            if len(acts) < schema.MENU_MAX_ACTS and all(a["guid64"] != job["guid64"] for a in acts):
+            cap = schema.MENU_MAX_PHONE_ACTS if job.get("phone") is True else schema.MENU_MAX_ACTS
+            if len(acts) < cap and all(a["guid64"] != job["guid64"] for a in acts):
                 acts.append({"guid64": job["guid64"], "name": (job.get("name") or "")[:128],
                              "text_key": job.get("text_key")})
         objects = [by_object[key] for key in order][:schema.MENU_MAX_OBJECTS]
+        # 2.37.0 (W10 P2, P3): cached counts the candidates whose outcome the far cache gave (tested counts real tests).
         return {"menu_rev": menu_rev, "room": room, "objects": objects,
-                "tested": self.tested, "refused": self.refused,
+                "tested": self.tested, "cached": self.cached, "refused": self.refused,
                 "build_ms": round(self.build_ms, 2), "part": 0, "parts": 1,
-                "refused_phone": list(self.refused_phone)}
+                "refused_phone": list(self.refused_phone),
+                "excluded_phone": list(self.excluded_phone)}
 
 
 def _room_text(room):
@@ -203,10 +286,26 @@ def parts(payload):
     (part of parts, with the same menu_rev). An empty menu is one empty part."""
     objects = payload["objects"]
     count = max(1, -(-len(objects) // MENU_PART_OBJECTS))
-    # 2.35.0 (D3): the phone's refusals are written once, on part 0.
-    return [dict(payload, objects=objects[index * MENU_PART_OBJECTS:(index + 1) * MENU_PART_OBJECTS],
+    # 2.35.0 (D3): the phone's refusals are written once, on part 0. 2.37.0 (P3): so are the phone's exclusions.
+    rows = [dict(payload, objects=objects[index * MENU_PART_OBJECTS:(index + 1) * MENU_PART_OBJECTS],
                  part=index, parts=count,
-                 refused_phone=payload.get("refused_phone") if index == 0 else None) for index in range(count)]
+                 refused_phone=payload.get("refused_phone") if index == 0 else None,
+                 excluded_phone=payload.get("excluded_phone") if index == 0 else None) for index in range(count)]
+    # 2.37.0 (W10 P3): part 0 carries the phone's diagnostics; when they would push it past the record limit, the
+    # last exclusions go first, then the last refusals (a diagnostic is shortened; the menu is never lost).
+    first = rows[0]
+    for key in ("excluded_phone", "refused_phone"):
+        while first.get(key) and _part_bytes(first) > PART_BYTES_MAX:
+            first[key] = first[key][:-1]
+    return rows
+
+
+# 2.37.0 (W10 P3): a part's payload stays this far under the record limit (the record's envelope needs the rest).
+PART_BYTES_MAX = schema.MAX_SERIALIZED_RECORD_BYTES - 4096
+
+
+def _part_bytes(row):
+    return len(json.dumps(row, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
 def same_menu(left, right):
@@ -217,4 +316,5 @@ def same_menu(left, right):
         return [(item["object_id"], item.get("room"), item.get("reach"), tuple(act["guid64"] for act in item["acts"]))
                 for item in payload["objects"]]
     return (shape(left) == shape(right) and left.get("room") == right.get("room")
-            and left.get("refused_phone") == right.get("refused_phone"))
+            and left.get("refused_phone") == right.get("refused_phone")
+            and left.get("excluded_phone") == right.get("excluded_phone"))

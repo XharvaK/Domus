@@ -548,6 +548,8 @@ class MenuSenseTests(unittest.TestCase):
         self.probe._menu_tick(self.row)   # ... that changes nothing writes nothing
         self.assertEqual(len(self.base.e2("act_menu")), 1)
         self.allowed = set()
+        # 2.37.0 (W10 P2): a far object's outcome is kept for FAR_CACHE_S (120 s); the time runs out before the room change.
+        now["s"] += 125.0
         self.probe._menu_tick(dict(self.row, zone=dict(self.row["zone"], room="5")))
         self.probe._menu_tick(self.row)
         menus = self.base.e2("act_menu")

@@ -97,7 +97,7 @@ class PhoneMenuTests(unittest.TestCase):
         return build.payload(1, room)
 
     def test_version(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.36.0")
+        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.37.0")
 
     def test_the_phone_entry_lists_only_allowed_and_test_passing_phone_acts(self):
         payload = self._payload()
@@ -150,13 +150,15 @@ class PhoneMenuTests(unittest.TestCase):
         self.assertNotIn("5004", guids)
         self.assertNotIn("5005", guids)
 
-    def test_her_phone_is_at_most_the_menu_act_cap(self):
+    def test_her_phone_is_at_most_the_phone_act_cap_which_is_past_an_objects_cap(self):
+        # 2.37.0 (W10 P3): her phone is one entry for all its acts; call and invite came after the 8th.
         many = [type("PhoneSampleMany%d" % i, (object,), {"guid64": 6000 + i, "allow_user_directed": True})
-                for i in range(10)]
+                for i in range(60)]
         self.case.base.sim._phone_affordances = many
-        self.case.allowed = {6000 + i for i in range(10)}
+        self.case.allowed = {6000 + i for i in range(60)}
         entry = self._payload()["objects"][0]
-        self.assertEqual(len(entry["acts"]), self.probe.schema.MENU_MAX_ACTS)
+        self.assertEqual(len(entry["acts"]), self.probe.schema.MENU_MAX_PHONE_ACTS)
+        self.assertGreater(self.probe.schema.MENU_MAX_PHONE_ACTS, self.probe.schema.MENU_MAX_ACTS)
 
     def test_no_phone_list_means_no_phone_entry(self):
         del self.case.base.sim._phone_affordances
