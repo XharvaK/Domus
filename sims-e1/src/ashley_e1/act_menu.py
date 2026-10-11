@@ -21,6 +21,11 @@ CANDIDATE_ACTS = 16
 PHONE_CANDIDATES = 96
 # 2.37.0 (W10 P2): a far candidate's test outcome is kept this long (seconds), then tested again; cleared on a zone change.
 FAR_CACHE_S = 120.0
+# 2.37.1 (live 2026-10-12: outside her rooms the near part was her phone alone, and the house came only with the
+# whole first build, minutes later): the first build in a zone writes the menu it has so far every FIRST_PARTIAL_S
+# seconds, and steps with FIRST_BUDGET_MS a tick instead of the usual 8.
+FIRST_PARTIAL_S = 15.0
+FIRST_BUDGET_MS = 20.0
 # Lights, candles, doors and windows come last within their room: ordering only; nothing is hidden.
 FIXTURE_PARTS = ("light", "candle", "door", "window", "gate")
 # 2.34.0 (N8, F4): the menu's objects per written part (a part is one act_menu record, under 48 KiB).

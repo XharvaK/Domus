@@ -97,7 +97,7 @@ class PhoneMenuTests(unittest.TestCase):
         return build.payload(1, room)
 
     def test_version(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.37.0")
+        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.37.1")
 
     def test_the_phone_entry_lists_only_allowed_and_test_passing_phone_acts(self):
         payload = self._payload()
@@ -125,23 +125,26 @@ class PhoneMenuTests(unittest.TestCase):
         self.assertNotIn("5006", [act["guid64"] for act in self._payload()["objects"][0]["acts"]])
         self.assertNotIn("5009", [act["guid64"] for act in self._payload()["objects"][0]["acts"]])
 
-    def test_inviting_over_is_on_her_phone_though_invite_is_a_deny_name_elsewhere(self):
+    def test_inviting_over_is_hers_on_her_phone_and_elsewhere(self):
+        # 2.37.1 (User 2026-10-12): invite is no longer a deny name anywhere; it was one until this version.
         actuator = self.probe.e2_actuator
-        self.assertEqual(actuator.act_excluded(PhoneSampleInviteOver, False), "deny_name")
+        self.assertIsNone(actuator.act_excluded(PhoneSampleInviteOver, False))
         self.assertIsNone(actuator.phone_act_excluded(PhoneSampleInviteOver))
         self.assertIn("5010", [act["guid64"] for act in self._payload()["objects"][0]["acts"]])
 
-    def test_phone_names_keep_out_trips_money_emergencies_and_testers(self):
+    def test_phone_names_keep_out_trips_testers_and_acts_not_meant_for_a_hand(self):
         actuator = self.probe.e2_actuator
         def named(name):
             return type(name, (object,), {"guid64": 1, "allow_user_directed": True})
         for kept in ("phone_Picker_Chat", "phone_Picker_Text", "phone_Picker_Invite_Over",
-                     "phone_Picker_VideoCall", "phone_Picker_PrankCall"):
+                     "phone_Picker_VideoCall", "phone_Picker_PrankCall", "phone_Burglar_CallPolice",
+                     "phone_Business_MakeBusinessCalls"):
+            # 2.37.1: money, jobs, emergencies and family are hers to choose.
             self.assertIsNone(actuator.phone_act_excluded(named(kept)), kept)
         for out in ("phone_mapPicker_AskOnDate", "phone_Picker_InviteTo_NEW", "phone_simPicker_AskOnHangout_CAD",
-                    "phone_simPicker_InviteToJoinVacation", "phone_CallBackToLodging", "phone_Burglar_CallPolice",
-                    "phone_Business_MakeBusinessCalls", "phone_Picker_Chat_Autonomous", "phone_CallOver_EventNPC",
-                    "phone_Debug_Sample", "phone_Sample_PieMenu"):
+                    "phone_simPicker_InviteToJoinVacation", "phone_CallBackToLodging",
+                    "phone_Picker_Chat_Autonomous", "phone_CallOver_EventNPC",
+                    "phone_Debug_Sample", "phone_Cheat_Sample", "phone_Sample_PieMenu"):
             self.assertIsNotNone(actuator.phone_act_excluded(named(out)), out)
 
     def test_a_cheat_an_autonomous_only_or_untested_phone_act_is_left_out(self):

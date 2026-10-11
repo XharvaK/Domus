@@ -164,11 +164,16 @@ class ActCommandTests(unittest.TestCase):
         self.base.objects[CHAIR] = neighbour
         ok, connection = self.act(act_id="%032x" % 1)
         self.assertTrue(ok, connection.lines)
+        # 2.37.1 (User 2026-10-12): Propose is a judgement name, hers to choose toward a Sim now.
         neighbour._affordances = [Propose]
         ok, connection = self.act(act_id="%032x" % 2, guid64="4345")
-        self.assertEqual(connection.lines[-1], "ACT_REJECT EXCLUDED")
+        self.assertTrue(ok, connection.lines)
+        # A social toward a thing stays out, whatever the social is named.
         self.base.objects[CHAIR] = _Offer(CHAIR, [Greet])
         ok, connection = self.act(act_id="%032x" % 3)
+        self.assertEqual(connection.lines[-1], "ACT_REJECT EXCLUDED")
+        self.base.objects[CHAIR] = _Offer(CHAIR, [Propose])
+        ok, connection = self.act(act_id="%032x" % 4, guid64="4345")
         self.assertEqual(connection.lines[-1], "ACT_REJECT EXCLUDED")
 
     def test_a_failed_push_is_rejected_after_acceptance(self):
@@ -496,7 +501,8 @@ class MenuSenseTests(unittest.TestCase):
         self.assertEqual((jobs[0]["object_id"], jobs[0]["class"], jobs[0]["guid64"]), ("31", "sim", GUID))
         self.assertEqual(jobs[-1]["object_id"], "33")
         self.assertNotIn("32", [job["object_id"] for job in jobs])
-        self.assertNotIn("4345", [job["guid64"] for job in jobs if job["object_id"] == "31"])
+        # 2.37.1 (User 2026-10-12): the neighbour's Propose is hers to choose, so it is on the menu too.
+        self.assertIn("4345", [job["guid64"] for job in jobs if job["object_id"] == "31"])
 
     def test_a_person_she_cannot_see_is_not_offered(self):
         # 2.32.0 (PR3, SS4-v2): a Sim in another room, or on another level, is heard, not offered.

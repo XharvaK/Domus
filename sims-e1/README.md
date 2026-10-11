@@ -2,7 +2,12 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.37.0 (W10 live fixes: the window owner, the menu's speed, her phone)
+## Current build: 2.37.1 (W10b: nothing of her life blocked by name, a first menu that arrives as it is tested)
+
+2.37.1 (W10b): schema 19 unchanged. Acts are kept out by name only when they are testers' or cheat acts, when they
+take her off the lot (the bridge cannot follow her yet), or when they are not meant for a player's hand; careers,
+money, love, family and moving are hers to choose. The first build in a zone steps with 20 ms a tick (8 otherwise)
+and writes the menu it has so far every 15 seconds, so the house reaches her as it is tested.
 
 2.37.0 (W10): observation schema 19. The window owner follows the game's own source: a window on her Sim whose first
 interaction is a script, reflex or cancel act is hers and held for her; a pie menu or a hand at the controls
@@ -34,7 +39,7 @@ menu's `part` and `parts` are new; the observation schema is 16 and the helper a
 are looked at, then four are read per tick). An act that is past its time is refused as an act: an `act_event`
 REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the command reply.
 
-The source is version `2.37.0` (`src/ashley_e1/__init__.py`,
+The source is version `2.37.1` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 19; the helper accepts schema 4 to 19). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
@@ -191,8 +196,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.37.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.37.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.37.1
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.37.1
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

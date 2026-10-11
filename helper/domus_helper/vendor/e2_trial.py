@@ -25,13 +25,11 @@ IDLE_RUNNING_SOURCES = ("InteractionSource.POSTURE_GRAPH",
 # its words come next to each other in that order. So "kill" no longer hides the skill acts (the
 # word is inside "Skill") and "fire" no longer hides Fireplace or Campfire acts. Forms written as
 # one word are kept for names that spell the phrase in one piece (Woohoo, Breakup, Goto, Socialize).
+# 2.37.1 (User 2026-10-12: she is coherent enough to take responsibility; nothing of her life is blocked): only
+# testers' and cheat acts (developer tools, not life) and leaving the lot (the bridge cannot follow her off it yet)
+# stay out by name. Careers, money, love, family, moving and the rest are hers to choose.
 DENY_NAME_PARTS = (
-    "debug", "cheat", "testing", "tutorial", "sell", "delete", "destroy",
-    "demolish", "burn", "fire", "kill", "death", "grim", "woohoo", "woo_hoo",
-    "trybaby", "try_baby", "try_for_baby", "propose", "breakup", "break_up", "divorce",
-    "adopt", "adoption", "moveout", "move_out", "travel", "goto", "go_to", "go_here",
-    "leave", "career", "careers", "job", "jobs", "quit", "retire", "buy", "purchase", "order",
-    "call", "phone_call", "invite", "ask_to", "social", "socialize",
+    "debug", "cheat", "testing", "tutorial", "travel", "goto", "go_to", "go_here", "leave",
 )
 
 
@@ -75,17 +73,14 @@ def denied_name(name):
     """2.31.0: the DENY_NAME_PARTS entry whose words come next to each other in the name, else None."""
     return denied_part(name, DENY_NAME_PARTS)
 
-# 2.17.0: her socials toward another Sim (greet, invite in, talk) are hers to choose. The
-# acts that change a life or a household in one click stay out, as do testers' acts.
+# 2.17.0: her socials toward another Sim (greet, invite in, talk) are hers to choose.
+# 2.37.1: so are the ones that change a life or a household; testers' and cheat acts stay out, a trip off the lot
+# stays out (the bridge cannot follow her), and a phone social is offered by her phone, not by the Sim.
 # 2.31.0 (W4): whole words, as DENY_NAME_PARTS; the plural and -ing forms the substring match caught
 # stay listed so the same acts stay out.
 SOCIAL_DENY_PARTS = (
-    "debug", "cheat", "cheats", "cheating", "testing", "tutorial", "kill", "killing", "death", "deaths",
-    "grim", "fire", "burn", "burning", "woohoo", "woo_hoo", "trybaby", "try_baby", "try_for_baby",
-    "propose", "breakup", "break_up", "divorce", "adopt", "adopted", "adoption", "moveout", "move_out",
-    "movein", "move_in", "travel", "traveling", "travelling", "vacation", "career", "careers", "job",
-    "jobs", "quit", "quitting", "retire", "retired", "buy", "buying", "purchase", "sell", "selling",
-    "phone",
+    "debug", "cheat", "cheats", "cheating", "testing", "tutorial", "travel", "traveling", "travelling",
+    "vacation", "phone",
 )
 
 # D8 (live 2026-10-04): with energy in distress the guard refused bed and food too,
