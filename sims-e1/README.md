@@ -2,7 +2,19 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.36.0 (her inner life read: aspiration, bills, what she carries, the weather, the game's notices)
+## Current build: 2.37.0 (W10 live fixes: the window owner, the menu's speed, her phone)
+
+2.37.0 (W10): observation schema 19. The window owner follows the game's own source: a window on her Sim whose first
+interaction is a script, reflex or cancel act is hers and held for her; a pie menu or a hand at the controls
+(SCRIPT_WITH_USER_INTENT) stays the User's; another Sim's interaction stays the User's. The act menu tests a far
+candidate (not in her room, not her phone, not a Sim) once and keeps its outcome for 120 seconds (`cached` counts
+those; `tested` counts real tests only; the cache is cleared on a zone change). The first build in a zone writes its
+near part (her phone, her room, the people she sees) as the far part starts, then the whole menu. Her phone's acts are
+not capped at 16 (up to 96 candidates); a phone act the guard leaves out before its test is named in `excluded_phone`
+(`pie_picker`, `deny_name`, `travel`, `not_user_directed`, `hidden`; at most 64). The phone's refusals are at most 64.
+Schema 19 adds `cached` and `excluded_phone` to `act_menu`; the helper accepts schemas 4 to 19.
+
+## Previous build: 2.36.0 (her inner life read: aspiration, bills, what she carries, the weather, the game's notices)
 
 2.36.0 (D6): observation schema 18. Her Sim's inner life is read, never changed. `self.aspiration`: her primary aspiration and the objectives of its current milestone (at most six, each done or not). `self.bills`: what her household owes, whether the bills came in the mail, and whether a utility is late. `self.inventory`: what her Sim carries, by object name and count (at most 24, on the lot only). `weather` (a row field): the weather types now and the season, absent when the game has no such service. `notices` (a row field): the game's notices about her, at most four per row and each once; a notice owned by her Sim or a Sim of her household, or with no owner, counts, and the probe's own lines do not. A notice is never held, cancelled or answered. Every new field is absent when the game cannot say.
 
@@ -22,8 +34,8 @@ menu's `part` and `parts` are new; the observation schema is 16 and the helper a
 are looked at, then four are read per tick). An act that is past its time is refused as an act: an `act_event`
 REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the command reply.
 
-The source is version `2.36.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 18; the helper accepts schema 4 to 18). It is no longer read-only:
+The source is version `2.37.0` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 19; the helper accepts schema 4 to 19). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
 The file the game lists is `Domus_<version>.ts4script`. The package inside stays `ashley_e1`.
@@ -179,8 +191,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.36.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.36.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.37.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.37.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

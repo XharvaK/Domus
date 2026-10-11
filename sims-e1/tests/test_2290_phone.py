@@ -97,7 +97,7 @@ class PhoneMenuTests(unittest.TestCase):
         return build.payload(1, room)
 
     def test_version(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.36.0")
+        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.37.0")
 
     def test_the_phone_entry_lists_only_allowed_and_test_passing_phone_acts(self):
         payload = self._payload()
