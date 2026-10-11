@@ -7,6 +7,8 @@ import unittest
 
 import test_215_senses as senses
 import test_ds3_senses as ds3
+import test_2260_talk as talk
+from test_2210_camera import HER
 from test_ds3_senses import _Wrapper
 
 
@@ -376,6 +378,37 @@ class SchemaEighteenTests(_Base):
         for bad in ({"types": ["a"] * 7, "season": None}, {"types": None}, {"types": None, "season": 4}):
             with self.assertRaises(Exception):
                 self.schema.validate_record(dict(row, weather=bad))
+
+
+class OwnLineTests(unittest.TestCase):
+    """2.36.0: the probe's own talk line is remembered by its dialog id, so it is never a notice about her."""
+
+    def test_the_talk_line_is_remembered_as_the_probes_own(self):
+        base = talk.TalkTests("test_shows_one_line_and_changes_nothing")
+        base.setUp()
+        self.addCleanup(base.tearDown)
+
+        class _Line(object):
+            dialog_id = 701
+
+            def __init__(self, owner, text):
+                self.owner, self.text = owner, text
+
+            def show_dialog(self):
+                return None
+
+        class _Factory(object):
+            def TunableFactory(self):
+                class _Tunable(object):
+                    def default(self, owner, text=None):
+                        return _Line(owner, text)
+                return _Tunable()
+
+        base.control.UiDialogNotification = _Factory()
+        base.case.ready()
+        ok, connection = base.talk({"text": "Ashley is asking Don about his day.", "sim_id": HER})
+        self.assertTrue(ok, connection.lines)
+        self.assertIn("701", base.probe.observers._OWN_NOTICES)
 
 
 if __name__ == "__main__":
