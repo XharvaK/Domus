@@ -5,6 +5,7 @@ observers/e2_actuator read helpers; all file I/O through the writer queue.
 The host supplies emit/state callables so this module never imports probe.
 """
 
+import contextlib
 import sys
 import time
 
@@ -605,6 +606,9 @@ class E2Control:
         # tuning_name, interaction_id, seen, misses}. 2.28.0: an act's returned id and each
         # alias it gained map to one shared record.
         self.pushed = {}
+        # 2.34.0 (F1): {"act": her act's record or None} while her act is being pushed, else None. A window or
+        # screen that arrives meanwhile about her Sim is hers, before _watch_act has recorded the act.
+        self.pushing = None
         # 2.31.0: the UI_MODAL pause requests seen so far (catch-all), and the windows the fallback showed.
         self._modal_seen = []
         self.shown_to_user = []
@@ -904,7 +908,8 @@ class E2Control:
             self.experiment_counter += 1
             experiment_id = "%s-%d" % (self._session_id()[:8], self.experiment_counter)
             pushed_ns = time.perf_counter_ns()
-            interaction, detail = e2_actuator.push_sit(sim, obj, offers[0], context)
+            with self._pushing_for_her(None):
+                interaction, detail = e2_actuator.push_sit(sim, obj, offers[0], context)
             if interaction is None:
                 self._experiment_event("PUSH_FAILED", experiment_id=experiment_id,
                                        token=token, object_id=object_id,
@@ -953,8 +958,9 @@ class E2Control:
             self.experiment_counter += 1
             experiment_id = "%s-%d" % (self._session_id()[:8], self.experiment_counter)
             pushed_ns = time.perf_counter_ns()
-            interaction, detail, kind = e2_actuator.push_affordance(
-                sim, obj, offers[0], context)
+            with self._pushing_for_her(None):
+                interaction, detail, kind = e2_actuator.push_affordance(
+                    sim, obj, offers[0], context)
             if interaction is None and kind == "refused":
                 reason = (detail or "")[:schema.MAX_DETAIL_LENGTH]
                 self._experiment_event("PUSH_REFUSED", experiment_id=experiment_id,
@@ -1113,8 +1119,10 @@ class E2Control:
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
             accepted = True
             queued_before = _queued_interactions(sim)
-            interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
-                sim, obj, affordance, context)
+            with self._pushing_for_her({"act_id": act_id, "interaction_id": None, "tuning_name": tuning_name,
+                                        "base": base}):
+                interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
+                    sim, obj, affordance, context)
             # 2.28.0 (live 2026-10-08: a picker's push returned 704 while her queue gained 703, and
             # 704 never appeared): whatever the push put in her queue or running list is this act too.
             born = {}
@@ -1777,9 +1785,13 @@ class E2Control:
 
     def _withhold_screen(self, name):
         """R4/R5 (§4.5): a client screen her own act opened is not sent. Only her act's frame on the
-        call stack makes it hers (§4.1 rule 1); anything else is the game's or the User's."""
+        call stack makes it hers (§4.1 rule 1); anything else is the game's or the User's.
+        2.34.0 (F1): while her act is being pushed (the mark), a screen is hers too, as a window is."""
         if name is None:
             return False
+        if self.pushing is not None:
+            self._withheld(self.pushing["act"], name, "screen")
+            return True
         item = self._pushed_on_stack()
         if item is None:
             return False
@@ -1817,6 +1829,8 @@ class E2Control:
             item = self._pushed_for(interaction)
             if item is not None:
                 return "hers", item
+        if self._pushing_window(dialog, her, interactions):
+            return "hers", self.pushing["act"]
         if interactions:
             first = interactions[0]
             source = _read(lambda: str(first.context.source))
@@ -1828,6 +1842,18 @@ class E2Control:
         if _same_id(_read(lambda: dialog._owner()), her):
             return "hers", None
         return "user", None
+
+    def _pushing_window(self, dialog, her, interactions):
+        """2.34.0 (F1): True while her act is being pushed and the window is about her Sim: its owner, its
+        resolver's Sim, or an interaction's Sim is her. Identity is checked before this. Reads only."""
+        if self.pushing is None or her is None:
+            return False
+        if _same_id(_read(lambda: dialog._owner()), her):
+            return True
+        resolver = dialog._resolver
+        if _same_id(_read(lambda: resolver.sim_info), her) or _same_id(_read(lambda: resolver.sim), her):
+            return True
+        return any(_same_id(_read(lambda: interaction.sim), her) for interaction in interactions)
 
     def _identity_window(self, dialog, her, interactions, pairs):
         """§4.1 identity, checked before the rest: her own Sim renamed, retraited or re-personalised
@@ -2059,6 +2085,16 @@ class E2Control:
 
     def _pushed_keys(self, item):
         return [key for key, value in self.pushed.items() if value is item]
+
+    @contextlib.contextmanager
+    def _pushing_for_her(self, act):
+        """2.34.0 (F1): the mark for one push of her act. act is her act's record (None for a sit or a trial).
+        The mark is cleared in finally, so a push that raises leaves nothing marked."""
+        self.pushing = {"act": act}
+        try:
+            yield
+        finally:
+            self.pushing = None
 
     def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction, aliases=None):
         """2.28.0: the act is tracked under its returned interaction and under each alias (the

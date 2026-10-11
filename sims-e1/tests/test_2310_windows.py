@@ -537,6 +537,98 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("ACT_REJECT NOT_HELD", connection.lines)
 
+    # 2.34.0 (F1): windows and screens that arrive while her act is being pushed, before it is recorded.
+    def push_then(self, during, raises=False):
+        """Her act (cmd_act) whose push runs `during` before the game's own push: the window or screen
+        is created inside push_super_affordance, as the game does."""
+        original = self.base.sim.push_super_affordance
+
+        def push(affordance, target, context):
+            during()
+            if raises:
+                raise RuntimeError("game")
+            return original(affordance, target, context)
+
+        self.base.sim.push_super_affordance = push
+        return self.case.act(act_id=ACT_ID)
+
+    def test_a_picker_opened_during_her_push_is_hers_and_held(self):
+        window = {}
+
+        def open_picker():
+            window["dialog"] = self.window(dialog_id=603, interaction=self.her_interaction(
+                OPENER, source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
+            window["dialog"].distribute_dialog("T", "m")
+
+        ok, connection = self.push_then(open_picker)
+        self.assertTrue(ok, connection.lines)
+        self.assertEqual(window["dialog"].sent, [])
+        self.assertEqual(self.control.held["603"]["act_id"], ACT_ID)
+        self.assertEqual(self.last_speed(), ("DIALOG_HELD", None, "dialog 603 act %s" % ACT_ID))
+
+    def test_a_window_owned_by_her_during_her_push_is_hers(self):
+        window = {}
+
+        def open_window():
+            window["dialog"] = self.window(dialog_id=604, interaction=None, owner=HER)
+            window["dialog"].distribute_dialog("T", "m")
+
+        self.push_then(open_window)
+        self.assertEqual(window["dialog"].sent, [])
+        self.assertEqual(self.control.held["604"]["act_id"], ACT_ID)
+
+    def test_a_window_about_another_sim_during_her_push_is_the_users(self):
+        window = {}
+
+        def open_window():
+            window["dialog"] = self.window(dialog_id=605, interaction=self.her_interaction(
+                OPENER, sim=OTHER, source="InteractionSource.SCRIPT_WITH_USER_INTENT"), owner=OTHER)
+            window["dialog"].distribute_dialog("T", "m")
+
+        self.push_then(open_window)
+        self.assertEqual(window["dialog"].sent, [("T", "m", False)])
+        self.assertEqual(self.control.held, {})
+
+    def test_her_screen_during_her_push_is_withheld_and_her_act_says_so(self):
+        self.push_then(lambda: self.dist.add_event(SCREEN, "m"))
+        self.assertEqual(self.dist.sent, [])
+        withheld = [row for row in self.act_rows() if str(row.get("code", "")).startswith("SCREEN_WITHHELD")]
+        self.assertEqual([row["code"] for row in withheld], ["SCREEN_WITHHELD:MSG_SITUATION_PREPARE"])
+        self.assertEqual(withheld[0]["act_id"], ACT_ID)
+        self.assertEqual(self.last_speed(), ("SCREEN_WITHHELD", "MSG_SITUATION_PREPARE", "screen act %s" % ACT_ID))
+
+    def test_an_identity_window_during_her_push_stays_the_users(self):
+        window = {}
+
+        def rename():
+            window["dialog"] = self.window(dialog_id=606, interaction=None, cls=SimPersonalityAssignmentDialog)
+            window["dialog"]._assignment_sim_info = types.SimpleNamespace(id=HER)
+            window["dialog"].distribute_dialog("T", "m")
+
+        self.push_then(rename)
+        self.assertEqual(window["dialog"].sent, [("T", "m")])
+        self.assertEqual(self.last_speed()[:2], ("DIALOG_SHOWN", "IDENTITY_USER"))
+        self.assertEqual(self.control.held, {})
+
+    def test_the_mark_is_cleared_after_the_push_so_a_later_unlinked_window_is_the_users(self):
+        ok, connection = self.push_then(lambda: None)
+        self.assertTrue(ok, connection.lines)
+        self.assertIsNone(self.control.pushing)
+        window = self.window(dialog_id=607, interaction=self.her_interaction(
+            999, source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
+        self.assertEqual(self.control.held, {})
+
+    def test_the_mark_is_cleared_when_the_push_raises(self):
+        ok, connection = self.push_then(lambda: None, raises=True)
+        self.assertFalse(ok)
+        self.assertIsNone(self.control.pushing)
+        window = self.window(dialog_id=608, interaction=self.her_interaction(
+            998, source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
+
 
 if __name__ == "__main__":
     unittest.main()
