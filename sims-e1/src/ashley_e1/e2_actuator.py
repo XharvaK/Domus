@@ -480,16 +480,17 @@ def front_door():
         return None
 
 
-def spot_start(obj, kind):
+def spot_start(obj, kind, side=1.0):
     """Read: where the game's standable search starts for a spot. A room's spot starts at the object's own position
-    (the search finds free ground near it); the front door's starts one metre in front of it, on its forward side,
-    which is the outdoor side. None when it cannot be read."""
+    (the search finds free ground near it); the front door's starts one metre from it, along its forward axis on the
+    given side (+1 forward, -1 behind): the caller picks the side that is outdoors, since a door may face either way.
+    None when it cannot be read."""
     try:
         position = obj.position
         if kind == "front_door":
             forward = obj.forward
-            return Vector3(position.x + forward.x * FRONT_DOOR_STEP_M, position.y,
-                           position.z + forward.z * FRONT_DOOR_STEP_M)
+            step = FRONT_DOOR_STEP_M * side
+            return Vector3(position.x + forward.x * step, position.y, position.z + forward.z * step)
         return position
     except Exception:
         return None
@@ -503,7 +504,9 @@ def standable_spot(sim, start, routing_surface):
     try:
         starting = placement.create_starting_location(position=start, routing_surface=routing_surface)
         context = placement.create_fgl_context_for_sim(starting, sim)
-        position, orientation = placement.find_good_location(context)
+        # The game returns (position, orientation, reason); position is None when nothing was found.
+        found = placement.find_good_location(context)
+        position, orientation = found[0], found[1]
     except Exception:
         return None
     return None if position is None else (position, orientation)

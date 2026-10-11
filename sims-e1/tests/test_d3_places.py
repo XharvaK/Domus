@@ -162,6 +162,19 @@ class SpotMenuTests(unittest.TestCase):
         _build, payload = self.menu()
         self.assertEqual([s["spot"] for s in self.spots(payload)], ["room"])
 
+    def test_a_front_door_facing_in_gets_its_spot_from_behind_and_none_when_neither_side_is_outdoors(self):
+        self.things = [_Place(11, 2.0, 0.0, 0, "4")]
+        self.door = _Place(15, 30.0, 0.0, 0, "4", affordances=())
+        self.door.forward = types.SimpleNamespace(x=1.0, y=0.0, z=0.0)  # facing into the house (x > 30 is room 4)
+        self.actuator.Vector3 = lambda x, y, z: types.SimpleNamespace(x=x, y=y, z=z, room="0" if x < 30.0 else "4")
+        _build, payload = self.menu()
+        front = [s for s in self.spots(payload) if s["spot"] == "front_door"]
+        self.assertEqual([s["room"] for s in front], ["0"])
+        self.assertIn((29.0, 0.0, "surface-0"), self.asked)  # one metre behind the door, which is outdoors
+        self.actuator.Vector3 = lambda x, y, z: types.SimpleNamespace(x=x, y=y, z=z, room="4")
+        _build, payload = self.menu()
+        self.assertEqual([s["spot"] for s in self.spots(payload)], ["room"])
+
     def test_spot_ids_are_small_from_one_and_keep_their_room_across_builds(self):
         self.things = [_Place(11, 2.0, 0.0, 0, "4"), _Place(12, 12.0, 0.0, 0, "5")]
         first, _payload = self.menu()
@@ -360,7 +373,7 @@ class SpotActTests(unittest.TestCase):
         self.probe._lot_snapshot = lambda: ([bed], None)
         self.probe.observers._room = lambda obj, position: obj.position.room
         self.actuator.front_door = lambda: None
-        self.actuator.spot_start = lambda obj, kind: obj.position
+        self.actuator.spot_start = lambda obj, kind, side=1.0: obj.position
         self.actuator.standable_spot = lambda sim, start, surface: (
             types.SimpleNamespace(x=start.x, y=0.0, z=start.z, room=start.room), "facing")
         self.actuator.room_at = lambda obj, position, level: position.room
@@ -470,3 +483,30 @@ class PhoneRefusalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StandableSpotTests(unittest.TestCase):
+    """The game's placement.find_good_location returns (position, orientation, reason); position is None on a miss."""
+
+    def setUp(self):
+        from test_binding import load_probe
+        _package, probe, _calls = load_probe()
+        self.actuator = probe.e2_actuator
+        self.saved = self.actuator.placement
+
+    def tearDown(self):
+        self.actuator.placement = self.saved
+
+    def fake_placement(self, result):
+        return types.SimpleNamespace(
+            create_starting_location=lambda position=None, routing_surface=None: ("start", position, routing_surface),
+            create_fgl_context_for_sim=lambda starting, sim: ("context", starting, sim),
+            find_good_location=lambda context: result)
+
+    def test_the_games_three_values_give_the_position_and_orientation(self):
+        self.actuator.placement = self.fake_placement(("here", "facing", "FGL Successful"))
+        self.assertEqual(self.actuator.standable_spot("sim", "start", "surface"), ("here", "facing"))
+
+    def test_a_search_that_finds_nothing_gives_no_spot(self):
+        self.actuator.placement = self.fake_placement((None, None, "FGL Failed: search returned 0 results."))
+        self.assertIsNone(self.actuator.standable_spot("sim", "start", "surface"))

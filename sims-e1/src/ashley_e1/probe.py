@@ -2032,20 +2032,23 @@ def _spot_anchors(items, body_room):
 
 
 def _front_door_anchors(body_position, body_room):
-    """2.35.0 (D3): the front door's spot to look for, when the game has a front door. Its room is the room one metre
-    in front of the door (outdoors, or the room it opens into); a door with no readable room gives no spot."""
+    """2.35.0 (D3): the front door's spot to look for, when the game has a front door. The spot is on the door's
+    outdoor side: one metre along its forward axis, in front or behind, whichever is outdoors (room "0"), since a
+    door may face either way. A door with neither side outdoors, or no readable room, gives no spot."""
     door = e2_actuator.front_door()
     if door is None:
         return []
     level = _level_of(door)
-    start = e2_actuator.spot_start(door, "front_door")
-    if type(level) is not int or start is None:
+    if type(level) is not int:
         return []
-    room = e2_actuator.room_at(door, start, level)
-    if room is None:
-        return []
-    distance = observers._distance(observers._position(door), body_position)
-    return [_spot_item(door, "front_door", room, level, distance, body_room)]
+    for side in (1.0, -1.0):
+        start = e2_actuator.spot_start(door, "front_door", side)
+        if start is not None and e2_actuator.room_at(door, start, level) == "0":
+            distance = observers._distance(observers._position(door), body_position)
+            item = _spot_item(door, "front_door", "0", level, distance, body_room)
+            item["side"] = side
+            return [item]
+    return []
 
 
 def _spot_offers(item, sim, body_position, terrain, spots, seen):
@@ -2055,7 +2058,7 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen):
     and its record goes into the build's table under that id. A search that fails leaves the spot out."""
     kind, room, level = item["spot"], item["room"], item["level"]
     surface = _routing_surface(item["obj"])
-    found = e2_actuator.standable_spot(sim, e2_actuator.spot_start(item["obj"], kind), surface)
+    found = e2_actuator.standable_spot(sim, e2_actuator.spot_start(item["obj"], kind, item.get("side", 1.0)), surface)
     if found is None:
         return []
     position, orientation = found
