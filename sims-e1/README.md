@@ -2,7 +2,11 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.34.0 (her whole lot in her menu, identical acts once per object, the game's own windows hers)
+## Current build: 2.35.0 (going places on the lot: spots and Go Here, the phone's refusals read)
+
+2.35.0 (D3): observation schema 17 (the menu's spot entries and the phone's refusals, below, are the rest of D3).
+
+## Previous build: 2.34.0 (her whole lot in her menu, identical acts once per object, the game's own windows hers)
 
 2.34.0 (N8, after the first live play): her act menu covers every object on the lot that offers her something, not the
 nearest 30; each object carries its room. The menu is written in parts of 16 objects (one record each, same
@@ -14,8 +18,8 @@ menu's `part` and `parts` are new; the observation schema is 16 and the helper a
 are looked at, then four are read per tick). An act that is past its time is refused as an act: an `act_event`
 REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the command reply.
 
-The source is version `2.34.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 16, the helper accepts schema 4 to 16). It is no longer read-only:
+The source is version `2.35.0` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 17; the helper's vendored copy follows it). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
 The file the game lists is `Domus_<version>.ts4script`. The package inside stays `ashley_e1`.
@@ -171,8 +175,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.34.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.34.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.35.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.35.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

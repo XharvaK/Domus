@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 16
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v16"
-PROBE_VERSION = "2.34.0"
+OBSERVATION_SCHEMA_VERSION = 17
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v17"
+PROBE_VERSION = "2.35.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
