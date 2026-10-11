@@ -186,3 +186,16 @@ def test_the_vendored_schema_is_2_37_0_and_accepts_menus_of_schema_18_and_19():
     row = schema.make_record("act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1, e2=older)
     schema.validate_record(row)
     assert row["e2"]["cached"] is None and row["e2"]["excluded_phone"] is None
+
+
+def test_another_sims_name_token_is_someone_even_when_her_names_are_known():
+    assert tokens.fill("{0.SimFirstName} waves at {1.SimFirstName}.", subject=HER) == "Ada waves at someone."
+
+
+def test_an_act_text_keeps_its_tokens_so_the_target_is_named():
+    from domus_helper.acts import clean_text
+    words = tokens.Words(lambda key: "Chat with {1.SimFirstName}" if key == 5 else None)
+    words.her = HER
+    assert words.raw(5) == "Chat with {1.SimFirstName}"
+    assert clean_text(words.raw(5), "Bo Reed") == "Chat with Bo"
+    assert words.raw(6) is None

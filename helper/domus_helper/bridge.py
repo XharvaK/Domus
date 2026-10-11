@@ -225,7 +225,8 @@ class Bridge:
             except Exception:
                 self._catalog = False
         room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
-        listed = act_options(menu.get("payload"), self._resolve_text.other, self._catalog or None,
+        # 2.37.0 (W10 H3): act texts keep their tokens here; clean_text fills a person's name or drops them.
+        listed = act_options(menu.get("payload"), self._resolve_text.raw, self._catalog or None,
                              people=people_names(row, self._seen_ids()), refs=self._refs, limit=max(0, room),
                              withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"),
                              room_labels=self._room_labels(), cut=cut,
@@ -532,8 +533,8 @@ class Bridge:
 
     def _act_names(self):
         """HE1: the game's own words for her acts, from the newest menu's text keys (humanized as fallback)."""
-        # 2.37.0 (W10 H3): an act may name its target, so its words say someone, never her name.
-        return act_names(self._menu.get("payload") if isinstance(self._menu, dict) else None, self._resolve_text.other)
+        # 2.37.0 (W10 H3): act texts keep their tokens here; clean_text drops them (an act's words never say her name).
+        return act_names(self._menu.get("payload") if isinstance(self._menu, dict) else None, self._resolve_text.raw)
 
     def _world(self):
         slot = self._extractor.slot_id

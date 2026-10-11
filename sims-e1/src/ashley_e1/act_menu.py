@@ -10,6 +10,7 @@ the nearest few. Each object keeps its room. The build is stepped across samplin
 reading the offers of one object at a time, and the menu is written in parts small
 enough for one record.
 """
+import json
 import time
 
 from . import schema
@@ -263,7 +264,8 @@ class MenuBuild(object):
                     "spot": job.get("spot"), "level": job.get("level"), "acts": []}
                 order.append(key)
             acts = by_object[key]["acts"]
-            if len(acts) < schema.MENU_MAX_ACTS and all(a["guid64"] != job["guid64"] for a in acts):
+            cap = schema.MENU_MAX_PHONE_ACTS if job.get("phone") is True else schema.MENU_MAX_ACTS
+            if len(acts) < cap and all(a["guid64"] != job["guid64"] for a in acts):
                 acts.append({"guid64": job["guid64"], "name": (job.get("name") or "")[:128],
                              "text_key": job.get("text_key")})
         objects = [by_object[key] for key in order][:schema.MENU_MAX_OBJECTS]
@@ -285,10 +287,25 @@ def parts(payload):
     objects = payload["objects"]
     count = max(1, -(-len(objects) // MENU_PART_OBJECTS))
     # 2.35.0 (D3): the phone's refusals are written once, on part 0. 2.37.0 (P3): so are the phone's exclusions.
-    return [dict(payload, objects=objects[index * MENU_PART_OBJECTS:(index + 1) * MENU_PART_OBJECTS],
+    rows = [dict(payload, objects=objects[index * MENU_PART_OBJECTS:(index + 1) * MENU_PART_OBJECTS],
                  part=index, parts=count,
                  refused_phone=payload.get("refused_phone") if index == 0 else None,
                  excluded_phone=payload.get("excluded_phone") if index == 0 else None) for index in range(count)]
+    # 2.37.0 (W10 P3): part 0 carries the phone's diagnostics; when they would push it past the record limit, the
+    # last exclusions go first, then the last refusals (a diagnostic is shortened; the menu is never lost).
+    first = rows[0]
+    for key in ("excluded_phone", "refused_phone"):
+        while first.get(key) and _part_bytes(first) > PART_BYTES_MAX:
+            first[key] = first[key][:-1]
+    return rows
+
+
+# 2.37.0 (W10 P3): a part's payload stays this far under the record limit (the record's envelope needs the rest).
+PART_BYTES_MAX = schema.MAX_SERIALIZED_RECORD_BYTES - 4096
+
+
+def _part_bytes(row):
+    return len(json.dumps(row, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
 def same_menu(left, right):

@@ -102,6 +102,8 @@ RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
 MENU_MAX_OBJECTS = 256
 MENU_MAX_PARTS = 64
 MENU_MAX_ACTS = 8
+# 2.37.0 (W10 P3): her phone is one entry for all its acts, so it has its own cap (call and invite came after the 8th).
+MENU_MAX_PHONE_ACTS = 48
 # 2.25.0: reach (the game's own connectivity check from her to the object; None when unread).
 # 2.29.0: phone (True on her own phone's entry, None on every other object) is optional the same way.
 # 2.35.0 (D3): spot and level are the spot's kind ("room" or "front_door") and its level; None on every object.
@@ -765,7 +767,8 @@ def _validate_menu(payload):
         _require(item["level"] is None or type(item["level"]) is int, "menu level")
         _require(item["spot"] is None or item["class"] == "spot", "menu spot class")
         acts = item["acts"]
-        _require(isinstance(acts, list) and 1 <= len(acts) <= MENU_MAX_ACTS, "menu acts")
+        cap = MENU_MAX_PHONE_ACTS if item["phone"] is True else MENU_MAX_ACTS
+        _require(isinstance(acts, list) and 1 <= len(acts) <= cap, "menu acts")
         for act in acts:
             _require(isinstance(act, dict) and set(act) == set(MENU_ACT_KEYS), "menu act shape")
             _require(isinstance(act["guid64"], str), "menu guid64")

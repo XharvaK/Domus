@@ -176,6 +176,49 @@ class FarCacheUnitTests(unittest.TestCase):
             self.schema.validate_record(self.schema.make_record(
                 "act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1, e2=payload))
 
+    def _menu_object(self, phone, count):
+        return {"object_id": "7", "definition_id": None, "class": "phone" if phone else "chair", "distance_m": None,
+                "same_room": None, "room": None, "reach": None, "phone": True if phone else None, "spot": None,
+                "level": None, "acts": [{"guid64": str(9000 + i), "name": "act_%d" % i, "text_key": None}
+                                        for i in range(count)]}
+
+    def _validate_menu(self, objects):
+        payload = {"menu_rev": 1, "room": None, "tested": 1, "cached": 0, "refused": 0, "build_ms": 1.0,
+                   "part": 0, "parts": 1, "refused_phone": [], "excluded_phone": [], "objects": objects}
+        self.schema.validate_record(self.schema.make_record(
+            "act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1, e2=payload))
+
+    def test_her_phone_may_carry_its_own_cap_of_acts_and_another_object_only_eight(self):
+        self._validate_menu([self._menu_object(True, self.schema.MENU_MAX_PHONE_ACTS)])
+        with self.assertRaises(Exception):
+            self._validate_menu([self._menu_object(True, self.schema.MENU_MAX_PHONE_ACTS + 1)])
+        with self.assertRaises(Exception):
+            self._validate_menu([self._menu_object(False, self.schema.MENU_MAX_ACTS + 1)])
+
+    def test_a_part_too_large_for_its_record_sheds_phone_diagnostics_not_objects(self):
+        big = "x" * 128
+        objects = [dict(self._menu_object(False, 8), object_id=str(i)) for i in range(15)]
+        for item in objects:
+            for act in item["acts"]:
+                act["name"] = big
+        objects.append(self._menu_object(True, self.schema.MENU_MAX_PHONE_ACTS))
+        payload = {"menu_rev": 1, "room": None, "tested": 1, "cached": 0, "refused": 0, "build_ms": 1.0,
+                   "refused_phone": [{"name": big, "reason_key": "0x" + "f" * 60} for _ in range(64)],
+                   "excluded_phone": [{"name": big, "why": "travel"} for _ in range(64)], "objects": objects}
+        first = self.menu.parts(payload)[0]
+        self.assertEqual(len(first["objects"]), 16)
+        self.assertLess(len(first["excluded_phone"]), 64)
+        self.assertLessEqual(self.menu._part_bytes(first), self.menu.PART_BYTES_MAX)
+        self.schema.validate_record(self.schema.make_record(
+            "act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1, e2=first))
+
+    def test_a_small_part_keeps_all_its_phone_diagnostics(self):
+        payload = {"menu_rev": 1, "room": None, "tested": 1, "cached": 0, "refused": 0, "build_ms": 1.0,
+                   "refused_phone": [{"name": "a", "reason_key": None}] * 64,
+                   "excluded_phone": [{"name": "b", "why": "hidden"}] * 64, "objects": []}
+        first = self.menu.parts(payload)[0]
+        self.assertEqual((len(first["refused_phone"]), len(first["excluded_phone"])), (64, 64))
+
     def test_the_probe_version_is_2_37_0_and_the_schema_is_19(self):
         self.assertEqual(self.schema.PROBE_VERSION, "2.37.0")
         self.assertEqual(self.schema.OBSERVATION_SCHEMA_VERSION, 19)

@@ -9,7 +9,7 @@ SOMEONE = "someone"
 SOME = "some"
 _TOKEN = re.compile(r"\{([^{}]*)\}")
 _PAIR = re.compile(r"\{M(\d+)\.([^{}]*)\}\{F\1\.([^{}]*)\}")
-_NAME = re.compile(r"\{\d+\.(SimFirstName|SimLastName|SimName|SimFullName)\}")
+_NAME = re.compile(r"\{(\d+)\.(SimFirstName|SimLastName|SimName|SimFullName)\}")
 _NUMBER = re.compile(r"\{\d+\.Number\}")
 _SPACES = re.compile(r"[ \t]{2,}")
 
@@ -41,9 +41,10 @@ def _fill(text, subject, gender, number):
     text = _PAIR.sub(lambda match: match.group(3) if gender == "F" else match.group(2), text)
 
     def name(match):
-        if subject is None:
+        # Token 0 is the Sim the text is about (her, in her own lines); a higher index is another Sim: someone.
+        if subject is None or match.group(1) != "0":
             return SOMEONE
-        field = match.group(1)
+        field = match.group(2)
         if field == "SimFirstName":
             return subject["first"]
         if field == "SimLastName":
@@ -60,7 +61,8 @@ def _tidy(text):
 
 class Words(object):
     """2.37.0 (W10 H3): the game's text for a key, in words for her. The bridge sets her names (her) from her body
-    row. words(key) is text about her; words.other(key) is text about no one she can name (someone). The probe does
+    row. words(key) is text about her (token 0 is her, a higher index is someone); words.other(key) is text about no
+    one she can name (someone); words.raw(key) keeps the tokens. The probe does
     not report gender, so the first form of a pair is used (gender stays None until it does)."""
 
     def __init__(self, raw):
@@ -73,6 +75,15 @@ class Words(object):
 
     def other(self, key):
         return self._words(key, None)
+
+    def raw(self, key):
+        """The game's text as it is, tokens kept: for act texts, which acts.clean_text fills with the target's name."""
+        if self._raw is None:
+            return None
+        try:
+            return self._raw(key)
+        except Exception:
+            return None
 
     def _words(self, key, subject):
         if self._raw is None:
