@@ -537,8 +537,9 @@ def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_sessi
     assert len(payloads) == 1
     obs = check(payloads[0], WALL + 1500)
     assert bridge._menu["at_ms"] == WALL  # HE12: the menu keeps its wall time
-    assert obs["options"] == [{"object": "object bookshelf", "object_id": "11", "where": "here, 2.0 m",
+    assert obs["options"] == [{"object": "object bookshelf", "object_id": "11", "where": "here, 2.0 m", "near": True,
                                "acts": [{"ref": "a1", "guid64": "4242", "text": "bookshelf Read Book"}]}]
+    assert "options_cut" not in obs  # N8 (F4): a cut is named only when there is one
     bridge._menu = dict(bridge._menu, session="another")
     assert bridge._options(bridge._last_row) == []
 

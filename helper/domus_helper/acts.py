@@ -6,7 +6,11 @@ import re
 
 from . import snapshot
 
-OPTIONS_LIMIT = 7800
+# N8 (F4): the options of one view: at most 160 objects and 32,768 bytes (contract.py takes the same).
+OPTIONS_LIMIT = 32768
+OPTIONS_OBJECTS_LIMIT = 160
+# N8 (F4): an object within this many metres of her is near, as one in her room is.
+NEAR_M = 4.0
 # Mint expires an act its helper never picked up after 90 s; a written act the probe never
 # answers about is unknown after this long.
 # W3h (C9): real time. The probe reads its inbox on a real-time alarm and writes the reply then,
@@ -302,17 +306,44 @@ def _where(item, menu_room, room):
     return "elsewhere" if same is True else "nearby"
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None):
-    """The observation's options: nearest objects first, each act with a short ref (a1, a2,
-    ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the
-    life of the helper session (refs is a RefBook). Farthest objects are left out
-    until it fits the byte budget. W2h: an act whose interaction the notebook has seen end on a
-    screen only the User's hands can use stays listed, marked with what it opens. HE12: room is
-    the room she is in now (the zone's), and the menu's own room comes with the menu."""
+def _in_her_room(item, room):
+    """N8 (F4): whether an object is in the room she is in now. The probe's room id for the object decides
+    when both are known; an older menu without one is judged by the probe's same_room flag."""
+    object_room = item.get("room")
+    if object_room is not None and room is not None:
+        return str(object_room) == str(room)
+    return item.get("same_room") is True
+
+
+def _near(item, room):
+    distance = item.get("distance_m")
+    close = isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance <= NEAR_M
+    return item.get("phone") is True or close or _in_her_room(item, room)
+
+
+def _room_label(item, room_labels):
+    """N8 (F4): the room's label when it is known; None when it is not (the object then names no room)."""
+    object_room = item.get("room")
+    if object_room is None:
+        return None
+    return (room_labels or {}).get(str(object_room))
+
+
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
+            room_labels=None, cut=None):
+    """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
+    (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
+    of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
+    each object names its room (room_labels gives the label, when known) and whether it is near. Farthest
+    objects are left out until it fits the byte budget and the object limit; cut (a dict, filled in) names
+    how many were left out and in which rooms. W2h: an act whose interaction the notebook has seen end on a
+    screen only the User's hands can use stays listed, marked with what it opens. HE12: room is the room she
+    is in now (the zone's), and the menu's own room comes with the menu."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
     refs = RefBook() if refs is None else refs
     result = []
+    left_out = []
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
@@ -326,25 +357,39 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         if item.get("phone") is True:
             where = "with her"  # 2.29.0: her phone is on her, so no distance and no room.
         acts = []
+        texts = set()
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
+            text = _text(resolve, act.get("text_key")) or humanize(act.get("name"))
+            if text in texts:
+                continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
+            texts.add(text)
             listed = {"ref": refs.ref(("act", str(item.get("object_id")), str(act["guid64"]))),
-                      "guid64": str(act["guid64"]),
-                      "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))}
+                      "guid64": str(act["guid64"]), "text": text}
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
             acts.append(listed)
         if acts:
             entry = {"object": _object_name(item, resolve, catalog, people),
-                     "object_id": str(item.get("object_id")), "where": where, "acts": acts}
+                     "object_id": str(item.get("object_id")), "where": where, "acts": acts,
+                     "near": _near(item, room)}
+            label = _room_label(item, room_labels)
+            if label:
+                entry["room"] = label[:64]
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
-            result.append(entry)
-    while result and _bytes(result) > limit:
-        result.pop()
-    return result
+            # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
+            where_named = label or (str(item["room"])[:64] if item.get("room") is not None else None)
+            result.append((entry, where_named))
+    result.sort(key=lambda pair: pair[0]["near"] is not True)  # near first; the rest keep the menu's order
+    while result and (len(result) > OPTIONS_OBJECTS_LIMIT or _bytes([pair[0] for pair in result]) > limit):
+        left_out.append(result.pop()[1])
+    if cut is not None and left_out:
+        cut["objects"] = len(left_out)
+        cut["rooms"] = sorted({name for name in left_out if name})[:16]
+    return [pair[0] for pair in result]
 
 
 def _version(probe):

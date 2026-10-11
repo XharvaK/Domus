@@ -232,7 +232,7 @@ class Bridge:
             self.director.tick(now, live)
         self.talk.tick(now, self._state == "attached" and _probe_ok(probe, _TALK_PROBE))
 
-    def _options(self, row):
+    def _options(self, row, cut=None):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
         the game is asking her (an open dialog that is hers) comes first, menu or not."""
         if not isinstance(row, dict):
@@ -251,7 +251,8 @@ class Bridge:
         room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
         listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
                              people=people_names(row, self._seen_ids()), refs=self._refs, limit=max(0, room),
-                             withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"))
+                             withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"),
+                             room_labels=self._room_labels(), cut=cut)
         return asked + listed
 
     def status(self):
@@ -476,6 +477,7 @@ class Bridge:
         # identity of this decision stay on the newest row, which may be an event.
         body = self._last_body_row or self._last_row
         session = body.get("telemetry_session_id") if isinstance(body, dict) else None
+        options_cut = {}  # N8 (F4): what the options left out, named in the view (filled by _options)
         return {
             "helper_session": self.helper_session,
             "obs_seq": self._obs_seq,
@@ -488,7 +490,8 @@ class Bridge:
             "act_name": self._act_names(),
             "room_labels": self._room_labels(),
             "seen": self._seen,
-            "options": self._options(body),
+            "options": self._options(body, cut=options_cut),
+            "options_cut": options_cut,
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
             "pace": pace.portrait(self._pace_block, self._pace_log.costs()),

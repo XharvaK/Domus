@@ -41,10 +41,10 @@ def test_options_name_each_act_in_the_games_words_with_short_refs():
     catalog = {"511": {"name_key": "900"}}
     result = options(MENU, texts.get, catalog.get, room="4")
     assert result == [
-        {"object": "Wooden Bookshelf", "object_id": "11", "where": "here, 2.0 m", "acts": [
+        {"object": "Wooden Bookshelf", "object_id": "11", "where": "here, 2.0 m", "near": True, "acts": [
             {"ref": "a1", "guid64": "4242", "text": "Read a Book"},
             {"ref": "a2", "guid64": "4243", "text": "bookshelf Browse Books"}]},
-        {"object": "object guitar", "object_id": "12", "where": "elsewhere, 6.5 m", "acts": [
+        {"object": "object guitar", "object_id": "12", "where": "elsewhere, 6.5 m", "near": False, "acts": [
             {"ref": "a3", "guid64": "5000", "text": "guitar Practice"}]},
     ]
 
@@ -97,7 +97,7 @@ def test_her_own_phone_is_an_option_named_your_phone():
     # body (the same id) is never named as a person.
     result = options(PHONE_MENU, lambda key: None, people={"900": "Dennis Kim"})
     phone = [entry for entry in result if entry["object_id"] == "900"][0]
-    assert phone == {"object": "your phone", "object_id": "900", "where": "with her", "acts": [
+    assert phone == {"object": "your phone", "object_id": "900", "where": "with her", "near": True, "acts": [
         {"ref": "a2", "guid64": "6001", "text": "phone Sample Message"}]}
     assert [entry["object"] for entry in result] == ["object bookshelf", "your phone"]
 
@@ -137,7 +137,7 @@ def test_the_contract_carries_options_within_8_kib():
             "options": options(MENU)}
     assert validate_observation(body, 1500)["options"] == body["options"]
     with pytest.raises(ContractError):
-        validate_observation(dict(body, options=[{"object": "x" * 9000}]), 1500)
+        validate_observation(dict(body, options=[{"object": "x" * 33000}]), 1500)  # N8 (F4): 32,768 bytes
     with pytest.raises(ContractError):
         validate_observation(dict(body, options="a1"), 1500)
 
