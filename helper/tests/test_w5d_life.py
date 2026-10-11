@@ -46,6 +46,6 @@ def test_a_lineage_record_without_a_reason_has_no_reason_fact():
 
 
 def test_the_vendored_schema_is_fifteen_and_names_the_body_gone_record():
-    assert schema.OBSERVATION_SCHEMA_VERSION == 16
+    assert schema.OBSERVATION_SCHEMA_VERSION == 17
     assert "BODY_GONE" in schema.LINEAGE_RECORDS
     assert "reason" in schema.E2_PAYLOAD_KEYS["lineage_event"]

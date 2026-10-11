@@ -17,18 +17,48 @@ from interactions.priority import Priority  # TARGET_BYTECODE 1.128.
 from . import e2_trial
 from . import observers
 
+# 2.35.0 (D3): going places. The game's Go Here (terrain-gohere) and its standable-spot search. Read from the game's
+# own code offline (no install is read here); each name is optional, so a missing one turns spots off and nothing
+# else (PRIOR_ART|RUNTIME_UNVERIFIED).
+try:
+    from objects.terrain import TerrainPoint
+except ImportError:
+    TerrainPoint = None
+try:
+    from sims4.math import Location, Transform, Vector3
+except ImportError:
+    Location = Transform = Vector3 = None
+try:
+    import placement
+except ImportError:
+    placement = None
+try:
+    from build_buy import get_room_id, is_location_pool
+except ImportError:
+    get_room_id = is_location_pool = None
+try:
+    from interactions.context import PickInfo, PickType
+except ImportError:
+    PickInfo = PickType = None
+
 SIT_AFFORDANCE_GUID = 31564
 PAUSE_REASON = "ashley_e2_pause"
 RELEASE_REASON = "ashley_e2_release"
 TRIAL_END_REASON = "ashley_e2_trial_end"
+# 2.35.0 (D3): the tuning name of the game's Go Here, its class, and how far in front of the front door a spot starts.
+GO_HERE_NAME = "terrain-gohere"
+GO_HERE_CLASS = "GoHereSuperInteraction"
+FRONT_DOOR_STEP_M = 1.0
 
 
-def build_context(sim, owner=False):
+def build_context(sim, owner=False, pick=None):
     """2.24.0: an act her Thought marked as asked for by the User goes in at Critical, so a
-    reflex at High queues behind it instead of displacing it; every other act stays High."""
+    reflex at High queues behind it instead of displacing it; every other act stays High.
+    2.35.0 (D3): a Go Here act carries the game's pick (pick=PickInfo), as the game's own Go Here does."""
+    extra = {} if pick is None else {"pick": pick}
     return InteractionContext(sim, InteractionContext.SOURCE_SCRIPT_WITH_USER_INTENT,
                               Priority.Critical if owner else Priority.High,
-                              insert_strategy=QueueInsertStrategy.NEXT)
+                              insert_strategy=QueueInsertStrategy.NEXT, **extra)
 
 
 def find_object(object_id):
@@ -429,3 +459,124 @@ def _mro(affordance):
         return target.mro()
     except Exception:
         return ()
+
+
+# 2.35.0 (D3): going places. A spot is a standable point the game's own search finds near a position for her Sim;
+# Go Here takes her there, as a player's click does, with the game's own pick. Every function here is a read.
+
+def terrain_object():
+    """Read: the lot's terrain object, which offers Go Here, or None."""
+    try:
+        return services.terrain_service.terrain_object()
+    except Exception:
+        return None
+
+
+def front_door():
+    """Read: the game's front door object, or None when the lot has none."""
+    try:
+        return services.get_door_service().get_front_door()
+    except Exception:
+        return None
+
+
+def spot_start(obj, kind, side=1.0):
+    """Read: where the game's standable search starts for a spot. A room's spot starts at the object's own position
+    (the search finds free ground near it); the front door's starts one metre from it, along its forward axis on the
+    given side (+1 forward, -1 behind): the caller picks the side that is outdoors, since a door may face either way.
+    None when it cannot be read."""
+    try:
+        position = obj.position
+        if kind == "front_door":
+            forward = obj.forward
+            step = FRONT_DOOR_STEP_M * side
+            return Vector3(position.x + forward.x * step, position.y, position.z + forward.z * step)
+        return position
+    except Exception:
+        return None
+
+
+def standable_spot(sim, start, routing_surface):
+    """Read: the game's own standable spot for her Sim near start (placement.find_good_location), as
+    (position, orientation); None when the game finds none, or the search cannot be run."""
+    if placement is None or start is None:
+        return None
+    try:
+        starting = placement.create_starting_location(position=start, routing_surface=routing_surface)
+        context = placement.create_fgl_context_for_sim(starting, sim)
+        # The game returns (position, orientation, reason); position is None when nothing was found.
+        found = placement.find_good_location(context)
+        position, orientation = found[0], found[1]
+    except Exception:
+        return None
+    return None if position is None else (position, orientation)
+
+
+def room_at(obj, position, level):
+    """Read: the room id at a position on a level, by the game's own lookup (build_buy.get_room_id), as a string;
+    None when unknown."""
+    if get_room_id is None:
+        return None
+    try:
+        room = get_room_id(obj.zone_id, position, level)
+    except Exception:
+        return None
+    if isinstance(room, bool) or not isinstance(room, int):
+        return None
+    return str(room)
+
+
+def is_go_here(affordance):
+    """Read: whether an affordance is the game's Go Here: tuning name terrain-gohere, or class GoHereSuperInteraction."""
+    try:
+        name = affordance.__name__
+    except Exception:
+        name = ""
+    if name == GO_HERE_NAME:
+        return True
+    return any(_class_name(cls) == GO_HERE_CLASS for cls in _mro(affordance))
+
+
+def _class_name(cls):
+    try:
+        return cls.__name__
+    except Exception:
+        return ""
+
+
+def go_here_offered(terrain, context):
+    """Read: the terrain's Go Here affordances that this context offers (a spot's context carries its pick)."""
+    return [affordance for affordance in terrain.super_affordances(context) if is_go_here(affordance)]
+
+
+def spot_offers_for(terrain, context, guid64):
+    """Read: the terrain's Go Here affordances with this guid64, as the context offers them (an act's request)."""
+    if terrain is None:
+        return []
+    return [affordance for affordance in offers_for(terrain, context, guid64) if is_go_here(affordance)]
+
+
+def go_here_target(spot):
+    """2.35.0 (D3): the point Go Here targets (a TerrainPoint of a Location at the spot) and the pick the game's own
+    Go Here context carries: PICK_TERRAIN, or PICK_POOL_SURFACE when the spot is in a pool. (None, None) when a game
+    name is missing or the spot cannot be made into a target."""
+    if any(name is None for name in (TerrainPoint, Location, Transform, PickInfo, PickType)):
+        return None, None
+    try:
+        position, level, surface = spot["position"], spot["level"], spot["routing_surface"]
+        point = TerrainPoint(Location(Transform(position, spot["orientation"]), surface))
+        pool = is_location_pool(position, level) is True
+        pick = PickInfo(pick_type=PickType.PICK_POOL_SURFACE if pool else PickType.PICK_TERRAIN,
+                        target=point, location=position, routing_surface=surface)
+    except Exception:
+        return None, None
+    return point, pick
+
+
+def spot_target(sim, spot, owner=False):
+    """2.35.0 (D3): the target of Go Here at a spot and the act's context (the normal act context with the spot's
+    pick); (None, None) when the spot cannot be made into a target."""
+    point, pick = go_here_target(spot)
+    if point is None:
+        return None, None
+    return point, build_context(sim, owner=owner, pick=pick)

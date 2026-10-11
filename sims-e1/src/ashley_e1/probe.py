@@ -209,6 +209,7 @@ _E2 = e2_control.E2Control(
     get_writer=lambda: _WRITER,
     output=_output,
     get_armed_name=lambda: _ARMED_NAME,
+    get_zone=lambda: _current_zone(),
 )
 
 _ARM_NATIVE_TO_CANONICAL = {
@@ -1959,6 +1960,144 @@ def _on_lot(obj):
     return value if type(value) is bool else None
 
 
+class _MenuJobs(object):
+    """2.35.0 (D3): the jobs of one menu build, read lazily as _lazy_jobs reads them, with the spots the build has
+    found so far (the build's table; it is published when the build finishes)."""
+
+    def __init__(self, pairs, spots):
+        self._jobs = _lazy_jobs(pairs)
+        self.spots = spots
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._jobs)
+
+
+def _same_room(room, body_room):
+    """The menu's same_room: an object in her room (outdoors is never her room)."""
+    return room is not None and body_room is not None and room == body_room and room != "0"
+
+
+def _routing_surface(obj):
+    try:
+        return obj.routing_surface
+    except Exception:
+        return None
+
+
+def _level_of(obj):
+    try:
+        return obj.level
+    except Exception:
+        return None
+
+
+def _planar(vector):
+    """2.35.0 (D3): {x, z} of a game Vector3, rounded to 0.01, or None when unread."""
+    try:
+        return {"x": round(float(vector.x), 2), "z": round(float(vector.z), 2)}
+    except Exception:
+        return None
+
+
+def _spot_item(obj, kind, room, level, distance, body_room):
+    """2.35.0 (D3): one spot to look for. It is never an object of the game: it has no definition and no class of
+    its own, and it is on her lot."""
+    return {"object_id": None, "obj": obj, "spot": kind, "room": room, "level": level, "distance_m": distance,
+            "on_lot": True, "same_room": _same_room(room, body_room), "person": False,
+            "definition_id": None, "class": "spot"}
+
+
+def _spot_anchors(items, body_room):
+    """2.35.0 (D3): one spot to look for per (room, level) of the lot's objects. Its anchor is the object nearest the
+    group's centre; the game's search starts there when the build asks for the spot (never here, so a build stays
+    within its steps). A group without a level or a position is left out."""
+    groups = {}
+    for item in items:
+        position = item.get("position")
+        if (item["on_lot"] is not True or item["person"] is True or item["room"] is None or position is None
+                or type(position.get("level")) is not int):
+            continue  # a person is not an object: she is never the place the search starts from
+        groups.setdefault((item["room"], position["level"]), []).append(item)
+    anchors = []
+    for (room, level), members in groups.items():
+        centre_x = sum(member["position"]["x"] for member in members) / len(members)
+        centre_z = sum(member["position"]["z"] for member in members) / len(members)
+        anchor = min(members, key=lambda member: (member["position"]["x"] - centre_x) ** 2 +
+                     (member["position"]["z"] - centre_z) ** 2)
+        anchors.append(_spot_item(anchor["obj"], "room", room, level, anchor["distance_m"], body_room))
+    return anchors
+
+
+def _front_door_anchors(body_position, body_room):
+    """2.35.0 (D3): the front door's spot to look for, when the game has a front door. The spot is on the door's
+    outdoor side: one metre along its forward axis, in front or behind, whichever is outdoors (room "0"), since a
+    door may face either way. A door with neither side outdoors, or no readable room, gives no spot."""
+    door = e2_actuator.front_door()
+    if door is None:
+        return []
+    level = _level_of(door)
+    if type(level) is not int:
+        return []
+    for side in (1.0, -1.0):
+        start = e2_actuator.spot_start(door, "front_door", side)
+        if start is not None and e2_actuator.room_at(door, start, level) == "0":
+            distance = observers._distance(observers._position(door), body_position)
+            item = _spot_item(door, "front_door", "0", level, distance, body_room)
+            item["side"] = side
+            return [item]
+    return []
+
+
+def _spot_offers(item, sim, body_position, terrain, spots, seen):
+    """2.35.0 (D3): the Go Here act of one spot, for the build that asks for it. The game's standable search runs
+    here, inside the build's steps, from the spot's anchor. The spot counts only in the room it was asked for, once
+    per (room, level, kind), and only when the terrain offers Go Here at it; its id comes from the session's registry
+    and its record goes into the build's table under that id. A search that fails leaves the spot out."""
+    kind, room, level = item["spot"], item["room"], item["level"]
+    surface = _routing_surface(item["obj"])
+    found = e2_actuator.standable_spot(sim, e2_actuator.spot_start(item["obj"], kind, item.get("side", 1.0)), surface)
+    if found is None:
+        return []
+    position, orientation = found
+    if e2_actuator.room_at(item["obj"], position, level) != room:
+        return []
+    key = (room, level, kind)
+    if key in seen or terrain is None:
+        return []
+    spot = {"position": position, "orientation": orientation, "routing_surface": surface, "level": level,
+            "room": room, "kind": kind}
+    point, spot_context = e2_actuator.spot_target(sim, spot)
+    if point is None:
+        return []
+    picked = []
+    for affordance in e2_actuator.go_here_offered(terrain, spot_context):
+        if len(picked) >= act_menu.CANDIDATE_ACTS:
+            break
+        guid = tuned._class_plain(affordance, "guid64")
+        if type(guid) is not int:
+            continue
+        if (e2_actuator.act_excluded(affordance, False) is not None
+                or not e2_actuator.user_directed(affordance) or _menu_hidden(affordance)):
+            continue
+        picked.append((affordance, guid))
+    if not picked:
+        return []
+    spot_id = _E2.spot_ids.id_for(room, level, kind)
+    if spot_id is None:
+        return []
+    seen.add(key)
+    spots[str(spot_id)] = spot
+    distance = observers._distance(_planar(position), body_position)
+    return [{"object_id": str(spot_id), "definition_id": None, "class": "spot", "distance_m": distance,
+             "same_room": item["same_room"], "room": room, "level": level, "spot": kind,
+             "guid64": str(guid), "name": e2_actuator.GO_HERE_NAME, "text_key": None,
+             "obj": point, "affordance": affordance, "sim": sim, "context": spot_context}
+            for affordance, guid in picked]
+
+
 def _menu_jobs(row):
     """8f: (jobs, room) for a new menu build: the user-directed offers of the lot she is on,
     her room first (act_menu.ordered and pick). Plain reads only; the runner tests. Jobs
@@ -2000,11 +2139,14 @@ def _menu_jobs(row):
             continue  # 2.32.0 (SS4-v2, PR3): a person she cannot see is not offered (2.17.0: the same test, wider)
         items.append({
             "object_id": object_id, "obj": obj, "distance_m": distance, "on_lot": on_lot,
-            "room": room, "person": person,
-            "same_room": (room is not None and body_room is not None and room == body_room
-                          and room != "0"),
+            "room": room, "person": person, "position": position,
+            "same_room": _same_room(room, body_room),
         })
-    ordered = act_menu.ordered(items)
+    # 2.35.0 (D3): the spots of her lot (one per room and level, and the front door), searched when the build asks.
+    spots, seen = {}, set()
+    terrain = e2_actuator.terrain_object()
+    anchors = _spot_anchors(items, body_room) + _front_door_anchors(body_position, body_room)
+    ordered = act_menu.ordered(items + anchors)
     phone = []
     if sim_id is not None and sim_id not in e2_control.EXCLUDED_OBJECT_IDS:
         phone.append({"object_id": sim_id, "obj": sim, "phone": True, "person": False,
@@ -2016,11 +2158,15 @@ def _menu_jobs(row):
         try:
             if item.get("phone") is True:
                 return _menu_phone_offers(item, sim, context)
+            if item.get("spot") is not None:
+                return _spot_offers(item, sim, body_position, terrain, spots, seen)
             return _menu_offers(item, sim, context)
         except Exception:
             return []
 
     for item in ordered:
+        if item.get("spot") is not None:
+            continue  # 2.35.0 (D3): a spot is a place; its class and definition are set when it is found
         if item["person"]:
             # One person is never "the same kind" as another; the helper names them.
             item["definition_id"] = None
@@ -2031,7 +2177,7 @@ def _menu_jobs(row):
         except Exception:
             item["definition_id"] = None
         item["class"] = situation._name(type(item["obj"])) or ""
-    return _lazy_jobs(act_menu.iter_pick(phone + ordered, offers)), body_room
+    return _MenuJobs(act_menu.iter_pick(phone + ordered, offers), spots), body_room
 
 
 def _lazy_jobs(pairs):
@@ -2040,8 +2186,8 @@ def _lazy_jobs(pairs):
     reach = {}
     for item, acts in pairs:
         for job in acts:
-            # Her phone's reach is not asked: the game's connectivity check is for objects.
-            job["reach_seen"] = None if item.get("phone") is True else reach
+            # Her phone's reach is not asked: the game's connectivity check is for objects. 2.35.0 (D3): nor a spot's.
+            job["reach_seen"] = None if item.get("phone") is True or item.get("spot") is not None else reach
             yield job
 
 
@@ -2054,8 +2200,11 @@ def _menu_test(job):
         if job["object_id"] not in seen:
             seen[job["object_id"]] = e2_actuator.reachable(job["sim"], job["obj"])
         job["reach"] = seen[job["object_id"]]
-    ok, _reason, _reason_key = e2_actuator.preflight_test(
+    ok, _reason, reason_key = e2_actuator.preflight_test(
         job["sim"], job["obj"], job["affordance"], job["context"])
+    if not ok:
+        # 2.35.0 (D3): a refusal (not an error) is named in the menu for her phone's offers (refused_phone).
+        job["refused"], job["reason_key"] = True, reason_key
     return bool(ok)
 
 
@@ -2072,6 +2221,8 @@ def _menu_tick(row):
         build, zone = _MENU, _MENU_ZONE
         _MENU = None
         if zone is _current_zone() and not build.failed:
+            # 2.35.0 (D3): the spots of the build that finished are the ones an act may name (the newest build).
+            _E2.publish_spots(zone, build.spots)
             payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
             if not act_menu.same_menu(payload, _MENU_LAST):
                 # 2.34.0 (F4): the menu is written in parts, each one record; it counts as written when all are.
@@ -2085,7 +2236,7 @@ def _menu_tick(row):
         _MENU_STARTED_S = now
         _MENU_ROOM = body_room
         if jobs is not None:
-            _MENU = act_menu.MenuBuild(jobs, _menu_test)
+            _MENU = act_menu.MenuBuild(jobs, _menu_test, spots=jobs.spots)
             _MENU_ZONE = _current_zone()
 
 

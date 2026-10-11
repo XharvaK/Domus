@@ -387,6 +387,26 @@ def _room_label(item, room_labels):
     return (room_labels or {}).get(str(object_room))
 
 
+# 2.35.0 (D3): a spot is a place she can go to. Its act is Go here, whatever the probe names the game's act.
+SPOT_ACT_TEXT = "Go here"
+SPOT_OUTSIDE = "outside"
+SPOT_FRONT_DOOR = "the front door, outside"
+
+
+def _spot_name(item, label):
+    """2.35.0 (D3): a spot is named by its place: the front door, outside; else the room's label when it is known;
+    else outside for room 0; else a room upstairs or a room, by level."""
+    if item.get("spot") == "front_door":
+        return SPOT_FRONT_DOOR
+    if label:
+        return label[:64]
+    if str(item.get("room")) == "0":
+        return SPOT_OUTSIDE
+    level = item.get("level")
+    upstairs = isinstance(level, int) and not isinstance(level, bool) and level > 0
+    return "a room upstairs" if upstairs else "a room"
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
             room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
@@ -405,6 +425,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
+        is_spot = item.get("class") == "spot"  # 2.35.0 (D3): a place she goes to, not a thing she uses
         if item.get("class") == "sim" and people is not None and str(item.get("object_id")) not in people:
             # SS4-v2 (PR3): a person she cannot see is not offered; the menu names only seen Sims.
             continue
@@ -419,20 +440,27 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
-            text = _text(resolve, act.get("text_key"), _person_name(item, people)) or humanize(act.get("name"))
+            if is_spot:
+                text = SPOT_ACT_TEXT
+            else:
+                text = _text(resolve, act.get("text_key"), _person_name(item, people)) or humanize(act.get("name"))
             if text in texts:
                 continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
             texts.add(text)
-            listed = {"ref": refs.ref(("act", str(item.get("object_id")), str(act["guid64"]))),
-                      "guid64": str(act["guid64"]), "text": text}
+            if is_spot:
+                # 2.35.0 (D3): a spot's ref is its room, level and kind, not the probe's number (it can change).
+                ref_key = ("spot", str(item.get("room")), item.get("level"), item.get("spot"))
+            else:
+                ref_key = ("act", str(item.get("object_id")), str(act["guid64"]))
+            listed = {"ref": refs.ref(ref_key), "guid64": str(act["guid64"]), "text": text}
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
             acts.append(listed)
         if acts:
-            entry = {"object": _object_name(item, resolve, catalog, people),
-                     "object_id": str(item.get("object_id")), "where": where, "acts": acts,
-                     "near": _near(item, room)}
             label = _room_label(item, room_labels)
+            name = _spot_name(item, label) if is_spot else _object_name(item, resolve, catalog, people)
+            entry = {"object": name, "object_id": str(item.get("object_id")), "where": where, "acts": acts,
+                     "near": _near(item, room)}
             if label:
                 entry["room"] = label[:64]
             if item.get("reach") is False:
@@ -440,14 +468,20 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
                 entry["noWay"] = NO_WAY
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
             where_named = label or (str(item["room"])[:64] if item.get("room") is not None else None)
-            result.append((entry, where_named))
-    result.sort(key=lambda pair: pair[0]["near"] is not True)  # near first; the rest keep the menu's order
-    while result and (len(result) > objects_limit or _bytes([pair[0] for pair in result]) > limit):
+            room_id = None if item.get("room") is None else str(item["room"])
+            result.append((entry, where_named, room_id, is_spot))
+    # Near first; then the rooms in the menu's order, and a spot before the objects of its own room, so a cut takes
+    # a spot only once its room's objects are gone (2.35.0, D3). Within a room the menu's order is kept.
+    heads = {}
+    for index, row in enumerate(result):
+        heads.setdefault(row[2], index)
+    result.sort(key=lambda row: (row[0]["near"] is not True, heads[row[2]], not row[3]))
+    while result and (len(result) > objects_limit or _bytes([row[0] for row in result]) > limit):
         left_out.append(result.pop()[1])
     if cut is not None and left_out:
         cut["objects"] = len(left_out)
         cut["rooms"] = sorted({name for name in left_out if name})[:16]
-    return [pair[0] for pair in result]
+    return [row[0] for row in result]
 
 
 def _version(probe):
