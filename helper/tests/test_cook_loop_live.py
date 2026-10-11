@@ -105,7 +105,7 @@ def test_holding_still_never_fills_her_running_or_queued_acts():
 
 
 def test_what_she_is_doing_is_hers_to_stop_and_posture_is_not():
-    from domus_helper.acts import QUEUE_OBJECT_ID, queue_options
+    from domus_helper.acts import QUEUE_OBJECT_ID, RefBook, queue_options
     row = {"interactions": {"observed": [
         {"interaction_id": "313", "affordance_text": "<class 'sims4.tuning.instances.piano_Play_Song'>",
          "membership": "QUEUED_AND_RUNNING", "source_raw": "InteractionSource.SCRIPT_WITH_USER_INTENT"},
@@ -114,10 +114,10 @@ def test_what_she_is_doing_is_hers_to_stop_and_posture_is_not():
         {"interaction_id": "339", "affordance_text": "<class 'sims4.tuning.instances.seating_Sit_single'>",
          "membership": "RUNNING", "source_raw": "InteractionSource.POSTURE_GRAPH"},
     ]}}
-    [group] = queue_options(row, start=2)
+    [group] = queue_options(row, refs=RefBook())  # N8 (F3): refs number from the view's own book
     assert group["object_id"] == QUEUE_OBJECT_ID
-    assert group["acts"] == [{"ref": "a3", "guid64": "313", "text": "Stop: piano Play Song"},
-                             {"ref": "a4", "guid64": "609", "text": "Cancel (queued): fridge Create Tray"}]
+    assert group["acts"] == [{"ref": "a1", "guid64": "313", "text": "Stop: piano Play Song"},
+                             {"ref": "a2", "guid64": "609", "text": "Cancel (queued): fridge Create Tray"}]
     assert queue_options({"interactions": {"observed": []}}) == []
 
 

@@ -38,6 +38,33 @@ _PHASES = {"ACCEPTED": "accepted", "REJECTED": "rejected", "PUSHED": "pushed",
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 
+class MenuParts(object):
+    """N8 (F4): the probe writes a menu in parts, one act_menu row each, with the same menu_rev and each part's
+    index of the count. take() returns the whole menu once all of its parts have come, else None. A row without
+    parts (an older probe) is a whole menu. A menu whose parts are not all in is never shown part-way."""
+
+    def __init__(self):
+        self._key = None
+        self._pieces = {}
+
+    def take(self, session, e2):
+        parts = e2.get("parts") if type(e2.get("parts")) is int else 1
+        part = e2.get("part") if type(e2.get("part")) is int else 0
+        if not 1 <= parts <= 64 or not 0 <= part < parts:
+            return None
+        key = (session, e2.get("menu_rev"))
+        if key != self._key:
+            self._key, self._pieces = key, {}
+        self._pieces[part] = e2
+        if len(self._pieces) < parts:
+            return None
+        objects = []
+        for index in range(parts):
+            objects.extend(self._pieces[index].get("objects") or [])
+        self._key, self._pieces = None, {}
+        return dict(e2, objects=objects, part=0, parts=1)
+
+
 class RefBook(object):
     """N8 (F3): the refs of one helper session (one attachment). The first time a key is listed it gets the next
     free number; it keeps that ref in every later view, and a number is never given to another key."""

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from domus_helper.acts import OPENS_SCREEN, WITHHELD_SEED, RefBook, dialog_options, options, queue_options
+from domus_helper.acts import OPENS_SCREEN, WITHHELD_SEED, MenuParts, RefBook, dialog_options, options, queue_options
 from domus_helper.contract import ContractError, validate_observation
 
 
@@ -164,3 +164,29 @@ def test_the_contract_carries_160_options_and_the_cut_within_32_kib():
         validate_observation(dict(body, options=[{"object": "x"}] * 161), 1500)
     with pytest.raises(ContractError):
         validate_observation(dict(body, options_cut={"objects": "ten"}), 1500)
+
+
+# F4 part 1 on the helper side: a menu arrives in parts and is shown once whole.
+def test_a_menu_in_parts_is_shown_only_once_all_its_parts_have_come_in_order():
+    parts = MenuParts()
+    first = {"menu_rev": 3, "room": "1", "tested": 4, "refused": 1, "build_ms": 2.0, "part": 0, "parts": 3,
+             "objects": [{"object_id": "1"}]}
+    second = dict(first, part=1, objects=[{"object_id": "2"}])
+    third = dict(first, part=2, objects=[{"object_id": "3"}])
+    assert parts.take("s", third) is None
+    assert parts.take("s", first) is None
+    whole = parts.take("s", second)
+    assert [item["object_id"] for item in whole["objects"]] == ["1", "2", "3"]
+    assert (whole["menu_rev"], whole["room"], whole["part"], whole["parts"]) == (3, "1", 0, 1)
+
+
+def test_a_lone_part_of_an_older_menu_is_dropped_by_the_next_revision_and_an_old_row_is_whole():
+    parts = MenuParts()
+    assert parts.take("s", {"menu_rev": 3, "room": None, "objects": [{"object_id": "1"}], "part": 0,
+                            "parts": 2}) is None
+    newer = {"menu_rev": 4, "room": None, "objects": [{"object_id": "9"}], "part": 0, "parts": 1}
+    assert [item["object_id"] for item in parts.take("s", newer)["objects"]] == ["9"]
+    assert parts.take("s", {"menu_rev": 5, "room": None, "objects": [], "part": 1, "parts": 2}) is None
+    assert parts.take("s", {"menu_rev": 5, "room": None, "objects": [], "part": 5, "parts": 2}) is None
+    assert parts.take("s", {"menu_rev": 1, "room": None, "objects": [{"object_id": "7"}]})["objects"] == [
+        {"object_id": "7"}]

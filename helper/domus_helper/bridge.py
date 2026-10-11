@@ -12,7 +12,7 @@ from . import commands
 from . import fingerprints as fingerprint_reader
 from . import pace
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, ActCourier, RefBook, act_names, dialog_options, options as act_options, people_names, queue_options
+from .acts import OPTIONS_LIMIT, ActCourier, MenuParts, RefBook, act_names, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -140,6 +140,7 @@ class Bridge:
         # that carries her requested acts to the probe (only when Ashley is reachable).
         self._menu = None
         self._refs = RefBook()  # N8 (F3): the refs of this helper session (reset at each attachment)
+        self._menu_parts = MenuParts()  # N8 (F4): a menu arrives in parts; the whole one is the menu
         self._catalog = None
         self._acts = None if self.client is None else ActCourier(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
@@ -349,10 +350,13 @@ class Bridge:
             clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
             if kind == "act_menu" and isinstance(record.get("e2"), dict):
                 # HE12: the menu keeps its wall time and its room; its labels are read against her room now.
-                self._menu = {"session": record.get("telemetry_session_id"), "payload": record["e2"],
-                              "at_ms": clock_ms}
-                self._notebook_quietly(
-                    lambda: self.notebook.observe_menu(self._world(), record["e2"], clock_ms))
+                # N8 (F4): a menu is shown once all its parts have come (see MenuParts).
+                whole = self._menu_parts.take(record.get("telemetry_session_id"), record["e2"])
+                if whole is not None:
+                    self._menu = {"session": record.get("telemetry_session_id"), "payload": whole,
+                                  "at_ms": clock_ms}
+                    self._notebook_quietly(
+                        lambda: self.notebook.observe_menu(self._world(), whole, clock_ms))
             elif kind == "presence_snapshot":
                 self._notebook_quietly(
                     lambda: self.notebook.observe_presence(self._world(), record, clock_ms))
