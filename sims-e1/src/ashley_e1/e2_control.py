@@ -262,6 +262,20 @@ def _same_id(obj, her):
     return her is not None and obj is not None and _read(lambda: str(obj.id)) == her
 
 
+# 2.37.0 (W10 P1): the game's InteractionSource names. A window whose first interaction is one of the others, on her
+# Sim, is hers; a pie menu or a hand at the controls (SCRIPT_WITH_USER_INTENT) keeps it the User's.
+HER_INTERACTION_SOURCES = frozenset(("AUTONOMY", "BODY_CANCEL_AOP", "CARRY_CANCEL_AOP", "SCRIPT", "UNIT_TEST",
+                                     "POSTURE_GRAPH", "SOCIAL_ADJUSTMENT", "REACTION", "GET_COMFORTABLE",
+                                     "VEHCILE_CANCEL_AOP"))
+
+
+def _interaction_source_name(source):
+    """2.37.0 (W10 P1): the enum member's name from str(source) ("InteractionSource.SCRIPT" gives "SCRIPT"), or None."""
+    if not isinstance(source, str):
+        return None
+    return source.rsplit(".", 1)[-1]
+
+
 def _target_or_actor_is(interaction, her):
     """2.31.0 (§4.1 identity): the interaction's target Sim, or its actor when the target cannot be read."""
     target = _read(lambda: interaction.target)
@@ -1882,9 +1896,12 @@ class E2Control:
         if self._pushing_window(dialog, her, interactions):
             return "hers", self.pushing["act"]
         if interactions:
+            # 2.37.0 (W10 P1): the first interaction's source decides. On her Sim, every game source but a pie
+            # menu or a hand at the controls is hers (her own script, reflex or cancel act); another Sim's is the User's.
             first = interactions[0]
             source = _read(lambda: str(first.context.source))
-            if source is not None and source.endswith("AUTONOMY") and _same_id(_read(lambda: first.sim), her):
+            if (_interaction_source_name(source) in HER_INTERACTION_SOURCES
+                    and _same_id(_read(lambda: first.sim), her)):
                 return "hers", None
             return "user", None
         if commanded:
