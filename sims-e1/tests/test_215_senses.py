@@ -186,7 +186,7 @@ class SelfTests(unittest.TestCase):
         lab.trait_tracker = self._sim_info().trait_tracker
         lab.household = types.SimpleNamespace(_funds=types.SimpleNamespace(_funds=500))
         row = ds3.PollOnceTests.row(self)
-        self.assertEqual(row["schema_version"], 15)
+        self.assertEqual(row["schema_version"], 16)
         self.assertEqual(row["self"]["funds"], 500)
         self.assertEqual(row["self"]["traits"][0]["trait"], "trait_Cheerful")
         self.assertEqual([item["on_lot"] for item in row["presence"]], [True, True, True])

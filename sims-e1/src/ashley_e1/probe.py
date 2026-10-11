@@ -1913,7 +1913,7 @@ def _menu_offers(item, sim, context):
             name = ""
         jobs.append({
             "object_id": item["object_id"], "definition_id": item["definition_id"], "class": item["class"],
-            "distance_m": item["distance_m"], "same_room": item["same_room"],
+            "distance_m": item["distance_m"], "same_room": item["same_room"], "room": item.get("room"),
             "guid64": str(guid), "name": name if type(name) is str else "",
             "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
             "obj": obj, "affordance": affordance, "sim": sim, "context": context,
@@ -1943,7 +1943,7 @@ def _menu_phone_offers(item, sim, context):
             name = ""
         jobs.append({
             "object_id": item["object_id"], "definition_id": None, "class": "phone",
-            "distance_m": None, "same_room": None, "phone": True,
+            "distance_m": None, "same_room": None, "room": None, "phone": True,
             "guid64": str(guid), "name": name if type(name) is str else "",
             "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
             "obj": sim, "affordance": affordance, "sim": sim, "context": context,
@@ -2026,14 +2026,18 @@ def _menu_jobs(row):
         except Exception:
             item["definition_id"] = None
         item["class"] = situation._name(type(item["obj"])) or ""
-    jobs = []
+    return _job_stream(act_menu.iter_pick(phone + ordered, offers)), body_room
+
+
+def _job_stream(pairs):
+    """2.34.0 (F4): the jobs of each (item, acts) pair, read one object at a time as the build asks for
+    them (a lazy stream, so a full lot is stepped across ticks and never read in one)."""
     reach = {}
-    for item, acts in act_menu.pick(phone + ordered, offers):
+    for item, acts in pairs:
         for job in acts:
             # Her phone's reach is not asked: the game's connectivity check is for objects.
             job["reach_seen"] = None if item.get("phone") is True else reach
-        jobs.extend(acts)
-    return jobs, body_room
+            yield job
 
 
 def _menu_test(job):
@@ -2062,10 +2066,12 @@ def _menu_tick(row):
     if _MENU is not None and _MENU.done:
         build, zone = _MENU, _MENU_ZONE
         _MENU = None
-        if zone is _current_zone():
+        if zone is _current_zone() and not build.failed:
             payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
             if not act_menu.same_menu(payload, _MENU_LAST):
-                if _E2._event("act_menu", payload):
+                # 2.34.0 (F4): the menu is written in parts, each one record; it counts as written when all are.
+                written = [_E2._event("act_menu", part) for part in act_menu.parts(payload)]
+                if all(written):
                     _MENU_REV += 1
                     _MENU_LAST = payload
     if _MENU is None and (_MENU_STARTED_S is None or room != _MENU_ROOM or

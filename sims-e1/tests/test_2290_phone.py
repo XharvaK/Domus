@@ -190,9 +190,10 @@ class PhoneMenuTests(unittest.TestCase):
 
     def test_phone_rows_validate_and_the_phone_key_is_optional(self):
         schema = self.probe.schema
-        payload = {"menu_rev": 1, "room": None, "tested": 1, "refused": 0, "build_ms": 1.0, "objects": [
+        payload = {"menu_rev": 1, "room": None, "tested": 1, "refused": 0, "build_ms": 1.0, "part": 0, "parts": 1,
+                   "objects": [
             {"object_id": "1", "definition_id": None, "class": "c", "distance_m": 1.0, "same_room": True,
-             "reach": True, "acts": [{"guid64": "1", "name": "n", "text_key": None}]}]}
+             "reach": True, "room": None, "acts": [{"guid64": "1", "name": "n", "text_key": None}]}]}
         row = schema.make_record("act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1,
                                  e2=payload)
         schema.validate_record(row)
