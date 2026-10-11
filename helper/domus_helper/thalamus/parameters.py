@@ -5,5 +5,5 @@ DECISION_LOG_QUOTA_BYTES = 50 * 1024 * 1024
 
 KINDS = (
     "need", "interaction", "posture", "presence", "social",
-    "moodlet", "env", "lineage", "gap",
+    "moodlet", "env", "lineage", "gap", "look",
 )

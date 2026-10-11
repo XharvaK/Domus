@@ -527,8 +527,10 @@ class ActCourier(object):
         # probe called it gone (LEFT_QUEUE) and she cooked again and again. Dialogs seen open.
         raw = spool.get_kv("acts_asked")
         self._asked = json.loads(raw) if raw else []
-        # H0.5: steps of her plan Ashley still holds; while any wait, her idle is not a decision point.
+        # H0.5: steps of her plan Ashley still holds (the view sender no longer reads them, D2).
         self.planned = int(spool.get_kv("acts_planned") or 0)
+        # D2 (H3): Ashley asked for a look at her body now; handed over once by take_look().
+        self.look_owed = False
         # E3: the game dialogs she answered herself in this run (the overlay tells her hand from a human's).
         self.answered_dialogs = []
 
@@ -611,6 +613,11 @@ class ActCourier(object):
                 known["terminal"] = True
         self._save()
 
+    def take_look(self):
+        """D2 (H3): whether a look was asked since the last call; the flag is cleared when it is read."""
+        owed, self.look_owed = self.look_owed, False
+        return owed
+
     def tick(self, client, helper_session, now_ms, attached, probe=None):
         """One round trip: send what happened, receive what to do. Returns the acts written.
         probe: the installed probe's version, when the helper knows it (A9-9 gates what it is sent)."""
@@ -642,6 +649,8 @@ class ActCourier(object):
         self._events = self._events[len(sending):]
         planned = response.get("planned")
         self.planned = planned if type(planned) is int and planned >= 0 else 0
+        if response.get("look") is True:
+            self.look_owed = True
         written = []
         for act in response.get("acts") or []:
             act_id = act.get("act_id") if isinstance(act, dict) else None

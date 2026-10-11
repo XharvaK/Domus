@@ -28,6 +28,7 @@ from . import coalesce
 from .thalamus.log import DecisionLog
 from .thalamus.observation import SeenMemory, build
 from .thalamus.percepts import Extractor
+from .thalamus.types import Percept
 from .transport import AshleyClient, load_credentials
 from .windows import WindowLog, withheld_of
 
@@ -191,6 +192,8 @@ class Bridge:
             written = self._acts.tick(self.client, self.helper_session, now, self._state == "attached", probe=probe)
             self._pace_log.received(written)
             self.overlay.answered = self._acts.answered_dialogs
+            if self._acts.take_look():
+                self._send_look(now)
         if self.client is not None:
             self.spool.flush(self.client, now)
         self._pace_tick(now)
@@ -361,9 +364,20 @@ class Bridge:
         percepts, self._coalesced = coalesce.take(self._coalesced)
         self._send_view(percepts, reason, wall_ms)
 
-    def _send_view(self, percepts, trigger, wall_ms):
+    def _send_look(self, wall_ms):
+        """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;
+        the changes waiting go with it. With no body row yet nothing is sent, and the log says so."""
+        body = self._last_body_row
+        if body is None:
+            self._log.write({"wall_ms": wall_ms, "trigger": "look", "percepts": 0, "kinds": [],
+                             "enqueued": False, "observation_id": None, "error": "no_body_row"})
+            return
+        percepts, self._coalesced = coalesce.take(self._coalesced)
+        self._send_view(percepts + (Percept("look", "self", "", "asked"),), "look", wall_ms, event=body)
+
+    def _send_view(self, percepts, trigger, wall_ms, event=None):
         """One view of her body now, carrying these changes. Salience is 0: the view says what changed, not what
-        matters. One line in the decision log per view sent."""
+        matters. One line in the decision log per view sent. event: the row the view is about (default the newest)."""
         self._fires += 1
         self._last_fire_reason = trigger
         self._last_fire_wall_ms = wall_ms
@@ -371,7 +385,7 @@ class Bridge:
         observation_id = None
         error = None
         decision = SimpleNamespace(percepts=[(percept, 0.0) for percept in percepts], reason=trigger)
-        obs = build(decision, self._obs_ctx(wall_ms))
+        obs = build(decision, self._obs_ctx(wall_ms, event))
         if self.client is not None and not self._telemetry_only:
             try:
                 self.spool.enqueue_observation(obs, wall_ms)
@@ -417,7 +431,7 @@ class Bridge:
         self._enqueued += 1
         self.diary.clear()
 
-    def _obs_ctx(self, wall_ms):
+    def _obs_ctx(self, wall_ms, event=None):
         # Portrait, dialogs and presence come from the latest body sample. Timing and
         # identity of this decision stay on the newest row, which may be an event.
         body = self._last_body_row or self._last_row
@@ -430,7 +444,7 @@ class Bridge:
             "guid": self._extractor.guid,
             "lineage_class": self._extractor.lineage_class,
             "row": body,
-            "event_row": self._last_row,
+            "event_row": self._last_row if event is None else event,
             "resolve_text": self._resolve_text,
             "act_name": self._act_names(),
             "room_labels": self._room_labels(),

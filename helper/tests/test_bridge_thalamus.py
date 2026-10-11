@@ -588,3 +588,51 @@ def test_the_thalamus_decision_is_gone_and_a_calm_change_is_sent_after_the_quiet
     assert line["trigger"] == "quiet" and line["percepts"] == len(obs["percepts"])
     assert line["kinds"] == sorted({item["kind"] for item in obs["percepts"]})
     assert line["enqueued"] is True and line["observation_id"] == obs["observation_id"]
+class _LookClient(_Client):
+    """H3: the acts sync answers `look: true` once for each look the test asks for."""
+
+    def __init__(self):
+        self.looks = 0
+
+    def sync_acts(self, body):
+        if self.looks:
+            self.looks -= 1
+            return {"v": 1, "look": True}
+        return {"v": 1}
+
+
+def test_a_look_the_acts_sync_asks_for_sends_one_look_view_at_once(paths, tmp_path, monkeypatch):
+    """H3: `look: true` in the sync answer sends one view now, from the newest body row, with a look percept."""
+    from domus_helper.contract import validate_observation as check
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10)])
+    client = _LookClient()
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono, client=client)
+    bridge.tick(WALL)
+    bridge.tick(WALL + 1_500)
+    assert len(_payloads(bridge)) == 1
+    client.looks = 1
+    bridge.tick(WALL + 1_600)
+    payloads = _payloads(bridge)
+    assert len(payloads) == 2
+    obs = check(payloads[1], WALL + 1_600)
+    assert [item["kind"] for item in obs["percepts"]] == ["look"]
+    assert obs["percepts"][0]["facts"]["bucket"] == "asked"
+    assert obs["snapshot"] == "2" and obs["portrait"]["needs"] == {"hunger": {"value": 40, "band": "ok"}}
+    bridge.tick(WALL + 1_700)
+    assert len(_payloads(bridge)) == 2  # handed over once: the flag is cleared
+
+
+def test_a_look_before_any_body_row_sends_nothing_and_says_so_in_the_log(paths, tmp_path, monkeypatch):
+    """H3: no body row yet, so no view; the pending changes stay pending and the log says why."""
+    data = _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL)])
+    client = _LookClient()
+    client.looks = 1
+    bridge = _bridge(paths, {"ms": WALL}, client=client)
+    bridge.tick(WALL)
+    assert _payloads(bridge) == []
+    line = _log_lines(data)[-1]
+    assert line["trigger"] == "look" and line["enqueued"] is False
+    assert line["observation_id"] is None and line["error"] == "no_body_row"
