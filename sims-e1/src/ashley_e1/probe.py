@@ -2162,10 +2162,12 @@ def _menu_jobs(row):
         # The room lookup is only worth it for objects of this lot or near her.
         room = (observers._room(obj, position)
                 if on_lot is True or (distance is not None and distance <= 20.0) else None)
-        if person and not observers.seen_here(room, None if position is None else position.get("level"),
-                                              distance, body_room,
-                                              None if body_position is None else body_position.get("level")):
-            continue  # 2.32.0 (SS4-v2, PR3): a person she cannot see is not offered (2.17.0: the same test, wider)
+        # 2.38.0 (W11 H2): a Sim on her lot she cannot see is heard, and is offered too (the helper says so); off the
+        # lot, a Sim she cannot see is not offered (2.32.0, SS4-v2, PR3).
+        if person and on_lot is not True and not observers.seen_here(
+                room, None if position is None else position.get("level"),
+                distance, body_room, None if body_position is None else body_position.get("level")):
+            continue
         items.append({
             "object_id": object_id, "obj": obj, "distance_m": distance, "on_lot": on_lot,
             "room": room, "person": person, "position": position,
