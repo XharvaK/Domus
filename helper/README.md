@@ -76,7 +76,7 @@ fail closed. Evidence missing its ledger is an error, not fabricated data.
 ## Bridge
 
 `python -m domus_helper.bridge --once` reads new telemetry, updates attachment,
-runs the peripheral thalamus, sends one heartbeat when Ashley is configured,
+sends the changes it sees as views (`coalesce.py`), sends one heartbeat when Ashley is configured,
 and flushes the observation outbox. `python -m domus_helper.bridge --interval 5`
 repeats until Ctrl+C.
 
@@ -153,7 +153,7 @@ counts. State, extractor state, `last_rowid`, and `obs_seq` persist in the spool
 `kv` table (`user_version` 2; a v1 database upgrades in place) so a helper
 restart does not repeat observations.
 
-A fire is enqueued only when transport is enabled and the session is not
+A view is enqueued only when transport is enabled and the session is not
 `telemetry_only`. `thalamus/observation.py` builds one v1 observation:
 `{helper_session}.{obs_seq}`, world `slot{slot_id}` (or `unknown`), branch from
 the lineage guid, session from `telemetry_session_id`, body from `body.sim_id`,
@@ -162,13 +162,11 @@ class `[A-Z_]{1,32}` or `PENDING`, up to 32 percepts (salience clamped to
 0..1, facts capped at 2048 bytes), and a present-tense portrait capped at
 8192 bytes. `seq` increments only when the outbox accepts the observation.
 
-Every `decide` that had percepts or fired appends one JSON line to
-`data_dir/thalamus/decisions-YYYYMMDD.jsonl` (UTC). `DECISION_LOG_QUOTA_BYTES`
-in `thalamus/parameters.py` (50 MiB) is the Owner-adjustable cap. After a
-write, the oldest files other than today's are deleted until the directory
-fits. A shadow scorer (`thalamus/scorer.py`, `DOMUS_SHADOW_SCORER`) may
-annotate a fire in that line. Unknown names stay `NullScorer`. The scorer has
-a 2 second budget, and it never changes `decide`, the observation, or enqueueing.
+Every view sent appends one JSON line to `data_dir/thalamus/decisions-YYYYMMDD.jsonl`
+(UTC): time, trigger (`quiet`, `oldest`, `question`, or `look`), percept count, kinds, and
+observation id. `DECISION_LOG_QUOTA_BYTES` in `thalamus/parameters.py` (50 MiB) is the
+Owner-adjustable cap. After a write, the oldest files other than today's are deleted until the
+directory fits. There is no scorer and no decision (D2): every change is sent, coalesced.
 
 Credentials: `E:\Domus\ashley_url` and `ashley_token` (or
 `DOMUS_DATA_DIR`). Overrides: `DOMUS_ASHLEY_URL` and `DOMUS_ASHLEY_TOKEN`.

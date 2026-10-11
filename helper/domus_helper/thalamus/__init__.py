@@ -1,6 +1,3 @@
-"""Peripheral thalamus: which game percepts reach Ashley."""
+"""Peripheral thalamus: the Extractor (percepts.py) and the view builder (observation.py).
 
-from domus_helper.thalamus.core import decide
-from domus_helper.thalamus.parameters import PARAMETER_REVISION, Parameters
-
-__all__ = ["PARAMETER_REVISION", "Parameters", "decide"]
+What decides when a view goes is the coalescer (domus_helper/coalesce.py); the thalamus no longer decides (D2)."""

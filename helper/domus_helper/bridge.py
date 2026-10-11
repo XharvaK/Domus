@@ -1,6 +1,5 @@
 """Helper bridge: spool telemetry, heartbeat, and flush the observation outbox."""
 import argparse
-import dataclasses
 import json
 import secrets
 import sqlite3
@@ -25,13 +24,10 @@ from .contract import ContractError
 from .cursor import TelemetryCursor
 from .paths import Paths
 from .spool import OutboxConflict, Spool
-from .thalamus.core import decide, prune
+from . import coalesce
 from .thalamus.log import DecisionLog
 from .thalamus.observation import SeenMemory, build
-from .thalamus.parameters import Parameters
 from .thalamus.percepts import Extractor
-from .thalamus.scorer import load_scorer, run_scorer
-from .thalamus.types import Context, ThalamusState
 from .transport import AshleyClient, load_credentials
 from .windows import WindowLog, withheld_of
 
@@ -43,9 +39,6 @@ _TALK_PROBE = (2, 26, 0)
 PACE_RETRY_MS = 30_000
 # HE17: the newest row is kept in the spool when it changed, and at most this often.
 ROW_WRITE_EVERY_MS = 30_000
-# HE16: the wakes a quiet game makes (no new row), and the window an observation stays valid for.
-CLOCK_WAKES = ("check", "boredom")
-OBSERVATION_WINDOW_MS = 600_000
 
 
 def _body_sample(record):
@@ -66,29 +59,13 @@ def _probe_ok(probe, least=_CAMERA_PROBE):
         return False
 
 
-def _wall(record):
-    wall = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
-    return wall if type(wall) is int else 0
-
-
 def _ticks(record):
     game = record.get("game") if isinstance(record, dict) else None
     return game.get("ticks") if isinstance(game, dict) else None
 
 
-def _trace(item):
-    return {
-        "key": item.key,
-        "raw": item.raw,
-        "h_before": item.h_before,
-        "h_after": item.h_after,
-        "salience": item.salience,
-        "novelty": item.novelty,
-    }
-
-
 class Bridge:
-    def __init__(self, paths=None, *, client=_AUTO, process=_AUTO, detected_build=_AUTO, mono=None, scorer=_AUTO):
+    def __init__(self, paths=None, *, client=_AUTO, process=_AUTO, detected_build=_AUTO, mono=None):
         self.paths = paths or Paths.from_env()
         self.paths.data_dir.mkdir(parents=True, exist_ok=True)
         self.spool = Spool(self.paths.data_dir / "spool.db")
@@ -120,22 +97,19 @@ class Bridge:
         self._last_heartbeat_ms = None
         self._tried_attached = None
         self._tried_inputs = None
-        self._params = Parameters()
-        self._context = Context()
         self._log = DecisionLog(self.paths.data_dir)
         self._loaded = False
-        self._thalamus = ThalamusState()
+        self._coalesced = coalesce.Pending()  # D2: the changes waiting for their view
         self._extractor = Extractor()
         self._last_rowid = 0
         self._obs_seq = 0
         self._last_row = None
         self._last_body_row = None
-        self._seen = None  # SS4-v2: who she sees, by handle (set when the thalamus state loads)
-        self._fires = 0
+        self._seen = None  # SS4-v2: who she sees, by handle (set when the state loads; kept in memory only)
+        self._fires = 0  # views sent (the status keeps the name)
         self._enqueued = 0
         self._last_fire_reason = None
         self._last_fire_wall_ms = None
-        self._theta = self._params.theta0
         # 8f: the probe's newest menu of what she can do ({session, payload}), and the courier
         # that carries her requested acts to the probe (only when Ashley is reachable).
         self._menu = None
@@ -154,11 +128,6 @@ class Bridge:
         self.talk = Talk(self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
         if self._acts is not None:
             self.overlay.answered = self._acts.answered_dialogs
-        if scorer is _AUTO:
-            self.scorer, self._scorer_note = load_scorer()
-        else:
-            self.scorer = scorer
-            self._scorer_note = None
         self.notebook = notebook.Notebook(self.paths.data_dir / notebook.DB_NAME)
         # W2h: the window facts (held windows shown, screens only the User's hands can use).
         self._windows = WindowLog(self.spool)
@@ -284,29 +253,27 @@ class Bridge:
                 "match": probe == schema.PROBE_VERSION}
 
     def thalamus_status(self):
-        self._load_thalamus()
-        note = self._scorer_note
+        """The view sender's counts. `fires` is the views sent; `pending` the changes still waiting."""
+        self._load_state()
         return {
             "fires": self._fires,
             "last_fire_reason": self._last_fire_reason,
             "last_fire_wall_ms": self._last_fire_wall_ms,
-            "pending": len(self._thalamus.pending),
-            "theta": self._theta,
-            "keys": len(self._thalamus.keys),
+            "pending": len(self._coalesced.items),
             "enqueued": self._enqueued,
-            "scorer": note if note else type(self.scorer).__name__,
         }
 
-    def _load_thalamus(self):
+    def _load_state(self):
         if self._loaded:
             return
         self._loaded = True
-        raw = self.spool.get_kv("thalamus_state")
+        raw = self.spool.get_kv("coalescer_state")
         if raw:
-            self._thalamus = ThalamusState.from_dict(json.loads(raw))
+            self._coalesced = coalesce.from_list(json.loads(raw))
         raw = self.spool.get_kv("extractor_state")
         if raw:
             self._extractor = Extractor.from_dict(json.loads(raw))
+        # Not persisted: the held handles are rebuilt from her body samples as they come (the key is kept in the spool).
         self._seen = SeenMemory(self._heard_key())
         self._last_rowid = int(self.spool.get_kv("last_rowid") or 0)
         self._obs_seq = int(self.spool.get_kv("obs_seq") or 0)
@@ -321,9 +288,6 @@ class Bridge:
         self._last_fire_reason = self.spool.get_kv("thalamus_last_reason") or None
         wall = self.spool.get_kv("thalamus_last_wall_ms")
         self._last_fire_wall_ms = int(wall) if wall else None
-        theta = self.spool.get_kv("thalamus_theta")
-        if theta is not None:
-            self._theta = float(theta)
 
     def _heard_key(self):
         """SS4-v2: the per-install key of the handles of the Sims she hears. Made once, kept in the spool."""
@@ -335,16 +299,15 @@ class Bridge:
 
     def _seen_ids(self):
         """SS4-v2: the presence ids she sees at her body's latest sample (None before the state loads)."""
-        self._load_thalamus()
+        self._load_state()
         return self._seen.seen_ids if self._seen is not None else None
 
     def _advance_thalamus(self, wall_ms):
-        # D50: one clock for the thalamus, the wall clock. Rows carry the wall time they were
-        # written; the tick carries now. The game's monotonic clock restarts at every launch
-        # and the bridge's own (uptime) at every boot, and the thalamus never moves time
-        # back, so either one froze it after a restart (live 2026-10-05: arousal 43 against
-        # threshold 1 and no fire).
-        self._load_thalamus()
+        # D50: one clock, the wall clock. Rows carry the wall time they were written; the tick
+        # carries now. The game's monotonic clock restarts at every launch and the bridge's own
+        # (uptime) at every boot, so neither one is used for timing.
+        # D2: nothing here judges a change. Each one waits in the coalescer until its view goes.
+        self._load_state()
         for rowid, record in self.spool.rows_after(self._last_rowid):
             kind = record.get("event_kind") if isinstance(record, dict) else None
             written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
@@ -380,80 +343,57 @@ class Bridge:
             if self.director is not None:
                 self.director.on_row(record, wall_ms)
             self.talk.on_row(record, wall_ms, _body_sample(record))
-            percepts = self._extractor.step(record)
-            if self._acts is not None and self._acts.planned > 0:
-                # H0.5: between the steps of her plan she is idle for a moment, and a step's end is
-                # not a decision point either (Ashley sends the next step in the same round trip).
-                percepts = [dataclasses.replace(p, urgency="normal")
-                            if p.kind == "interaction" and p.bucket in ("idle", "ended") else p
-                            for p in percepts]
-            self._thalamus, decision = decide(
-                self._thalamus, percepts, clock_ms, self._params, self._points())
-            self._theta = decision.theta
+            self._coalesced = coalesce.add(self._coalesced, self._extractor.step(record), clock_ms)
             self._last_row = record
             if _body_sample(record):
                 self._last_body_row = record
                 self._seen.observe(record)
             self._last_rowid = rowid
-            seq = record.get("written_sequence") if isinstance(record, dict) else None
-            self._on_decision(decision, percepts, wall_ms, clock_ms, seq if type(seq) is int else None)
         self._send_diary(wall_ms)
-        self._thalamus, decision = decide(
-            self._thalamus, [], wall_ms, self._params, self._points())
-        self._theta = decision.theta
-        self._on_decision(decision, [], wall_ms, wall_ms, None)
-        lineage = self._extractor.lineage_id
-        self._thalamus = prune(self._thalamus, wall_ms, self._params, lineage)
+        self._flush_views(wall_ms)
         self._persist_thalamus(wall_ms)
 
-    def _points(self):
-        """H0.5: the live bridge wakes her at decision points. Before the first snapshot her body
-        counts as idle."""
-        return dataclasses.replace(self._context, busy=self._extractor.busy is True)
-
-    def _on_decision(self, decision, percepts, wall_ms, clock_ms, row_seq):
-        if not percepts and not decision.fired:
+    def _flush_views(self, wall_ms):
+        """D2: a view goes when the coalescer says so; nothing pending sends nothing."""
+        reason = coalesce.due(self._coalesced, wall_ms)
+        if reason is None:
             return
+        percepts, self._coalesced = coalesce.take(self._coalesced)
+        self._send_view(percepts, reason, wall_ms)
+
+    def _send_view(self, percepts, trigger, wall_ms):
+        """One view of her body now, carrying these changes. Salience is 0: the view says what changed, not what
+        matters. One line in the decision log per view sent."""
+        self._fires += 1
+        self._last_fire_reason = trigger
+        self._last_fire_wall_ms = wall_ms
         enqueued = False
         observation_id = None
-        scorer = None
-        if decision.fired:
-            self._fires += 1
-            self._last_fire_reason = decision.reason
-            self._last_fire_wall_ms = wall_ms
-            if decision.percepts and self._last_row is not None and decision.reason in CLOCK_WAKES and (
-                    wall_ms - _wall(self._last_row) > OBSERVATION_WINDOW_MS):
-                # HE16: a check or boredom wake is built from the newest row; a row this old would only expire.
-                scorer = {"skipped": "stale_row"}
-            elif decision.percepts and self._last_row is not None:
-                obs = build(decision, self._obs_ctx(wall_ms))
-                scorer = run_scorer(self.scorer, json.loads(json.dumps(obs)))
-                if self.client is not None and not self._telemetry_only:
-                    try:
-                        self.spool.enqueue_observation(obs, wall_ms)
-                    except (ContractError, OutboxConflict) as exc:
-                        scorer = {"error": "%s: %s" % (type(exc).__name__, exc)}
-                    else:
-                        enqueued = True
-                        self._pace_log.observed(_ticks(self._last_body_row or self._last_row))
-                        observation_id = obs["observation_id"]
-                        self._obs_seq += 1
-                        self._enqueued += 1
-        self._log.write({
+        error = None
+        decision = SimpleNamespace(percepts=[(percept, 0.0) for percept in percepts], reason=trigger)
+        obs = build(decision, self._obs_ctx(wall_ms))
+        if self.client is not None and not self._telemetry_only:
+            try:
+                self.spool.enqueue_observation(obs, wall_ms)
+            except (ContractError, OutboxConflict) as exc:
+                error = type(exc).__name__
+            else:
+                enqueued = True
+                self._pace_log.observed(_ticks(self._last_body_row or self._last_row))
+                observation_id = obs["observation_id"]
+                self._obs_seq += 1
+                self._enqueued += 1
+        line = {
             "wall_ms": wall_ms,
-            "clock_ms": clock_ms,
-            "ticks": _ticks(self._last_row),
-            "urgency": sorted({percept.urgency for percept, _ in decision.percepts}),
-            "row_seq": row_seq,
-            "fired": decision.fired,
-            "reason": decision.reason,
-            "theta": decision.theta,
-            "arousal": decision.arousal,
-            "traces": [_trace(item) for item in decision.trace],
+            "trigger": trigger,
+            "percepts": len(percepts),
+            "kinds": sorted({percept.kind for percept in percepts}),
             "enqueued": enqueued,
             "observation_id": observation_id,
-            "scorer": scorer,
-        })
+        }
+        if error is not None:
+            line["error"] = error
+        self._log.write(line)
 
     def _send_diary(self, wall_ms):
         if self.diary is None or self.client is None or self._telemetry_only or self._last_row is None:
@@ -602,7 +542,7 @@ class Bridge:
             if self._row_due(key, value, now_ms):
                 rows[key] = value
         values = {
-            "thalamus_state": json.dumps(self._thalamus.to_dict()),
+            "coalescer_state": json.dumps(coalesce.to_list(self._coalesced)),
             "extractor_state": json.dumps(self._extractor.to_dict()),
             "last_rowid": str(self._last_rowid),
             "obs_seq": str(self._obs_seq),
@@ -611,7 +551,6 @@ class Bridge:
             "thalamus_enqueued": str(self._enqueued),
             "thalamus_last_reason": "" if self._last_fire_reason is None else self._last_fire_reason,
             "thalamus_last_wall_ms": "" if self._last_fire_wall_ms is None else str(self._last_fire_wall_ms),
-            "thalamus_theta": str(self._theta),
         }
         values.update(rows)
         self.spool.put_many_kv(values)

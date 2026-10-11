@@ -1,4 +1,4 @@
-# The helper bridge (8d): reads new telemetry, runs the peripheral thalamus, sends heartbeats and
+# The helper bridge (8d): reads new telemetry, sends the changes it sees as views, sends heartbeats and
 # observations to Ashley, and keeps the archive and string indexes fresh. It lives with the game:
 # this watcher (started at logon by the "Domus bridge" task, one instance at a time) waits for
 # TS4_x64.exe and starts the bridge, which exits a short drain after the game closes.
