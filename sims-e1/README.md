@@ -2,18 +2,24 @@
 
 This directory contains the owner-commanded Sims 4 Embodiment probe.
 
-## Current build: 2.33.0 (her acts that come late are refused as acts; the oldest command goes first)
+## Current build: 2.34.0 (her whole lot in her menu, identical acts once per object, the game's own windows hers)
+
+2.34.0 (N8, after the first live play): her act menu covers every object on the lot that offers her something, not the
+nearest 30; each object carries its room. The menu is written in parts of 16 objects (one record each, same
+`menu_rev`), and the helper shows it once all its parts are in. A window or a client screen that the game opens while
+her act is being pushed is hers (held for her, or withheld), not the User's. Schema 16: the object's `room` and the
+menu's `part` and `parts` are new; the observation schema is 16 and the helper accepts rows of schema 4 to 16.
 
 2.33.0 reads the inbox oldest command first, by when it was issued, not by its random file name (at most 64 files
 are looked at, then four are read per tick). An act that is past its time is refused as an act: an `act_event`
-REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the command reply. Schema unchanged (15).
+REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the command reply.
 
-The source is version `2.33.0` (`src/ashley_e1/__init__.py`,
-`src/ashley_e1/schema.py`; observation schema 15, schema 4 to 14 rows still validate). It is no longer read-only:
+The source is version `2.34.0` (`src/ashley_e1/__init__.py`,
+`src/ashley_e1/schema.py`; observation schema 16, the helper accepts schema 4 to 16). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
 The file the game lists is `Domus_<version>.ts4script`. The package inside stays `ashley_e1`.
-2.33.0 has not yet passed its E2 first-load gate or trials; those run on the
+2.34.0 has not yet passed its E2 first-load gate or trials; those run on the
 Owner's Windows dev PC. `calibrate` while armed refuses actuation and only observes.
 Class cards judge a trial by posture, need, interaction, or social purpose.
 `trial` pushes one parameter-free super-affordance on the lab fork and judges it
@@ -165,8 +171,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.33.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.33.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.34.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.34.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under
