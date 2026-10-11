@@ -267,6 +267,10 @@ def _same_id(obj, her):
 HER_INTERACTION_SOURCES = frozenset(("AUTONOMY", "BODY_CANCEL_AOP", "CARRY_CANCEL_AOP", "SCRIPT", "UNIT_TEST",
                                      "POSTURE_GRAPH", "SOCIAL_ADJUSTMENT", "REACTION", "GET_COMFORTABLE",
                                      "VEHCILE_CANCEL_AOP"))
+# 2.38.0 (W11 P1): how long an interaction's group_id stays tied to her pushed act, and how long after her last push
+# a SCRIPT_WITH_USER_INTENT window on her Sim is hers (the probe's own pushes carry that source).
+GROUP_KEEP_S = 600.0
+PUSH_SOURCE_S = 120.0
 
 
 def _interaction_source_name(source):
@@ -655,6 +659,10 @@ class E2Control:
         # 2.34.0 (F1): {"act": her act's record or None} while her act is being pushed, else None. A window or
         # screen that arrives meanwhile about her Sim is hers, before _watch_act has recorded the act.
         self.pushing = None
+        # 2.38.0 (W11 P1): {group_id: {"item": her act's record, "at": monotonic push time}} for each interaction the
+        # probe pushed for her (kept GROUP_KEEP_S), and the monotonic time of her last push (None before one).
+        self.pushed_groups = {}
+        self.last_push_at = None
         # 2.31.0: the UI_MODAL pause requests seen so far (catch-all), and the windows the fallback showed.
         self._modal_seen = []
         self.shown_to_user = []
@@ -1891,6 +1899,9 @@ class E2Control:
             return "hers", pairs[0][1]
         for interaction in interactions:
             item = self._pushed_for(interaction)
+            if item is None:
+                # 2.38.0 (W11 P1): a window whose interaction continues her pushed act (same group_id) is hers, with it.
+                item = self._group_pushed_for(interaction)
             if item is not None:
                 return "hers", item
         if self._pushing_window(dialog, her, interactions):
@@ -1898,17 +1909,57 @@ class E2Control:
         if interactions:
             # 2.37.0 (W10 P1): the first interaction's source decides. On her Sim, every game source but a pie
             # menu or a hand at the controls is hers (her own script, reflex or cancel act); another Sim's is the User's.
+            # 2.38.0 (W11 P1): a hand's SCRIPT_WITH_USER_INTENT on her Sim is hers within PUSH_SOURCE_S of her last push.
             first = interactions[0]
             source = _read(lambda: str(first.context.source))
-            if (_interaction_source_name(source) in HER_INTERACTION_SOURCES
-                    and _same_id(_read(lambda: first.sim), her)):
-                return "hers", None
+            name = _interaction_source_name(source)
+            if _same_id(_read(lambda: first.sim), her):
+                if name in HER_INTERACTION_SOURCES:
+                    return "hers", None
+                if name == "SCRIPT_WITH_USER_INTENT" and self._pushed_recently():
+                    return "hers", None
             return "user", None
         if commanded:
             return "user", None
         if _same_id(_read(lambda: dialog._owner()), her):
             return "hers", None
         return "user", None
+
+    def _group_pushed_for(self, interaction):
+        """2.38.0 (W11 P1): the record of her pushed act this interaction continues, by group_id, while the group is
+        kept (GROUP_KEEP_S after her push); None otherwise. Never raises: a window that cannot be read is not hers by this."""
+        try:
+            if interaction is None or not self.pushed_groups:
+                return None
+            group = _read(lambda: interaction.group_id)
+            entry = None if group is None else self.pushed_groups.get(str(group))
+            if entry is None or time.monotonic() - entry["at"] > GROUP_KEEP_S:
+                return None
+            return entry["item"]
+        except Exception:
+            return None
+
+    def _pushed_recently(self):
+        """2.38.0 (W11 P1): an act was pushed for her less than PUSH_SOURCE_S ago. Never raises."""
+        try:
+            return self.last_push_at is not None and time.monotonic() - self.last_push_at < PUSH_SOURCE_S
+        except Exception:
+            return False
+
+    def _keep_groups(self, item, interactions):
+        """2.38.0 (W11 P1): the group_id of each interaction the push gave her (the act and its aliases) is kept with
+        her act's record for GROUP_KEEP_S; entries past that are dropped. An interaction with no group is not kept.
+        Never raises."""
+        try:
+            now = time.monotonic()
+            for key in [key for key, entry in self.pushed_groups.items() if now - entry["at"] >= GROUP_KEEP_S]:
+                self.pushed_groups.pop(key, None)
+            for interaction in interactions:
+                group = _read(lambda: interaction.group_id)
+                if group is not None:
+                    self.pushed_groups[str(group)] = {"item": item, "at": now}
+        except Exception:
+            pass
 
     def _pushing_window(self, dialog, her, interactions):
         """2.34.0 (F1): True while her act is being pushed and the window is about her Sim: its owner, its
@@ -2180,6 +2231,9 @@ class E2Control:
         for alias_id, alias in (aliases or {}).items():
             self.pushed[alias_id] = item
             watched.append((alias_id, alias))
+        # 2.38.0 (W11 P1): her push is noted for the source rule, and each interaction it gave her keeps its group.
+        self.last_push_at = time.monotonic()
+        self._keep_groups(item, [watched_interaction for _id, watched_interaction in watched])
         for watched_id, watched_interaction in watched:
             self._watch_act_finish(item, watched_id, watched_interaction)
 
