@@ -4,11 +4,11 @@ What the pages show is put together here from two sources:
 - her body as the probe reports it: needs, mood, moodlets, the game clock, and what her body is
   doing, each marked by whose hand started it (her choice, her body's reflex, the game, or a
   human at the controls);
-- her settled game passes from Ashley's overlay feed: her journal line, the act she chose, and
-  what became of it and of her plan.
+- the lines she chose to put on the overlay, from Ashley's overlay feed. Each is stamped
+  `inputs: "chosen"`; anything else is refused and counted. The feed is polled whatever the old
+  game-only switch says (O1): that switch no longer decides what reaches the pages.
 
-A pass without the game-only stamp is refused, and nothing of hers is shown while the switch is
-off. A line that matches the User's privacy list (`overlay_privacy.txt` in the data folder, one
+A line that matches the User's privacy list (`overlay_privacy.txt` in the data folder, one
 name or place per line) is held: "..." is shown instead. Names of other Sims in the save are
 learned from telemetry and held the same way (`overlay_save_names.json`); her own Sim is exempt.
 Ashley holds her own lines too; this is the second, local line.
@@ -42,6 +42,8 @@ SAVE_NAMES_FILE = "overlay_save_names.json"
 SAVE_NAMES_EVERY_MS = 60_000
 CURTAIN_KEY = "overlay_curtain"
 PASSES_SHOWN = 6
+# O1: the one stamp a feed line may carry; she chose to show it.
+CHOSEN = "chosen"
 DOING_SHOWN = 4
 MOODLETS_SHOWN = 4
 HELD = "…"
@@ -286,9 +288,6 @@ class Overlay:
     kept = None
 
     def poll(self, client, helper_session, now_ms):
-        if game_inputs.current(self._spool) != game_inputs.GAME_ONLY:
-            self._items, self._polled_ms = [], None
-            return
         if client is None or not hasattr(client, "post_feed"):
             return
         if self._polled_ms is not None and now_ms - self._polled_ms < FEED_EVERY_MS:
@@ -318,7 +317,7 @@ class Overlay:
     def _accept(self, items):
         accepted = []
         for item in items if isinstance(items, list) else []:
-            if not isinstance(item, dict) or item.get("inputs") != game_inputs.GAME_ONLY:
+            if not isinstance(item, dict) or item.get("inputs") != CHOSEN:
                 self._refused += 1
                 continue
             shown = {"at_ms": item.get("at_ms"), "_pass": item.get("pass"),
@@ -369,20 +368,14 @@ class Overlay:
                 "label": "AI-controlled"}
         jobs = ((row.get("self") or {}).get("careers")) or []
         work = next((item for item in jobs if isinstance(item, dict) and item.get("at_work") is True), None)
-        if inputs_now != game_inputs.GAME_ONLY:
-            mode = "off"
-        elif curtain(self._spool) or not attached:
+        if curtain(self._spool) or not attached:
             mode = "curtain"
         elif work is not None:
             mode = "work"
         else:
             mode = "live"
         state = {"v": 1, "mode": mode, "card": card}
-        if mode == "off":
-            # Nothing of hers while her passes may read the User's conversations.
-            self.published = state
-            return state
-        needs = {str(item.get("id")): item for item in row.get("motives") or [] if isinstance(item, dict)}
+        needs ={str(item.get("id")): item for item in row.get("motives") or [] if isinstance(item, dict)}
         mood = row.get("mood") if isinstance(row.get("mood"), dict) else {}
         moodlets = []
         for item in row.get("sim_signals") or []:
@@ -410,7 +403,7 @@ class Overlay:
             "feed": {"ok": self._feed_ok, "refused": self._refused},
         })
         if mode == "live" and self._trace is not None:
-            self._seal(state["passes"], row, inputs_now, now_ms)
+            self._seal(state["passes"], row, now_ms)
         if work is not None:
             title = None
             if self._resolve is not None and work.get("title_key") is not None:
@@ -425,11 +418,12 @@ class Overlay:
     def _held(self, text):
         return self._privacy.held(text) or self._save_names.held(text)
 
-    def _seal(self, shown, row, inputs_now, now_ms):
-        """E4: a pass goes into the trace the first time it is on screen, as it was shown."""
+    def _seal(self, shown, row, now_ms):
+        """E4: a pass goes into the trace the first time it is on screen, as it was shown. Every pass on
+        the overlay is one she chose to show (O1), so the regime says so, and no more."""
         probe = row.get("probe_version")
         for item, public in zip(self._items, shown):
-            regime = dict(item["_regime"], inputs=inputs_now, helper_build=self._helper_build,
+            regime = dict(item["_regime"], inputs=CHOSEN, helper_build=self._helper_build,
                           probe_version=probe if isinstance(probe, str) else None)
             try:
                 self._trace.shown(item["_pass"], public, regime, now_ms)
