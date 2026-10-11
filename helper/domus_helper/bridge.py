@@ -12,7 +12,7 @@ from . import commands
 from . import fingerprints as fingerprint_reader
 from . import pace
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, ActCourier, MenuParts, RefBook, act_names, dialog_options, options as act_options, people_names, queue_options
+from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, dialog_options, options as act_options, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -253,7 +253,8 @@ class Bridge:
         listed = act_options(menu.get("payload"), self._resolve_text, self._catalog or None,
                              people=people_names(row, self._seen_ids()), refs=self._refs, limit=max(0, room),
                              withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"),
-                             room_labels=self._room_labels(), cut=cut)
+                             room_labels=self._room_labels(), cut=cut,
+                             objects_limit=max(0, OPTIONS_OBJECTS_LIMIT - len(asked)))
         return asked + listed
 
     def status(self):

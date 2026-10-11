@@ -151,6 +151,12 @@ def test_more_than_160_objects_or_too_many_bytes_are_cut_and_named_never_silentl
     assert cut == {"objects": cut["objects"], "rooms": cut["rooms"]}
 
 
+def test_the_objects_a_question_and_her_queue_take_leave_the_menu_less_room():
+    cut = {}
+    result = options(lot(objects=170, acts=1), room="1", room_labels=ROOM_LABELS, cut=cut, objects_limit=158)
+    assert len(result) == 158 and cut["objects"] == 12
+
+
 def test_the_contract_carries_160_options_and_the_cut_within_32_kib():
     cut = {}
     result = options(lot(objects=170, acts=1), room="1", room_labels=ROOM_LABELS, cut=cut)

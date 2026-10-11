@@ -388,7 +388,7 @@ def _room_label(item, room_labels):
 
 
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
-            room_labels=None, cut=None):
+            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
     (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
     of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
@@ -442,7 +442,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             where_named = label or (str(item["room"])[:64] if item.get("room") is not None else None)
             result.append((entry, where_named))
     result.sort(key=lambda pair: pair[0]["near"] is not True)  # near first; the rest keep the menu's order
-    while result and (len(result) > OPTIONS_OBJECTS_LIMIT or _bytes([pair[0] for pair in result]) > limit):
+    while result and (len(result) > objects_limit or _bytes([pair[0] for pair in result]) > limit):
         left_out.append(result.pop()[1])
     if cut is not None and left_out:
         cut["objects"] = len(left_out)
