@@ -46,6 +46,12 @@ def _meal(origin_source=PIE, experiment=False):
     return rows
 
 
+def test_a_record_carries_the_wall_time_its_first_sample_was_recorded():
+    # D7b: the memory answer says when an act was recorded, in wall time.
+    grab = outcomes.acts(_meal(), "abcdef12-0000")[0]
+    assert grab["wall_ms"] == 1000
+
+
 def test_grab_then_eat_is_one_chain_and_posture_is_left_out():
     records = outcomes.acts(_meal(), "abcdef12-0000")
     assert [r["interaction"]["name"] for r in records] == [GRAB, EAT, WASH]
