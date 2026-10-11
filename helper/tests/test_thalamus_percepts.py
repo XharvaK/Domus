@@ -165,6 +165,17 @@ def test_gap_and_lineage_reset_models():
     assert all(p.lineage == "" or p.kind != "lineage" for p in lin)
 
 
+def test_a_social_percept_carries_the_talk_text_for_the_portrait():
+    ext = Extractor(owner_sim_id="OWNER")
+    ext.step(_row(1, include_presence=True, presence=[{"id": "A"}], social=[]))
+    arrived = ext.step(_row(2, include_presence=True, presence=[{"id": "A"}], social=[{
+        "entry_key": "s1", "target_id": "ASH", "affordance_id": 99, "source_sim": "A",
+        "affordance_text": "<class 'sims4.tuning.instances.invented_ask'>"}]))
+    social = [p for p in arrived if p.kind == "social"]
+    assert (social[0].subject, social[0].object) == ("A", "99")
+    assert dict(social[0].facts)["affordance_text"] == "<class 'sims4.tuning.instances.invented_ask'>"
+
+
 def test_presence_social_and_owner():
     ext = Extractor(owner_sim_id="OWNER")
     ext.step(_row(1, include_presence=True, presence=[{"id": "A"}], social=[]))

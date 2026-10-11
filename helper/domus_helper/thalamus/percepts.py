@@ -588,9 +588,11 @@ class Extractor:
                 source = item.get("actor_id")
             source_s = "" if source is None else str(source)
             urgency = "always_through" if source_s and source_s == self.owner_sim_id else "normal"
+            talk = item.get("affordance_text")
             percepts.append(Percept(
                 "social", source_s, "" if item.get("affordance_id") is None else str(item.get("affordance_id")),
-                "addressed", urgency=urgency, lineage=self.lineage_id, facts=_facts(ticks, ())))
+                "addressed", urgency=urgency, lineage=self.lineage_id,
+                facts=_facts(ticks, (("affordance_text", None if talk is None else _text(talk)),))))
         self._social = seen
         return percepts
 
