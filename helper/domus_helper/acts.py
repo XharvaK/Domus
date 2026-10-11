@@ -256,7 +256,23 @@ def people_names(row, seen_ids=None):
 
 
 OPENS_SCREEN = "a screen only the User's hands can use"
-NO_WAY = "the game sees no way for her to get there from where she is now"
+# N8 (F2): interactions that open such a screen, so they are marked before the notebook has seen one end on it:
+# the event planner (phone), Create a Sim (terrain, every age and sex), Change Sim, outfit planning and try-on.
+# Tuning names as the game's atlas lists them; the notebook adds to this list, it never removes from it.
+WITHHELD_SEED = (
+    "phone_PlanEvent",
+    "terrain-createsim_female-adult", "terrain-createsim_female-baby", "terrain-createsim_female-child",
+    "terrain-createsim_female-elder", "terrain-createsim_female-infant", "terrain-createsim_female-teen",
+    "terrain-createsim_female-toddler", "terrain-createsim_female-youngadult",
+    "terrain-createsim_male-adult", "terrain-createsim_male-baby", "terrain-createsim_male-child",
+    "terrain-createsim_male-elder", "terrain-createsim_male-infant", "terrain-createsim_male-teen",
+    "terrain-createsim_male-toddler", "terrain-createsim_male-youngadult",
+    "dresser_ChangeSim",
+    "PlanOutfit", "PlanOutfit_Mirror", "tent_PlanOutfit", "vanityTable_planOutfit", "planOutfit_Styleboard",
+    "planOutfit_Mirror_toddler", "planOutfit_Toddler",
+    "dresser_TryOnOutfits_Start", "dresser_TryOnOutfits_End",
+    "Dresser_TryOnOutfit_00", "Dresser_TryOnOutfit_01", "Dresser_TryOnOutfit_02", "Dresser_TryOnOutfit_03")
+NO_WAY ="the game sees no way for her to get there from where she is now"
 
 
 def _where(item, menu_room, room):
@@ -300,7 +316,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             count += 1
             listed = {"ref": "a%d" % count, "guid64": str(act["guid64"]),
                       "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))}
-            if act.get("name") in withheld:
+            if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
             acts.append(listed)
         if acts:
