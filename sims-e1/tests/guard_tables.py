@@ -19,6 +19,7 @@ APPROVED_GAME_IMPORTS = {
     "date_and_time",
     "interactions",
     "objects",
+    "placement",
     "scheduling",
     "server",
     "services",

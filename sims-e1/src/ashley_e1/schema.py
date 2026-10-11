@@ -99,7 +99,10 @@ MENU_MAX_PARTS = 64
 MENU_MAX_ACTS = 8
 # 2.25.0: reach (the game's own connectivity check from her to the object; None when unread).
 # 2.29.0: phone (True on her own phone's entry, None on every other object) is optional the same way.
-MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "room", "reach", "acts", "phone")
+# 2.35.0 (D3): spot and level are the spot's kind ("room" or "front_door") and its level; None on every object.
+MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "room", "reach", "acts", "phone",
+                    "spot", "level")
+MENU_SPOT_KINDS = ("room", "front_door")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
@@ -570,13 +573,17 @@ def _validate_e2(row):
             if key not in payload:
                 payload[key] = None
     elif kind == "act_menu" and isinstance(payload, dict):
-        # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone.
+        # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone. 2.35.0: so are spot and level.
         for item in payload.get("objects") or ():
             if isinstance(item, dict):
                 if "reach" not in item:
                     item["reach"] = None
                 if "phone" not in item:
                     item["phone"] = None
+                if "spot" not in item:
+                    item["spot"] = None
+                if "level" not in item:
+                    item["level"] = None
     elif kind == "lineage_event" and isinstance(payload, dict):
         # 2.32.0: reason is optional; rows before schema 15 omit it.
         if "reason" not in payload:
@@ -709,6 +716,9 @@ def _validate_menu(payload):
         _require(item["same_room"] in (True, False, None), "menu same_room")
         _require(item["reach"] in (True, False, None), "menu reach")
         _require(item["phone"] in (True, False, None), "menu phone")
+        _require(item["spot"] in MENU_SPOT_KINDS + (None,), "menu spot")
+        _require(item["level"] is None or type(item["level"]) is int, "menu level")
+        _require(item["spot"] is None or item["class"] == "spot", "menu spot class")
         acts = item["acts"]
         _require(isinstance(acts, list) and 1 <= len(acts) <= MENU_MAX_ACTS, "menu acts")
         for act in acts:

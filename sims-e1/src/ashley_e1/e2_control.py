@@ -8,6 +8,7 @@ The host supplies emit/state callables so this module never imports probe.
 import sys
 import time
 
+from . import act_menu
 from . import e2_admission
 from . import e2_cards
 from . import e2_lineage
@@ -561,7 +562,7 @@ def _queued_interactions(sim):
 
 class E2Control:
     def __init__(self, emit, get_state, get_session_id, get_armed_snapshot,
-                 get_writer, output, get_armed_name=None):
+                 get_writer, output, get_armed_name=None, get_zone=None):
         self._emit_row = emit
         self._state = get_state
         self._session_id = get_session_id
@@ -569,6 +570,8 @@ class E2Control:
         self._writer = get_writer
         self._output = output
         self._armed_name = get_armed_name or (lambda: None)
+        # 2.35.0 (D3): the zone she is in now, to tell whether the spots of a menu are still hers to name.
+        self._get_zone = get_zone or (lambda: None)
         self._camera_at = None
         self._talk_at = None
         # 2.27.0: windows held back, by dialog id: {act_id, at, kind, send}. 2.31.0: the same record for
@@ -605,6 +608,11 @@ class E2Control:
         # tuning_name, interaction_id, seen, misses}. 2.28.0: an act's returned id and each
         # alias it gained map to one shared record.
         self.pushed = {}
+        # 2.35.0 (D3): the spot ids of this session (act_menu.SpotIds), and the spots of the newest finished menu
+        # build with the zone they were found in: {spot id: spot record}. An act names a spot by its id.
+        self.spot_ids = act_menu.SpotIds()
+        self.spots = {}
+        self.spots_zone = None
         # 2.34.0 (F1): {"act": her act's record or None} while her act is being pushed, else None. A window or
         # screen that arrives meanwhile about her Sim is hers, before _watch_act has recorded the act.
         self.pushing = None
@@ -2097,6 +2105,10 @@ class E2Control:
         """2.34.0 (F1): the mark for one push of her act, set just before the push. act is her act's record (None
         for a sit or a trial). The caller clears it in a finally, so a push that raises leaves nothing marked."""
         self.pushing = {"act": act}
+
+    def publish_spots(self, zone, spots):
+        """2.35.0 (D3): the spots of a menu build that finished in this zone are the ones an act may name now."""
+        self.spots, self.spots_zone = dict(spots), zone
 
     def _watch_act(self, act_id, base, interaction_id, tuning_name, interaction, aliases=None):
         """2.28.0: the act is tracked under its returned interaction and under each alias (the

@@ -12,7 +12,7 @@ APPROVED_STDLIB_IMPORTS = {
 }
 APPROVED_GAME_ROOTS = {
     "alarms", "clock", "date_and_time", "interactions", "objects",
-    "scheduling", "server", "services", "sims", "sims4",
+    "placement", "scheduling", "server", "services", "sims", "sims4",
 }
 PRODUCTION_MODULES = (
     "__init__", "probe", "observers", "snapshot", "schema", "writer",
@@ -21,7 +21,7 @@ PRODUCTION_MODULES = (
 )
 # DS3: build_buy also holds world mutators; only its read-only room lookup may be
 # imported, and only by name (never `import build_buy`).
-NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id"},
+NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id", "is_location_pool"},
                        # 2.20.1: only the Distributor, to send the game's queued events now.
                        "distributor.system": {"Distributor"},
                        # 2.21.0: only the two view calls; they move the camera, never the world.
