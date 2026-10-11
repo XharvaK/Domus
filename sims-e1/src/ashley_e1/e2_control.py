@@ -275,6 +275,12 @@ def _is_commands_file(path):
     return "sims4" in path and path.endswith("commands.py")
 
 
+def _note_own_notice(notification):
+    """2.36.0 (D6, P2): the probe's own line is remembered by its dialog id (observers.note_own_notice). Never raises."""
+    if observers is not None:
+        observers.note_own_notice(notification)
+
+
 def _dialog_hook(original):
     """2.31.0: stands in for one distribute_dialog (UiDialogBase and each overrider of §3.2). The
     game's own sends the window; a window that is hers is held or withheld here. Any exception:
@@ -1548,6 +1554,7 @@ class E2Control:
             line = LocalizationHelperTuning.get_raw_text(text)
             notification = UiDialogNotification.TunableFactory().default(owner, text=lambda *_, **__: line)
             notification.show_dialog()
+            _note_own_notice(notification)  # 2.36.0 (D6, P2): her own line is never a notice about her
             self._talk_at = now
             self._say(connection, "TALK_OK")
             return True

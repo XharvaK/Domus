@@ -27,7 +27,7 @@ def _observation(seq=1, **payload):
 
 def test_schema_14_is_accepted_by_the_vendored_validator():
     # 2.32.0 (W5d): the helper accepts schema 13 to 15 (15 adds her life block and the BODY_GONE reason).
-    assert schema.OBSERVATION_SCHEMA_VERSION == 17
+    assert schema.OBSERVATION_SCHEMA_VERSION == 18
     assert {13, 14, 15, 16, 17} <= set(schema.ACCEPTED_SCHEMA_VERSIONS)
     assert 13 in schema.ACCEPTED_SCHEMA_VERSIONS
 
@@ -37,7 +37,7 @@ def test_schema_14_presence_row_with_dialog_and_pace_passes_validation(paths):
     assert schema.validate_record(row) is row
     path = session_file(paths, [opened(), row])
     rows = list(telemetry.file_rows(path))
-    assert rows[1]["schema_version"] == 17
+    assert rows[1]["schema_version"] == 18
     assert rows[1]["pace"]["need_drain"] == 0.5
     assert rows[1]["dialogs"]["open"][0]["held"] is True
 
