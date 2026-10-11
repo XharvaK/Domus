@@ -394,6 +394,13 @@ def test_helper_extra_deny_covers_the_reviewed_families():
         assert not cp.name_blocked(name), name
 
 
+def test_the_crawl_keeps_its_own_floor_when_the_probe_narrowed_its_names_in_2_37_1():
+    # 2.37.1: the probe no longer keeps these out by name; the unsupervised crawl still does.
+    from domus_helper import crawl_protocol as cp
+    for name in ("sim_delete_object", "Sell_Object", "KillSim", "CareerTalk", "PhoneCall", "Propose"):
+        assert cp.name_blocked(name), name
+
+
 def test_restart_in_same_session_does_not_reuse_reject_keys(tmp_path, capsys):
     # Live: a second crawl process in the same game session hit
     # "UNIQUE constraint failed: trials.experiment_id" on "<session>:0".
