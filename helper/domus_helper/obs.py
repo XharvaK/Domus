@@ -88,9 +88,10 @@ def request(config, request_types, connect=socket.create_connection):
         sock.sendall(("GET / HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                       "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n"
                       "Sec-WebSocket-Protocol: obswebsocket.json\r\n\r\n" % (config["port"], key)).encode("ascii"))
+        # One byte at a time: the server's hello can follow the header in the same packet, and must stay unread.
         head = b""
-        while b"\r\n\r\n" not in head:
-            chunk = sock.recv(1024)
+        while not head.endswith(b"\r\n\r\n"):
+            chunk = sock.recv(1)
             if not chunk:
                 return results
             head += chunk

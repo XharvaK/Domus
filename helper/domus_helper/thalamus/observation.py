@@ -591,7 +591,7 @@ def build(decision, ctx):
             score = 0.0
         if score > 1:
             score = 1.0
-        # HE11: the wake mechanics (ticks, urgency, reason) stay in the decision trace; the facts are the world.
+        # HE11: the wake mechanics (ticks, urgency) are not sent; the facts are the world.
         facts = dict(percept.facts)
         facts.pop("ticks", None)
         facts.update({

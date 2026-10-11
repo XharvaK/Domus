@@ -1,15 +1,14 @@
-"""DT2C: spool v2, thalamus bridge, decision log, prune, shadow scorer."""
+"""DT2C: spool v2, the view bridge, decision log. D2: the bridge sends every change, coalesced; no decision."""
 import json
 import sqlite3
+from types import SimpleNamespace
 
 from domus_helper.contract import validate_observation
 from domus_helper.spool import Spool
-from domus_helper.thalamus.core import decide, prune
 from domus_helper.thalamus.log import DecisionLog
 from domus_helper.thalamus.observation import build
-from domus_helper.thalamus.parameters import DECISION_LOG_QUOTA_BYTES, Parameters
-from domus_helper.thalamus.scorer import NullScorer, load_scorer, run_scorer
-from domus_helper.thalamus.types import Context, Decision, KeyState, Percept, ThalamusState
+from domus_helper.thalamus.parameters import DECISION_LOG_QUOTA_BYTES
+from domus_helper.thalamus.types import Percept
 
 
 def _v1(path):
@@ -77,7 +76,7 @@ def _percept(facts=(("value", "1"), ("band", "low"))):
 
 def test_build_clamps_salience_and_fits_caps():
     huge = "x" * 5000
-    decision = Decision(True, "threshold", ((_percept((("blob", huge),)), 4.5),), 0.2, 1.0, ())
+    decision = SimpleNamespace(percepts=((_percept((("blob", huge),)), 4.5),), reason="quiet")
     row = {
         "written_sequence": 3,
         "wall_timestamp_ms": 5_000,
@@ -118,68 +117,17 @@ def test_decision_log_shape_and_quota(tmp_path):
     (old / "decisions-20200102.jsonl").write_text("b" * 80, encoding="utf-8")
     wall = 1_700_000_000_000
     log.write({
-        "wall_ms": wall, "clock_ms": 10, "row_seq": 3, "fired": True, "reason": "threshold",
-        "theta": 1.0, "arousal": 0.2, "traces": [{
-            "key": "need:hunger::low", "raw": 1.1, "h_before": 1.0, "h_after": 0.7,
-            "salience": 1.1, "novelty": 0.6,
-        }],
-        "enqueued": False, "observation_id": None, "scorer": None,
+        "wall_ms": wall, "trigger": "quiet", "percepts": 1, "kinds": ["need"],
+        "enqueued": False, "observation_id": None,
     })
     day = "20231114"
     today = old / ("decisions-%s.jsonl" % day)
     assert today.is_file()
     line = json.loads(today.read_text(encoding="utf-8").splitlines()[0])
-    assert set(line) == {
-        "wall_ms", "clock_ms", "row_seq", "fired", "reason", "theta", "arousal",
-        "traces", "enqueued", "observation_id", "scorer",
-    }
+    assert set(line) == {"wall_ms", "trigger", "percepts", "kinds", "enqueued", "observation_id"}
     names = sorted(path.name for path in old.glob("decisions-*.jsonl"))
     assert "decisions-20200101.jsonl" not in names
     assert today.name in names
-
-
-def test_prune_drops_recovered_keys_and_foreign_novelty():
-    params = Parameters()
-    context = Context()
-    key = "need:hunger::low"
-    state = ThalamusState(
-        last_now_ms=0, idle_since_ms=0,
-        keys={key: KeyState(h=1.0, last_ms=0), "fresh": KeyState(h=0.2, last_ms=10_000_000)},
-        novelty_counts={("old", key): 4, ("L", key): 2},
-    )
-    now = 10_000_000
-    pruned = prune(state, now, params, "L")
-    assert key not in pruned.keys and "fresh" in pruned.keys
-    assert pruned.novelty_counts == {("L", key): 2}
-    percept = Percept("need", "hunger", "", "low", lineage="L")
-    _kept, decided = decide(state, [percept], now, params, context)
-    _dropped, after = decide(pruned, [percept], now, params, context)
-    assert decided.trace[0].h_before == after.trace[0].h_before == 1.0
-    assert decided.fired == after.fired
-    assert decided.arousal == after.arousal
-    assert decided.reason == after.reason
-
-
-def test_scorer_null_by_default_and_timeout(monkeypatch):
-    monkeypatch.delenv("DOMUS_SHADOW_SCORER", raising=False)
-    scorer, note = load_scorer()
-    assert isinstance(scorer, NullScorer) and note is None
-    assert scorer.score({"v": 1}) is None
-    monkeypatch.setenv("DOMUS_SHADOW_SCORER", "not_a_real_scorer")
-    unknown, note = load_scorer()
-    assert isinstance(unknown, NullScorer) and "not_a_real_scorer" in note
-
-    class Slow:
-        def score(self, observation):
-            import time
-            time.sleep(0.2)
-            return {"ok": True}
-
-    assert run_scorer(Slow(), {"v": 1}, timeout_s=0.01)["error"]
-    class Boom:
-        def score(self, observation):
-            raise RuntimeError("boom")
-    assert "boom" in run_scorer(Boom(), {"v": 1})["error"]
 
 
 BUILD = "1.128.90.1030"
@@ -237,23 +185,11 @@ class _Client:
         return type("R", (), {"kind": "admitted", "status": 200})()
 
 
-class _Mark:
-    def score(self, observation):
-        return {"mark": observation["seq"]}
-
-
-class _Boom:
-    def score(self, observation):
-        raise RuntimeError("boom")
-
-
 def _bridge(paths, mono_at, **kw):
     from domus_helper.bridge import Bridge
     kwargs = dict(
         client=kw.get("client", _Client()), process=(1, "t"),
         detected_build=kw.get("detected_build", BUILD), mono=lambda: mono_at["ms"])
-    if "scorer" in kw:
-        kwargs["scorer"] = kw["scorer"]
     return Bridge(paths, **kwargs)
 
 
@@ -269,26 +205,6 @@ def _log_lines(data):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_a_check_wake_over_a_stale_row_is_skipped_and_logged_and_a_fresh_one_is_sent(paths, tmp_path, monkeypatch):
-    # HE16: a check or boredom wake is built from the newest row; one over the window old is not sent.
-    from types import SimpleNamespace
-    from domus_helper.thalamus.types import Percept
-    data = _data(paths, tmp_path, monkeypatch)
-    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10)])
-    mono = {"ms": WALL}
-    bridge = _bridge(paths, mono)
-    bridge.tick(WALL)
-    percept = Percept("need", "hunger", "", "low", urgency="wake", lineage="")
-    decision = SimpleNamespace(fired=True, reason="check", percepts=[(percept, 1.0)], theta=1.0, arousal=0.0,
-                               trace=[])
-    before = len(_payloads(bridge))
-    bridge._on_decision(decision, [], WALL + 700_000, WALL + 700_000, None)
-    assert len(_payloads(bridge)) == before
-    assert _log_lines(data)[-1]["scorer"] == {"skipped": "stale_row"}
-    bridge._on_decision(decision, [], WALL + 1_000, WALL + 1_000, None)
-    assert len(_payloads(bridge)) == before + 1
-
-
 def test_the_newest_row_is_kept_when_it_changes_and_at_most_every_30_seconds(paths, tmp_path, monkeypatch):
     # HE17: last_row is written on a change, and not sooner than 30 s after its last write.
     _data(paths, tmp_path, monkeypatch)
@@ -300,7 +216,8 @@ def test_the_newest_row_is_kept_when_it_changes_and_at_most_every_30_seconds(pat
     assert bridge._row_due("last_row", "b", 60_000) is False
 
 
-def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatch):
+def test_a_change_is_sent_once_nothing_new_has_come_for_a_second_and_a_half_then_the_next_one_waits_too(paths, tmp_path, monkeypatch):
+    """D2: no threshold decides. A change goes after the quiet wait; the next change waits its own wait."""
     from domus_helper.contract import validate_observation as check
     data = _data(paths, tmp_path, monkeypatch)
     _append(paths, [
@@ -312,7 +229,8 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     bridge = _bridge(paths, mono)
     bridge.tick(WALL)
     assert _payloads(bridge) == []
-    mono["ms"] = WALL + 1500
+    bridge.tick(WALL + 1499)
+    assert _payloads(bridge) == []
     bridge.tick(WALL + 1500)
     payloads = _payloads(bridge)
     assert len(payloads) == 1
@@ -323,24 +241,25 @@ def test_need_window_enqueues_one_then_seq_increases(paths, tmp_path, monkeypatc
     assert obs["portrait"]["needs"]["hunger"]["band"] == "low"
     assert need["facts"]["bucket"] == "low" and "reason" not in need["facts"]
     _append(paths, [_snap(4, "distress", WALL + 4000, 30)])
-    mono["ms"] = WALL + 4000
     bridge.tick(WALL + 4000)
+    assert len(_payloads(bridge)) == 1
+    bridge.tick(WALL + 5500)
     payloads = _payloads(bridge)
     assert [item["seq"] for item in payloads] == [0, 1]
     assert payloads[1]["observation_id"].endswith(".1")
-    fired = [line for line in _log_lines(data) if line["fired"]]
-    assert fired[0]["enqueued"] is True and fired[0]["reason"] == "wake"
-    assert fired[0]["urgency"] and "ticks" in fired[0]  # HE11: the wake mechanics are in the trace
-    traced = [line for line in _log_lines(data) if line["traces"]]
-    assert traced and "key" in traced[0]["traces"][0]
+    lines = _log_lines(data)
+    assert [line["trigger"] for line in lines] == ["quiet", "quiet"]
+    assert all(line["enqueued"] is True for line in lines)
+    assert [line["observation_id"] for line in lines] == [item["observation_id"] for item in payloads]
     status = bridge.status()
     assert status["thalamus"]["enqueued"] == 2
-    assert status["thalamus"]["fires"] >= 2
+    assert status["thalamus"]["fires"] == 2
+    assert status["thalamus"]["pending"] == 0
     blob = json.dumps(status)
     assert "super-secret-token-value" not in blob
 
 
-def test_telemetry_only_logs_fire_without_enqueue(paths, tmp_path, monkeypatch):
+def test_telemetry_only_logs_the_view_without_enqueue(paths, tmp_path, monkeypatch):
     data = _data(paths, tmp_path, monkeypatch)
     _append(paths, [
         _lineage(1, WALL), _snap(2, "ok", WALL, 10), _snap(3, "low", WALL, 20),
@@ -348,11 +267,10 @@ def test_telemetry_only_logs_fire_without_enqueue(paths, tmp_path, monkeypatch):
     mono = {"ms": WALL}
     bridge = _bridge(paths, mono, detected_build="other-build")
     bridge.tick(WALL)
-    mono["ms"] = WALL + 1500
     bridge.tick(WALL + 1500)
     assert _payloads(bridge) == []
-    fired = [line for line in _log_lines(data) if line["fired"]]
-    assert fired and fired[0]["enqueued"] is False and fired[0]["observation_id"] is None
+    lines = _log_lines(data)
+    assert lines and lines[0]["enqueued"] is False and lines[0]["observation_id"] is None
 
 
 def test_restart_resumes_rowid_seq_and_does_not_duplicate(paths, tmp_path, monkeypatch):
@@ -365,7 +283,6 @@ def test_restart_resumes_rowid_seq_and_does_not_duplicate(paths, tmp_path, monke
     first = _bridge(paths, mono)
     first.tick(WALL)
     assert _payloads(first) == []
-    mono["ms"] = WALL + 1500
     first.tick(WALL + 1500)
     assert len(_payloads(first)) == 1
     assert first.spool.get_kv("obs_seq") == "1"
@@ -375,32 +292,7 @@ def test_restart_resumes_rowid_seq_and_does_not_duplicate(paths, tmp_path, monke
     second.tick(WALL + 1500)
     assert len(_payloads(second)) == 1
     assert second.spool.get_kv("obs_seq") == "1"
-    assert second.status()["thalamus"]["last_fire_reason"] == "wake"
-
-
-def test_scorer_result_and_error_land_in_the_log(paths, tmp_path, monkeypatch):
-    data = _data(paths, tmp_path, monkeypatch)
-    _append(paths, [
-        _lineage(1, WALL), _snap(2, "ok", WALL, 10), _snap(3, "low", WALL, 20),
-    ])
-    mono = {"ms": WALL + 1500}
-    marked = _bridge(paths, mono, scorer=_Mark())
-    marked.tick(WALL + 1500)
-    fired = [line for line in _log_lines(data) if line["fired"]]
-    assert fired[-1]["scorer"] == {"mark": 0}
-    assert len(_payloads(marked)) == 1
-    marked.spool.close()
-    other = tmp_path / "data-b"
-    monkeypatch.setenv("DOMUS_DATA_DIR", str(other))
-    session = paths.telemetry / SESSION
-    # fresh spool, same telemetry file is already consumed only in the first spool
-    boom = _bridge(paths, mono, scorer=_Boom())
-    # cursor offsets live in the new spool, so the file is read again
-    boom.tick(WALL + 1500)
-    assert len(_payloads(boom)) == 1
-    fired = [line for line in _log_lines(other) if line["fired"]]
-    assert "boom" in fired[-1]["scorer"]["error"]
-    assert fired[-1]["enqueued"] is True
+    assert second.status()["thalamus"]["last_fire_reason"] == "quiet"
 
 
 def test_status_thalamus_block_without_secrets(paths, tmp_path, monkeypatch):
@@ -410,11 +302,7 @@ def test_status_thalamus_block_without_secrets(paths, tmp_path, monkeypatch):
     from domus_helper.bridge import Bridge
     bridge = Bridge(paths, process=(None, None), detected_build=BUILD, client=None)
     block = bridge.status()["thalamus"]
-    assert set(block) == {
-        "fires", "last_fire_reason", "last_fire_wall_ms", "pending", "theta", "keys",
-        "enqueued", "scorer",
-    }
-    assert block["scorer"] == "NullScorer"
+    assert set(block) == {"fires", "last_fire_reason", "last_fire_wall_ms", "pending", "enqueued"}
     blob = json.dumps(bridge.status())
     assert "super-secret-token-value" not in blob and "127.0.0.1" not in blob
 
@@ -440,8 +328,8 @@ def test_act_menu_then_fire_puts_notebook_on_portrait(paths, tmp_path, monkeypat
     mono = {"ms": WALL + 3}
     bridge = _bridge(paths, mono)
     bridge.tick(WALL + 3)
-    mono["ms"] = WALL + 1500
-    bridge.tick(WALL + 1500)
+    mono["ms"] = WALL + 1503
+    bridge.tick(WALL + 1503)
     moved = _payloads(bridge)[-1]["portrait"]["notebook"]["moved"]
     assert moved[0]["was_in"] == "7" and moved[0]["now_in"] == "9"
 
@@ -482,7 +370,7 @@ def test_ds3_portrait_has_time_room_company_moodlets():
 
 
 def test_thalamus_keeps_firing_after_a_reboot_or_game_relaunch(paths, tmp_path, monkeypatch):
-    """D50: the thalamus runs on the wall clock. Live 2026-10-05 it ran on the game's monotonic
+    """D50: the views run on the wall clock. Live 2026-10-05 the thalamus ran on the game's monotonic
     clock (restarts every launch) and the bridge's uptime (restarts every boot) and froze."""
     from domus_helper.bridge import Bridge
     _data(paths, tmp_path, monkeypatch)
@@ -500,11 +388,11 @@ def test_thalamus_keeps_firing_after_a_reboot_or_game_relaunch(paths, tmp_path, 
         return row
 
     _append(paths, [relaunched(_snap(2, "ok", WALL + 60_000, 10))])
-    second.tick(WALL + 60_000)
+    second.tick(WALL + 60_000)  # the change kept across the restart is 60 s old: the oldest-wait rule sends now
     assert len(_payloads(second)) == 1
     _append(paths, [relaunched(_snap(3, "low", WALL + 100_000, 20))])
     second.tick(WALL + 100_000)
-    restarted["ms"] += 1500
+    assert len(_payloads(second)) == 1
     second.tick(WALL + 101_500)
     payloads = _payloads(second)
     assert len(payloads) == 2
@@ -542,35 +430,6 @@ def test_her_options_ride_on_each_observation_from_the_newest_menu_of_this_sessi
     assert "options_cut" not in obs  # N8 (F4): a cut is named only when there is one
     bridge._menu = dict(bridge._menu, session="another")
     assert bridge._options(bridge._last_row) == []
-
-
-def _activity(seq, wall, source):
-    row = _snap(seq, "ok", wall, seq * 10)
-    row["interactions"]["observed"] = [] if source is None else [{
-        "entry_key": "a", "interaction_id": "a", "affordance_id": 5, "affordance_text": "play",
-        "membership": "RUNNING", "source_raw": source}]
-    return row
-
-
-def test_h05_her_idle_wakes_her_unless_a_plan_step_is_still_to_follow(paths, tmp_path, monkeypatch):
-    """H0.5: an act ending into idle is a decision point; mid-plan Ashley sends the next step itself."""
-    mine = "InteractionSource.SCRIPT_WITH_USER_INTENT"
-    for planned, expected in ((0, 1), (2, 0)):
-        _data(paths, tmp_path / str(planned), monkeypatch)
-        (paths.telemetry / SESSION).unlink(missing_ok=True)
-        _append(paths, [_lineage(1, WALL), _activity(2, WALL, mine)])
-        mono = {"ms": WALL}
-        bridge = _bridge(paths, mono)
-        bridge.tick(WALL)
-        bridge.tick(WALL + 2_000)
-        before = len(_payloads(bridge))
-        bridge._acts.planned = planned
-        _append(paths, [_activity(3, WALL + 60_000, None)])
-        bridge.tick(WALL + 60_000)
-        bridge.tick(WALL + 62_000)
-        woke = [item for item in _payloads(bridge)[before:]
-                if any(p["facts"].get("bucket") == "idle" for p in item["percepts"])]
-        assert len(woke) == expected, planned
 
 
 def _act(seq, wall):
@@ -703,3 +562,77 @@ def test_a_crash_leaves_its_traceback_in_the_data_folder(tmp_path, monkeypatch):
         bridge_module._crash_logged([])
     text = (tmp_path / "bridge_crash.log").read_text(encoding="utf-8")
     assert "invented failure" in text and "Traceback" in text
+
+
+def test_the_thalamus_decision_is_gone_and_a_calm_change_is_sent_after_the_quiet_wait(paths, tmp_path, monkeypatch):
+    """H1: no threshold, refractory or boredom decides; a change goes once nothing new has come for 1.5 s."""
+    from domus_helper import bridge as bridge_module
+    from domus_helper.contract import validate_observation as check
+    data = _data(paths, tmp_path, monkeypatch)
+    assert not hasattr(bridge_module, "decide") and not hasattr(bridge_module, "prune")
+    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10), _snap(3, "low", WALL, 20)])
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    bridge.tick(WALL)
+    assert _payloads(bridge) == []
+    bridge.tick(WALL + 1_499)
+    assert _payloads(bridge) == []
+    bridge.tick(WALL + 1_500)
+    payloads = _payloads(bridge)
+    assert len(payloads) == 1
+    obs = check(payloads[0], WALL + 1_500)
+    assert all(item["salience"] == 0.0 for item in obs["percepts"])
+    assert obs["portrait"]["needs"]["hunger"]["band"] == "low"
+    line = _log_lines(data)[-1]
+    assert set(line) == {"wall_ms", "trigger", "percepts", "kinds", "enqueued", "observation_id"}
+    assert line["trigger"] == "quiet" and line["percepts"] == len(obs["percepts"])
+    assert line["kinds"] == sorted({item["kind"] for item in obs["percepts"]})
+    assert line["enqueued"] is True and line["observation_id"] == obs["observation_id"]
+class _LookClient(_Client):
+    """H3: the acts sync answers `look: true` once for each look the test asks for."""
+
+    def __init__(self):
+        self.looks = 0
+
+    def sync_acts(self, body):
+        if self.looks:
+            self.looks -= 1
+            return {"v": 1, "look": True}
+        return {"v": 1}
+
+
+def test_a_look_the_acts_sync_asks_for_sends_one_look_view_at_once(paths, tmp_path, monkeypatch):
+    """H3: `look: true` in the sync answer sends one view now, from the newest body row, with a look percept."""
+    from domus_helper.contract import validate_observation as check
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10)])
+    client = _LookClient()
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono, client=client)
+    bridge.tick(WALL)
+    bridge.tick(WALL + 1_500)
+    assert len(_payloads(bridge)) == 1
+    client.looks = 1
+    bridge.tick(WALL + 1_600)
+    payloads = _payloads(bridge)
+    assert len(payloads) == 2
+    obs = check(payloads[1], WALL + 1_600)
+    assert [item["kind"] for item in obs["percepts"]] == ["look"]
+    assert obs["percepts"][0]["facts"]["bucket"] == "asked"
+    assert obs["snapshot"] == "2" and obs["portrait"]["needs"] == {"hunger": {"value": 40, "band": "ok"}}
+    bridge.tick(WALL + 1_700)
+    assert len(_payloads(bridge)) == 2  # handed over once: the flag is cleared
+
+
+def test_a_look_before_any_body_row_sends_nothing_and_says_so_in_the_log(paths, tmp_path, monkeypatch):
+    """H3: no body row yet, so no view; the pending changes stay pending and the log says why."""
+    data = _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_lineage(1, WALL)])
+    client = _LookClient()
+    client.looks = 1
+    bridge = _bridge(paths, {"ms": WALL}, client=client)
+    bridge.tick(WALL)
+    assert _payloads(bridge) == []
+    line = _log_lines(data)[-1]
+    assert line["trigger"] == "look" and line["enqueued"] is False
+    assert line["observation_id"] is None and line["error"] == "no_body_row"
