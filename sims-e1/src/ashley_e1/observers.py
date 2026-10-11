@@ -1427,16 +1427,14 @@ def _dialog_rows(dialog):
     return found[:schema.MAX_DIALOG_ROWS]
 
 
-def read_dialogs(sim_info=None):
+def read_dialogs():
     """2.15.2: the game's pop-ups (live 2026-10-05: a question about a new like was
     answered for her and never sensed). Open ones come from the dialog
     service's `_active_dialogs` (dialog id -> dialog; bytecode ui/ui_dialog_service),
     newest last; a dialog gone since the last sample is reported closed with the
     answer the game stored on it (`response`). A dialog waiting on the game's own
-    auto-response is marked. Read only: no dialog is answered or cancelled here.
-    2.36.0 (D6, P2): the notices this sample finds are kept for read_notices."""
-    global _DIALOGS_OPEN, _NOTICES_SAMPLE
-    _NOTICES_SAMPLE = None
+    auto-response is marked. Read only: no dialog is answered or cancelled here."""
+    global _DIALOGS_OPEN
     try:
         service = services.ui_dialog_service()
         active = list(service._active_dialogs.items())
@@ -1466,52 +1464,93 @@ def read_dialogs(sim_info=None):
     for stale in [key for key in _WINDOWS if key not in current]:
         del _WINDOWS[stale]
     _remember_dialog_speeds(set(current))
-    _NOTICES_SAMPLE = _sample_notices(sim_info, current)
     opened = [entry for _, entry in current.values()]
     truncated = (len(opened) > schema.MAX_DIALOGS or len(closed) > schema.MAX_DIALOGS)
     return {"open": opened[-schema.MAX_DIALOGS:], "closed": closed[-schema.MAX_DIALOGS:],
             "truncated": truncated}
 
 
-# 2.36.0 (D6, P2): the game's notices about her. A notice is a UiDialogNotification (any class of it) whose
-# owner is her Sim or a Sim of her household, or which has no owner. It is recorded once, in the next row, and
-# never held, cancelled or answered: the probe only reads what read_dialogs samples. The probe's own lines
-# (cmd_talk, note_own_notice) are not notices about her.
+# 2.36.0 (D6, P2): the game's notices about her. A notification is observed as it is shown: e2_control's notice
+# hook sits on UiDialogNotification.distribute_dialog, which every notification goes through. (dialog_show keeps
+# only dialogs WITH responses in _active_dialogs, and a notice normally has none, so sampling that dict would miss
+# nearly every notice.) Read only: never held, cancelled or answered. The probe's own lines are not notices about
+# her: note_own_notice marks them before they are shown.
 NOTICES_PENDING_KEPT = 16
-_NOTICED = set()
-_OWN_NOTICES = set()
-_NOTICES_PENDING = []
-_NOTICES_SAMPLE = None
+NOTICED_KEPT = 64
+OWN_NOTICES_KEPT = 64
+_SHOWN = []             # notices shown since the last row, newest last (bounded)
+_NOTICED = {}           # dialog id keys already handed over (bounded)
+_NOTICES_PENDING = []   # recorded, not yet sent in a row
+_OWN_NOTICES = {}       # dialog id keys of the probe's own lines (bounded)
+
+
+def _remember(table, key, kept):
+    """A bounded set in insertion order: the oldest key goes first."""
+    table[key] = True
+    while len(table) > kept:
+        del table[next(iter(table))]
+
+
+def _dialog_key(dialog):
+    return str(schema.string_id(int(dialog.dialog_id), "dialog_id"))
 
 
 def note_own_notice(dialog):
-    """2.36.0: the probe's own line is a notification it showed itself; its dialog id is kept so it is never a
-    notice. Reads the dialog id only. Never raises."""
+    """2.36.0: the probe's own line, marked BEFORE it is shown: its dialog id is kept, so the notice hook never
+    records it. dialog_id is safe to read before the show: the game's unique_id descriptor assigns it on the first
+    read, and the show uses that same id. Never raises."""
     try:
-        _OWN_NOTICES.add(str(schema.string_id(int(dialog.dialog_id), "dialog_id")))
+        _remember(_OWN_NOTICES, _dialog_key(dialog), OWN_NOTICES_KEPT)
     except Exception:
         pass
 
 
-def read_notices():
-    """2.36.0: the notices the last dialog sample found, at most schema.MAX_NOTICES, each once; None when the
-    dialogs could not be read. Handed over once: the next row starts from the notices that came after."""
-    global _NOTICES_SAMPLE
-    sample, _NOTICES_SAMPLE = _NOTICES_SAMPLE, None
-    return sample
+def notice_shown(dialog):
+    """2.36.0 (D6, P2): the notice hook's observer, called as a notification is distributed. A probe's own line
+    is dropped (its mark is used up). Any other notification is kept with its words and its owner, read now (the
+    owner's sim id and household id, or None when it has no owner). Never raises."""
+    try:
+        key = _dialog_key(dialog)
+        if key in _OWN_NOTICES:
+            del _OWN_NOTICES[key]
+            return
+        if not _is_notification(dialog):
+            return
+        owner = _notice_owner(dialog)
+        _SHOWN.append({"dialog_id": key, "title_key": _text_key(lambda: dialog.title),
+                       "text_key": _text_key(lambda: dialog.text), "owner": owner})
+        del _SHOWN[:-NOTICES_PENDING_KEPT]
+    except Exception:
+        pass
 
 
-def _sample_notices(sim_info, current):
-    """2.36.0: the notices among the open dialogs (current: dialog id key -> (dialog, entry)) that are new since
-    the last sample. Pending ones wait (bounded), and at most schema.MAX_NOTICES leave with this row."""
-    _NOTICED.intersection_update(current)
-    _OWN_NOTICES.intersection_update(current)
-    for key, (dialog, entry) in current.items():
-        if key in _NOTICED or key in _OWN_NOTICES:
+def _text_key(read):
+    try:
+        return _string_key(read())
+    except Exception:
+        return None
+
+
+def _notice_owner(dialog):
+    """Who a notice belongs to, read when it is shown: None when it has no owner, else the owner's sim id and
+    household id (strings; household None when unknown). Raises when the owner cannot be read (the notice is
+    then skipped)."""
+    owner = dialog._owner()
+    if owner is None:
+        return None
+    household = _value(lambda: owner.household_id)
+    return {"sim_id": str(owner.id), "household_id": None if household is None else str(household)}
+
+
+def read_notices(sim_info=None):
+    """2.36.0: the notices shown since the last row that are hers (her Sim, a Sim of her household, or no owner),
+    each once, at most schema.MAX_NOTICES. Handed over once: the next row starts from what came after."""
+    shown = list(_SHOWN)
+    del _SHOWN[:]
+    for entry in shown:
+        if entry["dialog_id"] in _NOTICED or not _is_hers(entry["owner"], sim_info):
             continue
-        if not _is_notification(dialog) or not _is_hers(dialog, sim_info):
-            continue
-        _NOTICED.add(key)
+        _remember(_NOTICED, entry["dialog_id"], NOTICED_KEPT)
         _NOTICES_PENDING.append({"title_key": entry["title_key"], "text_key": entry["text_key"]})
     del _NOTICES_PENDING[:-NOTICES_PENDING_KEPT]
     sent = _NOTICES_PENDING[:schema.MAX_NOTICES]
@@ -1527,20 +1566,17 @@ def _is_notification(dialog):
         return False
 
 
-def _is_hers(dialog, sim_info):
-    """Her Sim or a Sim of her household owns the notice, or it has no owner (a weakref read: dialog._owner())."""
-    try:
-        owner = dialog._owner()
-    except Exception:
-        return False
+def _is_hers(owner, sim_info):
+    """A notice's owner (from _owner_of) is her Sim, a Sim of her household, or nobody."""
     if owner is None:
         return True
     if sim_info is None:
         return False
     try:
-        if owner.id == sim_info.id:
+        if owner["sim_id"] == str(sim_info.id):
             return True
-        return owner.household_id is not None and owner.household_id == sim_info.household_id
+        household = sim_info.household_id
+        return household is not None and owner["household_id"] == str(household)
     except Exception:
         return False
 
@@ -1807,11 +1843,11 @@ def poll_once(telemetry_session_id, armed_name,
     except Exception:
         row["place"] = None
     try:
-        row["dialogs"] = read_dialogs(sim_info)
+        row["dialogs"] = read_dialogs()
     except Exception:
         row["dialogs"] = None
     try:
-        row["notices"] = read_notices()
+        row["notices"] = read_notices(sim_info)
     except Exception:
         row["notices"] = None
     try:

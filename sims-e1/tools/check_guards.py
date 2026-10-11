@@ -66,6 +66,8 @@ E2_CONTROL_ASSIGNABLE = frozenset((
     "sims.sim_dialogs.SimPersonalityAssignmentDialog.distribute_dialog",
     "ui.ui_dialog_picker.UiMapViewPicker.distribute_dialog",
     "ui.ui_dialog_picker.UiApartmentPicker.distribute_dialog",
+    # 2.36.0 (D6, P2): the notice observer. It reads each notification as it is shown and never holds it.
+    "ui.ui_dialog_notification.UiDialogNotification.distribute_dialog",
     "distributor.system.Distributor.add_event",
     "distributor.system.Distributor.add_op",
     "distributor.system.Distributor.add_op_with_no_owner",

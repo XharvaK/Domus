@@ -99,7 +99,7 @@ class _Base(unittest.TestCase):
         self.observers._NOTICED.clear()
         self.observers._OWN_NOTICES.clear()
         del self.observers._NOTICES_PENDING[:]
-        self.observers._NOTICES_SAMPLE = None
+        del self.observers._SHOWN[:]
 
     def _info(self):
         return senses.SelfTests._sim_info(self)
@@ -244,19 +244,23 @@ class WeatherTests(_Base):
 
 
 class NoticeFake(object):
-    """A UiDialogNotification as the game builds one: owner, title and text, no responses."""
+    """A UiDialogNotification as the game builds one: owner, title and text, and a dialog id. A notice normally
+    has no responses, so dialog_show never stores it in _active_dialogs; the game distributes it instead."""
+
+    _ids = iter(range(701, 100000))
 
     def __init__(self, owner, title, text):
+        self.dialog_id = next(NoticeFake._ids)
         self._owner = lambda: owner
         self.title = None if title is None else _Wrapper(title)
         self.text = _Wrapper(text)
         self.response = None
 
+    def has_responses(self):
+        return False
+
     def respond(self, response):
         raise AssertionError("the probe never answers a notice")
-
-    def show_dialog(self):
-        raise AssertionError("the probe never shows a notice")
 
 
 class UiDialogNotification(NoticeFake):
@@ -274,6 +278,7 @@ class UiDialogOkCancel(object):
 class NoticeTests(_Base):
     def setUp(self):
         _Base.setUp(self)
+        self.module = sys.modules[type(self.probe._E2).__module__]
         self.service = types.SimpleNamespace(_active_dialogs={}, _auto_respond_alarm_handles={})
 
         def never(*args, **kwargs):
@@ -283,61 +288,138 @@ class NoticeTests(_Base):
         self.service.dialog_show = never
         self.services.ui_dialog_service = lambda: self.service
 
+    def shown(self, notice):
+        """The game distributes a notice: the notice hook sees it, and the game's own send runs."""
+        sent = []
+        hook = self.module._notice_hook(lambda dialog, *args, **kwargs: sent.append(dialog))
+        hook(notice, "dialog_type", "message")
+        return sent
+
     def row(self):
         return ds3.PollOnceTests.row(self)
 
-    def test_a_notice_about_her_is_recorded_once(self):
-        self.service._active_dialogs[701] = UiDialogNotification(self.lab, 0xA001, 0xA002)
+    def test_a_notice_with_no_responses_is_in_the_next_row_once(self):
+        notice = UiDialogNotification(self.lab, 0xA001, 0xA002)
+        self.assertFalse(notice.has_responses())
+        self.shown(notice)
+        self.assertEqual(self.service._active_dialogs, {})  # the game keeps only dialogs with responses
         self.assertEqual(self.row()["notices"], [{"title_key": str(0xA001), "text_key": str(0xA002)}])
-        self.assertEqual(self.row()["notices"], [])  # still showing, already recorded
+        self.assertEqual(self.row()["notices"], [])  # recorded once
 
     def test_a_notice_about_a_household_member_is_hers(self):
         member = types.SimpleNamespace(id=101, household_id="hh1")
-        self.service._active_dialogs[701] = UiDialogNotification(member, None, 0xA002)
+        self.shown(UiDialogNotification(member, None, 0xA002))
         self.assertEqual(self.row()["notices"], [{"title_key": None, "text_key": str(0xA002)}])
 
     def test_a_notice_with_no_owner_is_recorded(self):
-        self.service._active_dialogs[701] = UiDialogNotification(None, 0xA001, 0xA002)
+        self.shown(UiDialogNotification(None, 0xA001, 0xA002))
         self.assertEqual(len(self.row()["notices"]), 1)
 
     def test_a_stranger_is_not_recorded(self):
-        self.service._active_dialogs[701] = UiDialogNotification(self.far, 0xA001, 0xA002)
+        self.shown(UiDialogNotification(self.far, 0xA001, 0xA002))
         self.assertEqual(self.row()["notices"], [])
 
     def test_the_probes_own_line_is_not_recorded(self):
         own = UiDialogNotification(self.lab, 0xA001, 0xA002)
-        own.dialog_id = 701  # the game gives every dialog its id when it is shown
-        self.service._active_dialogs[701] = own
         self.observers.note_own_notice(own)
+        self.shown(own)
         self.assertEqual(self.row()["notices"], [])
 
     def test_a_question_is_not_a_notice(self):
-        self.service._active_dialogs[702] = UiDialogOkCancel(self.lab, 0x5001, 0x5002)
+        self.shown(UiDialogOkCancel(self.lab, 0x5001, 0x5002))
         self.assertEqual(self.row()["notices"], [])
 
     def test_at_most_four_per_row_and_the_rest_wait_for_the_next(self):
         for number in range(6):
-            self.service._active_dialogs[710 + number] = UiDialogNotification(
-                self.lab, 0xA100 + number, 0xA200 + number)
+            self.shown(UiDialogNotification(self.lab, 0xA100 + number, 0xA200 + number))
         first, second = self.row()["notices"], self.row()["notices"]
         self.assertEqual([item["text_key"] for item in first],
                          [str(0xA200 + n) for n in range(4)])
         self.assertEqual([item["text_key"] for item in second], [str(0xA204), str(0xA205)])
 
-    def test_no_dialog_service_is_none(self):
+    def test_no_dialog_service_does_not_stop_the_notices(self):
         def no_service():
             raise RuntimeError("no service")
         self.services.ui_dialog_service = no_service
-        self.assertIsNone(self.row()["notices"])
+        self.shown(UiDialogNotification(self.lab, 0xA001, 0xA002))
+        self.assertEqual(len(self.row()["notices"]), 1)
 
     def test_the_notice_schema_accepts_the_list_and_rejects_a_bad_one(self):
-        self.service._active_dialogs[701] = UiDialogNotification(self.lab, 0xA001, 0xA002)
+        self.shown(UiDialogNotification(self.lab, 0xA001, 0xA002))
         row = self.row()
         self.schema.validate_record(row)
         for bad in ([{"title_key": "9" * 65, "text_key": None}], [{"title_key": None}],
                     [{"title_key": None, "text_key": None}] * 5):
             with self.assertRaises(Exception):
                 self.schema.validate_record(dict(row, notices=bad))
+
+
+class NoticeHookTests(_Base):
+    """2.36.0: the notice hook observes; it never holds, never answers, and always runs the game's own send."""
+
+    def setUp(self):
+        _Base.setUp(self)
+        self.module = sys.modules[type(self.probe._E2).__module__]
+
+    def test_the_original_gets_the_same_arguments_and_its_result(self):
+        seen = []
+
+        def original(dialog, *args, **kwargs):
+            seen.append((dialog, args, kwargs))
+            return "sent"
+        notice = UiDialogNotification(self.lab, 0xA001, 0xA002)
+        result = self.module._notice_hook(original)(notice, "type", "msg", extra=2)
+        self.assertEqual(result, "sent")
+        self.assertEqual(seen, [(notice, ("type", "msg"), {"extra": 2})])
+
+    def test_the_original_still_runs_when_the_observer_raises(self):
+        seen = []
+        saved = self.observers.notice_shown
+
+        def broken(dialog):
+            raise RuntimeError("the observer broke")
+        self.observers.notice_shown = broken
+        self.addCleanup(setattr, self.observers, "notice_shown", saved)
+        notice = UiDialogNotification(self.lab, 0xA001, 0xA002)
+        self.module._notice_hook(lambda dialog, *args, **kwargs: seen.append(dialog))(notice, "type", "msg")
+        self.assertEqual(seen, [notice])
+
+    def test_the_hold_controller_is_never_consulted(self):
+        class Controller(object):
+            def hold_dialog(self, *args, **kwargs):
+                raise AssertionError("a notice is never held")
+        saved = self.module._HOLD["controller"]
+        self.module._HOLD["controller"] = Controller()
+        self.addCleanup(self.module._HOLD.__setitem__, "controller", saved)
+        seen = []
+        self.module._notice_hook(lambda dialog, *args, **kwargs: seen.append(dialog))(
+            UiDialogNotification(self.lab, 0xA001, 0xA002), "type", "msg")
+        self.assertEqual(len(seen), 1)
+
+    def test_install_observes_the_class_and_restore_gives_the_game_back(self):
+        names = ("UiDialogBase", "UiDialogObjectColorPicker", "SimPersonalityAssignmentDialog",
+                 "UiMapViewPicker", "UiApartmentPicker", "UiDialogNotification", "Distributor", "Consts_pb2")
+        saved = dict((name, getattr(self.module, name)) for name in names)
+
+        def put_back():
+            self.module._restore_holds()
+            for name, value in saved.items():
+                setattr(self.module, name, value)
+        self.addCleanup(put_back)
+
+        class Notification(object):
+            def distribute_dialog(self, dialog_type, dialog_msg):
+                return "game"
+        original = Notification.distribute_dialog
+        for name in names:
+            setattr(self.module, name, None)
+        self.module.UiDialogNotification = Notification
+        self.module._restore_holds()
+        self.assertTrue(self.module._install_holds(object()))
+        self.assertIsNot(Notification.distribute_dialog, original)
+        self.assertEqual(Notification.distribute_dialog.__qualname__, "_notice_hook.<locals>.distribute_dialog")
+        self.module._restore_holds()
+        self.assertIs(Notification.distribute_dialog, original)
 
 
 class SchemaEighteenTests(_Base):
@@ -381,34 +463,43 @@ class SchemaEighteenTests(_Base):
 
 
 class OwnLineTests(unittest.TestCase):
-    """2.36.0: the probe's own talk line is remembered by its dialog id, so it is never a notice about her."""
+    """2.36.0: the probe's own talk line is marked before it is shown, so the notice hook never records it."""
 
-    def test_the_talk_line_is_remembered_as_the_probes_own(self):
+    def test_the_talk_line_is_marked_before_it_is_shown(self):
         base = talk.TalkTests("test_shows_one_line_and_changes_nothing")
         base.setUp()
         self.addCleanup(base.tearDown)
+        module = sys.modules[type(base.probe._E2).__module__]
 
-        class _Line(object):
-            dialog_id = 701
+        class UiDialogNotification(object):
+            """The game's class name: the hook looks for it by name."""
 
             def __init__(self, owner, text):
-                self.owner, self.text = owner, text
+                self.dialog_id = 701
+                self._owner = lambda: owner
+                self.title = None
+                self.text = None
 
             def show_dialog(self):
-                return None
+                # the game distributes the line as it shows it
+                module._notice_hook(lambda dialog, *args, **kwargs: None)(self, "type", "msg")
 
         class _Factory(object):
             def TunableFactory(self):
                 class _Tunable(object):
                     def default(self, owner, text=None):
-                        return _Line(owner, text)
+                        return UiDialogNotification(owner, text)
                 return _Tunable()
 
-        base.control.UiDialogNotification = _Factory()
+        saved = module.UiDialogNotification
+        self.addCleanup(setattr, module, "UiDialogNotification", saved)
+        module.UiDialogNotification = _Factory()
         base.case.ready()
         ok, connection = base.talk({"text": "Ashley is asking Don about his day.", "sim_id": HER})
         self.assertTrue(ok, connection.lines)
-        self.assertIn("701", base.probe.observers._OWN_NOTICES)
+        her = types.SimpleNamespace(id=int(HER), household_id="hh1")
+        self.assertEqual(module.observers.read_notices(her), [])
+        self.assertEqual(module.observers._OWN_NOTICES, {})  # the mark was used by the hook
 
 
 if __name__ == "__main__":
