@@ -190,3 +190,30 @@ def test_a_lone_part_of_an_older_menu_is_dropped_by_the_next_revision_and_an_old
     assert parts.take("s", {"menu_rev": 5, "room": None, "objects": [], "part": 5, "parts": 2}) is None
     assert parts.take("s", {"menu_rev": 1, "room": None, "objects": [{"object_id": "7"}]})["objects"] == [
         {"object_id": "7"}]
+
+
+# F10: an unresolved string token never reaches her with braces.
+def test_an_unresolved_token_is_filled_from_a_person_or_dropped_and_no_brace_is_shown():
+    texts = {"k1": "Assign {2.String} Bed to", "k2": "Greet {1.SimFirstName} now", "k3": "Pick {0.SimFirstName} up",
+             "k4": "Odd { brace"}
+    menu = {"room": "1", "objects": [
+        {"object_id": "51", "class": "sim", "room": "1", "distance_m": 2.0, "same_room": True,
+         "acts": [{"guid64": "8001", "name": "sim_Greet", "text_key": "k2"},
+                  {"guid64": "8002", "name": "sim_Assign", "text_key": "k1"}]},
+        {"object_id": "52", "class": "object_bed", "room": "1", "distance_m": 2.0, "same_room": True,
+         "acts": [{"guid64": "8003", "name": "bed_Assign", "text_key": "k1"},
+                  {"guid64": "8004", "name": "bed_Pick", "text_key": "k3"},
+                  {"guid64": "8005", "name": "bed_Odd", "text_key": "k4"}]}]}
+    result = options(menu, texts.get, people={"51": "Mara Quill"})
+    texts_shown = {act["guid64"]: act["text"] for item in result for act in item["acts"]}
+    assert texts_shown == {"8001": "Greet Mara now", "8002": "Assign Mara Quill Bed to",
+                           "8003": "Assign Bed to", "8004": "Pick up", "8005": "Odd brace"}
+    assert all("{" not in text and "}" not in text for text in texts_shown.values())
+
+
+def test_the_spaces_round_a_dropped_token_are_tidied_before_punctuation():
+    texts = {"k5": "Put it {0.String} , then rest ."}
+    menu = {"room": "1", "objects": [{"object_id": "53", "class": "object_desk", "room": "1", "distance_m": 1.0,
+                                      "same_room": True, "acts": [{"guid64": "8006", "name": "desk_Put",
+                                                                   "text_key": "k5"}]}]}
+    assert options(menu, texts.get)[0]["acts"][0]["text"] == "Put it, then rest."

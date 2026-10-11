@@ -92,14 +92,40 @@ def humanize(name):
     return " ".join(_CAMEL.sub(" ", word) for word in words if word).strip()[:80] or "unnamed"
 
 
-def _text(resolve, key):
+_TOKEN = re.compile(r"\{([^{}]*)\}")
+
+
+def clean_text(text, person=None):
+    """N8 (F10): a game sentence with its string tokens resolved, never with braces. A token that names the
+    target (index 1 or more) is filled with the person's name when the target is a person (a first-name field
+    gets the first name, a last-name field the last name, anything else the full name); every other token is
+    dropped. Then the spaces are tidied. None when nothing is left."""
+    def fill(match):
+        index, _dot, field = match.group(1).partition(".")
+        if not person or index == "0" or not index.isdigit():
+            return ""
+        if "FirstName" in field:
+            return person.split()[0]
+        if "LastName" in field:
+            return person.split()[-1]
+        return person
+    text = _TOKEN.sub(fill, text).replace("{", "").replace("}", "")
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    return text or None
+
+
+def _text(resolve, key, person=None):
     if resolve is None or key is None:
         return None
     try:
         text = resolve(key)
     except Exception:
         return None
-    return text.strip()[:80] if isinstance(text, str) and text.strip() else None
+    if not isinstance(text, str):
+        return None
+    cleaned = clean_text(text, person)
+    return cleaned[:80] if cleaned else None
 
 
 def act_names(menu, resolve=None):
@@ -128,10 +154,15 @@ def _sentence(resolve, key):
         return None
     if not isinstance(text, str):
         return None
-    text = text.strip()
-    if not text:
+    text = clean_text(text)
+    return text[:200] if text else None
+
+
+def _person_name(item, people):
+    """N8 (F10): the name of the person an act is on, when the object is a person she can name, else None."""
+    if item.get("class") != "sim":
         return None
-    return text[:200]
+    return (people or {}).get(str(item.get("object_id")))
 
 
 def _object_name(item, resolve, catalog, people=None):
@@ -388,7 +419,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
-            text = _text(resolve, act.get("text_key")) or humanize(act.get("name"))
+            text = _text(resolve, act.get("text_key"), _person_name(item, people)) or humanize(act.get("name"))
             if text in texts:
                 continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
             texts.add(text)
