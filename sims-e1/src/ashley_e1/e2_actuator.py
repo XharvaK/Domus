@@ -411,14 +411,32 @@ def started(interaction):
         return None
 
 
+# 2.38.0 (W11 P2): a portal's class names (the menu's fixture rule reads "door" and "gate" too).
+PORTAL_PARTS = ("door", "gate", "archway")
+
+
+def is_portal(obj):
+    """Read: whether the object is a door, gate or archway, by its class name. False when unreadable."""
+    try:
+        name = type(obj).__name__.lower()
+    except Exception:
+        return False
+    return any(part in name for part in PORTAL_PARTS)
+
+
 def reachable(sim, obj):
     """Read: whether the game sees a way from her to the object, by the check its own autonomy
     makes before it picks one (autonomy_request._check_object_connectivity_and_rules calls
-    ScriptObject.is_connected). True, False, or None when unreadable."""
+    ScriptObject.is_connected). True, False, or None when unreadable.
+    2.38.0 (W11 P2, live 2026-10-12: every door read False, the front door and both double doors too, while a chair
+    46 m away read True): the check does not give a door a way, so a portal never reads False. True when the game
+    says so, else None (unknown). No probe API reads a way to a portal's side, so none is computed."""
     try:
         value = obj.is_connected(sim)
     except Exception:
         return None
+    if is_portal(obj):
+        return True if value is True else None
     return value if type(value) is bool else None
 
 
