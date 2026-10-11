@@ -3,12 +3,13 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 18
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v18"
-PROBE_VERSION = "2.36.0"
+# 2.37.0 (schema 19, W10): the act menu's `cached` count and `excluded_phone` names. Rows of schema 18 still validate.
+OBSERVATION_SCHEMA_VERSION = 19
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v19"
+PROBE_VERSION = "2.37.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -85,7 +86,10 @@ E2_PAYLOAD_KEYS = {
                   "tuning_name", "finishing_type", "detail", "reason_key",
                   "closed", "resumed", "owner", "started", "aliases"),
     # 2.35.0 (D3): refused_phone is on part 0 (None on the other parts, and on older rows).
-    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms", "part", "parts", "refused_phone"),
+    # 2.37.0 (schema 19, W10): cached (candidates the far cache answered; None on older rows) and excluded_phone
+    # (part 0 only, like refused_phone).
+    "act_menu": ("menu_rev", "room", "objects", "tested", "cached", "refused", "build_ms", "part", "parts",
+                 "refused_phone", "excluded_phone"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
 # 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
@@ -104,9 +108,14 @@ MENU_MAX_ACTS = 8
 MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "room", "reach", "acts", "phone",
                     "spot", "level")
 MENU_SPOT_KINDS = ("room", "front_door")
-# 2.35.0 (D3): the phone's offers the game's preflight refuses, by tuning name and reason key (a diagnostic; at most 16).
-MENU_MAX_REFUSED_PHONE = 16
+# 2.35.0 (D3): the phone's offers the game's preflight refuses, by tuning name and reason key (a diagnostic).
+# 2.37.0 (W10 P3): at most 64 (was 16: a phone with more than 16 acts lost the later ones).
+MENU_MAX_REFUSED_PHONE = 64
 MENU_REFUSED_KEYS = ("name", "reason_key")
+# 2.37.0 (W10 P3): the phone's acts the guard excluded before the game's test, by name and why (at most 64).
+MENU_MAX_EXCLUDED_PHONE = 64
+MENU_EXCLUDED_KEYS = ("name", "why")
+MENU_EXCLUDED_WHY = ("pie_picker", "deny_name", "travel", "not_user_directed", "hidden")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
@@ -587,6 +596,10 @@ def _validate_e2(row):
         # 2.35.0: refused_phone is optional; rows before schema 17 omit it.
         if "refused_phone" not in payload:
             payload["refused_phone"] = None
+        # 2.37.0 (schema 19): cached and excluded_phone are optional; rows before schema 19 omit them.
+        for key in ("cached", "excluded_phone"):
+            if key not in payload:
+                payload[key] = None
         # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone. 2.35.0: so are spot and level.
         for item in payload.get("objects") or ():
             if isinstance(item, dict):
@@ -710,6 +723,8 @@ def _validate_menu(payload):
         string_id(payload["room"], "menu room")
     for key in ("tested", "refused"):
         _require(type(payload[key]) is int and payload[key] >= 0, "menu %s" % key)
+    if payload["cached"] is not None:
+        _require(type(payload["cached"]) is int and payload["cached"] >= 0, "menu cached")
     _number_or_none(payload["build_ms"], "menu build_ms")
     objects = payload["objects"]
     _require(type(payload["part"]) is int and type(payload["parts"]) is int, "menu part")
@@ -723,6 +738,13 @@ def _validate_menu(payload):
             if item["reason_key"] is not None:
                 _require(isinstance(item["reason_key"], str), "menu refused reason_key")
                 string_id(item["reason_key"], "menu refused reason_key")
+    excluded = payload["excluded_phone"]
+    if excluded is not None:
+        _require(type(excluded) is list and len(excluded) <= MENU_MAX_EXCLUDED_PHONE, "menu excluded_phone")
+        for item in excluded:
+            _require(isinstance(item, dict) and set(item) == set(MENU_EXCLUDED_KEYS), "menu excluded shape")
+            bounded_string(item["name"], 128, "menu excluded name", False)
+            _require(item["why"] in MENU_EXCLUDED_WHY, "menu excluded why")
     _require(isinstance(objects, list) and len(objects) <= MENU_MAX_OBJECTS, "menu objects")
     for item in objects:
         _require(isinstance(item, dict) and set(item) == set(MENU_OBJECT_KEYS), "menu object shape")
