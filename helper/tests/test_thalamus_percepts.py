@@ -1,11 +1,10 @@
-"""Synthetic rows for percept extraction and the online forward models."""
+"""Synthetic rows for percept extraction (D2: what changed, never a judgment of it)."""
 
 import json
 
 import pytest
 
 from domus_helper.telemetry import file_rows, raw_rows
-from domus_helper.thalamus.forward import DurationModel, NeedModel
 from domus_helper.thalamus.percepts import Extractor
 from domus_helper.thalamus.types import Percept
 
@@ -64,41 +63,6 @@ def test_raw_rows_skips_validation(tmp_path):
         list(file_rows(path))
 
 
-def test_need_model_learns_rate_and_z():
-    model = NeedModel()
-    # first pair sets the rate; z stays 0 because there is no prior rate
-    z0 = model.observe("hunger", (), 10, 50.0, 20, 40.0)
-    assert z0 == 0.0
-    assert model.rate("hunger", ()) == pytest.approx(-1.0)
-    # prediction 40 + -1*10 = 30; value 50; |e|=20; sigma was 1; z=20
-    z1 = model.observe("hunger", (), 20, 40.0, 30, 50.0)
-    assert z1 == pytest.approx(20.0)
-    blob = model.to_dict()
-    again = NeedModel.from_dict(blob)
-    assert again.rate("hunger", ()) == pytest.approx(model.rate("hunger", ()))
-    model.reset()
-    assert model.rate("hunger", ()) is None
-
-
-def test_duration_surprise_and_seed():
-    model = DurationModel()
-    assert model.surprise(10, 14244) == 0.0
-    for value in (10, 10, 10):
-        model.observe(14244, value)
-    assert model.surprise(10, 14244) == 0.0
-    assert model.surprise(100, 14244) == 3.0
-    assert model.surprise(1, 14244) == 3.0
-    seeded = DurationModel().seed_from_calibration({
-        "durations": [{"affordance_id": 5, "median_ticks": 40}, {"affordance_id": 6}],
-    })
-    seeded.seed_from_calibration({})
-    seeded.seed_from_calibration({"durations": None})
-    assert seeded.seeds[5] == 40
-    assert 6 not in seeded.seeds
-    roundtrip = DurationModel.from_dict(model.to_dict())
-    assert roundtrip.surprise(100, 14244) == 3.0
-
-
 def test_band_transitions_and_quiet_need():
     ext = Extractor()
     base = [_motive("hunger", 80, "ok")]
@@ -126,18 +90,16 @@ def test_band_transitions_and_quiet_need():
     assert second == []
 
 
-def test_need_surprise_when_z_is_large():
+def test_a_drift_inside_one_band_sends_no_need_percept_and_a_band_change_does():
+    """D2: a need percept is a band change and nothing else. A steep drift inside one band is not sent."""
     ext = Extractor()
     ext.step(_row(1, ticks=0, motives=[_motive("fun", 50, "ok")], observed=[_entry(1)]))
     ext.step(_row(2, ticks=10, motives=[_motive("fun", 40, "ok")], observed=[_entry(1)]))
-    surprising = ext.step(_row(3, ticks=20, motives=[_motive("fun", 80, "ok")], observed=[_entry(1)]))
-    needs = [p for p in surprising if p.kind == "need"]
-    assert len(needs) == 1
-    assert needs[0].bucket == "ok"
-    assert needs[0].surprise >= 2.0
-    assert needs[0].urgency == "normal"
-    assert ("band", "ok") in needs[0].facts
-    assert any(key == "value" for key, _ in needs[0].facts)
+    drift = ext.step(_row(3, ticks=20, motives=[_motive("fun", 80, "ok")], observed=[_entry(1)]))
+    assert [p for p in drift if p.kind == "need"] == []
+    crossed = ext.step(_row(4, ticks=30, motives=[_motive("fun", 20, "low")], observed=[_entry(1)]))
+    assert [(p.bucket, p.urgency) for p in crossed if p.kind == "need"] == [("low", "wake")]
+    assert ext.to_dict().keys().isdisjoint({"needs", "durations", "open", "barrier"})
 
 
 def test_interaction_start_end_cancel_and_user_intent():
@@ -164,25 +126,7 @@ def test_interaction_start_end_cancel_and_user_intent():
     cancelled = cancel.step(_row(2, ticks=5, observed=[_entry(
         9, iid="c", membership="QUEUED", source="InteractionSource.BODY_CANCEL_AOP")]))
     assert cancelled[0].bucket == "ended"
-    assert cancelled[0].surprise == 3.0
-
-
-def test_unambiguous_duration_is_recorded_once():
-    ext = Extractor()
-    ext.step(_row(1, ticks=0, observed=[_entry(7)]))
-    ext.step(_row(2, ticks=30, paused=True, observed=[_entry(7)]))
-    ext.step(_row(3, ticks=40, observed=[]))
-    assert ext.durations.samples.get(7, []) == []
-    clean = Extractor()
-    clean.step(_row(1, ticks=10, observed=[_entry(8)]))
-    clean.step(_row(2, ticks=25, observed=[]))
-    assert clean.durations.samples[8] == [15]
-    # a sequence hole makes the close ambiguous
-    gappy = Extractor()
-    gappy.step(_row(1, ticks=0, observed=[_entry(8, iid="g")]))
-    percepts = gappy.step(_row(4, ticks=50, observed=[]))
-    assert any(p.kind == "gap" for p in percepts)
-    assert gappy.durations.samples.get(8, []) == []
+    assert cancelled[0].surprise == 0.0  # D2: no surprise is computed or sent
 
 
 def test_posture_and_zone():
@@ -205,10 +149,8 @@ def test_gap_and_lineage_reset_models():
     ext = Extractor()
     ext.step(_row(1, ticks=0, motives=[_motive("hunger", 50, "ok")]))
     ext.step(_row(2, ticks=10, motives=[_motive("hunger", 40, "ok")]))
-    assert ext.needs.rate("hunger", ()) is not None
     jumped = ext.step(_row(5, ticks=40, motives=[_motive("hunger", 10, "ok")]))
     assert any(p.kind == "gap" and p.urgency == "wake" and p.bucket == "gap" for p in jumped)
-    assert ext.needs.rate("hunger", ()) is None
     opened = ext.step(_row(6, kind="session_open", ticks=41))
     assert any(p.kind == "gap" for p in opened)
     lineage = ext.step(_row(

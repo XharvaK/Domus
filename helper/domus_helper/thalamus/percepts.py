@@ -1,7 +1,6 @@
 """Turn one telemetry row into percepts. Explicit extractor state, no I/O."""
 
 from domus_helper.calibration import RUNNING
-from domus_helper.thalamus.forward import DurationModel, NeedModel
 from domus_helper.thalamus.types import Percept
 
 _USER = "InteractionSource.SCRIPT_WITH_USER_INTENT"
@@ -70,8 +69,6 @@ def _entry_id(entry):
 class Extractor:
     def __init__(self, owner_sim_id=None):
         self.owner_sim_id = owner_sim_id
-        self.needs = NeedModel()
-        self.durations = DurationModel()
         self.lineage_id = ""
         self.slot_id = None
         self.guid = None
@@ -80,8 +77,6 @@ class Extractor:
         self._session = None
         self._seq = None
         self._prev = None
-        self._open = {}
-        self._barrier = 0
         self._presence = None
         # HE3: who each present Sim was (name and last room), so "left" can say who and where.
         self._presence_names = {}
@@ -92,11 +87,6 @@ class Extractor:
         self._mood = None
         self._wall_ms = None
         self._finished_ms = None
-
-    @property
-    def busy(self):
-        """H0.5: her body is doing something (not just standing or sitting); None before the first snapshot."""
-        return self._busy
 
     def step(self, row):
         percepts = []
@@ -139,7 +129,6 @@ class Extractor:
             if self.lineage_id:  # a known lineage is left; a first one waits for its lineage event
                 self.lineage_id = f"{slot}:{guid}"
         self._prev = None
-        self._open = {}
         self._presence = None
         self._on_lot = set()
         self._social = set()
@@ -169,9 +158,6 @@ class Extractor:
                                             ("finishing_type", e2.get("finishing_type")), ("origin", "her_choice"))))]
 
     def _gap(self, session, lost=None):
-        self.needs.reset()
-        self.durations.reset()
-        self._barrier += 1
         self._seen_row = True
         return Percept("gap", "session", "" if session is None else str(session), "gap",
                        urgency="wake", lineage=self.lineage_id, facts=_facts(None, (("lost", lost),)))
@@ -189,9 +175,6 @@ class Extractor:
         self.guid = e2.get("guid")
         self.lineage_class = lineage_class
         self.lineage_id = f"{slot}:{guid}"
-        self.needs.reset()
-        self.durations.reset()
-        self._barrier += 1
         return percept
 
     def _snapshot(self, row):
@@ -227,10 +210,9 @@ class Extractor:
         conditions = (_conditions_of(objects) if isinstance(objects, dict) and "near_conditions" in objects
                       else None)
         prior_running = {} if previous is None else previous["running"]
-        percepts.extend(self._interactions(
-            prior_running, running, observed, ticks, paused, sim_s))
+        percepts.extend(self._interactions(prior_running, running, observed, ticks, sim_s))
         if previous is not None:
-            percepts.extend(self._needs(previous, row, ticks, paused, sim, motives, running))
+            percepts.extend(self._needs(previous, ticks, motives))
             if posture_name != previous["posture"]:
                 percepts.append(Percept(
                     "posture", sim_s, "" if target is None else str(target),
@@ -262,58 +244,19 @@ class Extractor:
             # HE7: the notable conditions of the near objects this sample named (kept when a sample names none).
             "conditions": conditions if conditions is not None else (previous or {}).get("conditions"),
         }
-        for identity, entry in running.items():
-            span = self._open.get(identity)
-            if span is None:
-                self._open[identity] = {
-                    "affordance_id": entry.get("affordance_id"),
-                    "text": entry.get("affordance_text"),
-                    "source": entry.get("source_raw"),
-                    "ticks": ticks,
-                    "barrier": self._barrier,
-                    "crossed": paused,
-                }
-            elif paused:
-                span["crossed"] = True
         return percepts
 
-    def _needs(self, previous, row, ticks, paused, sim, motives, running):
+    def _needs(self, previous, ticks, motives):
         percepts = []
-        learn = self._consecutive(previous, row, ticks, paused, sim)
-        activity = tuple(sorted({
-            entry.get("affordance_id") for entry in previous["running"].values()
-        }))
         for motive_id in sorted(motives):
             item = motives[motive_id]
             band = item.get("band")
-            value = item.get("value")
             before = previous["motives"].get(motive_id)
-            z = 0.0
-            if (learn and before is not None and type(before.get("value")) in (int, float)
-                    and type(value) in (int, float) and type(previous["ticks"]) is int
-                    and type(ticks) is int):
-                z = self.needs.observe(
-                    motive_id, activity, previous["ticks"], before["value"], ticks, value)
+            # D2: a need is sent when its band changes. How far it drifted inside one band is not sent.
             if before is not None and before.get("band") != band and band is not None:
-                percepts.append(self._need(motive_id, band, value, ticks, self._band_urgency(
-                    before.get("band"), band), 0.0))
-            elif before is not None and z >= 2.0 and band is not None:
-                percepts.append(self._need(motive_id, band, value, ticks, "normal", z))
+                percepts.append(self._need(motive_id, band, item.get("value"), ticks,
+                                           self._band_urgency(before.get("band"), band)))
         return percepts
-
-    def _consecutive(self, previous, row, ticks, paused, sim):
-        if previous["sim"] != sim:
-            return False
-        if previous["session"] != row.get("telemetry_session_id"):
-            return False
-        seq = row.get("written_sequence")
-        if type(previous["seq"]) is not int or type(seq) is not int or seq != previous["seq"] + 1:
-            return False
-        if paused or previous["paused"]:
-            return False
-        if type(previous["ticks"]) is not int or type(ticks) is not int or ticks <= previous["ticks"]:
-            return False
-        return True
 
     def _band_urgency(self, before, after):
         if after == "distress":
@@ -322,13 +265,13 @@ class Extractor:
             return "wake"
         return "normal"
 
-    def _need(self, motive, band, value, ticks, urgency, surprise):
+    def _need(self, motive, band, value, ticks, urgency):
         return Percept(
-            "need", str(motive), "", str(band), surprise=surprise, urgency=urgency,
+            "need", str(motive), "", str(band), urgency=urgency,
             lineage=self.lineage_id,
             facts=_facts(ticks, (("value", value), ("band", band))))
 
-    def _interactions(self, prior_running, running, observed, ticks, paused, sim_s):
+    def _interactions(self, prior_running, running, observed, ticks, sim_s):
         percepts = []
         gone = [identity for identity in prior_running if identity not in running]
         for identity in gone:
@@ -336,24 +279,14 @@ class Extractor:
             closing = _find_entry(observed, identity)
             source = (closing or entry).get("source_raw")
             affordance = entry.get("affordance_id")
-            span = self._open.get(identity)
-            surprise = 0.0
-            if source == _CANCEL:
-                surprise = 3.0
-            elif span is not None and self._clear_duration(span, ticks, paused):
-                duration = ticks - span["ticks"]
-                surprise = self.durations.surprise(duration, affordance)
-                self.durations.observe(affordance, duration)
             pressure = "action_end" if source == _USER else None
-            # GL10: a normal finish is a decision point; the plan's steps (H0.5) are held back in the bridge.
             self._finished_ms = self._wall_ms
             percepts.append(Percept(
-                "interaction", sim_s, str(affordance), "ended", surprise=surprise,
+                "interaction", sim_s, str(affordance), "ended",
                 pressure=pressure, urgency="wake", lineage=self.lineage_id,
                 facts=_facts(ticks, (("affordance_text", _text(
                     (closing or entry).get("affordance_text"))),
                     ("origin", _origin(entry.get("source_raw")))))))
-            self._open.pop(identity, None)
         for identity, entry in running.items():
             if identity in prior_running:
                 continue
@@ -363,13 +296,6 @@ class Extractor:
                 facts=_facts(ticks, (("affordance_text", _text(entry.get("affordance_text"))),
                                      ("origin", _origin(entry.get("source_raw")))))))
         return percepts
-
-    def _clear_duration(self, span, ticks, paused):
-        if span["barrier"] != self._barrier or span["crossed"] or paused:
-            return False
-        if type(span["ticks"]) is not int or type(ticks) is not int:
-            return False
-        return ticks >= span["ticks"]
 
     def _zone(self, previous, zone, ticks):
         zone_id = zone.get("zone_id")
@@ -519,8 +445,6 @@ class Extractor:
     def to_dict(self):
         return {
             "owner_sim_id": self.owner_sim_id,
-            "needs": self.needs.to_dict(),
-            "durations": self.durations.to_dict(),
             "lineage_id": self.lineage_id,
             "slot_id": self.slot_id,
             "guid": self.guid,
@@ -529,8 +453,6 @@ class Extractor:
             "session": self._session,
             "seq": self._seq,
             "prev": self._prev,
-            "open": self._open,
-            "barrier": self._barrier,
             "presence": None if self._presence is None else sorted(self._presence),
             "presence_names": self._presence_names,
             "on_lot": sorted(self._on_lot),
@@ -543,8 +465,6 @@ class Extractor:
     @classmethod
     def from_dict(cls, blob):
         extractor = cls(owner_sim_id=blob.get("owner_sim_id"))
-        extractor.needs = NeedModel.from_dict(blob.get("needs") or {})
-        extractor.durations = DurationModel.from_dict(blob.get("durations") or {})
         extractor.lineage_id = blob.get("lineage_id") or ""
         extractor.slot_id = blob.get("slot_id")
         extractor.guid = blob.get("guid")
@@ -553,8 +473,6 @@ class Extractor:
         extractor._session = blob.get("session")
         extractor._seq = blob.get("seq")
         extractor._prev = blob.get("prev")
-        extractor._open = blob.get("open") or {}
-        extractor._barrier = blob.get("barrier") or 0
         presence = blob.get("presence")
         extractor._presence = None if presence is None else set(presence)
         extractor._presence_names = blob.get("presence_names") or {}
