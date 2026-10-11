@@ -2017,8 +2017,9 @@ def _spot_anchors(items, body_room):
     groups = {}
     for item in items:
         position = item.get("position")
-        if item["on_lot"] is not True or item["room"] is None or position is None or type(position.get("level")) is not int:
-            continue
+        if (item["on_lot"] is not True or item["person"] is True or item["room"] is None or position is None
+                or type(position.get("level")) is not int):
+            continue  # a person is not an object: she is never the place the search starts from
         groups.setdefault((item["room"], position["level"]), []).append(item)
     anchors = []
     for (room, level), members in groups.items():

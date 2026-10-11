@@ -111,6 +111,18 @@ class SpotMenuTests(unittest.TestCase):
         self.assertEqual(self.asked, [(4.0, 0.0, "surface-0")])  # the centre is 3.0; 4.0 is nearest
         self.assertEqual([s["object_id"] for s in self.spots(payload)], ["1"])
 
+    def test_a_person_is_never_the_anchor_of_a_spot_only_an_object_is(self):
+        # The Sim is nearest the group's centre, so an anchor that counted people would search from her position.
+        desk = _Place(11, -2.0, 0.0, 0, "4")
+        bed = _Place(12, 2.0, 0.0, 0, "4")
+        sim = _Place(13, 0.0, 0.0, 0, "4")
+        sim.is_sim = True
+        self.things = [desk, sim, bed]
+        _build, payload = self.menu()
+        self.assertEqual([s["object_id"] for s in self.spots(payload)], ["1"])
+        self.assertIn(self.asked[0][0], (-2.0, 2.0))
+        self.assertNotIn(0.0, [start_x for start_x, _z, _surface in self.asked])
+
     def test_a_room_with_no_standable_spot_is_left_out_and_its_objects_stay(self):
         self.things = [_Place(11, 2.0, 0.0, 0, "4"), _Place(12, 12.0, 0.0, 0, "5")]
         self.no_spot = {12.0}
