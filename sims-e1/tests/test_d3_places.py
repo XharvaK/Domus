@@ -364,5 +364,97 @@ class SpotActTests(unittest.TestCase):
         self.assertEqual(self.base.pushes[-1][0], GO_HERE_GUID)
 
 
+class _RefusedWithoutKey(object):
+    def __bool__(self):
+        return False
+
+    tooltip = None
+
+
+class PhoneRefusalTests(unittest.TestCase):
+    """2.35.0 (D3, P3): the phone's offers the game's preflight refuses are named by tuning name and reason key in the
+    menu's part 0 (a diagnostic only: the menu itself is unchanged; D4 is designed from it)."""
+
+    def setUp(self):
+        import test_2160_act as acts
+        import test_2290_phone as phone
+        self.case = acts.MenuSenseTests()
+        self.case.setUp()
+        self.probe = self.case.probe
+        self.case.things = []
+        self.case.allowed = {5001, 5002, 5004, 5005, 5006, 5007, 5008, 5009, 5010, int(GUID)}
+        self.refusals = {}
+
+        def test_super_affordance(affordance, target, context):
+            if affordance.guid64 in self.refusals:
+                return self.refusals[affordance.guid64]
+            return affordance.guid64 in self.case.allowed
+        self.case.base.sim.test_super_affordance = test_super_affordance
+        phone.her_phone(self.case.base.sim)
+
+    def tearDown(self):
+        self.case.tearDown()
+
+    def _payload(self):
+        jobs, room = self.probe._menu_jobs(self.case.row)
+        build = self.probe.act_menu.MenuBuild(jobs, self.probe._menu_test, budget_ms=1e9, max_per_chunk=10000)
+        while not build.done:
+            build.step()
+        return build.payload(1, room)
+
+    def test_a_phone_act_the_game_refuses_is_named_with_its_reason_key(self):
+        self.refusals[5003] = _Refused()  # PhoneSampleUntested, refused with a tooltip key
+        payload = self._payload()
+        self.assertEqual(payload["refused_phone"], [{"name": "PhoneSampleUntested", "reason_key": "4711"}])
+        self.refusals[5003] = _RefusedWithoutKey()
+        self.assertEqual(self._payload()["refused_phone"], [{"name": "PhoneSampleUntested", "reason_key": None}])
+
+    def test_the_refusals_are_phone_acts_only_and_an_object_is_never_named(self):
+        import test_2160_act as acts
+        self.case.things = [acts._Thing(11, 2.0, [ReadBook])]
+        self.refusals[4242] = _Refused()  # an object's act, refused by the game: not a phone act, not named
+        payload = self._payload()
+        self.assertEqual([item["name"] for item in payload["refused_phone"]], ["PhoneSampleUntested"])
+
+    def test_at_most_sixteen_phone_refusals_are_named_and_the_menu_is_unchanged(self):
+        classes = [type("PhoneRefusal%d" % number, (object,), {"guid64": 6000 + number, "allow_user_directed": True})
+                   for number in range(20)]
+        self.case.base.sim._phone_affordances = classes
+        for number in range(20):
+            self.refusals[6000 + number] = _RefusedWithoutKey()
+        payload = self._payload()
+        self.assertEqual(len(payload["refused_phone"]), 16)  # the menu offers at most 16 phone acts to test
+        self.assertEqual(payload["objects"], [])  # every phone act is refused: her phone has no entry
+
+    def test_part_zero_carries_the_refusals_and_later_parts_none(self):
+        payload = self._payload()
+        payload = dict(payload, objects=payload["objects"] * 17)
+        parts = self.probe.act_menu.parts(payload)
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(parts[0]["refused_phone"], [{"name": "PhoneSampleUntested", "reason_key": None}])
+        self.assertIsNone(parts[1]["refused_phone"])
+
+    def test_the_refusals_validate_and_an_older_row_without_them_still_does(self):
+        schema = self.probe.schema
+        payload = self._payload()
+        part = self.probe.act_menu.parts(payload)[0]
+        schema.validate_record(schema.make_record("act_menu", telemetry_session_id="s", wall_timestamp_ms=1,
+                                                  monotonic_ns=1, e2=part))
+        older = dict(part)
+        del older["refused_phone"]
+        row = schema.make_record("act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1, e2=part)
+        row["e2"] = older
+        schema.validate_record(row)
+        self.assertIsNone(row["e2"]["refused_phone"])
+        row["e2"]["refused_phone"] = "not a list"
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_record(row)
+
+    def test_a_change_in_the_refusals_is_a_new_menu(self):
+        payload = self._payload()
+        self.assertTrue(self.probe.act_menu.same_menu(payload, dict(payload)))
+        self.assertFalse(self.probe.act_menu.same_menu(payload, dict(payload, refused_phone=[])))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2196,8 +2196,11 @@ def _menu_test(job):
         if job["object_id"] not in seen:
             seen[job["object_id"]] = e2_actuator.reachable(job["sim"], job["obj"])
         job["reach"] = seen[job["object_id"]]
-    ok, _reason, _reason_key = e2_actuator.preflight_test(
+    ok, _reason, reason_key = e2_actuator.preflight_test(
         job["sim"], job["obj"], job["affordance"], job["context"])
+    if not ok:
+        # 2.35.0 (D3): a refusal (not an error) is named in the menu for her phone's offers (refused_phone).
+        job["refused"], job["reason_key"] = True, reason_key
     return bool(ok)
 
 

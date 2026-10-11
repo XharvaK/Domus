@@ -126,6 +126,8 @@ class MenuBuild(object):
         self._kept = []
         # 2.35.0 (D3): the spots this build found, by spot id (the table an act names; published when it finishes).
         self.spots = {} if spots is None else spots
+        # 2.35.0 (D3): her phone's offers the game refused, {name, reason_key}, at most schema.MENU_MAX_REFUSED_PHONE.
+        self.refused_phone = []
         self.tested = 0
         self.refused = 0
         self.build_ms = 0.0
@@ -158,6 +160,10 @@ class MenuBuild(object):
                 self._kept.append(job)
             else:
                 self.refused += 1
+                if (job.get("phone") is True and job.get("refused") is True
+                        and len(self.refused_phone) < schema.MENU_MAX_REFUSED_PHONE):
+                    self.refused_phone.append({"name": (job.get("name") or "")[:128],
+                                               "reason_key": job.get("reason_key")})
         self.build_ms += (self.clock() - start) * 1000.0
 
     def payload(self, menu_rev, room):
@@ -184,7 +190,8 @@ class MenuBuild(object):
         objects = [by_object[key] for key in order][:schema.MENU_MAX_OBJECTS]
         return {"menu_rev": menu_rev, "room": room, "objects": objects,
                 "tested": self.tested, "refused": self.refused,
-                "build_ms": round(self.build_ms, 2), "part": 0, "parts": 1}
+                "build_ms": round(self.build_ms, 2), "part": 0, "parts": 1,
+                "refused_phone": list(self.refused_phone)}
 
 
 def _room_text(room):
@@ -196,8 +203,10 @@ def parts(payload):
     (part of parts, with the same menu_rev). An empty menu is one empty part."""
     objects = payload["objects"]
     count = max(1, -(-len(objects) // MENU_PART_OBJECTS))
+    # 2.35.0 (D3): the phone's refusals are written once, on part 0.
     return [dict(payload, objects=objects[index * MENU_PART_OBJECTS:(index + 1) * MENU_PART_OBJECTS],
-                 part=index, parts=count) for index in range(count)]
+                 part=index, parts=count,
+                 refused_phone=payload.get("refused_phone") if index == 0 else None) for index in range(count)]
 
 
 def same_menu(left, right):
@@ -207,4 +216,5 @@ def same_menu(left, right):
     def shape(payload):
         return [(item["object_id"], item.get("room"), item.get("reach"), tuple(act["guid64"] for act in item["acts"]))
                 for item in payload["objects"]]
-    return shape(left) == shape(right) and left.get("room") == right.get("room")
+    return (shape(left) == shape(right) and left.get("room") == right.get("room")
+            and left.get("refused_phone") == right.get("refused_phone"))

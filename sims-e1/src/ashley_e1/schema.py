@@ -84,7 +84,8 @@ E2_PAYLOAD_KEYS = {
     "act_event": ("act_id", "phase", "code", "object_id", "guid64", "interaction_id",
                   "tuning_name", "finishing_type", "detail", "reason_key",
                   "closed", "resumed", "owner", "started", "aliases"),
-    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms", "part", "parts"),
+    # 2.35.0 (D3): refused_phone is on part 0 (None on the other parts, and on older rows).
+    "act_menu": ("menu_rev", "room", "objects", "tested", "refused", "build_ms", "part", "parts", "refused_phone"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
 # 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
@@ -103,6 +104,9 @@ MENU_MAX_ACTS = 8
 MENU_OBJECT_KEYS = ("object_id", "definition_id", "class", "distance_m", "same_room", "room", "reach", "acts", "phone",
                     "spot", "level")
 MENU_SPOT_KINDS = ("room", "front_door")
+# 2.35.0 (D3): the phone's offers the game's preflight refuses, by tuning name and reason key (a diagnostic; at most 16).
+MENU_MAX_REFUSED_PHONE = 16
+MENU_REFUSED_KEYS = ("name", "reason_key")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
@@ -573,6 +577,9 @@ def _validate_e2(row):
             if key not in payload:
                 payload[key] = None
     elif kind == "act_menu" and isinstance(payload, dict):
+        # 2.35.0: refused_phone is optional; rows before schema 17 omit it.
+        if "refused_phone" not in payload:
+            payload["refused_phone"] = None
         # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone. 2.35.0: so are spot and level.
         for item in payload.get("objects") or ():
             if isinstance(item, dict):
@@ -700,6 +707,15 @@ def _validate_menu(payload):
     objects = payload["objects"]
     _require(type(payload["part"]) is int and type(payload["parts"]) is int, "menu part")
     _require(0 <= payload["part"] < payload["parts"] <= MENU_MAX_PARTS, "menu part range")
+    refused = payload["refused_phone"]
+    if refused is not None:
+        _require(type(refused) is list and len(refused) <= MENU_MAX_REFUSED_PHONE, "menu refused_phone")
+        for item in refused:
+            _require(isinstance(item, dict) and set(item) == set(MENU_REFUSED_KEYS), "menu refused shape")
+            bounded_string(item["name"], 128, "menu refused name", False)
+            if item["reason_key"] is not None:
+                _require(isinstance(item["reason_key"], str), "menu refused reason_key")
+                string_id(item["reason_key"], "menu refused reason_key")
     _require(isinstance(objects, list) and len(objects) <= MENU_MAX_OBJECTS, "menu objects")
     for item in objects:
         _require(isinstance(item, dict) and set(item) == set(MENU_OBJECT_KEYS), "menu object shape")
