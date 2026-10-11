@@ -114,11 +114,11 @@ DIALOG_ROW = {"presence": [{"id": "100", "level": 0, "is_body": True, "name": "H
 
 def test_a_question_the_game_asks_her_is_answered_by_choosing():
     texts = {"1": "What do you want to cook?", "2": "OK", "3": "Cancel", "4": "Grilled Cheese"}
-    result = dialog_options(DIALOG_ROW, texts.get, start=2)
+    result = dialog_options(DIALOG_ROW, texts.get)
     assert result == [{"object": "The game asks: What do you want to cook?", "object_id": "dialog:555",
                        "where": "asked now", "acts": [
-                           {"ref": "a3", "guid64": "11", "text": "Grilled Cheese (§5)"},
-                           {"ref": "a4", "guid64": "cancel", "text": "Cancel"}]}]
+                           {"ref": "a1", "guid64": "11", "text": "Grilled Cheese (§5)"},
+                           {"ref": "a2", "guid64": "cancel", "text": "Cancel"}]}]
     assert dialog_options({}) == [] and dialog_options({"dialogs": {"open": ["x"]}}) == []
 
 

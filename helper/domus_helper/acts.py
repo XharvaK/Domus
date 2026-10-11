@@ -34,6 +34,22 @@ _PHASES = {"ACCEPTED": "accepted", "REJECTED": "rejected", "PUSHED": "pushed",
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 
+class RefBook(object):
+    """N8 (F3): the refs of one helper session (one attachment). The first time a key is listed it gets the next
+    free number; it keeps that ref in every later view, and a number is never given to another key."""
+
+    def __init__(self):
+        self._numbers = {}
+        self._next = 1
+
+    def ref(self, key):
+        number = self._numbers.get(key)
+        if number is None:
+            number = self._numbers[key] = self._next
+            self._next += 1
+        return "a%d" % number
+
+
 def _bytes(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
@@ -114,12 +130,13 @@ _NOT_HERS_TO_STOP = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_
 _CLASS_REPR = re.compile(r"^<class '([^']+)'>$")
 
 
-def queue_options(row, start=0, act_name=None):
+def queue_options(row, refs=None, act_name=None):
     """2.20.0 (live 2026-10-06: her meal waited behind an open-ended piano song she had no
     way to stop): what her body is doing and has queued, each one hers to stop, the way the
-    client's X on her queue is. Refs continue from start. HE1: act_name gives the game's words."""
+    client's X on her queue is. N8 (F3): refs are stable per interaction (refs is a RefBook).
+    HE1: act_name gives the game's words."""
+    refs = RefBook() if refs is None else refs
     acts = []
-    count = start
     for entry in ((row or {}).get("interactions") or {}).get("observed") or []:
         if not isinstance(entry, dict) or entry.get("source_raw") in _NOT_HERS_TO_STOP:
             continue
@@ -131,8 +148,7 @@ def queue_options(row, start=0, act_name=None):
         match = _CLASS_REPR.match(text)
         tuning = match.group(1).rsplit(".", 1)[-1] if match else text
         name = (act_name or humanize)(tuning)
-        count += 1
-        acts.append({"ref": "a%d" % count, "guid64": iid,
+        acts.append({"ref": refs.ref(("queue", iid)), "guid64": iid,
                      "text": ("Cancel (queued): %s" if membership == "QUEUED" else "Stop: %s") % name})
         if len(acts) >= QUEUE_SHOWN:
             break
@@ -201,16 +217,16 @@ def answer_rules(dialog, resolve=None):
     return rules or None
 
 
-def dialog_options(row, resolve=None, start=0):
+def dialog_options(row, resolve=None, refs=None):
     """2.18.0: the game's open dialogs that are hers, as options she answers: a picker's enabled
     rows (with price), then its buttons. W2h: a dialog with more than one selectable row, counts
-    or text fields carries answer_rules, and its ok button is listed with the rows. Refs continue
-    from start."""
+    or text fields carries answer_rules, and its ok button is listed with the rows. N8 (F3): refs
+    are stable per dialog row and button (refs is a RefBook)."""
     dialogs = ((row or {}).get("dialogs") or {}).get("open") or []
     body = body_id(row)
     version = (row or {}).get("schema_version")
+    refs = RefBook() if refs is None else refs
     result = []
-    count = start
     for dialog in dialogs:
         if not isinstance(dialog, dict) or not dialog.get("dialog_id"):
             continue
@@ -223,14 +239,13 @@ def dialog_options(row, resolve=None, start=0):
             text = _text(resolve, entry.get("name_key")) or "choice %s" % entry.get("option_id")
             if isinstance(entry.get("price"), int):
                 text = "%s (§%d)" % (text, entry["price"])
-            count += 1
-            acts.append({"ref": "a%d" % count, "guid64": str(entry["option_id"]), "text": text})
+            acts.append({"ref": refs.ref(("dialog", str(dialog["dialog_id"]), "row", str(entry["option_id"]))),
+                         "guid64": str(entry["option_id"]), "text": text})
         for response in dialog.get("responses") or []:
             name = response.get("response") if isinstance(response, dict) else None
             if not isinstance(name, str) or (acts and name == "ok" and rules is None):
                 continue  # with rows, picking a row is the ok (unless her answer has rules)
-            count += 1
-            acts.append({"ref": "a%d" % count, "guid64": name,
+            acts.append({"ref": refs.ref(("dialog", str(dialog["dialog_id"]), "response", name)), "guid64": name,
                          "text": _text(resolve, response.get("text_key")) or name})
         if acts:
             title = _text(resolve, dialog.get("title_key")) or _text(resolve, dialog.get("text_key"))
@@ -287,16 +302,17 @@ def _where(item, menu_room, room):
     return "elsewhere" if same is True else "nearby"
 
 
-def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, start=0, withheld=(), room=None):
+def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None):
     """The observation's options: nearest objects first, each act with a short ref (a1, a2,
-    ...) unique in this observation, its guid64 and its text. Farthest objects are left out
+    ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the
+    life of the helper session (refs is a RefBook). Farthest objects are left out
     until it fits the byte budget. W2h: an act whose interaction the notebook has seen end on a
     screen only the User's hands can use stays listed, marked with what it opens. HE12: room is
     the room she is in now (the zone's), and the menu's own room comes with the menu."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
+    refs = RefBook() if refs is None else refs
     result = []
-    count = start
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
@@ -313,8 +329,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
-            count += 1
-            listed = {"ref": "a%d" % count, "guid64": str(act["guid64"]),
+            listed = {"ref": refs.ref(("act", str(item.get("object_id")), str(act["guid64"]))),
+                      "guid64": str(act["guid64"]),
                       "text": _text(resolve, act.get("text_key")) or humanize(act.get("name"))}
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
