@@ -3,12 +3,12 @@
 import json
 
 
-OBSERVATION_SCHEMA_VERSION = 17
-TELEMETRY_SCHEMA_ID = "e1.telemetry/v17"
-PROBE_VERSION = "2.35.0"
+OBSERVATION_SCHEMA_VERSION = 18
+TELEMETRY_SCHEMA_ID = "e1.telemetry/v18"
+PROBE_VERSION = "2.36.0"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
-ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)
 SIMS_BUILD = "1.128.90.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
@@ -188,6 +188,8 @@ COMMON_KEYS = {
     "place", "dialogs",
     # 2.31.0 (schema 14): her pace, as the probe applied it; observation rows only.
     "pace",
+    # 2.36.0 (schema 18, D6): the weather and season now; the game's notices about her. Observation rows only.
+    "weather", "notices",
 }
 MAX_OBJECT_EVENTS = 8
 # 2.32.0 (HE7, schema 15): the notable states of one near object, and the near objects a sample names.
@@ -203,6 +205,11 @@ MAX_SELF_SKILLS = 12
 MAX_OCCULT_KINDS = 4
 MAX_SELF_CAREERS = 4
 MAX_SELF_WANTS = 8
+# 2.36.0 (D6, schema 18): her aspiration's objectives, what she carries, the weather types and the notices.
+MAX_SELF_OBJECTIVES = 6
+MAX_SELF_INVENTORY = 24
+MAX_WEATHER_TYPES = 6
+MAX_NOTICES = 4
 MAX_SITUATIONS = 3
 MAX_DIALOGS = 4
 MAX_DIALOG_RESPONSES = 6
@@ -846,9 +853,17 @@ def _validate_self(row):
     keys = ({"traits", "skills", "funds"} | ({"careers"} if row["schema_version"] >= 12 else set()) |
             ({"wants"} if row["schema_version"] >= 13 else set()) |
             ({"life"} if row["schema_version"] >= 15 else set()))
-    _require(isinstance(value, dict) and set(value) == keys, "self shape")
+    # 2.36.0 (D6): the aspiration, the bills and the inventory are optional: a key is there only when readable.
+    optional = {"aspiration", "bills", "inventory"} if row["schema_version"] >= 18 else set()
+    _require(isinstance(value, dict) and keys <= set(value) <= keys | optional, "self shape")
     if "life" in value:
         _validate_life(value["life"])
+    if "aspiration" in value:
+        _validate_self_aspiration(value["aspiration"])
+    if "bills" in value:
+        _validate_self_bills(value["bills"])
+    if "inventory" in value:
+        _validate_self_inventory(value["inventory"])
     if value["traits"] is not None:
         _validate_named(value["traits"], "trait", MAX_SELF_TRAITS, "self.traits")
         for item in value["traits"]:
@@ -883,6 +898,66 @@ def _validate_self(row):
             _require(until is None or (isinstance(until, list) and len(until) == 2 and
                                        all(type(part) is int for part in until) and
                                        0 <= until[0] < 24 and 0 <= until[1] < 60), "self.wants.until")
+
+
+def _validate_self_aspiration(value):
+    """2.36.0 (D6, P1): her primary aspiration's display text and the current milestone's objectives."""
+    _require(isinstance(value, dict) and set(value) == {"name_key", "objectives"}, "self.aspiration")
+    string_id(value["name_key"], "self.aspiration.name_key")
+    _require(isinstance(value["objectives"], list) and len(value["objectives"]) <= MAX_SELF_OBJECTIVES,
+             "self.aspiration.objectives")
+    for item in value["objectives"]:
+        _require(isinstance(item, dict) and set(item) == {"text_key", "done"} and type(item["done"]) is bool,
+                 "self.aspiration.objectives entry")
+        string_id(item["text_key"], "self.aspiration.objectives.text_key")
+
+
+def _validate_self_bills(value):
+    """2.36.0 (D6, P1): what her household owes now and whether the bills came and whether a utility is late."""
+    _require(isinstance(value, dict) and set(value) == {"owed", "delivered", "late"}, "self.bills")
+    _require(value["owed"] is None or (type(value["owed"]) is int and value["owed"] >= 0), "self.bills.owed")
+    _require(type(value["delivered"]) is bool and type(value["late"]) is bool, "self.bills flags")
+
+
+def _validate_self_inventory(value):
+    """2.36.0 (D6, P1): the objects her Sim carries, by name, with the count each holds."""
+    _require(isinstance(value, list) and len(value) <= MAX_SELF_INVENTORY, "self.inventory")
+    for item in value:
+        _require(isinstance(item, dict) and set(item) == {"name", "count"} and
+                 type(item["count"]) is int and item["count"] >= 0, "self.inventory entry")
+        bounded_string(item["name"], 128, "self.inventory.name", False)
+
+
+def _validate_weather(row):
+    """2.36.0 (D6, P1): the weather types now (names) and the season (a name); absent when neither service can say."""
+    if "weather" not in row:
+        return
+    _observation_only(row, "weather", 18)
+    value = row["weather"]
+    if value is None:
+        return
+    _require(isinstance(value, dict) and set(value) == {"types", "season"}, "weather shape")
+    if value["types"] is not None:
+        _require(isinstance(value["types"], list) and len(value["types"]) <= MAX_WEATHER_TYPES,
+                 "weather.types")
+        for name in value["types"]:
+            bounded_string(name, 128, "weather.type", False)
+    bounded_string(value["season"], 128, "weather.season")
+
+
+def _validate_notices(row):
+    """2.36.0 (D6, P2): the game's notices about her found since the last row: title and text as string keys."""
+    if "notices" not in row:
+        return
+    _observation_only(row, "notices", 18)
+    value = row["notices"]
+    if value is None:
+        return
+    _require(isinstance(value, list) and len(value) <= MAX_NOTICES, "notices")
+    for item in value:
+        _require(isinstance(item, dict) and set(item) == {"title_key", "text_key"}, "notices entry")
+        string_id(item["title_key"], "notices.title_key")
+        string_id(item["text_key"], "notices.text_key")
 
 
 def _validate_situations(value):
@@ -1513,6 +1588,8 @@ def validate_record(row):
     _validate_self(row)
     _validate_place(row)
     _validate_dialogs(row)
+    _validate_weather(row)
+    _validate_notices(row)
     _validate_pace(row)
     _validate_string_tree(row)
     encoded = json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")

@@ -1470,6 +1470,146 @@ def read_dialogs():
             "truncated": truncated}
 
 
+# 2.36.0 (D6, P2): the game's notices about her. A notification is observed as it is shown: e2_control's notice
+# hook sits on UiDialogNotification.distribute_dialog, which every notification goes through. (dialog_show keeps
+# only dialogs WITH responses in _active_dialogs, and a notice normally has none, so sampling that dict would miss
+# nearly every notice.) Read only: never held, cancelled or answered. The probe's own lines are not notices about
+# her: note_own_notice marks them before they are shown.
+NOTICES_PENDING_KEPT = 16
+NOTICED_KEPT = 64
+OWN_NOTICES_KEPT = 64
+_SHOWN = []             # notices shown since the last row, newest last (bounded)
+_NOTICED = {}           # dialog id keys already handed over (bounded)
+_NOTICES_PENDING = []   # recorded, not yet sent in a row
+_OWN_NOTICES = {}       # dialog id keys of the probe's own lines (bounded)
+
+
+def _remember(table, key, kept):
+    """A bounded set in insertion order: the oldest key goes first."""
+    table[key] = True
+    while len(table) > kept:
+        del table[next(iter(table))]
+
+
+def _dialog_key(dialog):
+    return str(schema.string_id(int(dialog.dialog_id), "dialog_id"))
+
+
+def note_own_notice(dialog):
+    """2.36.0: the probe's own line, marked BEFORE it is shown: its dialog id is kept, so the notice hook never
+    records it. dialog_id is safe to read before the show: the game's unique_id descriptor assigns it on the first
+    read, and the show uses that same id. Never raises."""
+    try:
+        _remember(_OWN_NOTICES, _dialog_key(dialog), OWN_NOTICES_KEPT)
+    except Exception:
+        pass
+
+
+def notice_shown(dialog):
+    """2.36.0 (D6, P2): the notice hook's observer, called as a notification is distributed. A probe's own line
+    is dropped (its mark is used up). Any other notification is kept with its words and its owner, read now (the
+    owner's sim id and household id, or None when it has no owner). Never raises."""
+    try:
+        key = _dialog_key(dialog)
+        if key in _OWN_NOTICES:
+            del _OWN_NOTICES[key]
+            return
+        if not _is_notification(dialog):
+            return
+        owner = _notice_owner(dialog)
+        _SHOWN.append({"dialog_id": key, "title_key": _text_key(lambda: dialog.title),
+                       "text_key": _text_key(lambda: dialog.text), "owner": owner})
+        del _SHOWN[:-NOTICES_PENDING_KEPT]
+    except Exception:
+        pass
+
+
+def _text_key(read):
+    try:
+        return _string_key(read())
+    except Exception:
+        return None
+
+
+def _notice_owner(dialog):
+    """Who a notice belongs to, read when it is shown: None when it has no owner, else the owner's sim id and
+    household id (strings; household None when unknown). Raises when the owner cannot be read (the notice is
+    then skipped)."""
+    owner = dialog._owner()
+    if owner is None:
+        return None
+    household = _value(lambda: owner.household_id)
+    return {"sim_id": str(owner.id), "household_id": None if household is None else str(household)}
+
+
+def read_notices(sim_info=None):
+    """2.36.0: the notices shown since the last row that are hers (her Sim, a Sim of her household, or no owner),
+    each once, at most schema.MAX_NOTICES. Handed over once: the next row starts from what came after."""
+    shown = list(_SHOWN)
+    del _SHOWN[:]
+    for entry in shown:
+        if entry["dialog_id"] in _NOTICED or not _is_hers(entry["owner"], sim_info):
+            continue
+        _remember(_NOTICED, entry["dialog_id"], NOTICED_KEPT)
+        _NOTICES_PENDING.append({"title_key": entry["title_key"], "text_key": entry["text_key"]})
+    del _NOTICES_PENDING[:-NOTICES_PENDING_KEPT]
+    sent = _NOTICES_PENDING[:schema.MAX_NOTICES]
+    del _NOTICES_PENDING[:schema.MAX_NOTICES]
+    return sent
+
+
+def _is_notification(dialog):
+    """A UiDialogNotification or a class of it, by name (no import: the game class is not needed here)."""
+    try:
+        return any(cls.__name__ == "UiDialogNotification" for cls in type(dialog).__mro__)
+    except Exception:
+        return False
+
+
+def _is_hers(owner, sim_info):
+    """A notice's owner (from _owner_of) is her Sim, a Sim of her household, or nobody."""
+    if owner is None:
+        return True
+    if sim_info is None:
+        return False
+    try:
+        if owner["sim_id"] == str(sim_info.id):
+            return True
+        household = sim_info.household_id
+        return household is not None and owner["household_id"] == str(household)
+    except Exception:
+        return False
+
+
+def read_weather():
+    """2.36.0 (D6, P1): the weather now and the season, as the game names them. `types`: the current weather
+    types' names (sorted, at most schema.MAX_WEATHER_TYPES; services.weather_service().get_current_weather_types()
+    returns a copy of the set); `season`: the season's enum name (services.season_service().season, a property).
+    Each is None when its service is missing or unreadable; None (the whole) when neither can be read."""
+    types_now = season = None
+    try:
+        values = list(services.weather_service().get_current_weather_types())
+        types_now = sorted(set(name for name in (_bounded_name(_enum_name(value), "weather.type")
+                                                 for value in values) if name is not None))
+        types_now = types_now[:schema.MAX_WEATHER_TYPES]
+    except Exception:
+        types_now = None
+    try:
+        season = _bounded_name(services.season_service().season.name, "weather.season")
+    except Exception:
+        season = None
+    if types_now is None and season is None:
+        return None
+    return {"types": types_now, "season": season}
+
+
+def _enum_name(value):
+    try:
+        return value.name
+    except Exception:
+        return None
+
+
 def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None,
                   now_ticks=None):
     """Every instanced Sim in the zone, her body first, then nearest first.
@@ -1707,6 +1847,16 @@ def poll_once(telemetry_session_id, armed_name,
     except Exception:
         row["dialogs"] = None
     try:
+        row["notices"] = read_notices(sim_info)
+    except Exception:
+        row["notices"] = None
+    try:
+        weather = read_weather()
+    except Exception:
+        weather = None
+    if weather is not None:
+        row["weather"] = weather  # 2.36.0 (D6, P1): absent when neither service can say
+    try:
         row["objects"] = read_object_events(zone.get("zone_id"), zone.get("position"),
                                             int(time.time() * 1000))
     except Exception:
@@ -1872,10 +2022,16 @@ def read_self(sim_info):
         money = None
     if type(money) is int:
         funds = money
-    return {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
-            "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
-            "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info),
-            "life": read_life(sim_info)}
+    own = {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
+           "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
+           "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info),
+           "life": read_life(sim_info)}
+    # 2.36.0 (D6, P1): the three new senses are optional: a key is there only when the game could say.
+    for key, value in (("aspiration", _own_aspiration(sim_info)), ("bills", _own_bills(sim_info)),
+                       ("inventory", _own_inventory(sim_info))):
+        if value is not None:
+            own[key] = value
+    return own
 
 
 def _own_wants(sim_info):
@@ -1974,6 +2130,93 @@ def _own_careers(sim_info):
         careers.append({"career": name, "text_key": name_key, "title_key": title_key,
                         "level": level if type(level) is int else None, "at_work": at_work})
     return sorted(careers, key=lambda item: item["career"])
+
+
+def _own_aspiration(sim_info):
+    """2.36.0 (D6, P1): her primary aspiration (the track's display text) and the objectives of its current
+    milestone, the first six, each with whether the tracker has it done. Plain reads: sim_info.primary_aspiration
+    (a property of _primary_aspiration), sim_info.aspiration_tracker (_aspiration_tracker), its
+    _active_aspiration, the milestone's tuned `objectives` (each with display_text), and the tracker's
+    objective_completed (a set membership). None when she has no primary aspiration or it cannot be read."""
+    try:
+        track = sim_info.primary_aspiration
+    except Exception:
+        return None
+    if track is None:
+        return None
+    name_key = None
+    try:
+        name_key = _string_key(track.display_text)
+    except Exception:
+        name_key = None
+    tracker = None
+    try:
+        tracker = sim_info.aspiration_tracker
+        items = list(tracker._active_aspiration.objectives or ())
+    except Exception:
+        items = []
+    objectives = []
+    for objective in items[:schema.MAX_SELF_OBJECTIVES]:
+        try:
+            text_key = _string_key(objective.display_text)
+        except Exception:
+            text_key = None
+        try:
+            done = tracker.objective_completed(objective) is True
+        except Exception:
+            done = False
+        objectives.append({"text_key": text_key, "done": done})
+    return {"name_key": name_key, "objectives": objectives}
+
+
+def _own_bills(sim_info):
+    """2.36.0 (D6, P1): her household's bills, plain reads (sims/bills, sims/household): household.bills_manager,
+    its current_payment_owed (a property: the money owed now, an int), and mailman_has_delivered_bills() and
+    is_any_utility_delinquent() (methods that only read). None when the bills manager cannot be read."""
+    try:
+        bills = sim_info.household.bills_manager
+    except Exception:
+        return None
+    if bills is None:
+        return None
+    try:
+        owed = bills.current_payment_owed
+    except Exception:
+        owed = None
+    delivered = _is_true(lambda: bills.mailman_has_delivered_bills())
+    late = _is_true(lambda: bills.is_any_utility_delinquent())
+    return {"owed": owed if type(owed) is int else None, "delivered": delivered, "late": late}
+
+
+def _is_true(read):
+    try:
+        return read() is True
+    except Exception:
+        return False
+
+
+def _own_inventory(sim_info):
+    """2.36.0 (D6, P1): what her Sim carries. Her Sim's inventory_component is iterated as the game iterates
+    it (visible storage, then hidden); objects are grouped by their definition's name, with the count each
+    stack holds (stack_count()), most first; at most 24. None when she is not on the lot or cannot be read."""
+    try:
+        sim = sim_info.get_sim_instance(allow_hidden_flags=ALL_HIDDEN_REASONS)
+        items = list(sim.inventory_component)
+    except Exception:
+        return None
+    totals = {}
+    for item in items:
+        try:
+            name = _bounded_name(item.definition.name, "inventory.name")
+            count = item.stack_count()
+        except Exception:
+            continue
+        if name is None or type(count) is not int or count < 0:
+            continue
+        totals[name] = totals.get(name, 0) + count
+    entries = [{"name": name, "count": count} for name, count in totals.items()]
+    entries.sort(key=lambda entry: (-entry["count"], entry["name"]))
+    return entries[:schema.MAX_SELF_INVENTORY]
 
 
 # S5: object events. The previous sample's object ids (with class names) and the

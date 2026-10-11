@@ -111,7 +111,7 @@ class ReasonKeyTests(unittest.TestCase):
         self.assertEqual(tip.calls, 0)
 
     def test_schema_accepts_the_key_and_rejects_a_non_string(self):
-        self.assertEqual(self.schema.OBSERVATION_SCHEMA_VERSION, 17)
+        self.assertEqual(self.schema.OBSERVATION_SCHEMA_VERSION, 18)
 
         def row(reason_key="424242", include=True):
             payload = {

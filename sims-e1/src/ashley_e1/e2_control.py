@@ -54,7 +54,7 @@ except ImportError:
 try:
     # 2.31.0: the game's own overriders of distribute_dialog (bytecode scan, DOMUS_DEEP_DESIGN §3.2):
     # a colour picker, her personality dialog, the map and apartment pickers. UiDialogNotification is
-    # left alone on purpose.
+    # never held: 2.36.0 (D6, P2) observes its distribution only (_notice_hook), for the notices about her.
     from objects.color.object_color_dialog import UiDialogObjectColorPicker
 except ImportError:
     UiDialogObjectColorPicker = None
@@ -275,6 +275,12 @@ def _is_commands_file(path):
     return "sims4" in path and path.endswith("commands.py")
 
 
+def _note_own_notice(notification):
+    """2.36.0 (D6, P2): the probe's own line is remembered by its dialog id (observers.note_own_notice). Never raises."""
+    if observers is not None:
+        observers.note_own_notice(notification)
+
+
 def _dialog_hook(original):
     """2.31.0: stands in for one distribute_dialog (UiDialogBase and each overrider of §3.2). The
     game's own sends the window; a window that is hers is held or withheld here. Any exception:
@@ -287,6 +293,19 @@ def _dialog_hook(original):
                     return None
             except Exception:
                 pass
+        return original(dialog, *args, **kwargs)
+    return distribute_dialog
+
+
+def _notice_hook(original):
+    """2.36.0 (D6, P2): stands in for UiDialogNotification.distribute_dialog. A notification is never held,
+    withheld or changed here: the observer reads it (observers.notice_shown), and the game's own original sends
+    it with the same arguments, whatever the observer does. It never consults the hold controller."""
+    def distribute_dialog(dialog, *args, **kwargs):
+        try:
+            observers.notice_shown(dialog)
+        except Exception:
+            pass
         return original(dialog, *args, **kwargs)
     return distribute_dialog
 
@@ -376,6 +395,10 @@ def _install_holds(controller):
         if UiApartmentPicker is not None:
             saved["apartment"] = UiApartmentPicker.distribute_dialog
             UiApartmentPicker.distribute_dialog = _dialog_hook(saved["apartment"])
+        if UiDialogNotification is not None:
+            # 2.36.0 (D6, P2): observed, never held. Every notification passes here, with or without responses.
+            saved["notification"] = UiDialogNotification.distribute_dialog
+            UiDialogNotification.distribute_dialog = _notice_hook(saved["notification"])
         if Distributor is not None:
             saved["add_event"] = Distributor.add_event
             Distributor.add_event = _event_hook(saved["add_event"])
@@ -406,6 +429,8 @@ def _restore_holds():
         UiMapViewPicker.distribute_dialog = saved["map"]
     if "apartment" in saved:
         UiApartmentPicker.distribute_dialog = saved["apartment"]
+    if "notification" in saved:
+        UiDialogNotification.distribute_dialog = saved["notification"]
     if "add_event" in saved:
         Distributor.add_event = saved["add_event"]
     if "add_op" in saved:
@@ -1547,6 +1572,7 @@ class E2Control:
             owner = services.sim_info_manager().get(int(sim_id)) if sim_id is not None else None
             line = LocalizationHelperTuning.get_raw_text(text)
             notification = UiDialogNotification.TunableFactory().default(owner, text=lambda *_, **__: line)
+            _note_own_notice(notification)  # 2.36.0 (D6, P2): marked before it is shown: never a notice about her
             notification.show_dialog()
             self._talk_at = now
             self._say(connection, "TALK_OK")

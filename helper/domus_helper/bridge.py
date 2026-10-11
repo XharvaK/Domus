@@ -101,7 +101,7 @@ class Bridge:
         self._log = DecisionLog(self.paths.data_dir)
         self._loaded = False
         self._coalesced = coalesce.Pending()  # D2: the changes waiting for their view
-        self._extractor = Extractor()
+        self._extractor = Extractor(resolve=self._resolve_text)  # 2.36.0 (D6): notices and her self in words
         self._last_rowid = 0
         self._obs_seq = 0
         self._last_row = None
@@ -275,7 +275,7 @@ class Bridge:
             self._coalesced = coalesce.from_list(json.loads(raw))
         raw = self.spool.get_kv("extractor_state")
         if raw:
-            self._extractor = Extractor.from_dict(json.loads(raw))
+            self._extractor = Extractor.from_dict(json.loads(raw), resolve=self._resolve_text)
         # Not persisted: the held handles are rebuilt from her body samples as they come (the key is kept in the spool).
         self._seen = SeenMemory(self._heard_key())
         self._last_rowid = int(self.spool.get_kv("last_rowid") or 0)
