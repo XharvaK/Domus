@@ -68,6 +68,10 @@ class AshleyClient:
         """E3: her settled game passes for the overlay. The parsed 200 response, or None."""
         return self._round_trip("/domus/feed", body)
 
+    def post_memory(self, body):
+        """D7b: the world's memory answer for one of her asks. The parsed 200 response, or None."""
+        return self._round_trip("/domus/memory", body)
+
     def post_snapshot(self, body):
         """SNAPSHOT: one requested picture, or the reason there is none. HE15: a TransportResult whose kind is
         "sent" when Ashley took it, and otherwise why not (the same kinds as the other posts)."""
