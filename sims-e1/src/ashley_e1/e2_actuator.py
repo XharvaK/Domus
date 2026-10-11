@@ -112,14 +112,11 @@ PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "inviteto", "as
 # 2.29.0: her phone is how she calls, texts and invites people over, so the blanket name bans that
 # kept every phone act out (call_, phone_call, invite, social) do not apply to it. What still stays
 # out by name: testers' acts, money, jobs, emergencies and the acts that change a life in one click.
+# 2.37.1 (User 2026-10-12): only testers' and cheat acts stay out by name, and acts not meant for a player's
+# hand (autonomous, npc); money, jobs, family and the rest are hers to choose.
 # 2.31.0 (W4): whole words (e2_trial.denied_part), so the plural and -ing forms and the two-word forms
 # stay listed where the old substring match caught them.
-PHONE_DENY_PARTS = ("debug", "cheat", "cheats", "cheating", "testing", "tutorial", "buy", "buying",
-                    "purchase", "order", "orders", "ordering", "sell", "selling", "business", "businesses",
-                    "career", "careers", "job", "jobs", "quit", "quitting", "retire", "retired", "police",
-                    "firefighter", "firefighters", "burglar", "burglars", "woohoo", "woo_hoo", "trybaby",
-                    "try_baby", "try_for_baby", "propose", "breakup", "break_up", "divorce", "adopt",
-                    "adopted", "adoption", "movein", "move_in", "moveout", "move_out", "autonomous", "npc")
+PHONE_DENY_PARTS = ("debug", "cheat", "cheats", "cheating", "testing", "tutorial", "autonomous", "npc")
 
 
 def phone_affordances(sim):

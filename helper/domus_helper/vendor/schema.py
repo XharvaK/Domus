@@ -6,7 +6,7 @@ import json
 # 2.37.0 (schema 19, W10): the act menu's `cached` count and `excluded_phone` names. Rows of schema 18 still validate.
 OBSERVATION_SCHEMA_VERSION = 19
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v19"
-PROBE_VERSION = "2.37.0"
+PROBE_VERSION = "2.37.1"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)

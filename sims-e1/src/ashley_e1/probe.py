@@ -137,6 +137,8 @@ _MENU_FAR_ZONE = None
 _NO_ZONE = object()
 _MENU_DONE_ZONE = _NO_ZONE
 _MENU_FIRST = False
+# 2.37.1: when the first build in a zone last wrote its menu so far (act_menu.FIRST_PARTIAL_S).
+_MENU_PARTIAL_S = None
 _SITUATION_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
@@ -2241,7 +2243,7 @@ def _menu_tick(row):
     as an act_menu row when it differs from the last one; a new build starts when there
     is none, her room changed, or REBUILD_S passed."""
     global _MENU, _MENU_ZONE, _MENU_REV, _MENU_LAST, _MENU_STARTED_S, _MENU_ROOM
-    global _MENU_FAR_ZONE, _MENU_DONE_ZONE, _MENU_FIRST
+    global _MENU_FAR_ZONE, _MENU_DONE_ZONE, _MENU_FIRST, _MENU_PARTIAL_S
     now = _now_s()
     room = (row.get("zone") or {}).get("room")
     # 2.37.0 (W10 P2): the far cache belongs to one zone; a new zone starts it empty.
@@ -2250,6 +2252,11 @@ def _menu_tick(row):
         _MENU_FAR_ZONE = _current_zone()
     if _MENU is not None and not _MENU.done:
         _MENU.step()
+        # 2.37.1: the first build in a zone writes what it has so far, so the house reaches her as it is tested.
+        if (_MENU_FIRST and not _MENU.done and _MENU_PARTIAL_S is not None
+                and now - _MENU_PARTIAL_S >= act_menu.FIRST_PARTIAL_S):
+            _MENU_PARTIAL_S = now
+            _menu_near_part(_MENU)
     if _MENU is not None and _MENU.done:
         build, zone = _MENU, _MENU_ZONE
         _MENU = None
@@ -2274,13 +2281,16 @@ def _menu_tick(row):
             zone = _current_zone()
             # 2.37.0 (W10 P2): the first build in a zone writes its near part as its far part starts.
             _MENU_FIRST = _MENU_DONE_ZONE is not zone
+            _MENU_PARTIAL_S = now
             _MENU = act_menu.MenuBuild(jobs, _menu_test, spots=jobs.spots, excluded_phone=jobs.excluded_phone,
+                                       budget_ms=act_menu.FIRST_BUDGET_MS if _MENU_FIRST else 8.0,
                                        far=_MENU_FAR, on_near=_menu_near_part if _MENU_FIRST else None)
             _MENU_ZONE = zone
 
 
 def _menu_near_part(build):
-    """2.37.0 (W10 P2): her near part (her phone, her room, the people she can see) is written when the far part of
+    """2.37.1: also the menu so far, every act_menu.FIRST_PARTIAL_S seconds of the first build in a zone.
+    2.37.0 (W10 P2): her near part (her phone, her room, the people she can see) is written when the far part of
     the first build in a zone starts, so her views have objects before the rest of the lot is tested. It has the
     menu_rev the whole menu will have; the whole menu follows when the build finishes."""
     payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
