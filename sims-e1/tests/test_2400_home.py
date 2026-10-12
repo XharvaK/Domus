@@ -389,59 +389,59 @@ class ThingsListTests(HomeCase):
         rows = [self.raw(object_id=1000 + index) for index in range(700)]
         self.assertEqual(len(self.home.things_items(rows)), self.home.THINGS_MAX)
 
-    def test_the_things_record_validates(self):
-        items = self.home.things_items([self.raw(), self.raw(object_id=42, where="inventory", room_id=None,
-                                                            count=2)])
-        for payload in self.home.list_parts("things", 1, items):
-            row = self.schema.make_record("lists", telemetry_session_id="s" * 32, wall_timestamp_ms=1,
-                                          monotonic_ns=2, e2=dict(payload))
-            self.schema.validate_record(row)
-
     def test_a_thing_with_a_bad_room_fails_the_record_check(self):
         item = self.home.shape_thing(self.raw())
         item["room_id"] = "room five"
         with self.assertRaises(self.schema.SchemaError):
             self.schema._validate_thing(item)
 
-    def test_parts_hold_at_most_one_hundred_twenty_eight_items(self):
-        items = [{"n": index} for index in range(300)]
-        parts = self.home.list_parts("things", 2, items)
-        self.assertEqual([len(part["items"]) for part in parts], [128, 128, 44])
-        self.assertEqual([part["part"] for part in parts], [0, 1, 2])
-        self.assertEqual({part["parts"] for part in parts}, {3})
-        self.assertEqual({part["list_rev"] for part in parts}, {2})
 
-    def test_an_empty_list_is_one_empty_part(self):
-        parts = self.home.list_parts("things", 1, [])
-        self.assertEqual(len(parts), 1)
-        self.assertEqual(parts[0]["items"], [])
+class ThingsWiringTests(HomeCase):
+    """HOME-1 / CORE-1: the things list has a reader in the probe's lists tick, as people and places do, so it is
+    written (and rewritten when it changes) through reach.ListWriter. home.py keeps no writer of its own."""
 
-    def test_a_part_stays_under_its_byte_budget(self):
-        big = [{"text": "x" * 900} for _ in range(120)]
-        for part in self.home.list_parts("things", 1, big):
-            self.assertLessEqual(len(self.home.json.dumps(part["items"])), self.home.LIST_PART_BYTES + 2048)
+    def raw(self, **overrides):
+        row = {"object_id": 41, "definition_id": 55, "name_key": 123, "class_name": "Chair", "where": "room",
+               "room_id": 5, "value": 40, "made_by_her": None, "states": [], "in_use": False, "count": None,
+               "placement": "floor"}
+        row.update(overrides)
+        return row
 
-    def test_the_digest_ignores_key_order_and_follows_the_items(self):
-        one = [{"a": 1, "b": 2}]
-        self.assertEqual(self.home.items_digest(one), self.home.items_digest([{"b": 2, "a": 1}]))
-        self.assertNotEqual(self.home.items_digest(one), self.home.items_digest([{"a": 1, "b": 3}]))
+    def tick(self, rows, force=True):
+        written = []
+        writer = self.probe.reach.ListWriter(lambda kind, row: written.append((kind, row)) or True)
+        readers = self.probe._lists_readers()
+        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda: rows):
+            kinds = writer.tick({"things": readers["things"]}, force=force)
+        return kinds, written
 
-    def test_a_list_is_written_when_its_digest_changes_and_checked_once_a_minute(self):
-        self.actuator.things = [self.raw()]
-        self.assertTrue(self.home.write_things(self.control, now=100.0))
-        self.assertEqual([kind for kind, _ in self.control.emitted], ["lists"])
-        self.assertEqual(self.control.emitted[0][1]["list_rev"], 1)
-        self.assertFalse(self.home.write_things(self.control, now=130.0))
-        self.actuator.things = [self.raw(), self.raw(object_id=42)]
-        self.assertFalse(self.home.write_things(self.control, now=130.0))
-        self.assertTrue(self.home.write_things(self.control, now=161.0))
-        self.assertEqual(self.control.emitted[-1][1]["list_rev"], 2)
+    def test_the_lists_readers_include_things(self):
+        self.assertIn("things", self.probe._lists_readers())
 
-    def test_a_forced_write_goes_out_even_when_the_digest_is_the_same(self):
-        self.actuator.things = [self.raw()]
-        self.home.write_things(self.control, now=100.0)
-        self.assertTrue(self.home.write_things(self.control, force=True, now=101.0))
-        self.assertEqual(self.control.emitted[-1][1]["list_rev"], 2)
+    def test_a_things_tick_writes_the_shaped_rows(self):
+        kinds, written = self.tick([self.raw()])
+        self.assertEqual(kinds, ["things"])
+        kind, row = written[0]
+        self.assertEqual((kind, row["list_rev"], row["items"][0]["object_id"]), ("things", 1, "41"))
+
+    def test_an_unreadable_home_writes_no_things_list(self):
+        self.assertEqual(self.tick(None)[0], [])
+
+    def test_an_unchanged_list_is_not_written_again(self):
+        rows = [self.raw()]
+        writer = self.probe.reach.ListWriter(lambda kind, row: True)
+        readers = self.probe._lists_readers()
+        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda: rows):
+            self.assertEqual(writer.tick({"things": readers["things"]}, force=True), ["things"])
+            self.assertEqual(writer.tick({"things": readers["things"]}, force=True), [])
+
+    def test_the_written_things_rows_validate(self):
+        _kinds, written = self.tick([self.raw(), self.raw(object_id=42, where="inventory", room_id=None, count=2)])
+        self.assertTrue(written)
+        for _kind, row in written:
+            record = self.schema.make_record("lists", telemetry_session_id="s" * 32, wall_timestamp_ms=1,
+                                             monotonic_ns=2, e2=dict(row))
+            self.schema.validate_record(record)
 
 
 class CatalogTests(HomeCase):
@@ -917,6 +917,48 @@ class ActuatorReadTests(unittest.TestCase):
         self.actuator.place(obj, {"slot": Slot(), "translation": None, "orientation": None,
                                   "routing_surface": None})
         self.assertEqual(calls, [(obj, "joint_top")])
+
+
+class ThingsRowsReadTests(unittest.TestCase):
+    """HOME-18: the things rows are None when her home or her inventory cannot be read, so the writer keeps its last
+    list; only a lot that is not her home (at_home False) gives her inventory alone. Never raises."""
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+        self.info = types.SimpleNamespace(household_id=9)
+        self.inventory = [types.SimpleNamespace(id=5, definition=types.SimpleNamespace(id=55))]
+        self.sim = types.SimpleNamespace(inventory_component=self.inventory)
+        self.body = (self.info, self.sim)
+        self.home = True
+        self.lot = []
+        patches = [mock.patch.object(self.actuator, "_body", lambda: self.body),
+                   mock.patch.object(self.actuator, "at_home", lambda household: self.home),
+                   mock.patch.object(self.actuator, "lot_objects", lambda: self.lot)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_no_body_is_none(self):
+        self.body = (None, None)
+        self.assertIsNone(self.actuator.things_rows())
+
+    def test_an_unreadable_home_is_none(self):
+        self.home = None
+        self.assertIsNone(self.actuator.things_rows())
+
+    def test_an_unreadable_inventory_is_none(self):
+        self.sim.inventory_component = None
+        self.assertIsNone(self.actuator.things_rows())
+
+    def test_a_lot_that_is_not_her_home_gives_the_inventory_only(self):
+        self.home = False
+        self.lot.append(types.SimpleNamespace(id=7))
+        rows = self.actuator.things_rows()
+        self.assertEqual([(row["object_id"], row["where"]) for row in rows], [(5, "inventory")])
+
+    def test_her_home_and_inventory_are_read_together(self):
+        rows = self.actuator.things_rows()
+        self.assertEqual([row["where"] for row in rows], ["inventory"])
 
 
 class ProbeRouteTests(unittest.TestCase):

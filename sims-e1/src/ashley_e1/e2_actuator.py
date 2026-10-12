@@ -1283,20 +1283,31 @@ def save_now(slot_id, slot_name):
 
 def things_rows():
     """Read: the raw rows of the things list: her household's objects on her home lot (not Sims; home.things_items
-    leaves out walls, floors, roofs, stairs and terrain), and her inventory. None when she has no body. On a lot
-    that is not her home, only her inventory."""
+    leaves out walls, floors, roofs, stairs and terrain), and her inventory. None when she has no body, when her home
+    cannot be read, or when her inventory cannot: an unreadable list is never written as an empty one (HOME-18). On a
+    lot that is not her home (at_home False), only her inventory. Never raises."""
+    try:
+        return _things_rows()
+    except Exception:
+        return None
+
+
+def _things_rows():
     sim_info, sim = _body()
     if sim_info is None:
         return None
-    rows = []
     household = str(sim_info.household_id)
-    if at_home(sim_info.household_id) is True:
+    home_now = at_home(sim_info.household_id)
+    items = _read(lambda: list(sim.inventory_component))
+    if home_now is None or items is None:
+        return None
+    rows = []
+    if home_now is True:
         for obj in lot_objects():
             if owner_of(obj) != household or is_sim(obj) is True:
                 continue
             room = room_of(obj)
             rows.append(_thing_raw(obj, "outside" if room is None else "room", room))
-    items = _read(lambda: list(sim.inventory_component)) or []
     inventory = [_thing_raw(item, "inventory", None) for item in items]
     stacks = {}
     for row in inventory:

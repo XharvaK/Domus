@@ -2511,9 +2511,16 @@ def request_lists_now():
     return True
 
 
+def _things_reader():
+    """2.40.0 (W13 P2, home): the things list: her home's objects and her inventory (home.things_items shapes them).
+    None when the read is unreadable, so the writer keeps the list it sent last."""
+    rows = e2_actuator.things_rows()
+    return None if rows is None else home.things_items(rows)
+
+
 def _lists_readers():
-    """The readers of the lists her view counts (people, places, events). places reads its own people, so a tick that
-    reads places alone still has the households she knows."""
+    """The readers of the lists her view counts (people, places, events, things). places reads its own people, so a
+    tick that reads places alone still has the households she knows."""
     def people():
         return observers.read_people(observers.her_sim_info())
 
@@ -2521,7 +2528,7 @@ def _lists_readers():
         sim_info = observers.her_sim_info()
         return observers.read_places(sim_info, observers.read_people(sim_info))
 
-    return {"people": people, "places": places, "events": observers.read_events}
+    return {"people": people, "places": places, "events": observers.read_events, "things": _things_reader}
 
 
 def _write_discovery():

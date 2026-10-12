@@ -7,12 +7,10 @@ bounds, the save floor, the things and catalogue rows, the placement facts and t
 a purchase or move that cuts a route is reported in the result, never refused.
 """
 
-import hashlib
 import json
 import time
 
 from . import e2_lineage
-from . import reach
 from . import schema
 
 try:
@@ -32,12 +30,9 @@ COMMANDS = ("save", "buy", "place", "move", "sell", "catalog_dump")
 # 2.40.0: the save floor (15 real minutes between her saves, the User's ruling of 2026-10-12).
 SAVE_FLOOR_S = 15 * 60
 SAVE_CONFIRM_S = 120
-LIST_CHECK_S = 60.0
-LIST_KIND_THINGS = "things"
 THINGS_MAX = 600
-# The list and catalogue parts: at most this many items, and about this many bytes of JSON (a record is 48 KiB).
-LIST_PART_ITEMS = 128
-LIST_PART_BYTES = 32 * 1024
+# The catalogue parts: at most this many items, and about this many bytes of JSON (a record is 48 KiB). The things
+# list is written by the probe's lists tick (reach.ListWriter), not here.
 CATALOG_PART_ITEMS = 256
 CATALOG_PART_BYTES = 40 * 1024
 NEAR_M = 1.5
@@ -57,15 +52,11 @@ HIDDEN_TAG_WORDS = ("cheat", "debug", "hidden")
 
 class HomeState(object):
     """What the home commands remember for one controller: the time of her last save, the save still waiting for its
-    result, the lists' revisions, digests and last checks (real seconds), the objects she vacated (for `instead`), and
-    whether the save-complete callback is subscribed."""
+    result, the objects she vacated (for `instead`), and whether the save-complete callback is subscribed."""
 
     def __init__(self):
         self.saved_at = None
         self.pending_save = None
-        self.list_rev = {}
-        self.list_digest = {}
-        self.list_checked = {}
         self.vacated = {}
         self.subscribed = False
         self.callback = None
@@ -145,11 +136,6 @@ def purchasable(price, tag_names):
         if any(word in low for word in HIDDEN_TAG_WORDS):
             return False
     return True
-
-
-def items_digest(items):
-    """The SHA-256 hex of the canonical items, the same digest every list carries (reach.digest)."""
-    return reach.digest(items)
 
 
 def _size(item):
@@ -254,15 +240,6 @@ def catalog_items(raw_rows):
     return items
 
 
-def list_parts(kind, rev, items):
-    """The `lists` record payloads of one kind: parts of LIST_PART_ITEMS items, each under LIST_PART_BYTES."""
-    parts = pack(items, LIST_PART_ITEMS, LIST_PART_BYTES)
-    content = items_digest(items)
-    return [{"kind": kind, "list_rev": rev, "part": index, "parts": len(parts), "digest": content,
-             "count": len(items), "items": part}
-            for index, part in enumerate(parts)]
-
-
 def catalog_parts(rev, items):
     """The `catalog` record payloads: parts of CATALOG_PART_ITEMS items, each under CATALOG_PART_BYTES."""
     parts = pack(items, CATALOG_PART_ITEMS, CATALOG_PART_BYTES)
@@ -315,30 +292,6 @@ def sell_facts(value, funds):
 
 
 # ----------------------------------------------------------------------------------------------- the list writers
-
-def write_things(control, force=False, now=None):
-    """2.40.0: the things list, written when its digest changed. Checked at most once per LIST_CHECK_S real seconds
-    unless forced (a lists_now). Returns True when a list was written. The lead wires the zone-load call."""
-    state = state_of(control)
-    now = time.time() if now is None else now
-    last = state.list_checked.get(LIST_KIND_THINGS)
-    if not force and last is not None and now - last < LIST_CHECK_S:
-        return False
-    state.list_checked[LIST_KIND_THINGS] = now
-    raw = e2_actuator.things_rows() if e2_actuator is not None else None
-    if raw is None:
-        return False
-    items = things_items(raw)
-    digest = items_digest(items)
-    if not force and state.list_digest.get(LIST_KIND_THINGS) == digest:
-        return False
-    rev = state.list_rev.get(LIST_KIND_THINGS, 0) + 1
-    state.list_rev[LIST_KIND_THINGS] = rev
-    state.list_digest[LIST_KIND_THINGS] = digest
-    for payload in list_parts(LIST_KIND_THINGS, rev, items):
-        control._event("lists", payload)
-    return True
-
 
 def write_catalog(control, raw_rows, rev=None):
     """2.40.0: the catalogue record in parts (catalog_dump). rev is the game's version string."""
