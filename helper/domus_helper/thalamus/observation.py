@@ -252,6 +252,15 @@ def _company_actors(item, names, body, unseen=()):
     return [name]
 
 
+def _waiting(item):
+    """W13 (A6-8): a company entry is waiting when the presence item says so, or any of its situations does (the probe
+    writes the flag inside the situation)."""
+    if item.get("waiting") is True:
+        return True
+    return any(isinstance(situation, dict) and situation.get("waiting") is True
+               for situation in item.get("situations") or ())
+
+
 def _company_seen(item, resolve, labels=None):
     """A Sim she can see: the same entry the portrait has always carried. HE6: where, in words, not a room number."""
     doing = item.get("doing")
@@ -269,7 +278,7 @@ def _company_seen(item, resolve, labels=None):
         entry["occult"] = [kind for kind in item["occult_kinds"] if isinstance(kind, str)]
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
-    if item.get("waiting") is True:
+    if _waiting(item):
         entry["waiting"] = True  # W13 (D4.2): a visitor waiting at her door (from the visitor's situation job)
     if item.get("situations"):
         # 2.15.2: the game situations they are in (a visit, a party) and their role.
@@ -311,7 +320,7 @@ def _company_heard(item, seen, labels=None):
         entry["room_label"] = _room_label(item.get("room"), labels)
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
-    if item.get("waiting") is True:
+    if _waiting(item):
         entry["waiting"] = True  # W13 (D4.2): a visitor waiting at her door, heard and not seen
     return entry
 

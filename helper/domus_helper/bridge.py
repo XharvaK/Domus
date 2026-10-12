@@ -3,6 +3,7 @@ import argparse
 import json
 import secrets
 import sqlite3
+import threading
 import time
 import uuid
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from . import fingerprints as fingerprint_reader
 from . import pace
 from . import reach
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, dialog_options, options as act_options, people_heard, people_names, queue_options
+from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, options as act_options, people_heard, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -34,7 +35,7 @@ from .thalamus.log import DecisionLog
 from .thalamus.observation import SeenMemory, build
 from .thalamus.percepts import Extractor
 from .thalamus.types import Percept
-from .transport import AshleyClient, load_credentials
+from .transport import AshleyClient, SyncRefused, load_credentials
 from .windows import WindowLog, withheld_of
 
 _AUTO = object()
@@ -50,6 +51,9 @@ _VERB_PROBE = (2, 40, 0)
 CATALOG_DUMP_EVERY_MS = 10 * 60_000
 # W13 (H): a list Natalis did not take is sent again no sooner than this.
 LIST_RETRY_MS = 60_000
+# W13 (H, A4-15): a list Natalis refused this many times in a row (the same digest) waits this long before it is sent again.
+LIST_REFUSALS = 3
+LIST_REFUSED_WAIT_MS = 10 * 60_000
 # W12 (F3): a body row older than this, from before this helper started, is not a view of now.
 STALE_BODY_MS = 120_000
 # W12 (F4): a refused view's changes go back in the queue this many times in a row, then they are let go (logged).
@@ -141,8 +145,12 @@ class Bridge:
         self._lists = {}
         self._households = {}
         self._rooms_table = {}  # W13 (S5): room id -> label, from the newest things list
+        self._lists_session = None  # W13 (A4-16): the telemetry session the lists belong to
         self._list_parts = reach.ListParts()
         self._list_retry_ms = {}
+        self._list_refusals = {}  # W13 (A4-15): kind -> [digest, refusals in a row]
+        self._lists_lock = threading.Lock()  # W13 (A4-9): the lists are read and written under it (a post thread reads them)
+        self._lists_busy = False  # W13 (A4-9): one post pass at a time
         self._index = reach.index({})
         self._catalog_checked_ms = None
         self._acts = None if self.client is None else ActCourier(
@@ -340,6 +348,7 @@ class Bridge:
             self._lists = held.get("lists") or {}
             self._households = held.get("households") or {}
             self._rooms_table = held.get("rooms") or {}
+            self._lists_session = held.get("session")
         self._set_index()
         self._fires = int(self.spool.get_kv("thalamus_fires") or 0)
         self._enqueued = int(self.spool.get_kv("thalamus_enqueued") or 0)
@@ -378,6 +387,7 @@ class Bridge:
                     self._menu = {"session": record.get("telemetry_session_id"), "payload": whole,
                                   "at_ms": clock_ms}
                     self._log_spot_stages(whole, clock_ms)  # W12 (C11): the spot stages, read from the log
+                    self._extractor.act_words = act_words_by_guid(whole, self._resolve_text.raw)  # W13 (S1)
                     self._notebook_quietly(
                         lambda: self.notebook.observe_menu(self._world(), whole, clock_ms))
             elif kind == "presence_snapshot":
@@ -418,12 +428,31 @@ class Bridge:
         """W12 (B2): the refs of her menu are kept for one game session. An attach flip keeps them; a new telemetry
         session (a new game) starts its own, and the view's attachment changes with the epoch."""
         session = latest.get("telemetry_session_id") if isinstance(latest, dict) else None
-        if session is None or session == self._refs_session:
+        if session is None:
+            return
+        self._lists_for(session)
+        if session == self._refs_session:
             return
         if self._refs_session is not None:
             self._refs = RefBook()
             self._refs_epoch += 1
         self._refs_session = session
+
+    def _lists_for(self, session):
+        """W13 (A4-16): a new game session's lists come from its own probe, never the last game's: the lists, households
+        and room labels held are dropped (the spool is written again) when the session is not the one they belong to."""
+        self._load_state()  # the spooled lists and their session come first, so the check is against them
+        if session is None or session == self._lists_session:
+            return
+        with self._lists_lock:
+            self._lists, self._households, self._rooms_table = {}, {}, {}
+        self._lists_session = session
+        self._set_index()
+        self._spool_lists()
+
+    def _spool_lists(self):
+        self.spool.put_kv("domus_lists", json.dumps({"lists": self._lists, "households": self._households,
+                                                     "rooms": self._rooms_table, "session": self._lists_session}))
 
     def _attachment(self):
         """W12 (B2): the view's attachment: the helper session, with the refs epoch once the refs have been reset."""
@@ -676,11 +705,12 @@ class Bridge:
                                          read_records=self.diary.read_records)
 
     def _reach_quietly(self, fn):
-        """W13 (H): a probe row the lists, the catalogue or the discovery file read never stops the bridge."""
+        """W13 (H, A4-17): a probe row the lists, the catalogue or the discovery file read never stops the bridge. Any
+        error is logged by its class name (its text is never logged)."""
         try:
             fn()
-        except (sqlite3.Error, ValueError, TypeError, KeyError, AttributeError, OSError):
-            pass
+        except Exception as error:
+            self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "reach", "error": type(error).__name__})
 
     def _reach_row(self, kind, record, clock_ms):
         """W13 (H): a discovery record (a file, and one log line); one part of a list, or of the catalogue, kept whole."""
@@ -688,9 +718,11 @@ class Bridge:
         if kind == "discovery":
             name = reach.write_discovery(self.paths.data_dir / "discovery", record)
             if name is not None:
+                sections = e2.get("sections") if isinstance(e2.get("sections"), dict) else {}
                 self._log.write({"wall_ms": clock_ms, "trigger": "discovery", "file": name,
-                                 "sections": sorted(str(key)[:32] for key in e2)[:32]})
+                                 "sections": sorted(str(key)[:32] for key in sections)[:32]})
         elif kind == "lists":
+            self._lists_for(record.get("telemetry_session_id"))
             list_kind = e2.get("kind")
             raw = self._list_parts.take(list_kind, e2) if list_kind in reach.KINDS else None
             if raw is not None:
@@ -708,7 +740,8 @@ class Bridge:
             self._households = reach.households_of(raw)
         if kind == "things":
             # W13 (S5): the room labels come from this list, and the things are placed by them.
-            self._rooms_table = reach.room_labels(raw, resolve=self._resolve_text.raw, catalog=self._catalog_lookup())
+            with self._lists_lock:
+                self._rooms_table = reach.room_labels(raw, resolve=self._resolve_text.raw, catalog=self._catalog_lookup())
         skipped = []
         words = reach.list_words(kind, raw, refs=self._refs, rooms=self._room_labels(), resolve=self._resolve_text.raw,
                                  catalog=self._catalog_lookup(), households=self._households, skipped=skipped)
@@ -720,10 +753,10 @@ class Bridge:
                 reasons[reason] = reasons.get(reason, 0) + 1
             self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "kind": kind,
                              "skipped": reasons, "cut": len(words) - len(items)})
-        self._lists[kind] = {"digest": reach.digest(items), "items": items}
+        with self._lists_lock:
+            self._lists[kind] = {"digest": reach.digest(items), "items": items}
         self._set_index()
-        self.spool.put_kv("domus_lists", json.dumps({"lists": self._lists, "households": self._households,
-                                                     "rooms": self._rooms_table}))
+        self._spool_lists()
 
     def _set_index(self):
         """W13 (H): the names and conditions of things and places, and the names of people, from the lists held. The
@@ -747,31 +780,68 @@ class Bridge:
                                   place_of=self._index["places"].get, start=start)
 
     def _answered(self, answer, client, helper_session):
-        """W13 (H): what a sync answer asks of the helper. A list Natalis does not hold at its digest is sent now, and one
-        that failed waits LIST_RETRY_MS; a catalogue ask is searched and answered on its own thread."""
+        """W13 (H): what a sync answer asks of the helper. A list Natalis does not hold at its digest is sent off the acts
+        loop (A4-9); a catalogue ask is searched and answered on its own thread."""
         if not isinstance(answer, dict):
             return
         held = answer.get("lists")
         if isinstance(held, dict) and hasattr(client, "post_lists"):
-            for kind in reach.KINDS:
-                entry = self._lists.get(kind)
-                if entry is None or held.get(kind) == entry["digest"]:
-                    continue
-                now = self._mono()
-                if now < self._list_retry_ms.get(kind, 0):
-                    continue
-                body = {"v": 1, "helper_session": helper_session, "kind": kind, "digest": entry["digest"],
-                        "items": entry["items"]}
-                try:
-                    sent = client.post_lists(body)
-                except Exception:
-                    sent = None
-                if sent is None:
-                    self._list_retry_ms[kind] = now + LIST_RETRY_MS
-                    self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "not_sent",
-                                     "kind": kind})
+            self._post_lists_later(held, client, helper_session)
         catalog_ask.handle_asks_in_background(answer.get("catalog") or [], client, helper_session=helper_session,
                                               refs=self._refs, search=self._catalog_search)
+
+    def _post_lists_later(self, held, client, helper_session):
+        """W13 (A4-9): the lists Natalis lacks are posted on a daemon thread, one pass at a time, so a slow Natalis never
+        holds the acts loop (the view and the acts for that tick wait with it)."""
+        with self._lists_lock:
+            if self._lists_busy:
+                return
+            self._lists_busy = True
+        threading.Thread(target=self._post_lists, args=(held, client, helper_session), name="domus-lists",
+                         daemon=True).start()
+
+    def _post_lists(self, held, client, helper_session):
+        try:
+            for kind in reach.KINDS:
+                with self._lists_lock:
+                    entry = self._lists.get(kind)
+                if entry is None or held.get(kind) == entry["digest"]:
+                    continue
+                self._post_list(kind, entry, client, helper_session)
+        finally:
+            with self._lists_lock:
+                self._lists_busy = False
+
+    def _post_list(self, kind, entry, client, helper_session):
+        """W13 (H, A4-15): one list, posted unless its retry wait runs. A failed round trip waits LIST_RETRY_MS. A list
+        Natalis refuses waits LIST_RETRY_MS for each of its first refusals; after LIST_REFUSALS of the same digest it
+        waits LIST_REFUSED_WAIT_MS, and its reason is logged once, at that point."""
+        now = self._mono()
+        if now < self._list_retry_ms.get(kind, 0):
+            return
+        body = {"v": 1, "helper_session": helper_session, "kind": kind, "digest": entry["digest"],
+                "items": entry["items"]}
+        try:
+            sent = client.post_lists(body)
+        except Exception:
+            sent = None
+        if isinstance(sent, dict):
+            self._list_refusals.pop(kind, None)
+            return
+        if isinstance(sent, SyncRefused):
+            held_digest, refusals = self._list_refusals.get(kind, [None, 0])
+            refusals = refusals + 1 if held_digest == entry["digest"] else 1
+            self._list_refusals[kind] = [entry["digest"], refusals]
+            if refusals >= LIST_REFUSALS:
+                self._list_retry_ms[kind] = now + LIST_REFUSED_WAIT_MS
+                if refusals == LIST_REFUSALS:
+                    self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "refused",
+                                     "kind": kind, "reason": sent.reason or "unknown", "refusals": refusals})
+                return
+        else:
+            self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "not_sent",
+                             "kind": kind})
+        self._list_retry_ms[kind] = now + LIST_RETRY_MS
 
     def _catalog_search(self, words, max_price, placement):
         """W13 (H): the purchasable furniture and decor matched on words, from the catalogue of the running game."""

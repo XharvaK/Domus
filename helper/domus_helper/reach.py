@@ -21,6 +21,8 @@ from .acts import RESULT_WORDS_MAX, clean_text, humanize
 KINDS = ("people", "places", "things", "events")
 # The probe writes at most this many items per part, and at most this many parts (a list of 600 is 5 parts).
 PART_ITEMS = 128
+# The catalogue's parts are the probe's CATALOG_PART_ITEMS (A4-2): a part of 200 is kept whole.
+CATALOG_PART_ITEMS = 256
 PARTS_LIMIT = 64
 # Natalis takes a list body of 128 KiB; a list that would be larger is cut from its end (the digest is of what is sent).
 LIST_BYTES = 120 * 1024
@@ -57,9 +59,11 @@ def fit(items):
 
 
 class ListParts(object):
-    """W13 (H): a list in parts (list_rev, part, parts; the catalogue's rev is catalog_rev). take() returns the list's items
-    once every part of one rev has come, else None. A newer rev of a kind starts that kind over; a part out of range is
-    ignored."""
+    """W13 (H): a list in parts (list_rev, part, parts, digest, count; the catalogue's rev is catalog_rev). take() returns
+    the list's items once every part of one rev has come, else None. The parts must all carry the same digest, and the
+    items must number the count the list names (A4-6): a list is never stored half, nor mixed from two writes. A newer
+    rev, digest or part count starts the kind over; a part out of range is ignored. A part keeps at most its kind's cap
+    (A4-2), and a part over its cap makes the list unable to complete, never a silent cut."""
 
     def __init__(self):
         self._pieces = {}
@@ -70,15 +74,28 @@ class ListParts(object):
             return None
         if type(part) is not int or not 0 <= part < parts:
             return None
+        listed = rev_key == "list_rev"
+        content, count = e2.get("digest"), e2.get("count")
+        if listed and (not isinstance(content, str) or type(count) is not int):
+            return None
+        if not listed:
+            content, count = None, None
         held = self._pieces.get(kind)
-        if held is None or held[0] != rev or held[2] != parts:
-            held = self._pieces[kind] = (rev, {}, parts)
+        if held is None or held["rev"] != rev or held["parts"] != parts or held["digest"] != content or held["count"] != count:
+            held = self._pieces[kind] = {"rev": rev, "parts": parts, "digest": content, "count": count,
+                                         "items": {}, "sizes": {}}
         items = e2.get("items")
-        held[1][part] = [item for item in (items if isinstance(items, list) else []) if isinstance(item, dict)][:PART_ITEMS]
-        if len(held[1]) < parts:
+        items = items if isinstance(items, list) else []
+        cap = CATALOG_PART_ITEMS if kind == "catalog" else PART_ITEMS
+        held["sizes"][part] = len(items)
+        held["items"][part] = [item for item in items if isinstance(item, dict)][:cap]
+        if len(held["items"]) < parts:
+            return None
+        kept = [item for index in range(parts) for item in held["items"][index]]
+        if listed and (sum(held["sizes"].values()) != count or len(kept) != count):
             return None
         del self._pieces[kind]
-        return [item for index in range(parts) for item in held[1][index]]
+        return kept
 
 
 def _ident(value):
@@ -156,7 +173,8 @@ def _person(item, refs, **_):
         raise _Skip("id")
     first = _text(item.get("first_name"), NAME_LIMIT) or ""
     last = _text(item.get("last_name"), NAME_LIMIT) or ""
-    name = _name((first + " " + last).strip())
+    # A6-22: a person she knows with no readable name is kept (the count stays true), named as unnamed.
+    name = _text((first + " " + last).strip(), NAME_LIMIT) or "unnamed"
     return {"ref": refs.ref(sim, prefix="p"), "id": sim, "name": name,
             "how": _how(item.get("labels"), item.get("tracks")),
             "home": item.get("has_home") is True, "here": item.get("on_lot") is True,
@@ -174,12 +192,16 @@ def _place(item, refs, households=None, **_):
     if kind == "venue":
         venue = item.get("venue")
         what = humanize(venue)[:WHAT_LIMIT] if isinstance(venue, str) and venue else "a venue"
+        name = lot or what
     elif kind == "household":
+        # A6-24: what is the owner's first name ("whose home"); the name says "Ana's home".
         owner = (households or {}).get(_ident(item.get("household_id")))
-        what = ("%s's home" % owner if owner else "a household's home")[:WHAT_LIMIT]
+        what = owner[:WHAT_LIMIT] if owner else "a household"
+        name = lot or (("%s's home" % owner) if owner else "a household's home")[:NAME_LIMIT]
     else:
         what = "your home"
-    return {"ref": refs.ref(zone, prefix="h"), "id": zone, "name": lot or what, "kind": kind, "what": what}
+        name = lot or what
+    return {"ref": refs.ref(zone, prefix="h"), "id": zone, "name": name, "kind": kind, "what": what}
 
 
 def _placed(item):
@@ -349,12 +371,19 @@ def index(lists):
     return found
 
 
-def _names(ids, name_of):
+def _names(ids, name_of, kinds=None):
+    """The names of the things in ids (at most 4). A door or a window is named by its kind (S2, from kinds, parallel to
+    ids); anything else by its name, or "something" when it has none."""
     names = []
-    for thing in ids if isinstance(ids, list) else []:
+    kinds = kinds if isinstance(kinds, list) else []
+    for index, thing in enumerate(ids if isinstance(ids, list) else []):
         oid = _ident(thing)
         if oid is not None and len(names) < 4:
-            names.append((name_of(oid) if name_of is not None else None) or "something")
+            kind = kinds[index] if index < len(kinds) else None
+            if kind in ("door", "window"):
+                names.append("a " + kind)
+            else:
+                names.append((name_of(oid) if name_of is not None else None) or "something")
     return names
 
 
@@ -380,7 +409,7 @@ def result_words(result, *, name_of=None, room_of=None, place_of=None, start=Non
         where.append("In %s" % room_of(room))
     if result.get("wall") is True:
         clause = "against a wall"
-        on_wall = _names(result.get("wall_has"), name_of)
+        on_wall = _names(result.get("wall_has"), name_of, result.get("wall_kinds"))
         if on_wall:
             clause += " with %s" % _join(on_wall)
         where.append(clause)
@@ -418,15 +447,18 @@ def result_words(result, *, name_of=None, room_of=None, place_of=None, start=Non
 
 
 def write_discovery(folder, row):
-    """W13 (H, P1): the discovery row, as one JSON file per telemetry session, the newest kept. Returns the file's
-    name, or None when the row names no usable session. The folder is made when it is missing."""
+    """W13 (H, P1, A4-18): the discovery payload (the probe's e2, with its revision), as one JSON file per telemetry
+    session, the newest kept; the file also names the session. Returns the file's name, or None when the row names no
+    usable session. The folder is made when it is missing."""
     session = row.get("telemetry_session_id") if isinstance(row, dict) else None
     if not isinstance(session, str) or SESSION_NAME.fullmatch(session) is None:
         return None
+    payload = row.get("e2") if isinstance(row.get("e2"), dict) else row
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / ("%s.json" % session)
     temporary = folder / ("%s.json.tmp" % session)
-    raw = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    saved = {"telemetry_session_id": session, "discovery_rev": payload.get("discovery_rev"), "e2": payload}
+    raw = json.dumps(saved, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     with open(temporary, "w", encoding="utf-8") as handle:
         handle.write(raw)
     os.replace(temporary, target)

@@ -80,8 +80,9 @@ class AshleyClient:
         return self._round_trip("/domus/memory", body)
 
     def post_lists(self, body):
-        """W13 (H): one of her lists (people, places, things or events) in words. The parsed 200 response, or None."""
-        return self._round_trip("/domus/lists", body)
+        """W13 (H): one of her lists (people, places, things or events) in words. The parsed 200 response; SyncRefused
+        with Natalis's reason when it refused the list (a 400); None when the round trip failed."""
+        return self._round_trip("/domus/lists", body, refusals=True)
 
     def post_catalog(self, body):
         """W13 (H): the catalogue matches for one of her asks. The parsed 200 response, or None."""

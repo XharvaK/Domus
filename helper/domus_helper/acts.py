@@ -179,6 +179,22 @@ def act_names(menu, resolve=None):
     return name
 
 
+def act_words_by_guid(menu, resolve=None):
+    """W13 (S1): each act of the newest menu by its guid64, in the game's words (a phone notice names the act it is about).
+    An act with no guid64 or no name is left out."""
+    words = {}
+    objects = menu.get("objects") if isinstance(menu, dict) else None
+    for item in objects if isinstance(objects, list) else []:
+        acts_of = item.get("acts") if isinstance(item, dict) else None
+        for act in acts_of if isinstance(acts_of, list) else []:
+            if not isinstance(act, dict) or act.get("guid64") in (None, "") or not isinstance(act.get("name"), str):
+                continue
+            text = _text(resolve, act.get("text_key")) or humanize(act["name"])
+            if text:
+                words.setdefault(str(act["guid64"]), text[:64])
+    return words
+
+
 def _sentence(resolve, key):
     """Resolved sentence for a string key, at most 200 characters. Unknown is None."""
     if resolve is None or not isinstance(key, str) or not key:

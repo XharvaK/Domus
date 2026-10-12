@@ -59,6 +59,15 @@ class _Mint:
         return self.bodies[-1]["events"]
 
 
+def _settle(bridge, limit=5.0):
+    """Waits until the list posts of the bridge have finished (they run on their own thread)."""
+    import time
+    stop = time.monotonic() + limit
+    while bridge._lists_busy and time.monotonic() < stop:
+        time.sleep(0.01)
+    assert not bridge._lists_busy
+
+
 def _courier(tmp_path, **kw):
     sent = []
 
@@ -266,12 +275,14 @@ def test_a_needs_sim_act_is_marked_and_a_thing_in_her_list_names_its_states():
 # W13 (H): the lists, in words. A list is held until every part is in; its digest is of the words sent.
 def test_a_list_is_held_until_every_part_has_come_and_a_newer_revision_starts_over():
     parts = reach.ListParts()
-    assert parts.take("people", {"list_rev": 1, "part": 0, "parts": 2, "items": [{"sim_id": "1"}]}) is None
-    assert parts.take("people", {"list_rev": 1, "part": 5, "parts": 2, "items": []}) is None
-    assert parts.take("people", {"list_rev": 1, "part": 1, "parts": 2, "items": [{"sim_id": "2"}]}) == [
+    same = {"digest": "a" * 64, "count": 2}
+    assert parts.take("people", dict(same, list_rev=1, part=0, parts=2, items=[{"sim_id": "1"}])) is None
+    assert parts.take("people", dict(same, list_rev=1, part=5, parts=2, items=[])) is None
+    assert parts.take("people", dict(same, list_rev=1, part=1, parts=2, items=[{"sim_id": "2"}])) == [
         {"sim_id": "1"}, {"sim_id": "2"}]
-    assert parts.take("people", {"list_rev": 2, "part": 0, "parts": 2, "items": [{"sim_id": "3"}]}) is None
-    assert parts.take("people", {"list_rev": 3, "part": 0, "parts": 1, "items": [{"sim_id": "9"}]}) == [{"sim_id": "9"}]
+    assert parts.take("people", dict(same, list_rev=2, part=0, parts=2, items=[{"sim_id": "3"}])) is None
+    assert parts.take("people", {"list_rev": 3, "part": 0, "parts": 1, "digest": "b" * 64, "count": 1,
+                                 "items": [{"sim_id": "9"}]}) == [{"sim_id": "9"}]
     assert parts.take("catalog", {"catalog_rev": "x", "part": 0, "parts": 1, "items": [{"definition_id": 4}]},
                       rev_key="catalog_rev") == [{"definition_id": 4}]
 
@@ -296,7 +307,7 @@ def test_places_say_their_kind_and_whose_home_a_household_place_is():
     words = reach.list_words("places", raw, refs=RefBook(), households={"9": "Ana"})
     assert words == [
         {"ref": "h1", "id": "4", "name": "Test Lot", "kind": "home", "what": "your home"},
-        {"ref": "h2", "id": "6", "name": "Ana's home", "kind": "household", "what": "Ana's home"},
+        {"ref": "h2", "id": "6", "name": "Ana's home", "kind": "household", "what": "Ana"},
         {"ref": "h3", "id": "7", "name": "Test Cafe", "kind": "venue", "what": "cafe Venue"}]
 
 
@@ -384,12 +395,14 @@ def test_a_sale_an_event_and_a_trip_say_their_money_and_their_time():
 
 def test_a_discovery_record_is_one_file_per_session_the_newest_kept_and_a_bad_session_writes_nothing(tmp_path):
     folder = tmp_path / "discovery"
-    row = {"event_kind": "discovery", "telemetry_session_id": "ab12-3", "pickers": [{"guid": "1"}]}
+    row = {"event_kind": "discovery", "telemetry_session_id": "ab12-3",
+           "e2": {"discovery_rev": 2, "sections": {"pickers": [{"guid": "1"}]}}}
     assert reach.write_discovery(folder, row) == "ab12-3.json"
-    assert json.loads((folder / "ab12-3.json").read_text(encoding="utf-8")) == row
-    newer = dict(row, pickers=[])
+    saved = json.loads((folder / "ab12-3.json").read_text(encoding="utf-8"))
+    assert saved == {"telemetry_session_id": "ab12-3", "discovery_rev": 2, "e2": row["e2"]}
+    newer = dict(row, e2={"discovery_rev": 3, "sections": {}})
     reach.write_discovery(folder, newer)
-    assert json.loads((folder / "ab12-3.json").read_text(encoding="utf-8")) == newer
+    assert json.loads((folder / "ab12-3.json").read_text(encoding="utf-8"))["discovery_rev"] == 3
     assert reach.write_discovery(folder, {"telemetry_session_id": "../escape"}) is None
     assert sorted(path.name for path in folder.iterdir()) == ["ab12-3.json"]
 
@@ -507,11 +520,11 @@ def test_a_text_or_a_call_on_her_phone_is_a_percept_with_its_senders_name():
     extractor = Extractor()
     extractor.people_names = {"501": "Test Person"}
     row = {"event_kind": "phone", "telemetry_session_id": "s", "written_sequence": 1, "wall_timestamp_ms": WALL,
-           "e2": {"kind": "text", "from_sim_id": "501", "guid64": "4242"}}
+           "e2": {"kind": "call", "from_sim_id": "501", "notifies": None}}
     phone = [p for p in extractor.step(row) if p.kind == "phone"]
-    assert len(phone) == 1 and dict(phone[0].facts) == {"kind": "text", "from": "Test Person"}
-    unknown = dict(row, e2={"kind": "call", "from_sim_id": "777"})
-    assert dict((p.kind, dict(p.facts)) for p in extractor.step(unknown))["phone"] == {"kind": "call", "from": "someone"}
+    assert len(phone) == 1 and dict(phone[0].facts) == {"kind": "call", "from": "Test Person"}
+    unknown = dict(row, e2={"kind": "call", "from_sim_id": "777", "notifies": None})
+    assert dict((p.kind, dict(p.facts)) for p in extractor.step(unknown))["phone"] == {"kind": "call"}
     assert [p for p in extractor.step(dict(row, e2={"kind": "email", "from_sim_id": "501"})) if p.kind == "phone"] == []
 
 
@@ -529,19 +542,19 @@ def test_a_discovery_record_is_kept_in_a_file_for_the_lead_and_logged(paths, tmp
     data = _data(paths, tmp_path, monkeypatch)
     row = {"event_kind": "discovery", "written_sequence": 1, "wall_timestamp_ms": WALL,
            "monotonic_ns": WALL * 1_000_000, "telemetry_session_id": "sess-1", "sims_build": BUILD,
-           "probe_version": "2.40.0", "pickers": [{"guid": "1"}]}
+           "probe_version": "2.40.0", "e2": {"discovery_rev": 1, "sections": {"pickers": [{"guid": "1"}]}}}
     _append(paths, [row])
     bridge = _bridge(paths, {"ms": WALL}, client=_Mint())
     bridge.tick(WALL)
     saved = json.loads((data / "discovery" / "sess-1.json").read_text(encoding="utf-8"))
-    assert saved["pickers"] == [{"guid": "1"}]
+    assert saved["e2"]["sections"]["pickers"] == [{"guid": "1"}]
     lines = [line for line in _log_lines(data) if line.get("trigger") == "discovery"]
     assert len(lines) == 1 and lines[0]["file"] == "sess-1.json" and "pickers" in lines[0]["sections"]
 
 
 def _people_row(at, sim="501", name="Person"):
     return {"event_kind": "lists", "telemetry_session_id": "sess-1", "written_sequence": at, "wall_timestamp_ms": WALL,
-            "e2": {"kind": "people", "list_rev": 1, "part": 0, "parts": 1,
+            "e2": {"kind": "people", "list_rev": 1, "part": 0, "parts": 1, "digest": "a" * 64, "count": 1,
                    "items": [{"sim_id": sim, "first_name": "Test", "last_name": name, "labels": ["Friend"],
                               "tracks": {}, "household_id": 9, "has_home": False, "on_lot": True, "waiting": False}]}}
 
@@ -552,6 +565,7 @@ def test_a_list_is_sent_in_words_until_natalis_holds_its_digest_and_not_sent_aga
     client = _Mint()
     bridge = _bridge(paths, {"ms": WALL}, client=client)
     bridge.tick(WALL)
+    _settle(bridge)
     assert len(client.posted["lists"]) == 1
     body = client.posted["lists"][0]
     assert body["kind"] == "people" and body["helper_session"] == bridge.helper_session
@@ -571,17 +585,21 @@ def test_a_refused_list_waits_its_retry_wait_and_a_restart_keeps_the_list_to_sen
     mono = {"ms": 0}
     bridge = _bridge(paths, mono, client=client)
     bridge.tick(WALL)
+    _settle(bridge)
     assert client.posted["lists"] == []
     mono["ms"] = 1000
     bridge.tick(WALL + 1000)
+    _settle(bridge)
     client.refuse_lists = False
     mono["ms"] = bridge_module.LIST_RETRY_MS
     bridge.tick(WALL + bridge_module.LIST_RETRY_MS)
+    _settle(bridge)
     assert len(client.posted["lists"]) == 1
     digest = client.posted["lists"][0]["digest"]
     client.held = {}  # Natalis lost its copy: a restarted helper has no new row, so the list comes from the spool
     restarted = _bridge(paths, mono, client=client)
     restarted.tick(WALL + bridge_module.LIST_RETRY_MS + 1000)
+    _settle(restarted)
     assert [body["digest"] for body in client.posted["lists"]] == [digest, digest]
 
 
@@ -684,14 +702,14 @@ def test_every_list_built_from_fake_probe_rows_keeps_natalis_bounds_and_an_unnam
     people_words = reach.list_words("people", people, refs=RefBook(), skipped=skipped)
     _check_list_items("people", people_words)
     assert len(people_words) == 200 and max(len(item["how"]) for item in people_words) <= 80
-    assert "over_limit" in skipped and skipped.count("name") == 1
+    assert "over_limit" in skipped and "name" not in skipped  # the unnamed one is kept, past the limit
 
     places = [{"zone_id": 4, "kind": "home", "lot_name": "H" * 90},
               {"zone_id": 6, "kind": "household", "lot_name": "", "household_id": 9},
               {"zone_id": 7, "kind": "venue", "lot_name": "V" * 90, "venue": "v" * 90}]
     place_words = reach.list_words("places", places, refs=RefBook(), households={"9": "B" * 70})
     _check_list_items("places", place_words)
-    assert place_words[1]["what"] == ("B" * 70 + "'s home")[:40]
+    assert place_words[1]["what"] == "B" * 40 and place_words[1]["name"] == ("B" * 70 + "'s home")[:64]
 
     things = [{"object_id": str(50 + n), "name_key": "1", "where": {"where": "room", "room_id": 3},
                "value": n, "made_by_her": None, "states": [{"state": "x", "value": long_state}] * 6,
