@@ -123,6 +123,19 @@ def find_object(object_id):
     return manager.get(numeric)
 
 
+def find_thing(object_id):
+    """Read (2.40.0 W13 R2, SEAM2-2): the live object for an id, in the zone or in her inventory, or None. The game keeps
+    an object she carries in the inventory manager, not in the zone's object manager (find_object reads the zone only)."""
+    found = find_object(object_id)
+    if found is not None:
+        return found
+    try:
+        numeric = int(object_id)
+    except (TypeError, ValueError):
+        return None
+    return _read(lambda: services.inventory_manager().get(numeric))
+
+
 def offered(obj, context, cap=64):
     """Read: what the object offers now, as a trial sees it (class-tuned and
     component-given, such as a served plate's eat). At most cap."""
@@ -1116,10 +1129,9 @@ def near_objects(obj, radius):
     level = _level_of(obj)
     found = []
     for other in _all_objects():
-        if other is obj or _level_of(other) != level:
+        if other is obj:
             continue
-        if on_lot(other) is not True or in_inventory(other) is True or is_sim(other) is True:
-            continue
+        # 2.40.0 (W13 R2, HOME2-5): the distance is read before the level and lot tests, so a far thing costs one read.
         there = _read(lambda: other.position)
         if here is None or there is None:
             continue
@@ -1129,6 +1141,10 @@ def near_objects(obj, radius):
             continue
         distance = (dx * dx + dz * dz) ** 0.5
         if distance > radius:
+            continue
+        if _level_of(other) != level:
+            continue
+        if on_lot(other) is not True or in_inventory(other) is True or is_sim(other) is True:
             continue
         identity = _read(lambda: other.id)
         found.append({"object_id": None if identity is None else str(identity),
@@ -1203,6 +1219,11 @@ def _zone_id():
     return _read(lambda: services.current_zone_id())
 
 
+def current_zone():
+    """Read (2.40.0 W13 R2, HOME2-4): the current zone's id, or None; home.tick drops the room grids when it changes."""
+    return _zone_id()
+
+
 def _room_at_point(zone_id, position, level):
     """Read: the room id at a point on a level (build_buy.get_room_id), as a string; None when unknown."""
     if get_room_id is None or zone_id is None or position is None or level is None:
@@ -1254,11 +1275,13 @@ def _room_grid(zone_id, level):
     return grid
 
 
-def _grid_levels(first=None):
+def _grid_levels(first=None, lot=None):
     """The levels the room grids cover: the first (her Sim's or the target's), level 0, and each level a lot object
-    stands on, in that order, at most ROOM_LEVELS_MAX."""
+    stands on, in that order, at most ROOM_LEVELS_MAX. lot is the lot's objects when the caller has read them."""
+    if lot is None:
+        lot = lot_objects()
     levels = []
-    for value in [first, 0] + [_level_of(obj) for obj in lot_objects()]:
+    for value in [first, 0] + [_level_of(obj) for obj in lot]:
         if type(value) is int and value not in levels:
             levels.append(value)
     return levels[:ROOM_LEVELS_MAX]
@@ -1345,13 +1368,13 @@ def _facing(place, room_middle_xz):
     return str(facing), (position.x, position.z)
 
 
-def _surface_at(sim, level):
+def _surface_at(sim, level, lot=None):
     """Read: the routing surface of a level: her Sim's when she stands on it, else that of a lot object on it; None."""
     if _level_of(sim) == level:
         surface = _read(lambda: sim.routing_surface)
         if surface is not None:
             return surface
-    for other in lot_objects():
+    for other in (lot_objects() if lot is None else lot):
         if _level_of(other) == level:
             surface = _read(lambda: other.routing_surface)
             if surface is not None:
@@ -1359,11 +1382,11 @@ def _surface_at(sim, level):
     return None
 
 
-def _room_search(obj, sim, zone_id, room, starts, place, wall):
+def _room_search(obj, sim, zone_id, room, starts, place, wall, lot=None):
     """The game's standable search from each start cell (nearest first, up to WALL_STARTS): the first spot the game
     finds that reads the room. A wall search (and a facing) turns each start toward its target; a facing is applied
     only when its target is read. The spot carries facing_id when a facing object was applied, else None."""
-    surface = _surface_at(sim, room["level"])
+    surface = _surface_at(sim, room["level"], lot)
     facing_id, point = _facing(place, room["middle_xz"])
     if point is None and wall:
         point = room["middle_xz"]
@@ -1384,14 +1407,14 @@ def _room_of_object(zone_id, obj):
     return _room_at_point(zone_id, _read(lambda: obj.position), _level_of(obj))
 
 
-def against_wall(obj):
+def against_wall(obj, lot=None):
     """Read (HOME-24): whether the object stands within WALL_NEAR_M of a border cell of its room, so that it backs on a
-    wall: True, False, or None when the room or the object cannot be read."""
+    wall: True, False, or None when the room or the object cannot be read. lot: the lot's objects, when read already."""
     zone_id = _zone_id()
     position = _read(lambda: obj.position)
     room = None
     if position is not None:
-        room = _room(zone_id, _room_of_object(zone_id, obj), _grid_levels(_level_of(obj)))
+        room = _room(zone_id, _room_of_object(zone_id, obj), _grid_levels(_level_of(obj), lot))
     if room is None or not room["border"]:
         return None
     points = room["grid"]["points"]
@@ -1400,41 +1423,45 @@ def against_wall(obj):
     return gap <= WALL_NEAR_M ** 2
 
 
-def find_spot(obj, sim, place, wall_item=False):
+def find_spot(obj, sim, place, wall_item=False, lot=None):
     """Read: the spot a placement names (home.py's place shape). ON a free slot of the target. BESIDE the target: at its
     side, or, when the target and the item are both wall-placed, along the target's room border. IN a room, or WALL
     (against a room's border), by the game's search from the room's cells, nearest the middle first; a wall search
     faces the room's middle, and a facing turns the start toward its target. The rooms come from sampling the lot
-    (cached until forget_rooms). None when the game finds none."""
+    (cached until forget_rooms). None when the game finds none. lot: the lot's objects, when the caller has read them
+    (2.40.0 W13 R2, HOME2-5: one read per edit)."""
     rel = place.get("rel")
     if rel == "on":
         target = find_object(place.get("target_id"))
         return None if target is None else _slot_spot(target, obj)
+    if lot is None:
+        lot = lot_objects()
     zone_id = _zone_id()
     if rel == "beside":
         target = find_object(place.get("target_id"))
         position = _read(lambda: target.position) if target is not None else None
         if position is None:
             return None
-        room = _room(zone_id, _room_of_object(zone_id, target), _grid_levels(_level_of(target)))
+        room = _room(zone_id, _room_of_object(zone_id, target), _grid_levels(_level_of(target), lot))
         if wall_item and is_wall_placed(target):
             if room is None:
                 return None
             return _room_search(obj, sim, zone_id, room, _nearest(room, room["border"], (position.x, position.z)),
-                                place, wall=True)
+                                place, wall=True, lot=lot)
         facing_id, point = _facing(place, None if room is None else room["middle_xz"])
         orientation = _yaw_toward(position, point)
         spot = _standable(obj, position, _read(lambda: target.routing_surface), orientation)
         if spot is not None:
             spot["facing_id"] = facing_id if orientation is not None else None
         return spot
-    room = _room(zone_id, place.get("room_id"), _grid_levels(_level_of(sim)))
+    room = _room(zone_id, place.get("room_id"), _grid_levels(_level_of(sim), lot))
     if room is None:
         return None
     if rel == "wall":
         starts = _nearest(room, room["border"], room["middle_xz"])
-        return _room_search(obj, sim, zone_id, room, starts, place, wall=True)
-    return _room_search(obj, sim, zone_id, room, _nearest(room, room["cells"], room["middle_xz"]), place, wall=False)
+        return _room_search(obj, sim, zone_id, room, starts, place, wall=True, lot=lot)
+    return _room_search(obj, sim, zone_id, room, _nearest(room, room["cells"], room["middle_xz"]), place, wall=False,
+                        lot=lot)
 
 
 def place(obj, spot):
@@ -1536,10 +1563,14 @@ def sell_object(obj):
 
 
 def object_gone(object_id):
-    """Read: True when the zone's object manager no longer holds the object (its removal is finished), False while it
-    holds it, None when the manager cannot be read."""
+    """Read: True when neither the zone's object manager nor her inventory manager holds the object (its removal is
+    finished), False while one holds it, None when a manager cannot be read. 2.40.0 (W13 R2, SEAM2-2): a sold item she
+    carried is in the inventory manager until the game removes it."""
     try:
-        return services.object_manager().get(int(object_id)) is None
+        numeric = int(object_id)
+        if services.object_manager().get(numeric) is not None:
+            return False
+        return services.inventory_manager().get(numeric) is None
     except Exception:
         return None
 
@@ -1565,14 +1596,15 @@ def funds_try_remove(funds, amount, sim):
     return _read(lambda: funds.try_remove(amount, FUNDS_REASON, sim, require_full_amount=True)) is True
 
 
-def funds_add(funds, amount, sim):
+def funds_add(funds, amount, sim, count_as_earnings=True):
     """Effect (HOME-12): pay the amount into the funds (_Funds.add with an amount and a reason, as the game's own cheat
     calls it; the sim is not passed, as the cheat does not either). True when the money went up by exactly the amount,
     read before and after, so a notice that raises after the money moved still counts; when the money cannot be read,
-    True when the add did not raise."""
+    True when the add did not raise. 2.40.0 (W13 R2, SEAM2-10): count_as_earnings is the game's flag (a sale counts,
+    a refund does not)."""
     before = funds_money(funds)
     try:
-        funds.add(amount, FUNDS_REASON)
+        funds.add(amount, FUNDS_REASON, count_as_earnings=count_as_earnings)
         added = True
     except Exception:
         added = False
@@ -1617,18 +1649,19 @@ def save_now(slot_id, slot_name):
     persistence.save_using(persistence.save_game_gen, data, send_save_message=True, check_cooldown=False)
 
 
-def things_rows():
-    """Read: the raw rows of the things list: her household's objects on her home lot (not Sims; home.things_items
-    leaves out walls, floors, roofs, stairs and terrain), and her inventory. None when she has no body, when her home
-    cannot be read, or when her inventory cannot: an unreadable list is never written as an empty one (HOME-18). On a
-    lot that is not her home (at_home False), only her inventory. Never raises."""
+def things_rows(listed, limit):
+    """Read: the things list's raw rows and their total, as (rows, total): her household's objects on her home lot (not
+    Sims), and her inventory, which comes first (2.40.0 W13 R2, SEAM2-4). Only the first `limit` things that
+    listed(class_name) keeps are read in full (states, placement; HOME2-11); total counts every thing it keeps. None when
+    she has no body, when her home cannot be read, or when her inventory cannot: an unreadable list is never written as
+    an empty one (HOME-18). On a lot that is not her home (at_home False), only her inventory. Never raises."""
     try:
-        return _things_rows()
+        return _things_rows(listed, limit)
     except Exception:
         return None
 
 
-def _things_rows():
+def _things_rows(listed, limit):
     sim_info, sim = _body()
     if sim_info is None:
         return None
@@ -1637,20 +1670,27 @@ def _things_rows():
     items = _read(lambda: list(sim.inventory_component))
     if home_now is None or items is None:
         return None
-    rows = []
+    things = [(item, "inventory") for item in items]
     if home_now is True:
         for obj in lot_objects():
-            if owner_of(obj) != household or is_sim(obj) is True:
-                continue
+            if owner_of(obj) == household and is_sim(obj) is not True:
+                things.append((obj, "lot"))
+    kept = [(obj, where) for obj, where in things if listed(class_name(obj))]
+    rows = []
+    for obj, where in kept[:limit]:
+        if where == "inventory":
+            rows.append(_thing_raw(obj, "inventory", None))
+        else:
             room = room_of(obj)
             rows.append(_thing_raw(obj, "outside" if room is None else "room", room))
-    inventory = [_thing_raw(item, "inventory", None) for item in items]
     stacks = {}
-    for row in inventory:
-        stacks[row["definition_id"]] = stacks.get(row["definition_id"], 0) + 1
-    for row in inventory:
-        row["count"] = stacks.get(row["definition_id"], 1)
-    return rows + inventory
+    for row in rows:
+        if row["where"] == "inventory":
+            stacks[row["definition_id"]] = stacks.get(row["definition_id"], 0) + 1
+    for row in rows:
+        if row["where"] == "inventory":
+            row["count"] = stacks.get(row["definition_id"], 1)
+    return rows, len(kept)
 
 
 def _thing_raw(obj, where, room_id):
@@ -1672,18 +1712,22 @@ def _thing_states(obj):
     return [{"state": key, "value": value} for key, value in list(found.items())[:4]]
 
 
-def catalog_rows():
+def catalog_rows(wanted=None):
     """Read: the raw rows of the catalogue, every loaded definition: its id, price, tags, class name, whether it is a Sim,
     and its buy-category and placement flags (home.py keeps the purchasable ones, S3). None when the definitions cannot
-    be read."""
+    be read. 2.40.0 (W13 R2, HOME2-6): a definition that wanted(class_name, sim) refuses is left out before any of its
+    flags is read."""
     manager = _read(lambda: services.definition_manager())
     definitions = _read(lambda: list(manager.loaded_definitions))
     if definitions is None:
         return None
     rows = []
     for defn in definitions:
+        class_name = _read(lambda: defn.cls.__name__) or ""
+        sim = _read(lambda: defn.is_sim) is True
+        if wanted is not None and not wanted(class_name, sim):
+            continue
         rows.append({"definition_id": _read(lambda: defn.id), "price": definition_price(defn),
-                     "tags": definition_tags(defn), "class_name": _read(lambda: defn.cls.__name__) or "",
-                     "sim": _read(lambda: defn.is_sim) is True, "buy_flags": definition_buy_flags(defn),
-                     "placement_flags": definition_placement_flags(defn)})
+                     "tags": definition_tags(defn), "class_name": class_name, "sim": sim,
+                     "buy_flags": definition_buy_flags(defn), "placement_flags": definition_placement_flags(defn)})
     return rows

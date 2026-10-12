@@ -80,6 +80,7 @@ class FakeControl(object):
 
     def __init__(self):
         self.refuse_phases = ()
+        self.refuse_results = False
         self.raise_phases = ()
         self.refuse_catalog = False
         self.act_ids = set()
@@ -100,6 +101,8 @@ class FakeControl(object):
         return {"sim_id": "7"}
 
     def _act_event(self, act_id, phase, **payload):
+        if self.refuse_results and payload.get("result") is not None:
+            return False
         if phase in self.refuse_phases:
             return False
         if phase in self.raise_phases:
@@ -161,6 +164,11 @@ class FakeActuator(object):
         self.money_hidden = False
         self.money_hidden_after_charge = False
         self.refund_refused = False
+        self.spot_error = None
+        self.save_fires = False
+        self.earnings = []
+        self.zone = 7
+        self.order = []
 
     # reads
     def at_home(self, household_id):
@@ -169,6 +177,9 @@ class FakeActuator(object):
     def build_mode(self):
         return self.build
 
+    def current_zone(self):
+        return self.zone
+
     def room_of(self, obj):
         return "5"
 
@@ -176,6 +187,7 @@ class FakeActuator(object):
         return obj.wall
 
     def near_objects(self, obj, radius):
+        self.order.append("near")
         if self.near_raises:
             raise RuntimeError("near")
         return list(obj.near)
@@ -209,21 +221,29 @@ class FakeActuator(object):
         return obj.inventory
 
     def find_object(self, object_id):
+        """The zone's object manager: a thing she carries is not in it (SEAM2-2)."""
+        found = self.objects.get(str(object_id))
+        return None if found is not None and found.inventory else found
+
+    def find_thing(self, object_id):
         return self.objects.get(str(object_id))
 
-    def find_spot(self, obj, sim, place, wall_item=False):
+    def find_spot(self, obj, sim, place, wall_item=False, lot=None):
         self.calls.append(("find_spot", place["rel"]))
         self.wall_items.append(wall_item)
+        if self.spot_error is not None:
+            raise self.spot_error
         return self.spot
 
     def object_placement_flags(self, obj):
         return self.placement_flags
 
-    def against_wall(self, obj):
+    def against_wall(self, obj, lot=None):
         return obj.wall
 
     def forget_rooms(self):
         self.rooms_forgotten += 1
+        self.order.append("forget")
 
     def spot_of(self, obj):
         return obj.spot
@@ -258,11 +278,11 @@ class FakeActuator(object):
     def save_slot(self):
         return self.slot
 
-    def catalog_rows(self):
+    def catalog_rows(self, wanted=None):
         return self.catalog
 
-    def things_rows(self):
-        return self.things
+    def things_rows(self, listed=None, limit=None):
+        return None if self.things is None else (self.things, len(self.things))
 
     # effects
     def funds_try_remove(self, funds, amount, sim):
@@ -277,8 +297,9 @@ class FakeActuator(object):
     def funds_money(self, funds):
         return None if self.money_hidden else funds.money
 
-    def funds_add(self, funds, amount, sim):
+    def funds_add(self, funds, amount, sim, count_as_earnings=True):
         self.calls.append(("add", amount))
+        self.earnings.append(count_as_earnings)
         if self.refund_refused:
             return False
         funds.add(amount, "x")
@@ -347,6 +368,9 @@ class FakeActuator(object):
         self.calls.append(("save", slot_id, slot_name))
         if self.save_error is not None:
             raise self.save_error
+        if self.save_fires:
+            for callback in list(self.callbacks):
+                callback()
 
     def subscribe_saves(self, callback):
         self.callbacks.append(callback)
@@ -401,6 +425,12 @@ class HomeCase(unittest.TestCase):
 
     def object_facts(self, row):
         return row.get("result")
+
+
+def _read_things(actuator, limit=600):
+    """The raw things rows the actuator reads (every thing kept, up to the limit), without their total."""
+    read = actuator.things_rows(lambda name: True, limit)
+    return None if read is None else read[0]
 
 
 def _place(rel="on", target="41", **extra):
@@ -501,6 +531,11 @@ class ThingsListTests(HomeCase):
         rows = [self.raw(object_id=1000 + index) for index in range(700)]
         self.assertEqual(len(self.home.things_items(rows)), self.home.THINGS_MAX)
 
+    def test_the_things_list_carries_the_total_it_was_given(self):
+        """SEAM2-4 / T1: a list given a total carries it; without one, its total is the items it holds."""
+        self.assertEqual(self.home.things_items([self.raw()], total=9).total, 9)
+        self.assertEqual(self.home.things_items([self.raw()]).total, 1)
+
     def test_a_thing_with_a_bad_room_fails_the_record_check(self):
         item = self.home.shape_thing(self.raw())
         item["room_id"] = "room five"
@@ -523,7 +558,8 @@ class ThingsWiringTests(HomeCase):
         written = []
         writer = self.probe.reach.ListWriter(lambda kind, row: written.append((kind, row)) or True)
         readers = self.probe._lists_readers()
-        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda: rows):
+        with mock.patch.object(self.probe.e2_actuator, "things_rows",
+                               lambda *args: None if rows is None else (rows, len(rows))):
             kinds = writer.tick({"things": readers["things"]}, force=force)
         return kinds, written
 
@@ -543,9 +579,29 @@ class ThingsWiringTests(HomeCase):
         rows = [self.raw()]
         writer = self.probe.reach.ListWriter(lambda kind, row: True)
         readers = self.probe._lists_readers()
-        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda: rows):
+        with mock.patch.object(self.probe.e2_actuator, "things_rows",
+                               lambda *args: None if rows is None else (rows, len(rows))):
             self.assertEqual(writer.tick({"things": readers["things"]}, force=True), ["things"])
             self.assertEqual(writer.tick({"things": readers["things"]}, force=True), [])
+
+    def test_the_things_reader_passes_the_total_on(self):
+        """SEAM2-4 / T1: the probe's things reader gives the writer the total the game's read counted."""
+        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda *args: ([self.raw()], 7)):
+            items = self.probe._lists_readers()["things"]()
+        self.assertEqual(items.total, 7)
+        self.assertEqual(items[0]["object_id"], "41")
+
+    def test_the_lists_record_takes_an_optional_whole_total(self):
+        """T1: total is an optional whole number on a things record; a negative one is refused."""
+        def record(total):
+            row = {"kind": "things", "list_rev": 1, "part": 0, "parts": 1, "digest": "0" * 64, "count": 1,
+                   "items": list(self.home.things_items([self.raw()])), "total": total}
+            return self.schema.make_record("lists", telemetry_session_id="s" * 32, wall_timestamp_ms=1,
+                                           monotonic_ns=2, e2=row)
+
+        self.schema.validate_record(record(9))
+        with self.assertRaises(self.schema.SchemaError):
+            self.schema.validate_record(record(-1))
 
     def test_the_written_things_rows_validate(self):
         _kinds, written = self.tick([self.raw(), self.raw(object_id=42, where="inventory", room_id=None, count=2)])
@@ -666,6 +722,75 @@ class BuildNameTests(unittest.TestCase):
     def test_furniture_and_decor_are_not_build_items(self):
         for name in ("GameObject", "Sofa", "WallLight", "Mirror", "Bed", "IndoorPlant"):
             self.assertFalse(self.home.is_build_class(name), name)
+
+
+class RouteKindTests(unittest.TestCase):
+    """HOME2-7 / W13 R2: a route kind is the class name's last word (a door is a portal): decor whose name only contains
+    a route word (a toilet-paper roll, bed sheets) is no route, and a bed, toilet or fridge is one."""
+
+    def setUp(self):
+        self.home = modules()[1]
+
+    def test_a_bed_toilet_or_fridge_by_its_last_word_is_its_route(self):
+        cases = {"SingleBed": "bed", "BunkBed": "bed", "Toilet": "toilet", "Fridge": "fridge",
+                 "MiniRefrigerator": "fridge"}
+        for name, kind in cases.items():
+            self.assertEqual(self.home.route_kind(name, False), kind, name)
+
+    def test_decor_with_a_route_word_inside_its_name_is_no_route(self):
+        for name in ("ToiletPaper", "BedSheets", "BedsideLamp", "FridgeMagnet", "Chair"):
+            self.assertIsNone(self.home.route_kind(name, False), name)
+
+    def test_a_portal_is_a_door_whatever_its_name(self):
+        self.assertEqual(self.home.route_kind("Chair", True), "door")
+
+
+class CatalogReadTests(unittest.TestCase):
+    """HOME2-6 (probe half) / W13 R2: a Sim or a build item is left out before its price, tags and flags are read; the
+    other definitions are read as before."""
+
+    class Defn(object):
+        def __init__(self, def_id, cls_name, is_sim=False):
+            self.id = def_id
+            self.cls = type(cls_name, (object,), {})
+            self.is_sim = is_sim
+
+    def setUp(self):
+        modules_ = modules()
+        self.actuator, self.home = modules_[0].e2_actuator, modules_[1]
+        self.defs = [self.Defn(1, "Chair"), self.Defn(2, "Wall"), self.Defn(3, "Teen", is_sim=True),
+                     self.Defn(4, "Lamp")]
+        self.reads = []
+        self.manager = types.SimpleNamespace(loaded_definitions=self.defs)
+        services = types.SimpleNamespace(definition_manager=lambda: self.manager)
+
+        def recorder(name, value):
+            def read(defn):
+                self.reads.append((name, defn.id))
+                return value
+            return read
+
+        patches = [mock.patch.object(self.actuator, "services", services),
+                   mock.patch.object(self.actuator, "definition_price", recorder("price", 10)),
+                   mock.patch.object(self.actuator, "definition_tags", recorder("tags", [])),
+                   mock.patch.object(self.actuator, "definition_buy_flags", recorder("buy", 128)),
+                   mock.patch.object(self.actuator, "definition_placement_flags", recorder("placement", 0))]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_a_sim_and_a_build_item_are_skipped_before_any_flag_is_read(self):
+        rows = self.actuator.catalog_rows(self.home.catalog_wanted)
+        self.assertEqual([row["definition_id"] for row in rows], [1, 4])
+        self.assertEqual(sorted({defn_id for _name, defn_id in self.reads}), [1, 4])
+
+    def test_without_a_filter_every_definition_is_read(self):
+        rows = self.actuator.catalog_rows()
+        self.assertEqual([row["definition_id"] for row in rows], [1, 2, 3, 4])
+
+    def test_a_catalogue_the_game_cannot_list_is_none(self):
+        self.manager.loaded_definitions = None
+        self.assertIsNone(self.actuator.catalog_rows(self.home.catalog_wanted))
 
 
 class WallKindsTests(unittest.TestCase):
@@ -833,6 +958,14 @@ class SaveTests(HomeCase):
         self.actuator.callbacks[0]()
         self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("FINISHED", "SAVED")])
 
+    def test_a_save_the_game_finishes_inside_its_own_call_is_finished(self):
+        """HOME2-8 / W13 R2: the game may call back before the save call returns; the save is waiting before the call."""
+        self.actuator.save_fires = True
+        self.assertTrue(self.run_cmd("save", {}))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("FINISHED", "SAVED")])
+        self.assertIsNone(self.home.state_of(self.control).pending_save)
+        self.assertEqual(self.control.lines, ["ACT_ACCEPTED " + ACT, "ACT_FINISHED SAVED"])
+
     def test_a_save_callback_with_no_save_waiting_does_nothing(self):
         self.assertTrue(self.run_cmd("save", {}))
         self.actuator.callbacks[0]()
@@ -888,6 +1021,49 @@ class SaveTests(HomeCase):
         self.control.state = "ARMED"
         self.assertFalse(self.run_cmd("save", {}))
         self.assertEqual(self.control.phases(), [("REJECTED", "NOT_SAMPLING")])
+        self.assertEqual(self.actuator.calls, [])
+
+
+class RoomGridWatchTests(HomeCase):
+    """HOME2-4 / W13 R2: the room grids are read again after a zone change and after build mode ends (the User may have
+    changed walls there); a steady tick keeps them."""
+
+    def test_the_grids_are_dropped_when_build_mode_ends(self):
+        self.home.tick(self.control, 1000.0)
+        base = self.actuator.rooms_forgotten
+        self.actuator.build = True
+        self.home.tick(self.control, 1001.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base)
+        self.actuator.build = False
+        self.home.tick(self.control, 1002.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base + 1)
+        self.home.tick(self.control, 1003.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base + 1)
+
+    def test_the_grids_are_dropped_when_the_zone_changes(self):
+        self.home.tick(self.control, 1000.0)
+        base = self.actuator.rooms_forgotten
+        self.actuator.zone = 8
+        self.home.tick(self.control, 1001.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base + 1)
+
+
+class BodyTests(HomeCase):
+    """HOME2-3 / W13 R2: the observers raise when her body is ambiguous or unreadable; that is refused BODY_UNAVAILABLE."""
+
+    def raising_body(self, infos, flags):
+        raise RuntimeError("LabIdentityAmbiguous")
+
+    def test_an_ambiguous_body_is_body_unavailable_for_a_buy(self):
+        self.home.observers.select_lab_body = self.raising_body
+        self.assertFalse(self.run_cmd("buy", {"definition_id": "55", "place": _place("wall", "5")}))
+        self.assertEqual(self.control.phases(), [("REJECTED", "BODY_UNAVAILABLE")])
+        self.assertEqual(self.actuator.calls, [])
+
+    def test_an_unreadable_body_is_body_unavailable_for_a_save(self):
+        self.home.observers.select_lab_body = self.raising_body
+        self.assertFalse(self.run_cmd("save", {}))
+        self.assertEqual(self.control.phases(), [("REJECTED", "BODY_UNAVAILABLE")])
         self.assertEqual(self.actuator.calls, [])
 
 
@@ -965,6 +1141,12 @@ class BuyTests(HomeCase):
         self.assertEqual(calls, ["create", "find_spot", "try_remove", "place", "remove_created", "add"])
         self.assertEqual(self.actuator.funds.money, 500)
 
+    def test_a_refund_of_a_failed_purchase_is_not_earnings(self):
+        """SEAM2-10 / W13 R2: the refund of a purchase that failed is not counted as earnings (as an event's is not)."""
+        self.actuator.place_error = RuntimeError("refused")
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.actuator.earnings, [False])
+
     def test_a_failed_placement_is_refunded_only_once_the_game_has_removed_the_object(self):
         """HOME-11: the refund waits for the removal to finish; a failed path never refunds while the object exists."""
         self.actuator.removal_queued = True
@@ -1003,13 +1185,59 @@ class BuyTests(HomeCase):
         self.assertEqual(self.control.events[-1]["object_id"], "9000")
         self.assertEqual(self.actuator.funds.money, 350)
 
-    def test_a_charge_that_cannot_be_read_is_unknown_and_the_object_is_kept(self):
-        """HOME-10: she may have paid, so the object stays (never removed unpaid) and the act is UNKNOWN."""
+    def test_a_charge_that_cannot_be_read_removes_the_object_and_refunds_nothing(self):
+        """HOME-10 / SEAM2-5 / T4: whether she paid is not known, so the object is removed (no refund) and the act says so."""
         self.actuator.money_hidden_after_charge = True
         self.assertFalse(self.run_cmd("buy", self.args))
         self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "CHARGE_UNKNOWN"))
+        self.assertIn("not refunded", self.control.events[-1]["detail"])
+        self.assertTrue(self.actuator.created[0].removed)
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_charge_removal_the_game_queues_is_settled_once_it_is_gone(self):
+        self.actuator.money_hidden_after_charge = True
+        self.actuator.removal_queued = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.actuator.process_queue()
+        self.home.tick(self.control, 1001.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "CHARGE_UNKNOWN"))
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_charge_removal_still_there_after_thirty_seconds_says_remove_unconfirmed(self):
+        self.actuator.money_hidden_after_charge = True
+        self.actuator.removal_queued = True
+        self.run_cmd("buy", self.args)
+        self.home.tick(self.control, 1000.0)
+        self.home.tick(self.control, 1031.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
         self.assertEqual(self.control.events[-1]["object_id"], "9000")
-        self.assertFalse(self.actuator.created[0].removed)
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_charge_the_game_will_not_remove_is_unknown_with_the_object_id(self):
+        self.actuator.money_hidden_after_charge = True
+        self.actuator.remove_refused = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+
+    def test_a_spot_search_that_raises_removes_what_it_made_and_says_spot_failed(self):
+        """HOME2-2 / T4: nothing is charged before the spot is found, so a search that raises removes the object."""
+        self.actuator.spot_error = RuntimeError("points")
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("REJECTED", "SPOT_FAILED")])
+        self.assertEqual(self.control.events[-1]["detail"], "RuntimeError")
+        self.assertTrue(self.actuator.created[0].removed)
+        self.assertNotIn("try_remove", [c[0] for c in self.actuator.calls])
+        self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_a_spot_failure_whose_removal_is_refused_keeps_the_object_id(self):
+        self.actuator.spot_error = RuntimeError("points")
+        self.actuator.remove_refused = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+        self.assertEqual(self.actuator.funds.money, 500)
 
     def test_a_charge_the_funds_refuse_removes_the_object_and_takes_nothing(self):
         self.actuator.charge_refused = True
@@ -1025,6 +1253,14 @@ class BuyTests(HomeCase):
         self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
         self.assertEqual(self.control.events[-1]["detail"], "refund failed")
         self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_placed_purchase_whose_facts_the_schema_refuses_is_still_finished_with_its_object(self):
+        """SEAM2-9 / W13 R2: a refused FINISHED row keeps its phase and object id; only its facts are left out."""
+        self.control.refuse_results = True
+        self.assertTrue(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "PLACED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+        self.assertIsNone(self.control.events[-1]["result"])
 
     def test_a_game_that_cannot_create_refuses_with_place_failed(self):
         self.actuator.create_fail = True
@@ -1065,6 +1301,11 @@ class PlaceTests(HomeCase):
         self.actuator.placement_flags = 1
         self.assertTrue(self.run_cmd("place", self.args()))
         self.assertEqual(self.actuator.wall_items, [True])
+
+    def test_the_rooms_are_kept_for_the_facts_and_dropped_once_the_edit_is_done(self):
+        """HOME2-5 / W13 R2: the grid is read once per edit, so it is not dropped before the facts that read it."""
+        self.assertTrue(self.run_cmd("place", self.args()))
+        self.assertEqual(self.actuator.order, ["near", "forget"])
 
     def test_an_inventory_item_leaves_her_inventory_when_it_is_placed(self):
         """HOME-2: the game's own removal from the inventory comes before the move, so the item is not in two places."""
@@ -1172,6 +1413,14 @@ class MoveTests(HomeCase):
         self.assertFalse(self.run_cmd("move", self.args()))
         self.assertEqual(self.control.phases(), [("REJECTED", "IN_USE")])
 
+    def test_an_object_whose_use_cannot_be_read_is_not_moved(self):
+        """HOME2-10: only a known False lets an object move; an unreadable use is refused as unreadable."""
+        self.bed.in_use = None
+        self.assertFalse(self.run_cmd("move", self.args()))
+        self.assertEqual(self.control.phases(), [("REJECTED", "IN_USE")])
+        self.assertEqual(self.control.events[-1]["detail"], "unreadable")
+        self.assertNotIn("place", [c[0] for c in self.actuator.calls])
+
     def test_a_sim_or_a_door_is_not_movable(self):
         self.bed.is_sim = True
         self.assertFalse(self.run_cmd("move", self.args()))
@@ -1238,6 +1487,61 @@ class SellTests(HomeCase):
         self.tick(1031.0)
         self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "SELL_UNCONFIRMED"))
         self.assertEqual(self.control.events[-1]["object_id"], "41")
+        self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_an_item_she_carries_is_sold_like_any_other(self):
+        """SEAM2-2: a thing in her inventory is found (find_thing) and sold; it is paid once the game has removed it."""
+        self.chair.inventory = True
+        self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.tick(1000.0)
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "SOLD"))
+        self.assertEqual(self.actuator.funds.money, 540)
+
+    def test_a_second_sale_of_an_object_whose_sale_is_pending_is_refused(self):
+        """HOME2-1 / T4: the first sale's act would never get its row, and its money would be overwritten; the second
+        sale is refused SELL_PENDING, and the first is paid once, when the game has removed the object."""
+        self.actuator.removal_queued = True
+        self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
+        self.assertFalse(self.run_cmd("sell", {"object_id": "41"}, act_id=ACT_TWO))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "SELL_PENDING"))
+        self.assertEqual(self.control.events[-1]["act_id"], ACT_TWO)
+        self.actuator.process_queue()
+        self.tick(1001.0)
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("REJECTED", "SELL_PENDING"),
+                                                 ("FINISHED", "SOLD")])
+        self.assertEqual(self.actuator.funds.money, 540)
+
+    def test_an_object_whose_use_cannot_be_read_is_not_sold(self):
+        """HOME2-10: only a known False lets an object go; an unreadable use is refused as unreadable."""
+        self.chair.in_use = None
+        self.assertFalse(self.run_cmd("sell", {"object_id": "41"}))
+        self.assertEqual(self.control.events[-1]["code"], "IN_USE")
+        self.assertEqual(self.control.events[-1]["detail"], "unreadable")
+        self.assertFalse(self.chair.removed)
+
+    def test_a_sale_counts_as_earnings(self):
+        """SEAM2-10 / W13 R2: a sale is earnings (funds_add with count_as_earnings True)."""
+        self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
+        self.tick(1000.0)
+        self.assertEqual(self.actuator.earnings, [True])
+
+    def test_a_settlement_that_raises_ends_its_act_unknown_and_is_not_settled_again(self):
+        """HOME2-12 / W13 R2: a raise in the settlement is UNKNOWN E2_EXCEPTION for the act, and the removal is not
+        settled a second time."""
+        self.actuator.removal_queued = True
+        self.run_cmd("sell", {"object_id": "41"})
+        self.actuator.process_queue()
+
+        def broken(funds, amount, sim, count_as_earnings=True):
+            raise RuntimeError("row")
+
+        self.actuator.funds_add = broken
+        self.tick(1001.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "E2_EXCEPTION:RuntimeError"))
+        del self.actuator.funds_add
+        self.tick(1002.0)
+        self.assertEqual(len(self.control.events), 2)
         self.assertEqual(self.actuator.funds.money, 500)
 
     def test_a_sim_is_not_sold(self):
@@ -1474,6 +1778,21 @@ class RoomSearchTests(unittest.TestCase):
                                                             z=spot["translation"].z)))
 
 
+    def test_a_lot_passed_in_is_not_read_again_for_the_search_or_the_wall(self):
+        """HOME2-5 / W13 R2: the lot's objects are read once per edit and passed to the search and the wall fact."""
+        reads = []
+        lot = [self.sim, self.item] + list(self.objects.values())
+
+        def counting():
+            reads.append(1)
+            return lot
+
+        with mock.patch.object(self.actuator, "lot_objects", counting):
+            self.actuator.find_spot(self.item, self.sim, {"rel": "wall", "room_id": "1"}, wall_item=True, lot=lot)
+            self.actuator.against_wall(self.item, lot=lot)
+        self.assertEqual(reads, [])
+
+
 class PortalNameTests(unittest.TestCase):
     """HOME-7: a portal is a door, gate or archway by the last word of its class name, never by a substring: an
     'IndoorPlant' or an 'OutdoorBench' is not a door."""
@@ -1531,6 +1850,16 @@ class NearObjectTests(unittest.TestCase):
         self.things = [subject, self.Thing("2", 0.5, 0.0)]
         self.assertEqual(self.near(subject), ["2"])
 
+    def test_a_thing_too_far_away_is_not_asked_whether_it_is_on_the_lot(self):
+        """HOME2-5 / W13 R2: the distance is checked before the lot test, so a far thing costs one read."""
+        asked = []
+        far = self.Thing("6", 9.0, 0.0)
+        far.is_on_active_lot = lambda margin: asked.append("6") or True
+        subject = self.Thing("1", 0.0, 0.0)
+        self.things = [subject, far]
+        self.assertEqual(self.near(subject), [])
+        self.assertEqual(asked, [])
+
     def test_the_floor_above_a_Sim_an_inventory_item_and_off_lot_things_are_not_beside(self):
         subject = self.Thing("1", 0.0, 0.0)
         self.things = [subject, self.Thing("2", 0.0, 0.0, level=1), self.Thing("3", 0.2, 0.0, sim=True),
@@ -1548,8 +1877,10 @@ class FundsEffectTests(unittest.TestCase):
             self.money = money
             self.notice_raises = notice_raises
             self.adds = adds
+            self.earned = []
 
-        def add(self, amount, reason):
+        def add(self, amount, reason, count_as_earnings=True):
+            self.earned.append(count_as_earnings)
             if self.adds:
                 self.money += amount
             if self.notice_raises:
@@ -1562,6 +1893,13 @@ class FundsEffectTests(unittest.TestCase):
         funds = self.Funds(500, notice_raises=True)
         self.assertTrue(self.actuator.funds_add(funds, 40, None))
         self.assertEqual(funds.money, 540)
+
+    def test_a_payment_is_earnings_unless_the_caller_says_it_is_not(self):
+        """SEAM2-10 / W13 R2: a refund passes count_as_earnings False; a sale passes nothing and counts."""
+        funds = self.Funds(500)
+        self.assertTrue(self.actuator.funds_add(funds, 40, None, count_as_earnings=False))
+        self.assertTrue(self.actuator.funds_add(funds, 40, None))
+        self.assertEqual(funds.earned, [False, True])
 
     def test_a_payment_that_did_not_move_the_money_is_not_paid(self):
         funds = self.Funds(500, adds=False)
@@ -1611,7 +1949,8 @@ class ThingsRowsReadTests(unittest.TestCase):
         self.body = (self.info, self.sim)
         self.home = True
         self.lot = []
-        patches = [mock.patch.object(self.actuator, "_body", lambda: self.body),
+        patches = [mock.patch.object(self.actuator, "room_of", lambda obj: "5"),
+                   mock.patch.object(self.actuator, "_body", lambda: self.body),
                    mock.patch.object(self.actuator, "at_home", lambda household: self.home),
                    mock.patch.object(self.actuator, "lot_objects", lambda: self.lot)]
         for patch in patches:
@@ -1620,25 +1959,100 @@ class ThingsRowsReadTests(unittest.TestCase):
 
     def test_no_body_is_none(self):
         self.body = (None, None)
-        self.assertIsNone(self.actuator.things_rows())
+        self.assertIsNone(_read_things(self.actuator))
 
     def test_an_unreadable_home_is_none(self):
         self.home = None
-        self.assertIsNone(self.actuator.things_rows())
+        self.assertIsNone(_read_things(self.actuator))
 
     def test_an_unreadable_inventory_is_none(self):
         self.sim.inventory_component = None
-        self.assertIsNone(self.actuator.things_rows())
+        self.assertIsNone(_read_things(self.actuator))
 
     def test_a_lot_that_is_not_her_home_gives_the_inventory_only(self):
         self.home = False
         self.lot.append(types.SimpleNamespace(id=7))
-        rows = self.actuator.things_rows()
+        rows = _read_things(self.actuator)
         self.assertEqual([(row["object_id"], row["where"]) for row in rows], [(5, "inventory")])
 
+    class LotThing(object):
+        def __init__(self, object_id):
+            self.id = object_id
+            self.is_sim = False
+
+        def get_household_owner_id(self):
+            return 9
+
+    def test_the_inventory_comes_first_and_the_total_counts_what_the_list_keeps(self):
+        """SEAM2-4 / T1: her inventory first, then the lot; a build item is not counted; total is what the list keeps."""
+        wall = type("Wall", (self.LotThing,), {})
+        self.lot.extend([self.LotThing(100), wall(101), self.LotThing(102)])
+        rows, total = self.actuator.things_rows(modules()[1].thing_listed, 600)
+        self.assertEqual([row["object_id"] for row in rows], [5, 100, 102])
+        self.assertEqual(total, 3)
+
+    def test_only_the_things_the_list_keeps_are_read_in_full(self):
+        """HOME2-11 / W13 R2: states are read for the things the list keeps up to its limit, not for the rest."""
+        read = []
+        self.lot.extend(self.LotThing(100 + index) for index in range(5))
+        with mock.patch.object(self.actuator, "_thing_states", lambda obj: read.append(obj.id) or []):
+            rows, total = self.actuator.things_rows(lambda name: True, 2)
+        self.assertEqual(read, [5, 100])
+        self.assertEqual((len(rows), total), (2, 6))
+
     def test_her_home_and_inventory_are_read_together(self):
-        rows = self.actuator.things_rows()
+        rows = _read_things(self.actuator)
         self.assertEqual([row["where"] for row in rows], ["inventory"])
+
+
+class InventoryLookupTests(unittest.TestCase):
+    """SEAM2-2 (W13 R2): an object she carries is in the inventory manager, not in the zone's object manager. find_object
+    falls back to it; object_gone waits until neither manager holds the object."""
+
+    class Manager(object):
+        def __init__(self, objects):
+            self.objects = objects
+
+        def get(self, object_id):
+            return self.objects.get(object_id)
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+        self.zone_object = object()
+        self.carried = object()
+        self.zone = self.Manager({1: self.zone_object})
+        self.inventory = self.Manager({41: self.carried})
+        services = types.SimpleNamespace(object_manager=lambda: self.zone,
+                                         inventory_manager=lambda: self.inventory)
+        patch = mock.patch.object(self.actuator, "services", services)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_an_object_in_the_zone_is_found_in_the_object_manager(self):
+        self.assertIs(self.actuator.find_thing("1"), self.zone_object)
+
+    def test_a_carried_object_is_found_in_the_inventory_manager(self):
+        self.assertIs(self.actuator.find_thing("41"), self.carried)
+
+    def test_find_object_still_reads_the_zone_only(self):
+        """The probe's other callers (e2_control's act targets) keep the zone's object manager."""
+        self.assertIsNone(self.actuator.find_object("41"))
+
+    def test_an_id_neither_manager_holds_is_none(self):
+        self.assertIsNone(self.actuator.find_thing("99"))
+        self.assertIsNone(self.actuator.find_thing("not an id"))
+
+    def test_a_carried_object_is_not_gone_until_the_inventory_lets_it_go(self):
+        self.assertIs(self.actuator.object_gone("41"), False)
+        self.inventory.objects.pop(41)
+        self.assertIs(self.actuator.object_gone("41"), True)
+
+    def test_an_object_in_neither_manager_is_gone(self):
+        self.assertIs(self.actuator.object_gone("99"), True)
+
+    def test_a_manager_that_cannot_be_read_is_unknown(self):
+        self.zone = None
+        self.assertIsNone(self.actuator.object_gone("99"))
 
 
 class ProbeRouteTests(unittest.TestCase):
