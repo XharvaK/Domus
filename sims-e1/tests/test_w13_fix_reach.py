@@ -91,6 +91,7 @@ class FixActTests(unittest.TestCase):
                 _patched(self.probe.e2_actuator, "event_guest_list", lambda *args: "list"), \
                 _patched(self.probe.e2_actuator, "charge", lambda *args: True), \
                 _patched(self.probe.e2_actuator, "refund", lambda *args: refunds.append(args) or True), \
+                _patched(self.base.services, "current_zone_id", lambda: 1), \
                 _patched(self.base.services, "get_zone_situation_manager", lambda zone: manager), \
                 _patched(self.probe.observers, "household_money", lambda info: 1000):
             ok, _connection = self.sending_event()
