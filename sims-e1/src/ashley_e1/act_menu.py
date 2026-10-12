@@ -394,6 +394,9 @@ class MenuBuild(object):
             # The variant is always written (None for an act that is not a pie choice), so a part's size is what it is.
             acts.append({"guid64": job["guid64"], "name": (job.get("name") or "")[:128],
                          "text_key": job.get("text_key"), "variant": job.get("variant")})
+            # 2.40.0 (W13 P1): a phone act that asks for a Sim is listed with needs_sim (absent on every other act).
+            if job.get("needs_sim") is True:
+                acts[-1]["needs_sim"] = True
         return acts, cut
 
 

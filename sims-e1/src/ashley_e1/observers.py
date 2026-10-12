@@ -12,8 +12,21 @@ try:
 except Exception:
     get_room_id = None
 
+from . import reach
 from . import schema
 from . import snapshot
+from . import tuned
+
+# 2.40.0 (W13 P1): the game's user-facing situation creation option AVAILABLE (SituationCreationUIOption, read from the
+# game's bytecode: NOT_AVAILABLE 0, AVAILABLE 1, DEBUG_AVAILABLE 2, SPECIFIED_ONLY 3).
+CREATION_UI_AVAILABLE = 1
+# 2.40.0 (W13 P1): the game's Sim picker tunables the discovery record reads (names from the picker's own generator).
+PICKER_INCLUDE_FLAGS = ("include_actor_sim", "include_target_sim", "include_uninstantiated_sims",
+                        "include_instantiated_sims", "include_rabbithole_sims", "include_missing_pets")
+try:
+    from sims4.resources import Types as ResourceTypes
+except ImportError:
+    ResourceTypes = None
 
 
 class SelectabilityReadFailure(RuntimeError):
@@ -1127,7 +1140,12 @@ def read_situations():
                 role = None
             entries = found.setdefault(sim_id, [])
             if len(entries) < schema.MAX_SITUATIONS:
-                entries.append({"situation": name, "role": role})
+                # 2.40.0 (W13 P1): waiting is the visitor's waiting job (a visitor at her door), from the role's name.
+                # Written only when true (an optional key; older rows and other Sims carry none).
+                entry = {"situation": name, "role": role}
+                if waiting_role(role):
+                    entry["waiting"] = True
+                entries.append(entry)
     return found
 
 
@@ -2169,8 +2187,13 @@ def _own_careers(sim_info):
             at_work = career._at_work is True
         except Exception:
             at_work = False
-        careers.append({"career": name, "text_key": name_key, "title_key": title_key,
-                        "level": level if type(level) is int else None, "at_work": at_work})
+        # 2.40.0 (W13 P1): until_min, the game minute of the day her work session ends, while she is at work.
+        until_min = work_until_min(career) if at_work else None
+        entry = {"career": name, "text_key": name_key, "title_key": title_key,
+                 "level": level if type(level) is int else None, "at_work": at_work}
+        if until_min is not None:
+            entry["until_min"] = until_min
+        careers.append(entry)
     return sorted(careers, key=lambda item: item["career"])
 
 
@@ -2436,3 +2459,227 @@ def read_object_events(zone_id, body_position, wall_ms):
                 events["truncated"] = True
     _OBJECTS_PREV.update(zone=zone_id, wall_ms=wall_ms, classes=classes, near=near_states, places=places)
     return events
+
+
+# ------------------------------------------------------------------ 2.40.0 (W13 P1): her reach (reads)
+# Every read is guarded: an unreadable value is None (or its list is left out), never guessed. The names read are the
+# game's own (bytecode, cited in the comments); the discovery record answers what this code cannot confirm.
+
+def _safe(read):
+    """read() or None when it raises. The one guard every reach read uses."""
+    try:
+        return read()
+    except Exception:
+        return None
+
+
+def waiting_role(role):
+    """2.40.0 (W13 P1): whether a situation role is a visitor's waiting job (a visitor at her door): its name says wait.
+    False when there is no role name."""
+    return role is not None and "wait" in role.lower()
+
+
+def work_until_min(career):
+    """2.40.0 (W13 P1): the game minute of the day a career's current work session ends: CareerBase._current_work_end,
+    a DateAndTime read with its hour() and minute(). None when unread."""
+    end = _safe(lambda: career._current_work_end)
+    if end is None:
+        return None
+    hour = _safe(lambda: end.hour())
+    minute = _safe(lambda: end.minute())
+    return reach.work_end_minute((hour, minute))
+
+
+def her_sim_info():
+    """2.40.0 (W13 P1): her own sim info (the body the probe samples), or None."""
+    try:
+        sim_info, _sim = select_lab_body(services.sim_info_manager().get_all(), ALL_HIDDEN_REASONS)
+    except Exception:
+        return None
+    return sim_info
+
+
+def household_home_zone(household_id):
+    """2.40.0 (W13 P1): the home zone of a household (Household.home_zone_id, read from the household manager), as an
+    id; None when it has none or it cannot be read."""
+    if household_id is None:
+        return None
+    household = _safe(lambda: services.household_manager().get(int(household_id)))
+    zone = _safe(lambda: household.home_zone_id)
+    if type(zone) is not int or zone <= 0:
+        return None
+    return zone
+
+
+def _bit_names(tracker, target_id):
+    """2.40.0 (W13 P1): the relationship bits between her and a Sim, by their names (RelationshipTracker.get_all_bits),
+    at most reach.LABELS_PER_PERSON."""
+    bits = _safe(lambda: list(tracker.get_all_bits(target_id) or ()))
+    names = []
+    for bit in (bits or [])[:reach.LABELS_PER_PERSON]:
+        name = _type_name(bit) or _type_name(type(bit))
+        if name is not None:
+            names.append(name)
+    return names
+
+
+def _on_lot_of(target):
+    """2.40.0 (W13 P1): whether a Sim is on her active lot: False when she is not instanced (get_sim_instance is None),
+    else the Sim's is_on_active_lot(). None when unreadable."""
+    sim = _safe(lambda: target.get_sim_instance())
+    if sim is None:
+        return False
+    value = _safe(lambda: sim.is_on_active_lot())
+    return value if type(value) is bool else None
+
+
+def waiting_sim_ids():
+    """2.40.0 (W13 P1): the sim ids (digit strings) that hold a waiting job in a situation (read_situations)."""
+    found = read_situations() or {}
+    return set(sim_id for sim_id, entries in found.items()
+               if any(entry.get("waiting") is True for entry in entries))
+
+
+def read_people(sim_info, waiting=None):
+    """2.40.0 (W13 P1): the people she knows, in the game's own order: her relationship tracker's targets
+    (RelationshipTracker.get_target_sim_infos), with their names, relationship bits (get_all_bits), household, whether the
+    household has a home, whether they are on her lot, and whether they wait at her door. Tracks are not read here
+    (LIVE: the discovery record names the tracks). None when her relationships cannot be read."""
+    tracker = _safe(lambda: sim_info.relationship_tracker)
+    targets = _safe(lambda: list(tracker.get_target_sim_infos()))
+    if targets is None:
+        return None
+    waiting = waiting_sim_ids() if waiting is None else waiting
+    entries = []
+    for target in targets[:reach.PEOPLE_MAX]:
+        target_id = _safe(lambda: target.id)
+        household_id = _safe(lambda: target.household_id)
+        home = household_home_zone(household_id)
+        entries.append({
+            "sim_id": target_id,
+            "first_name": _name_part(lambda: target.first_name),
+            "last_name": _name_part(lambda: target.last_name),
+            "labels": _bit_names(tracker, target_id),
+            "tracks": {},
+            "household_id": household_id,
+            "has_home": None if household_id is None else home is not None,
+            "on_lot": _on_lot_of(target),
+            "waiting": None if target_id is None else str(target_id) in waiting})
+    return entries
+
+
+def read_places(sim_info, people):
+    """2.40.0 (W13 P1): the places she can go: her home, and the homes of the households of the people she knows (each
+    household once). Venues by type are not read here (LIVE: the venue service's type list is not in the record yet).
+    None when her household cannot be read."""
+    household_id = _safe(lambda: sim_info.household_id)
+    if household_id is None:
+        return None
+    homes = [(household_id, "home")]
+    for person in people or ():
+        if person.get("household_id") is not None:
+            homes.append((person["household_id"], "household"))
+    found = []
+    seen = set()
+    for hid, kind in homes:
+        if hid in seen:
+            continue
+        seen.add(hid)
+        zone = household_home_zone(hid)
+        if zone is None:
+            continue
+        found.append({"zone_id": str(zone), "kind": kind, "lot_name": None, "venue": None,
+                      "household_id": str(hid) if kind == "household" else None})
+    return found
+
+
+def read_events():
+    """2.40.0 (W13 P1): the user-facing situation types she can plan (party, date and the like): guid64, name key, cost
+    (the tuning's cost, int or None) and whether it can be scheduled (None: not read yet). Read from the game's situation
+    tuning: creation_ui_option AVAILABLE. None when the tuning cannot be read."""
+    if ResourceTypes is None:
+        return None
+    manager = _safe(lambda: services.get_instance_manager(ResourceTypes.SITUATION))
+    found = _safe(lambda: manager.types)
+    if callable(found):
+        found = _safe(found)
+    values = _safe(lambda: list(found.values()) if isinstance(found, dict) else list(found))
+    if values is None:
+        return None
+    events = []
+    for cls in values:
+        if tuned._class_plain(cls, "creation_ui_option") != CREATION_UI_AVAILABLE:
+            continue
+        cost = tuned._class_plain(cls, "cost")
+        events.append({"situation_id": tuned._class_plain(cls, "guid64"),
+                       "name_key": _string_key(tuned._class_plain(cls, "display_name")),
+                       "cost": cost if type(cost) is int else None, "schedulable": None})
+    return events
+
+
+def read_picker_steps(sim_info, sims):
+    """2.40.0 (W13 P1): for each Sim she knows, the first check of the phone picker's own generator it fails, or "ok".
+    The checks, in the generator's order: "unknown" (the relationship cannot be read), "hidden" (the relationship is
+    hidden), "ok". Approximate: a live session confirms the step names (discovery 'pickers')."""
+    tracker = _safe(lambda: sim_info.relationship_tracker)
+    steps = {}
+    for sim in sims or ():
+        target_id = _safe(lambda: sim.id)
+        if target_id is None:
+            continue
+        hidden = _safe(lambda: tracker.is_hidden(target_id))
+        if hidden is None:
+            steps[str(target_id)] = "unknown"
+        elif hidden is True:
+            steps[str(target_id)] = "hidden"
+        else:
+            steps[str(target_id)] = "ok"
+    return steps
+
+
+def read_save_discovery():
+    """2.40.0 (W13 P1): the save section of the discovery record: whether the loaded slot is a player slot (id above 1),
+    whether it has a name, and whether a save is locked. Never the slot id or its name."""
+    persistence = _safe(lambda: services.get_persistence_service())
+    slot = _safe(lambda: persistence.get_save_slot_proto_buff())
+    slot_id = _safe(lambda: slot.slot_id)
+    slot_name = _safe(lambda: slot.slot_name)
+    locked = _safe(lambda: persistence.is_save_locked())
+    return {"slot_ok": slot_id > 1 if type(slot_id) is int else None,
+            "slot_named": bool(slot_name) if isinstance(slot_name, str) else None,
+            "cooldown_s": None,
+            "locked": locked if type(locked) is bool else None}
+
+
+def read_career_discovery(sim_info):
+    """2.40.0 (W13 P1): her careers (name, level, at work, the minute the work session ends), as the portrait reads
+    them. can_work_early and available_for_work are not read here (LIVE: the discovery record names them)."""
+    careers = _own_careers(sim_info)
+    return None if careers is None else {"careers": careers}
+
+
+def read_discovery(sim_info, phone_pickers=None, phone_tests=None):
+    """2.40.0 (W13 P1): the discovery record's sections, each read by its own guarded reader and left out when None.
+    phone_pickers and phone_tests come from the actuator (it holds the phone's affordances and the game's test). Read
+    only: nothing here changes the game."""
+    sections = {"save": read_save_discovery(), "career": read_career_discovery(sim_info),
+                "situations": read_events(), "pickers": phone_pickers, "phone_tests": phone_tests}
+    return reach.discovery_sections(sections)
+
+
+def household_money(sim_info):
+    """2.40.0 (W13 P1): her household's money (the household funds' amount, as the portrait reads it); None when unread."""
+    value = _safe(lambda: sim_info.household._funds._funds)
+    return value if type(value) is int else None
+
+
+def save_locked():
+    """2.40.0 (W13 P1): whether the game's save lock holds (PersistenceService.is_save_locked). False when unread."""
+    return _safe(lambda: services.get_persistence_service().is_save_locked()) is True
+
+
+def is_carrying_baby(sim_info):
+    """2.40.0 (W13 P1): whether her Sim carries a baby (SimInfo.is_pregnant). False when it is not pregnant; None when
+    unread (a trip is then not refused for it: the game refuses it, and the act says so)."""
+    value = _safe(lambda: sim_info.is_pregnant)
+    return value if type(value) is bool else None

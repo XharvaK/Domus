@@ -14,6 +14,7 @@ from . import e2_cards
 from . import e2_lineage
 from . import e2_registry
 from . import e2_trial
+from . import reach
 from . import schema
 from . import snapshot
 
@@ -390,6 +391,9 @@ def _op_hook(original):
             return original(distributor, *args, **kwargs)
         op = args[-1] if args else kwargs.get("op")
         name = type(op).__name__
+        if name == "PhoneNotificationOp":
+            # 2.40.0 (W13 P1): a text for her is observed (never held); the op itself passes through below.
+            controller.note_phone(op)
         if name in _HOLD["ops"]:
             try:
                 if controller.withhold_op(name):
@@ -1120,7 +1124,7 @@ class E2Control:
         payload["phase"] = phase
         return self._event("act_event", payload)
 
-    def _act_check(self, object_id, guid64, owner=False, variant=None):
+    def _act_check(self, object_id, guid64, owner=False, variant=None, sim_id=None):
         """None when her chosen action may be pushed now, else (code, detail).
 
         Unlike a trial there is no lab-only gate, no busy gate (it queues like a
@@ -1185,15 +1189,42 @@ class E2Control:
             return ("EXCLUDED", excluded), None
         if not e2_actuator.user_directed(affordance):
             return ("NOT_USER_DIRECTED", None), None
-        ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context)
+        # 2.40.0 (W13 P1): a Sim picker takes the Sim she named (its picked_item_ids and included_override); the Sim is
+        # named only to a picker. The picker is tested and pushed with her choice.
+        parameters = None
+        if e2_actuator.needs_sim(affordance):
+            if sim_id is None:
+                return ("SIM_NEEDED", None), None
+            parameters, step = self._picked_sim(sim, sim_id)
+            if parameters is None:
+                return ("SIM_NOT_CHOOSABLE", "step %s" % step), None
+        elif sim_id is not None:
+            return ("NOT_A_SIM_ACT", None), None
+        if parameters is None:
+            ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context)
+        else:
+            ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context, parameters)
         if not ok:
+            if parameters is not None:
+                return ("SIM_NOT_CHOOSABLE", "step picker", reason_key), None
             # 2.32.0 (PR10, PR11): a refusal during a fire, or in build mode, is named as such.
             if observers.fire_active() is True:
                 return ("FIRE_REFUSED", reason, reason_key), None
             if observers.build_mode() is True:
                 return ("BUILD_MODE_REFUSED", reason, reason_key), None
             return ("GAME_REFUSED", reason, reason_key), None
-        return None, (sim, obj, affordance, context, False)
+        return None, (sim, obj, affordance, context, False, parameters)
+
+    def _picked_sim(self, sim, sim_id):
+        """2.40.0 (W13 P1): the picker's parameters for the Sim she named, and the step of the picker's own generator
+        that Sim passes ("ok") or fails (observers.read_picker_steps). No parameters unless the step is ok."""
+        sim_info = e2_actuator.sim_info_for(sim_id)
+        if sim_info is None:
+            return None, "unknown"
+        step = observers.read_picker_steps(observers.her_sim_info(), [sim_info]).get(str(sim_id), "unknown")
+        if step != "ok":
+            return None, step
+        return e2_actuator.picker_parameters(sim_info, sim_id), step
 
     def _variant_check(self, sim, obj, pie, context, object_id, guid64, variant, spot=False):
         """2.39.0 (W12 G1): the check of a pie choice. The pie is enumerated again now and the choice whose match key the
@@ -1217,7 +1248,7 @@ class E2Control:
             return ("GAME_REFUSED", reason, reason_key), None
         return None, (sim, obj, choice, context, True)
 
-    def cmd_act(self, act_id, object_id, guid64, connection, owner=False, variant=None):
+    def cmd_act(self, act_id, object_id, guid64, connection, owner=False, variant=None, sim_id=None):
         """8f: push exactly the game action Ashley chose; never another, never twice.
 
         ACCEPTED is written before the push, so a failure in between leaves
@@ -1238,7 +1269,7 @@ class E2Control:
             return False
         accepted = False
         try:
-            refusal, bound = self._act_check(object_id, guid64, owner=owner, variant=variant)
+            refusal, bound = self._act_check(object_id, guid64, owner=owner, variant=variant, sim_id=sim_id)
             if refusal is not None:
                 code, detail = refusal[0], refusal[1]
                 reason_key = refusal[2] if len(refusal) > 2 else None
@@ -1247,7 +1278,9 @@ class E2Control:
                                 reason_key=reason_key, **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
-            sim, obj, affordance, context, is_choice = bound
+            sim, obj, affordance, context, is_choice = bound[:5]
+            # 2.40.0 (W13 P1): a Sim picker's parameters (her picked Sim), None for every other act.
+            parameters = bound[5] if len(bound) > 5 else None
             # 2.39.0 (W12 G1): a pie choice is named by its own affordance; it runs as its own pair (push_choice).
             tuning_name = _tuning_name(affordance.affordance if is_choice else affordance)
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
@@ -1258,8 +1291,12 @@ class E2Control:
                 if is_choice:
                     interaction, detail, kind, reason_key = e2_actuator.push_choice(affordance, context)
                 else:
-                    interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
-                        sim, obj, affordance, context)
+                    if parameters is None:
+                        interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
+                            sim, obj, affordance, context)
+                    else:
+                        interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
+                            sim, obj, affordance, context, parameters)
             finally:
                 self.pushing = None
             # 2.28.0 (live 2026-10-08: a picker's push returned 704 while her queue gained 703, and
@@ -1301,6 +1338,204 @@ class E2Control:
             self._act_event(act_id, phase, code=code, **base)
             self._say(connection, "ACT_%s %s" % (phase, code))
             return False
+
+    # ------------------------------------------------------------ 2.40.0 (W13 P1): her reach (verbs)
+    # go and event hold the one-act slot like an act; their rows are act_event rows for their act id, and their facts
+    # are the row's result. The host reports and checks the game's own calls; it never judges her choice.
+    _go = None
+
+    def _reject(self, act_id, base, connection, code, detail=None):
+        """2.40.0: a verb refused: its REJECTED row and the reply. Always False."""
+        self._act_event(act_id, "REJECTED", code=code,
+                        detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH], **base)
+        self._say(connection, "ACT_REJECT %s" % code)
+        return False
+
+    def _verb_body(self, act_id, base, connection):
+        """2.40.0: the checks every verb shares before its own: the act id is new, E2 is available, and her body may act
+        (sampling, the same body as her acts, the User's Sim not the one playing). (sim_info, sim), or None when refused."""
+        if act_id in self.act_ids:
+            self._say(connection, "ACT_REJECT DUPLICATE")
+            return None
+        self.act_ids.add(act_id)
+        if not self.available():
+            self._reject(act_id, base, connection, "E2_UNAVAILABLE")
+            return None
+        if self._state() != "SAMPLING":
+            self._reject(act_id, base, connection, "NOT_SAMPLING")
+            return None
+        if self.lineage_class == e2_lineage.BODY_MISMATCH:
+            self._reject(act_id, base, connection, "BODY_MISMATCH")
+            return None
+        sim_info, sim = observers.select_lab_body(services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+        if sim is None:
+            self._reject(act_id, base, connection, "BODY_UNAVAILABLE")
+            return None
+        armed = (self._armed_snapshot() or {}).get("sim_id")
+        if (self.designated_sim_id is not None and str(sim_info.id) != self.designated_sim_id) or (
+                armed is not None and str(sim_info.id) != str(armed)):
+            self._reject(act_id, base, connection, "BODY_MISMATCH")
+            return None
+        active = observers.active_sim_id()
+        if active is not None and active != str(sim_info.id):
+            self._reject(act_id, base, connection, "BODY_MISMATCH", "NOT_ACTIVE")
+            return None
+        return sim_info, sim
+
+    def cmd_go(self, act_id, zone_id, connection, known_zones):
+        """2.40.0 (W13 P1): her trip to a place she knows (the game's travel service, which asks the client to travel).
+        ACCEPTED, then PUSHED (the trip is asked). FINISHED ARRIVED comes from tick_verbs, once her Sim is in that zone;
+        UNKNOWN TRAVEL_UNSEEN when no zone change comes within reach.GO_SEEN_S real seconds. Whether she should go is her
+        word (she asks the User first); the host records it and never gates it on its own."""
+        base = {"object_id": None, "guid64": None}
+        accepted = False
+        try:
+            body = self._verb_body(act_id, base, connection)
+            if body is None:
+                return False
+            sim_info, _sim = body
+            code = self._go_refusal(sim_info, zone_id, known_zones)
+            if code is not None:
+                return self._reject(act_id, base, connection, code)
+            self._act_event(act_id, "ACCEPTED", tuning_name="travel", **base)
+            accepted = True
+            if e2_actuator.travel(sim_info.id, zone_id) is not True:
+                self._act_event(act_id, "REJECTED", code="PUSH_FAILED", **base)
+                self._say(connection, "ACT_REJECT PUSH_FAILED")
+                return False
+            self._act_event(act_id, "PUSHED", tuning_name="travel", **base)
+            self._go = {"act_id": act_id, "zone_id": str(zone_id), "at": time.monotonic()}
+            self._say(connection, "ACT_PUSHED %s travel" % act_id)
+            return True
+        except Exception as error:
+            code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
+            self._act_event(act_id, "UNKNOWN" if accepted else "REJECTED", code=code, **base)
+            self._say(connection, "ACT_%s %s" % ("UNKNOWN" if accepted else "REJECTED", code))
+            return False
+
+    def _go_refusal(self, sim_info, zone_id, known_zones):
+        """2.40.0: the code that refuses a trip now, or None: CARRYING_BABY, SAME_ZONE, NO_ZONE (not a place of the newest
+        places list), SAVE_LOCKED (the game's own save lock). A trip the game refuses otherwise shows as TRAVEL_UNSEEN."""
+        if observers.is_carrying_baby(sim_info) is True:
+            return "CARRYING_BABY"
+        if str(_read(lambda: services.current_zone_id())) == str(zone_id):
+            return "SAME_ZONE"
+        if str(zone_id) not in known_zones:
+            return "NO_ZONE"
+        if observers.save_locked():
+            return "SAVE_LOCKED"
+        return None
+
+    def tick_verbs(self):
+        """2.40.0 (W13 P1): the pending trip, each sampling tick: FINISHED ARRIVED once her Sim is in the zone it asked for,
+        UNKNOWN TRAVEL_UNSEEN when no zone change came within reach.GO_SEEN_S real seconds. Never raises."""
+        pending = self._go
+        if pending is None:
+            return
+        try:
+            if str(_read(lambda: services.current_zone_id())) == pending["zone_id"]:
+                self._go = None
+                self._act_event(pending["act_id"], "FINISHED", code="ARRIVED", object_id=None, guid64=None,
+                                result={"zone_id": pending["zone_id"]})
+            elif time.monotonic() - pending["at"] >= reach.GO_SEEN_S:
+                self._go = None
+                self._act_event(pending["act_id"], "UNKNOWN", code="TRAVEL_UNSEEN", object_id=None, guid64=None)
+        except Exception:
+            self._go = None
+
+    def cmd_event(self, act_id, situation_id, guests, start, connection):
+        """2.40.0 (W13 P1): a planned event (a situation the game makes user-facing): her as host, the guests invited, now
+        or at a time today or tomorrow. The cost comes from her household's funds first (the game's own try_remove); a
+        failed creation gives the money back. ACCEPTED, then FINISHED CREATED with its cost, her funds and the start."""
+        base = {"object_id": None, "guid64": None}
+        accepted = False
+        charged = None
+        try:
+            body = self._verb_body(act_id, base, connection)
+            if body is None:
+                return False
+            sim_info, sim = body
+            situation = e2_actuator.situation_type(situation_id)
+            if situation is None:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "no situation type")
+            now = e2_actuator.now_absolute_minutes()
+            if now is None:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "clock")
+            start_min, scheduled, code = self._event_start(start, now)
+            if code is not None:
+                return self._reject(act_id, base, connection, code)
+            cost = e2_actuator.situation_cost(situation) or 0
+            household = _read(lambda: sim_info.household)
+            money = observers.household_money(sim_info)
+            if cost > 0 and (money is None or money < cost):
+                return self._reject(act_id, base, connection, "NO_FUNDS")
+            guest_ids = reach.sim_ids(list(guests), reach.EVENT_GUESTS_MAX)
+            if guest_ids is None:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "guests")
+            guest_list = e2_actuator.event_guest_list(sim_info.id, guest_ids, e2_actuator.default_job(situation))
+            if guest_list is None:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "guest list")
+            self._act_event(act_id, "ACCEPTED", tuning_name="event", **base)
+            accepted = True
+            if cost > 0:
+                charged = e2_actuator.charge(household, cost, sim, reach.FUNDS_REASON)
+                if charged is None:
+                    return self._reject(act_id, base, connection, "CREATE_FAILED", "funds unread")
+                if charged is False:
+                    return self._reject(act_id, base, connection, "NO_FUNDS")
+            created = e2_actuator.create_event(_read(lambda: services.current_zone_id()), situation, guest_list,
+                                               scheduled)
+            if created is None:
+                if charged:
+                    e2_actuator.refund(household, cost, sim, reach.FUNDS_REASON)
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "create")
+            funds = observers.household_money(sim_info)
+            self._act_event(act_id, "FINISHED", code="CREATED", result={"cost": cost, "funds": funds,
+                                                                        "start_min": start_min}, **base)
+            self._say(connection, "ACT_FINISHED %s CREATED" % act_id)
+            return True
+        except Exception as error:
+            code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
+            self._act_event(act_id, "UNKNOWN" if accepted else "REJECTED", code=code, **base)
+            self._say(connection, "ACT_%s %s" % ("UNKNOWN" if accepted else "REJECTED", code))
+            return False
+
+    def _event_start(self, start, now):
+        """2.40.0: (absolute game minute, scheduled time or None, refusal code or None) for a start: "now", or a day offset
+        (0 today, 1 tomorrow) with an hour and minute. START_PAST when it is before the clock; CREATE_FAILED when the game
+        cannot make the time."""
+        if start == "now":
+            return now, None, None
+        start_min = reach.start_minute(start["day_offset"], start["hour"], start["minute"],
+                                       now % reach.START_MINUTES_PER_DAY, now // reach.START_MINUTES_PER_DAY)
+        if start_min is None:
+            return None, None, "START_PAST"
+        scheduled = e2_actuator.scheduled_at(start_min)
+        return (start_min, scheduled, None) if scheduled is not None else (None, None, "CREATE_FAILED")
+
+    def note_phone(self, op):
+        """2.40.0 (W13 P1): a text for her (PhoneNotificationOp): one phone row, with the sender's sim id when the
+        notification names a Sim other than her own. Written while sampling only. Never raises."""
+        try:
+            if self._state() != "SAMPLING":
+                return
+            her = observers.her_sim_info()
+            sender = _read(lambda: op.sim_id)
+            sender_id = None if sender is None or _read(lambda: sender == her.id) else str(sender)
+            row = reach.phone_event("text", sender_id, None)
+            if row is not None:
+                self._event("phone", row)
+        except Exception:
+            pass
+
+    def _ring_for_her(self, dialog):
+        """2.40.0 (W13 P1): her phone's ring is hers when its caller is a Sim other than the User's active Sim: the
+        dialog's target sim id is the caller. False when either id is unread."""
+        caller = _read(lambda: dialog.target_sim_id)
+        active = observers.active_sim_id()
+        if caller is None or active is None:
+            return False
+        return str(caller) != active
 
     def _answer_check(self, dialog_id, pick, rows=None, text=None):
         """None when her answer may be given now, else (code, detail). The dialog must be open
@@ -1898,6 +2133,9 @@ class E2Control:
     def _window(self, original, dialog, send_args, send_kwargs, kind):
         """The one decision for a dialog window or her phone ring (§4.1, §4.2, §4.3)."""
         who, act = self._window_owner(dialog)
+        # 2.40.0 (W13 P1): an incoming call is held for her by its caller's sim id, not by the resolver's Sim.
+        if kind == "ring" and who == "user" and self._ring_for_her(dialog):
+            who, act = "hers", None
         name = type(dialog).__name__
         key = str(int(dialog.dialog_id))
         if who == "identity_user":

@@ -16,6 +16,7 @@ from interactions.priority import Priority  # TARGET_BYTECODE 1.128.
 
 from . import e2_trial
 from . import observers
+from . import reach
 from . import tuned
 
 # 2.35.0 (D3): going places. The game's Go Here (terrain-gohere) and its standable-spot search. Read from the game's
@@ -41,6 +42,24 @@ try:
     from interactions.context import PickInfo, PickType
 except ImportError:
     PickInfo = PickType = None
+# 2.40.0 (W13 P1): her trip, a planned event, and the situation's guest list. Each name is optional: a missing one
+# turns its verb off and nothing else (RUNTIME_UNVERIFIED until the discovery record is read in a live session).
+try:
+    from world.travel_service import travel_sim_to_zone
+except ImportError:
+    travel_sim_to_zone = None
+try:
+    from situations.situation_guest_list import SituationGuestInfo, SituationGuestList, SituationInvitationPurpose
+except ImportError:
+    SituationGuestInfo = SituationGuestList = SituationInvitationPurpose = None
+try:
+    from sims4.resources import Types as ResourceTypes
+except ImportError:
+    ResourceTypes = None
+try:
+    from date_and_time import create_date_and_time
+except ImportError:
+    create_date_and_time = None
 
 SIT_AFFORDANCE_GUID = 31564
 PAUSE_REASON = "ashley_e2_pause"
@@ -155,7 +174,8 @@ def phone_act_excluded(affordance):
         name = str(affordance.__name__)
     except Exception:
         name = ""
-    if "piemenu" in name.lower().replace("_", ""):
+    # 2.40.0 (W13 P1): a phone act that asks for a Sim (needs_sim) is listed, and the Sim is picked by her.
+    if "piemenu" in name.lower().replace("_", "") and not needs_sim(affordance):
         return "pie_picker"
     if e2_trial.denied_part(name, PHONE_DENY_PARTS) is not None:
         return "deny_name"
@@ -273,12 +293,17 @@ def push_affordance(sim, obj, affordance, context):
     return interaction, detail, kind
 
 
-def push_affordance_ex(sim, obj, affordance, context):
+def push_affordance_ex(sim, obj, affordance, context, parameters=None):
     """push_affordance plus the refusal tooltip's string key, or None.
 
     The tooltip is never called. Callers that only need the triple use push_affordance.
+    2.40.0 (W13 P1): parameters are the interaction parameters of a Sim picker (picked_item_ids, included_override),
+    passed as the push's keyword arguments, as the game's own picker is pushed. None for every other act.
     """
-    result = sim.push_super_affordance(affordance, obj, context)
+    if parameters:
+        result = sim.push_super_affordance(affordance, obj, context, **parameters)
+    else:
+        result = sim.push_super_affordance(affordance, obj, context)
     refusal = _refusal(result)
     if refusal is not None:
         try:
@@ -317,17 +342,208 @@ def push_sit(sim, obj, affordance, context):
     return interaction, detail
 
 
-def preflight_test(sim, obj, affordance, context):
+def preflight_test(sim, obj, affordance, context, parameters=None):
     """Read: would push_super_affordance's test refuse this pair (A28).
 
     Same arguments as the push. The game method calls AffordanceObjectPair.test
     and does not execute. Returns (ok, reason, reason_key). reason_key is the
     tooltip's string key when the test refuses, else None. The tooltip is never called.
+    2.40.0 (W13 P1): parameters as push_affordance_ex takes them (a Sim picker's picked Sim).
     """
-    result = sim.test_super_affordance(affordance, obj, context)
+    if parameters:
+        result = sim.test_super_affordance(affordance, obj, context, **parameters)
+    else:
+        result = sim.test_super_affordance(affordance, obj, context)
     if not result:
         return False, _bounded(str(result)), refusal_key(result)
     return True, None, None
+
+
+# 2.40.0 (W13 P1): her reach. A phone act that asks for a Sim (a call, a text, an invite) is a picker: the Sim she
+# names is the picker's own parameter (picked_item_ids, included_override), so the game's picker takes her choice.
+# Her trip and her planned event are the game's own travel and situation calls. Every function here is a read,
+# except travel, create_event and charge, which are the actuator's own effect calls.
+SIM_PICKER_CLASSES = ("SimPickerInteraction", "SimPickerMixin")
+
+
+def needs_sim(affordance):
+    """Read: True when the affordance opens a Sim picker (its class, read down the MRO, is a Sim picker)."""
+    return any(_class_name(cls) in SIM_PICKER_CLASSES for cls in _mro(affordance))
+
+
+def picker_parameters(sim_info, sim_id):
+    """2.40.0: the interaction parameters that make a Sim picker choose this Sim (picked_item_ids, included_override,
+    as the game's picker reads them), or None when the Sim cannot be named."""
+    if sim_info is None:
+        return None
+    try:
+        return {"picked_item_ids": frozenset((int(sim_id),)), "included_override": [sim_info]}
+    except (TypeError, ValueError):
+        return None
+
+
+def picker_offers(affordance, target, context):
+    """Read: whether the picker has any Sim it could choose now (its has_valid_choice). True or False; None when unread."""
+    try:
+        return bool(affordance.has_valid_choice(target, context))
+    except Exception:
+        return None
+
+
+def sim_info_for(sim_id):
+    """Read: the sim info with this id, or None."""
+    try:
+        return services.sim_info_manager().get(int(sim_id))
+    except Exception:
+        return None
+
+
+def travel(sim_id, zone_id):
+    """Act: her trip, asked of the game's travel service (the game's own travel call, which asks the client to travel).
+    True when the call went through, False when it raised, None when the game's call is not there."""
+    if travel_sim_to_zone is None:
+        return None
+    try:
+        travel_sim_to_zone(int(sim_id), int(zone_id))
+    except Exception:
+        return False
+    return True
+
+
+def situation_type(guid64):
+    """Read: the situation type with this guid64 (its tuning), or None."""
+    if ResourceTypes is None:
+        return None
+    try:
+        return services.get_instance_manager(ResourceTypes.SITUATION).get(int(guid64))
+    except Exception:
+        return None
+
+
+def default_job(situation):
+    """Read: the job a guest of this situation type takes (its default job), or None."""
+    try:
+        return situation.default_job()
+    except Exception:
+        return None
+
+
+def event_guest_list(host_sim_id, guest_ids, job_type):
+    """Read: a guest list with her as host and the guests invited (SituationGuestInfo.construct_from_purpose), or None
+    when the game's names are missing or the list cannot be made."""
+    if None in (SituationGuestList, SituationGuestInfo, SituationInvitationPurpose) or job_type is None:
+        return None
+    try:
+        guest_list = SituationGuestList(True, int(host_sim_id), None)
+        for sim_id in [host_sim_id] + list(guest_ids):
+            guest_list.add_guest_info(SituationGuestInfo.construct_from_purpose(
+                int(sim_id), job_type, SituationInvitationPurpose.INVITED))
+    except Exception:
+        return None
+    return guest_list
+
+
+def create_event(zone_id, situation, guest_list, scheduled_time=None):
+    """Act: the zone's situation manager makes the event she planned, user-facing, at scheduled_time (None: now).
+    Returns the new situation's id (digits), or None when the game made none."""
+    try:
+        manager = services.get_zone_situation_manager(int(zone_id))
+        created = manager.create_situation(situation, guest_list, user_facing=True, zone_id=int(zone_id),
+                                           scheduled_time=scheduled_time)
+        found = created.id
+    except Exception:
+        return None
+    return None if found is None else str(found)
+
+
+def funds_of(household):
+    """Read: the household's funds object, or None."""
+    try:
+        return household.funds
+    except Exception:
+        return None
+
+
+def charge(household, amount, sim, reason):
+    """Act: the household's funds pay amount, all of it or nothing (the game's own try_remove). True when paid, False
+    when the funds cannot pay, None when the call itself failed (the funds are unread, so nothing is known)."""
+    try:
+        paid = funds_of(household).try_remove(amount, reason, sim, require_full_amount=True)
+    except Exception:
+        return None
+    return bool(paid)
+
+
+def situation_cost(situation):
+    """Read: a situation type's cost (its tuned cost, an int), or None when unread."""
+    cost = tuned._class_plain(situation, "cost")
+    return cost if type(cost) is int and cost >= 0 else None
+
+
+def now_absolute_minutes():
+    """Read: the game's clock now, in absolute minutes (DateAndTime.absolute_minutes of the time service's sim_now);
+    None when unread."""
+    try:
+        value = services.time_service().sim_now.absolute_minutes()
+    except Exception:
+        return None
+    return value if type(value) is int else None
+
+
+def scheduled_at(absolute_minutes):
+    """Read: the game's date and time for an absolute minute (date_and_time.create_date_and_time from its days, hours and
+    minutes); None when the game's call is missing or fails."""
+    if create_date_and_time is None or absolute_minutes is None:
+        return None
+    try:
+        return create_date_and_time(absolute_minutes // 1440, (absolute_minutes % 1440) // 60, absolute_minutes % 60)
+    except Exception:
+        return None
+
+
+def refund(household, amount, sim, reason):
+    """Act: the money a charge took goes back to the household's funds (the game's own add), when a later step failed."""
+    try:
+        funds_of(household).add(amount, reason, sim)
+    except Exception:
+        return False
+    return True
+
+
+PHONE_TESTS_MAX = 64
+TEST_REASON_MAX = 200
+
+
+def phone_discovery(sim, affordances, known_sims):
+    """2.40.0 (W13 P1): the discovery record's phone sections, read only. pickers: each Sim picker of her phone, with its
+    tuned minimum, filter class name, include flags, radius and the step that drops each Sim she knows
+    (observers.read_picker_steps). phone_tests: each phone act's own test, asked as the game asks it (no run): its
+    reason text (cut to TEST_REASON_MAX) and tooltip key. Returns (pickers, phone_tests); a section that cannot be read
+    is None."""
+    pickers, tests = [], []
+    try:
+        context = build_context(sim)
+    except Exception:
+        return None, None
+    steps = observers.read_picker_steps(observers.her_sim_info(), known_sims)
+    for affordance in affordances[:PHONE_SCAN_LIMIT]:
+        try:
+            name = str(affordance.__name__)
+        except Exception:
+            name = ""
+        guid = tuned._class_plain(affordance, "guid64")
+        if needs_sim(affordance):
+            flags = [flag for flag in observers.PICKER_INCLUDE_FLAGS if tuned._class_plain(affordance, flag) is True]
+            sim_filter = tuned._class_plain(affordance, "sim_filter")
+            pickers.append(reach.picker_row(name, guid, tuned._class_plain(affordance, "min_selectable"),
+                                            observers._type_name(type(sim_filter)), flags,
+                                            tuned._class_plain(affordance, "radius"), steps))
+        if len(tests) < PHONE_TESTS_MAX:
+            ok, reason, reason_key = preflight_test(sim, sim, affordance, context)
+            tests.append({"name": reach._text(name, reach.LABEL_MAX), "guid64": reach._id(guid),
+                          "reason": None if ok else reach._text(reason, TEST_REASON_MAX),
+                          "tooltip_key": reason_key if type(reason_key) is str else None})
+    return pickers, tests
 
 
 def cancel_own(interaction):
