@@ -1,10 +1,10 @@
 """2.40.0 (W13 P2, probe: home): the things list, the catalogue, her save, and her home edits (buy, place, move, sell).
 
 Game thread only. Every game read and effect goes through e2_actuator, the only module that calls the game's effects
-(tools/check_guards.py). The removal of a household object is in two places only: sell, and the removal of the object
-this command just created after a failed placement (the money is refunded first). This module holds the shapes and
-bounds, the save floor, the things and catalogue rows, the placement facts and the command flow. Her home is her call:
-a purchase or move that cuts a route is reported in the result, never refused.
+(tools/check_guards.py). The removal of a household object is in two places only: a sale, and the removal of an object
+a purchase made when the purchase failed. Either is paid or refunded only once the game has finished the removal (the
+tick). This module holds the shapes and bounds, the save floor, the things and catalogue rows, the placement facts and
+the command flow. Her home is her call: a purchase or move that cuts a route is reported in the result, never refused.
 """
 
 import json

@@ -1003,8 +1003,9 @@ def push_choice(choice, context):
 
 # 2.40.0 (W13 P2, home): her home verbs and lists. The game's reads and effects for home.py, which is the only caller.
 # Reads never raise (None when unreadable), each through _read as e2_control reads. The effects are: save_using (her
-# save), create_object (an unplaced new object), move_to and add_child (placing), destroy (sell, and an object the
-# same command created after a failed placement), and the funds' add and try_remove.
+# save), create_object (an unplaced new object), move_to and add_child (placing), try_remove_object_by_id,
+# clear_previous_inventory and player_try_add_object (her inventory, for an item she places), destroy (a sale, and an
+# object a failed purchase made), and the funds' add and try_remove.
 
 def _read(read):
     """Read: one read that never raises; None when it cannot be read (as e2_control's _read)."""
