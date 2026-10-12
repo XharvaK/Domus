@@ -115,7 +115,7 @@ def test_a_question_says_whether_it_is_held_whose_it_is_and_its_rules():
     ]
     portrait = observation._portrait(_row(asked=asked), TEXTS.get)
     first, user, older = portrait["asked"]
-    assert first["held"] is True and first["whose"] == "hers"
+    assert first["held"] is True and first["whose"] == "yours"
     assert first["answer_rules"]["select"] == {"min": 1, "max": 3}
     assert first["answer_rules"]["counts"] == {"max_in_row": 4, "max_rows": 2}
     assert first["answer_rules"]["text"][0] == {"name": "tip", "label": "Tip Amount", "min_length": 1,

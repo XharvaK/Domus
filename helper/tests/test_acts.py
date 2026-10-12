@@ -97,7 +97,7 @@ def test_her_own_phone_is_an_option_named_your_phone():
     # body (the same id) is never named as a person.
     result = options(PHONE_MENU, lambda key: None, people={"900": "Dennis Kim"})
     phone = [entry for entry in result if entry["object_id"] == "900"][0]
-    assert phone == {"object": "your phone", "object_id": "900", "where": "with her", "near": True, "acts": [
+    assert phone == {"object": "your phone", "object_id": "900", "where": "with you", "near": True, "acts": [
         {"ref": "a2", "guid64": "6001", "text": "phone Sample Message"}]}
     assert [entry["object"] for entry in result] == ["object bookshelf", "your phone"]
 
@@ -349,7 +349,7 @@ def test_an_object_the_game_sees_no_way_to_says_so_and_stays_listed():
     menu = {"objects": [dict(MENU["objects"][0], reach=False), dict(MENU["objects"][1], reach=None)]}
     listed = options(menu)
     assert [item["object_id"] for item in listed] == ["11", "12"]
-    assert listed[0]["noWay"] == "the game sees no way for her to get there from where she is now"
+    assert listed[0]["noWay"] == "the game sees no way for you to get there from where you are now"
     assert "noWay" not in listed[1]
 
 

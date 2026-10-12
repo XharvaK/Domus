@@ -485,7 +485,7 @@ WITHHELD_SEED = (
     "planOutfit_Mirror_toddler", "planOutfit_Toddler",
     "dresser_TryOnOutfits_Start", "dresser_TryOnOutfits_End",
     "Dresser_TryOnOutfit_00", "Dresser_TryOnOutfit_01", "Dresser_TryOnOutfit_02", "Dresser_TryOnOutfit_03")
-NO_WAY ="the game sees no way for her to get there from where she is now"
+NO_WAY = "the game sees no way for you to get there from where you are now"
 
 
 def _where(item, menu_room, room):
@@ -675,7 +675,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
         if item.get("phone") is True:
-            where = "with her"  # 2.29.0: her phone is on her, so no distance and no room.
+            where = "with you"  # 2.29.0: your phone is on you, so no distance and no room.
         acts = []
         texts = set()
         for act in item["acts"]:

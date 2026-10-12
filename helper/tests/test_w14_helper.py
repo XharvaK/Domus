@@ -1,8 +1,10 @@
 """W14 (helper, Worker D): her menu when the probe writes a near part (D3: a near part never replaces the whole menu, a
 whole one does, and a set of parts is one revision in one count of parts), the choices that are still coming (S2), and
-the game's view of her thoughts (S4 is tested in its own file section). Every row is invented; the game and Mint are
+the game's words for her body (D8). Every row is invented; the game and Mint are
 fakes."""
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -293,3 +295,37 @@ def test_the_left_out_words_never_show_the_debug_code_or_an_internal_name():
         assert "_" not in words and "DEBUG" not in words and words[0].islower()
     lines = _phone_left_out({"excluded_phone": [{"name": "phone_Cheat", "why": "deny_name"}]}, {}.get)
     assert lines == ["phone Cheat: left out: a debug or cheat act"]
+
+
+# ----------------------------------------------------------------- D8: her body is "you" in every text that reaches her
+
+def test_the_words_that_reach_her_say_you_for_her_body():
+    from domus_helper import acts
+    from domus_helper.acts import RefBook, options
+    assert acts.NO_WAY == "the game sees no way for you to get there from where you are now"
+    phone = {"object_id": "900", "class": "object_phone", "phone": True, "distance_m": None, "same_room": None,
+             "acts": [{"guid64": "6001", "name": "phone_Sample", "text_key": None}]}
+    listed = options({"menu_rev": 1, "room": "4", "objects": [phone]}, resolve={}.get, refs=RefBook())
+    assert listed[0]["where"] == "with you"
+
+
+def test_no_string_she_or_her_is_in_the_helper_text_except_the_user_screens_and_ids():
+    """A guard: the helper's string literals (not docstrings) never say "she" or "her" for her body. The overlay pages
+    are the User's screen (they keep her name), and "queue:her" and "hers" are an id and a probe value."""
+    import io
+    import tokenize
+    from pathlib import Path
+    pattern = re.compile(r"\b(she|her|hers|herself|She|Her|Hers)\b")
+    allowed_files = {"overlay.py", "overlay_page.py", "talk.py"}
+    allowed_strings = {'"queue:her"', '"hers"'}
+    root = Path(__file__).resolve().parents[1] / "domus_helper"
+    found = []
+    for path in sorted(root.rglob("*.py")):
+        if "vendor" in path.parts or path.name in allowed_files:
+            continue
+        for tok in tokenize.generate_tokens(io.StringIO(path.read_text(encoding="utf-8")).readline):
+            if tok.type == tokenize.STRING and not tok.string.startswith(('"""', "'''")):
+                if tok.string not in allowed_strings and pattern.search(tok.string):
+                    found.append((path.name, tok.start[0], tok.string[:60]))
+    assert found == []
+
