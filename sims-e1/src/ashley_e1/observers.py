@@ -2010,16 +2010,29 @@ def read_life(sim_info):
             "ghost": _flag(lambda: sim_info.is_ghost), "npc": _flag(lambda: sim_info.is_npc)}
 
 
+def death_type_name(sim_info):
+    """R3 (death): the game's DeathType name of a dead Sim (sim_info.death_tracker.death_type), at most 40 characters.
+    None when the game does not say, or the name cannot be read."""
+    try:
+        name = sim_info.death_tracker.death_type.name
+    except Exception:
+        return None
+    return name if isinstance(name, str) and 0 < len(name) <= 40 else None
+
+
 def body_life(sim_id):
     """2.32.0 (PR5): her life state when her body is no longer selectable (a death removes her from the
-    selectable Sims, but her Sim info stays). None when no Sim info with that id can be read."""
+    selectable Sims, but her Sim info stays). None when no Sim info with that id can be read.
+    R3 (death): with the game's death type name ("death_type", None when the game does not say)."""
     try:
         infos = list(services.sim_info_manager().get_all())
     except Exception:
         return None
     for info in infos:
         if _info_id(info) == sim_id:
-            return read_life(info)
+            life = read_life(info)
+            life["death_type"] = death_type_name(info)
+            return life
     return None
 
 

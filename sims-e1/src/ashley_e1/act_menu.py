@@ -62,13 +62,25 @@ class SpotIds(object):
 
 
 def is_near(job):
-    """2.39.0 (W12 C1): a candidate near her: her phone, her room, a Sim on her lot, or within NEAR_M metres."""
-    if job.get("phone") is True or job.get("same_room") is True:
+    """2.39.0 (W12 C1): a candidate near her: her phone, her room, a Sim on her lot, or within NEAR_M metres.
+    R3 (PROBE3-11): never an object on another level (a floor up or down, other_level set by the probe)."""
+    if job.get("phone") is True:
+        return True
+    if job.get("other_level") is True:
+        return False
+    if job.get("same_room") is True:
         return True
     if job.get("person") is True and job.get("on_lot") is True:
         return True
     distance = job.get("distance_m")
     return distance is not None and distance <= NEAR_M
+
+
+def zone_text(zone):
+    """R2 (zone): a zone id as the menu writes it, a string of digits; None when the zone is not a known id."""
+    if type(zone) is int and zone >= 0:
+        return str(zone)
+    return None
 
 
 def fold_key(job):
@@ -193,11 +205,13 @@ def iter_pick(items, offers):
     rooms = [key for key in groups if key not in ("here", "off", "people", "phone")]
     sequence = [key for key in ("here", "phone", "people") if key in by_key] + rooms + \
         [key for key in ("off",) if key in by_key]
-    for key in sequence:
-        for item in by_key[key]:
-            acts = offers(item)
-            if acts:
-                yield item, acts
+    listed = [item for key in sequence for item in by_key[key]]
+    # R3 (PROBE3-3): every near object is tested before any far one, whatever its room, so the near part (written at
+    # the first job that is not near) holds them all. Within each of the two lists the order above is kept.
+    for item in [item for item in listed if is_near(item)] + [item for item in listed if not is_near(item)]:
+        acts = offers(item)
+        if acts:
+            yield item, acts
 
 
 def pick(items, offers):
@@ -299,9 +313,11 @@ class MenuBuild(object):
                 self.failed = self.done = True
                 break
             processed += 1
-            if not self._near_done and is_far(job):
+            if not self._near_done and not is_near(job):
                 # 2.37.0 (W10 P2): every near candidate has been tested by now; the near part can be written.
                 # 2.39.0 (W12 C1): on every build, not only the first in a zone.
+                # R3 (PROBE3-3): decided by is_near, not is_far: a near object of another room is not yet tested
+                # at the first job of another room (iter_pick lists the near objects first).
                 self._near_done = True
                 if self._on_near is not None:
                     self._on_near(self)
@@ -327,7 +343,7 @@ class MenuBuild(object):
                                                "reason_key": job.get("reason_key")})
         self.build_ms += (self.clock() - start) * 1000.0
 
-    def payload(self, menu_rev, room, near=False, refresh=None):
+    def payload(self, menu_rev, room, near=False, refresh=None, zone_id=None):
         """The whole menu as one payload (near=False), or its near part (near=True: only the near objects, each read
         again through refresh(head), which gives the fields read at write time: distance_m, room, same_room).
         Objects are in the order the build met them, nearest first: her room, the phone, the people, the rooms, what
@@ -378,6 +394,11 @@ class MenuBuild(object):
         # W14 (S1): a near part says so. A whole menu carries no near key; the helper keeps a near part apart from it.
         if near:
             menu["near"] = True
+        # R2 (zone): every menu part says which zone it was built in (the helper merges a near part only with a whole of
+        # the same zone). Omitted when the zone is unknown.
+        text = zone_text(zone_id)
+        if text is not None:
+            menu["zone_id"] = text
         return menu
 
     def _act_rows(self, oid, view):

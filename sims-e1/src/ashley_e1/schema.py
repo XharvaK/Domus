@@ -689,6 +689,21 @@ def _validate_e2(row):
     if kind == "act_menu" and isinstance(payload, dict) and "near" in payload:
         _require(payload["near"] is True, "menu near")
         expected_keys.add("near")
+    # R1 (partial whole): the first build's menu so far carries "partial": true (optional, act_menu only); never with near.
+    if kind == "act_menu" and isinstance(payload, dict) and "partial" in payload:
+        _require(payload["partial"] is True, "menu partial")
+        _require("near" not in payload, "menu partial with near")
+        expected_keys.add("partial")
+    # R2 (zone): every menu part carries the zone it was built in, a string of digits (optional, act_menu only).
+    if kind == "act_menu" and isinstance(payload, dict) and "zone_id" in payload:
+        _require(_is_digits(payload["zone_id"]), "menu zone_id")
+        expected_keys.add("zone_id")
+    # R3 (death): a BODY_GONE record may carry the game's death type name, up to 40 characters; the key is omitted
+    # when the game does not say.
+    if kind == "lineage_event" and isinstance(payload, dict) and "death_type" in payload:
+        _require(isinstance(payload["death_type"], str) and 0 < len(payload["death_type"]) <= 40,
+                 "lineage death_type")
+        expected_keys.add("death_type")
     _require(isinstance(payload, dict) and
              set(payload) == expected_keys, "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)

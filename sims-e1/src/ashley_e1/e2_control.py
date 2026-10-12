@@ -740,11 +740,13 @@ class E2Control:
         payload["session_uuid"] = self._session_id()
         return self._event("lineage_event", payload)
 
-    def body_gone(self, reason, sim_id):
-        """2.32.0 (PR5): her body is gone (her Sim died). One BODY_GONE lineage record, with the reason."""
+    def body_gone(self, reason, sim_id, death_type=None):
+        """2.32.0 (PR5): her body is gone (her Sim died). One BODY_GONE lineage record, with the reason.
+        R3 (death): and the game's death type name, when the game gave one (the key is left out otherwise)."""
         armed = self._armed_snapshot() or {}
+        extra = {} if death_type is None else {"death_type": death_type}
         return self._lineage_event("BODY_GONE", guid=armed.get("guid"), slot_id=armed.get("slot_id"),
-                                   sim_id=sim_id, ticks=None, lineage_class="BODY_GONE", reason=reason)
+                                   sim_id=sim_id, ticks=None, lineage_class="BODY_GONE", reason=reason, **extra)
 
     def _say(self, connection, text):
         try:
@@ -1562,7 +1564,12 @@ class E2Control:
                 None if money is None or after is None else max(0, money - after))
             if created is None:
                 if fell is None:
-                    return self._reject(act_id, base, connection, "CREATE_FAILED", "funds unread")
+                    # R3 (PROBE3-6): the game made no event, but her money cannot be read after the call, so whether
+                    # it fell is not known. UNKNOWN, and nothing is refunded (the money is not read back).
+                    self._act_event_safe(act_id, "UNKNOWN", code="FUNDS_UNREAD",
+                                         detail="no event; the money is not known", **base)
+                    self._say(connection, "ACT_UNKNOWN FUNDS_UNREAD")
+                    return False
                 if fell == 0:
                     return self._reject(act_id, base, connection, "CREATE_FAILED", "create")
                 refunded = e2_actuator.refund(household, fell, sim, reach.FUNDS_REASON)
