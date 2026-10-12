@@ -209,6 +209,11 @@ class FakeActuator(object):
         return obj.inventory
 
     def find_object(self, object_id):
+        """The zone's object manager: a thing she carries is not in it (SEAM2-2)."""
+        found = self.objects.get(str(object_id))
+        return None if found is not None and found.inventory else found
+
+    def find_thing(self, object_id):
         return self.objects.get(str(object_id))
 
     def find_spot(self, obj, sim, place, wall_item=False):
@@ -1240,6 +1245,15 @@ class SellTests(HomeCase):
         self.assertEqual(self.control.events[-1]["object_id"], "41")
         self.assertEqual(self.actuator.funds.money, 500)
 
+    def test_an_item_she_carries_is_sold_like_any_other(self):
+        """SEAM2-2: a thing in her inventory is found (find_thing) and sold; it is paid once the game has removed it."""
+        self.chair.inventory = True
+        self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.tick(1000.0)
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "SOLD"))
+        self.assertEqual(self.actuator.funds.money, 540)
+
     def test_a_sim_is_not_sold(self):
         self.chair.is_sim = True
         self.assertFalse(self.run_cmd("sell", {"object_id": "41"}))
@@ -1639,6 +1653,56 @@ class ThingsRowsReadTests(unittest.TestCase):
     def test_her_home_and_inventory_are_read_together(self):
         rows = self.actuator.things_rows()
         self.assertEqual([row["where"] for row in rows], ["inventory"])
+
+
+class InventoryLookupTests(unittest.TestCase):
+    """SEAM2-2 (W13 R2): an object she carries is in the inventory manager, not in the zone's object manager. find_object
+    falls back to it; object_gone waits until neither manager holds the object."""
+
+    class Manager(object):
+        def __init__(self, objects):
+            self.objects = objects
+
+        def get(self, object_id):
+            return self.objects.get(object_id)
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+        self.zone_object = object()
+        self.carried = object()
+        self.zone = self.Manager({1: self.zone_object})
+        self.inventory = self.Manager({41: self.carried})
+        services = types.SimpleNamespace(object_manager=lambda: self.zone,
+                                         inventory_manager=lambda: self.inventory)
+        patch = mock.patch.object(self.actuator, "services", services)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_an_object_in_the_zone_is_found_in_the_object_manager(self):
+        self.assertIs(self.actuator.find_thing("1"), self.zone_object)
+
+    def test_a_carried_object_is_found_in_the_inventory_manager(self):
+        self.assertIs(self.actuator.find_thing("41"), self.carried)
+
+    def test_find_object_still_reads_the_zone_only(self):
+        """The probe's other callers (e2_control's act targets) keep the zone's object manager."""
+        self.assertIsNone(self.actuator.find_object("41"))
+
+    def test_an_id_neither_manager_holds_is_none(self):
+        self.assertIsNone(self.actuator.find_thing("99"))
+        self.assertIsNone(self.actuator.find_thing("not an id"))
+
+    def test_a_carried_object_is_not_gone_until_the_inventory_lets_it_go(self):
+        self.assertIs(self.actuator.object_gone("41"), False)
+        self.inventory.objects.pop(41)
+        self.assertIs(self.actuator.object_gone("41"), True)
+
+    def test_an_object_in_neither_manager_is_gone(self):
+        self.assertIs(self.actuator.object_gone("99"), True)
+
+    def test_a_manager_that_cannot_be_read_is_unknown(self):
+        self.zone = None
+        self.assertIsNone(self.actuator.object_gone("99"))
 
 
 class ProbeRouteTests(unittest.TestCase):

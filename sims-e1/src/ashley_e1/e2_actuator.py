@@ -123,6 +123,19 @@ def find_object(object_id):
     return manager.get(numeric)
 
 
+def find_thing(object_id):
+    """Read (2.40.0 W13 R2, SEAM2-2): the live object for an id, in the zone or in her inventory, or None. The game keeps
+    an object she carries in the inventory manager, not in the zone's object manager (find_object reads the zone only)."""
+    found = find_object(object_id)
+    if found is not None:
+        return found
+    try:
+        numeric = int(object_id)
+    except (TypeError, ValueError):
+        return None
+    return _read(lambda: services.inventory_manager().get(numeric))
+
+
 def offered(obj, context, cap=64):
     """Read: what the object offers now, as a trial sees it (class-tuned and
     component-given, such as a served plate's eat). At most cap."""
@@ -1536,10 +1549,14 @@ def sell_object(obj):
 
 
 def object_gone(object_id):
-    """Read: True when the zone's object manager no longer holds the object (its removal is finished), False while it
-    holds it, None when the manager cannot be read."""
+    """Read: True when neither the zone's object manager nor her inventory manager holds the object (its removal is
+    finished), False while one holds it, None when a manager cannot be read. 2.40.0 (W13 R2, SEAM2-2): a sold item she
+    carried is in the inventory manager until the game removes it."""
     try:
-        return services.object_manager().get(int(object_id)) is None
+        numeric = int(object_id)
+        if services.object_manager().get(numeric) is not None:
+            return False
+        return services.inventory_manager().get(numeric) is None
     except Exception:
         return None
 

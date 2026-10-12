@@ -720,7 +720,7 @@ def cmd_place(control, args, connection):
     code, sim_info, sim = _home_gate(control)
     if code is not None:
         return _reject(control, act_id, connection, code, **base)
-    obj = e2_actuator.find_object(args["object_id"])
+    obj = e2_actuator.find_thing(args["object_id"])
     if obj is None or e2_actuator.in_inventory(obj) is not True:
         return _reject(control, act_id, connection, "NOT_IN_INVENTORY", **base)
     _row(control, act_id, "ACCEPTED", **base)
@@ -755,7 +755,7 @@ def cmd_move(control, args, connection):
     code, sim_info, sim = _home_gate(control)
     if code is not None:
         return _reject(control, act_id, connection, code, **base)
-    obj = e2_actuator.find_object(args["object_id"])
+    obj = e2_actuator.find_thing(args["object_id"])
     if obj is None or e2_actuator.owner_of(obj) != str(sim_info.household_id):
         return _reject(control, act_id, connection, "NOT_HERS", **base)
     if e2_actuator.in_use(obj) is True:
@@ -789,7 +789,7 @@ def cmd_sell(control, args, connection):
     code, sim_info, sim = _home_gate(control)
     if code is not None:
         return _reject(control, act_id, connection, code, **base)
-    obj = e2_actuator.find_object(args["object_id"])
+    obj = e2_actuator.find_thing(args["object_id"])
     if obj is None or e2_actuator.owner_of(obj) != str(sim_info.household_id):
         return _reject(control, act_id, connection, "NOT_HERS", **base)
     if e2_actuator.in_use(obj) is True:
