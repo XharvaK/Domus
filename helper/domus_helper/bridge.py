@@ -260,6 +260,8 @@ class Bridge:
         self._catalog_dump(now, probe)
         self._lists_now_due(now, probe)
         self.overlay.poll(self.client, self.helper_session, now)
+        for line in self.overlay.take_thoughts():  # W14 (S4): a line she chose shows in the game once, as her words
+            self.talk.say(line, sim_id=self._her_sim_id())
         self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
@@ -507,6 +509,13 @@ class Bridge:
     def _say_words(self, text, object_id):
         """W12 (S2): one talk line in her name (her words to the Sim the act targets)."""
         self.talk.say(text, sim_id=object_id)
+
+    def _her_sim_id(self):
+        """W14 (S4): her body's sim id from the newest body sample (None until one has come)."""
+        row = self._last_body_row or self._last_row
+        body = row.get("body") if isinstance(row, dict) else None
+        sim = body.get("sim_id") if isinstance(body, dict) else None
+        return None if sim is None else str(sim)
 
     def _log_spot_stages(self, menu, clock_ms):
         """W12 (C11): the menu's spot counters, written to the decision log when they change."""

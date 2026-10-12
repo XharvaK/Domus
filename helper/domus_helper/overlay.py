@@ -44,6 +44,8 @@ CURTAIN_KEY = "overlay_curtain"
 PASSES_SHOWN = 6
 # O1: the one stamp a feed line may carry; she chose to show it.
 CHOSEN = "chosen"
+# W14 (S4): at the first feed read after a start, a chosen line older than this is not shown in the game.
+THOUGHT_OLD_MS = 2 * 60_000
 DOING_SHOWN = 4
 MOODLETS_SHOWN = 4
 HELD = "…"
@@ -229,6 +231,11 @@ def _clock(calendar):
     return "%s %02d:%02d" % (time_["weekday"], time_["hour"], time_["minute"])
 
 
+def _young(at_ms, now_ms):
+    """W14 (S4): a line written no more than THOUGHT_OLD_MS before now. An unknown time is not young."""
+    return type(at_ms) is int and type(now_ms) is int and now_ms - at_ms <= THOUGHT_OLD_MS
+
+
 class Overlay:
     def __init__(self, spool, data_dir, now_ms, resolve=None, trace=None, helper_build=None):
         self._spool = spool
@@ -245,6 +252,11 @@ class Overlay:
         self._open = {}
         self._hers = []
         self._items = []
+        # W14 (S4): the passes this helper session has seen (a pass's line is shown in the game once), the lines the
+        # bridge takes to say in the game, and whether a feed has been read yet (the first read is the one with a rule).
+        self._passes_seen = set()
+        self._thoughts = []
+        self._fed_once = False
         self._polled_ms = None
         self._feed_ok = None
         self._refused = 0
@@ -296,8 +308,15 @@ class Overlay:
         response = client.post_feed({"v": 1, "helper_session": helper_session})
         self._feed_ok = response is not None
         if response is not None:
-            self._items = self._accept(response.get("items"))
+            first = not self._fed_once
+            self._fed_once = True
+            self._items = self._accept(response.get("items"), now_ms, first)
             self._marks(response.get("marks"), now_ms)
+
+    def take_thoughts(self):
+        """W14 (S4): the lines she chose since the last take, each once: the bridge says them in the game."""
+        lines, self._thoughts = self._thoughts, []
+        return lines
 
     def _marks(self, marks, now_ms):
         """E4: a word-watch flag on Ashley's side: logged in the proof ledger once, and the capture
@@ -314,12 +333,17 @@ class Overlay:
         self._spool.put_kv("overlay_marks_seen", json.dumps((seen + new)[-_LIMIT:]))
         self.kept = obs.keep_recording(self._data_dir)
 
-    def _accept(self, items):
+    def _accept(self, items, now_ms=None, first=False):
         accepted = []
         for item in items if isinstance(items, list) else []:
             if not isinstance(item, dict) or item.get("inputs") != CHOSEN:
                 self._refused += 1
                 continue
+            # W14 (S4): a pass this helper session has not seen is seen now, once; its line may be a thought for the game.
+            pass_id = item.get("pass")
+            new_pass = isinstance(pass_id, str) and bool(pass_id) and pass_id not in self._passes_seen
+            if new_pass:
+                self._passes_seen.add(pass_id)
             shown = {"at_ms": item.get("at_ms"), "_pass": item.get("pass"),
                      "_regime": item.get("regime") if isinstance(item.get("regime"), dict) else {}}
             line = item.get("line")
@@ -329,6 +353,8 @@ class Overlay:
                 shown["held"] = True
             else:
                 shown["line"] = line[:400]
+                if new_pass and (not first or _young(item.get("at_ms"), now_ms)):
+                    self._thoughts.append(shown["line"])
             act = item.get("act")
             if isinstance(act, dict):
                 shown["act"] = {"label": self._label(act.get("label")), "state": str(act.get("state")),

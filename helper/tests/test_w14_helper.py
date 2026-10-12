@@ -329,3 +329,106 @@ def test_no_string_she_or_her_is_in_the_helper_text_except_the_user_screens_and_
                     found.append((path.name, tok.start[0], tok.string[:60]))
     assert found == []
 
+
+
+# ----------------------------------------------------------------- S4: a line she chose shows in the game, once
+
+class _Feed(object):
+    def __init__(self, items):
+        self.items = items
+
+    def post_feed(self, body):
+        return {"status": "ok", "items": self.items}
+
+
+def _overlay(tmp_path, now_ms):
+    from domus_helper import overlay
+    from domus_helper.spool import Spool
+    spool = Spool(tmp_path / "spool.db")
+    return spool, overlay.Overlay(spool, tmp_path, now_ms - overlay.HUMAN_HAND_MS - 1)
+
+
+W14_NOW = 1_800_000_000_000
+
+
+def _chosen(pass_id, line, at_ms=None, **extra):
+    item = {"inputs": "chosen", "pass": pass_id, "line": line, "at_ms": at_ms}
+    item.update(extra)
+    return item
+
+
+def test_a_new_chosen_line_is_said_once_and_a_pass_already_seen_is_not_said_again(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        view.poll(_Feed([_chosen("p1", "The toast smells good.", W14_NOW - 1000)]), "h1", W14_NOW)
+        assert view.take_thoughts() == ["The toast smells good."]
+        view.poll(_Feed([_chosen("p1", "The toast smells good.", W14_NOW - 1000)]), "h1",
+                  W14_NOW + overlay.FEED_EVERY_MS)
+        assert view.take_thoughts() == []
+        view.poll(_Feed([_chosen("p2", "Next, a plan.", W14_NOW - 500)]), "h1", W14_NOW + 2 * overlay.FEED_EVERY_MS)
+        assert view.take_thoughts() == ["Next, a plan."]
+    finally:
+        spool.close()
+
+
+def test_a_held_or_quiet_line_and_a_line_with_no_pass_are_not_said(tmp_path):
+    from domus_helper.overlay import PrivacyList
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        (tmp_path / "privacy.txt").write_text("Test Hidden Phrase\n", encoding="utf-8")
+        view._privacy = PrivacyList(tmp_path / "privacy.txt")
+        view.poll(_Feed([_chosen("p1", "A line the feed holds.", W14_NOW, held=True),
+                         _chosen("p2", "Test Hidden Phrase is here.", W14_NOW),
+                         _chosen("p3", None, W14_NOW, quiet=True),
+                         _chosen(None, "No pass to know it by.", W14_NOW)]), "h1", W14_NOW)
+        assert view.take_thoughts() == []
+    finally:
+        spool.close()
+
+
+def test_at_the_first_read_after_a_start_an_old_line_is_not_shown_and_an_unknown_age_is_not_either(tmp_path):
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        view.poll(_Feed([_chosen("old", "An old thought.", W14_NOW - 3 * 60_000),
+                         _chosen("young", "A fresh thought.", W14_NOW - 60_000),
+                         _chosen("unknown", "A thought of unknown age.", None)]), "h1", W14_NOW)
+        assert view.take_thoughts() == ["A fresh thought."]
+    finally:
+        spool.close()
+
+
+def test_a_later_read_shows_a_new_line_whatever_its_age(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        view.poll(_Feed([]), "h1", W14_NOW)
+        view.poll(_Feed([_chosen("late", "Written a while ago.", W14_NOW - 10 * 60_000)]), "h1",
+                  W14_NOW + overlay.FEED_EVERY_MS)
+        assert view.take_thoughts() == ["Written a while ago."]
+    finally:
+        spool.close()
+
+
+def test_the_bridge_says_each_new_line_once_as_her_words_with_her_sim_id(paths, tmp_path, monkeypatch):
+    from test_bridge_thalamus import _Client
+    _data(paths, tmp_path, monkeypatch)
+
+    class _FeedClient(_Client):
+        def __init__(self, items):
+            self.items = items
+
+        def post_feed(self, body):
+            return {"status": "ok", "items": self.items}
+
+    mono = {"ms": WALL}
+    client = _FeedClient([_chosen("p1", "The toast smells good.", WALL - 1000)])
+    bridge = _bridge(paths, mono, client=client)
+    said = []
+    bridge.talk.say = lambda text, sim_id=None: said.append((text, sim_id))
+    snap = _snap(2, "ok", WALL, 10)
+    snap["body"]["sim_id"] = "118245043779534861"
+    _append(paths, [_lineage(1, WALL), snap])
+    _tick(bridge, mono, WALL)
+    _tick(bridge, mono, WALL + 9_000)
+    assert said == [("The toast smells good.", "118245043779534861")]
