@@ -44,6 +44,9 @@ class SchemaContractTests(unittest.TestCase):
                 "speed_event",
                 "lineage_event",
                 "command_event",
+                # 2.40.0 (W13 P2, home): the things list (lists) and the catalogue record (catalog).
+                "lists",
+                "catalog",
             },
         )
         self.assertEqual(

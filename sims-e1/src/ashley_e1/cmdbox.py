@@ -43,6 +43,60 @@ def valid_hex(value, length):
             all(ch in '0123456789abcdef' for ch in value))
 
 
+# 2.40.0 (W13 P2, home): her save, her home edits and the catalogue dump. Each takes an act id (catalog_dump takes
+# none); a place names one relation (on, beside or instead with a target; wall or in with a room), and an optional facing.
+HOME_COMMANDS = ('save', 'buy', 'place', 'move', 'sell', 'catalog_dump')
+COMMANDS = COMMANDS + HOME_COMMANDS
+HOME_MAX_PRICE = 10 ** 12
+PLACE_KEYS = {'rel', 'target_id', 'room_id', 'facing'}
+
+
+def _place_ok(place):
+    """2.40.0: a place: {rel, target_id} for on, beside or instead; {rel, room_id} for wall or in; facing (an object id
+    or 'room') optional. Digits only for ids."""
+    if type(place) is not dict or not set(place) <= PLACE_KEYS or 'rel' not in place:
+        return False
+    rel = place['rel']
+    if rel in ('on', 'beside', 'instead'):
+        need = {'rel', 'target_id'}
+    elif rel in ('wall', 'in'):
+        need = {'rel', 'room_id'}
+    else:
+        return False
+    if not need <= set(place) or not set(place) <= need | {'facing'}:
+        return False
+    if not all(_digits(place[key]) for key in need - {'rel'}):
+        return False
+    if 'facing' not in place:
+        return True
+    return place['facing'] == 'room' or _digits(place['facing'])
+
+
+def _home_args(name, args):
+    """2.40.0: the arguments of a home command, by name (True when they are the closed shape)."""
+    if name == 'catalog_dump':
+        return not args
+    if type(args) is not dict or not valid_hex(args.get('act_id'), 32):
+        return False
+    if name == 'save':
+        return set(args) == {'act_id'}
+    if name == 'sell':
+        return set(args) == {'act_id', 'object_id'} and _digits(args['object_id'])
+    if name in ('place', 'move'):
+        return (set(args) == {'act_id', 'object_id', 'place'} and _digits(args['object_id']) and
+                _place_ok(args['place']))
+    if name == 'buy':
+        keys = set(args)
+        if not {'act_id', 'definition_id', 'place'} <= keys or not keys <= {'act_id', 'definition_id', 'place',
+                                                                          'max_price'}:
+            return False
+        price = args.get('max_price')
+        if 'max_price' in args and not (type(price) is int and 0 <= price <= HOME_MAX_PRICE):
+            return False
+        return _digits(args['definition_id']) and _place_ok(args['place'])
+    return False
+
+
 def valid_issuer(value):
     if type(value) is not str:
         return False
@@ -145,6 +199,9 @@ def parse(raw_bytes, now_ms, used_ids):
         # 2.31.0 (W3p): her needs drain and the game's clock, as fractions of normal pace (1.0 is off).
         good = (set(args) == {'need_drain', 'slow_time'} and _pace_factor(args['need_drain']) and
                 _pace_factor(args['slow_time']))
+    elif good and name in HOME_COMMANDS:
+        # 2.40.0 (W13 P2, home): her save, her home edits and the catalogue dump (home.py).
+        good = _home_args(name, args)
     elif good:
         good = not args
     if not good:
