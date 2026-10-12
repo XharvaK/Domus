@@ -41,6 +41,13 @@ try:
     from interactions.context import PickInfo, PickType
 except ImportError:
     PickInfo = PickType = None
+# 2.40.0 (W13 P2, home): the game's own create (objects.system.create_object takes a definition, as the game's
+# replace-object code calls it) and the household funds' reason text (a plain label; the game's cheat passes its own).
+try:
+    from objects.system import create_object
+except ImportError:
+    create_object = None
+FUNDS_REASON = "ashley_home"
 
 SIT_AFFORDANCE_GUID = 31564
 PAUSE_REASON = "ashley_e2_pause"
@@ -738,3 +745,375 @@ def push_choice(choice, context):
     if interaction is None:
         return None, _bounded(repr(outcome)), "failed", None
     return interaction, None, None, None
+
+
+# 2.40.0 (W13 P2, home): her home verbs and lists. The game's reads and effects for home.py, which is the only caller.
+# Reads never raise (None when unreadable), each through _read as e2_control reads. The effects are: save_using (her
+# save), create_object (an unplaced new object), move_to and add_child (placing), destroy (sell, and an object the
+# same command created after a failed placement), and the funds' add and try_remove.
+
+def _read(read):
+    """Read: one read that never raises; None when it cannot be read (as e2_control's _read)."""
+    try:
+        return read()
+    except Exception:
+        return None
+
+
+def _maybe_call(value):
+    """Read: a value the game makes a method is called (never raises); other values are returned as they are."""
+    if callable(value):
+        return _read(value)
+    return value
+
+
+def _count(value):
+    return value if type(value) is int and not isinstance(value, bool) else None
+
+
+def _all_objects():
+    """Read: every object the zone's object manager holds (its own map, read as observers.poll_once does). []
+    when unreadable."""
+    return _read(lambda: list(services.object_manager()._objects.values())) or []
+
+
+def _body():
+    """Read: (sim_info, sim) of the armed body, or (None, None)."""
+    found = _read(lambda: observers.select_lab_body(services.sim_info_manager().get_all(),
+                                                    observers.ALL_HIDDEN_REASONS))
+    if found is None:
+        return None, None
+    return found[0], found[1]
+
+
+def build_mode():
+    """Read: the zone is in build or buy mode (True), False, or None when unreadable."""
+    return observers.build_mode()
+
+
+def at_home(household_id):
+    """Read: her household owns the active lot (True), False, or None when unreadable."""
+    return _read(lambda: int(services.owning_household_id_of_active_lot()) == int(household_id))
+
+
+def owner_of(obj):
+    """Read: the household id that owns the object, as a string; None when unknown."""
+    owner = _count(_read(lambda: obj.get_household_owner_id()))
+    return None if owner is None else str(owner)
+
+
+def class_name(obj):
+    """Read: the object's class name ('' when unreadable)."""
+    return _read(lambda: type(obj).__name__) or ""
+
+
+def is_sim(obj):
+    """Read: whether the object is a Sim (True), False, or None when unreadable."""
+    value = _read(lambda: obj.is_sim)
+    return value if type(value) is bool else None
+
+
+def on_lot(obj):
+    """Read: whether the object stands on the active lot (True), False, or None when unreadable."""
+    value = _read(lambda: obj.is_on_active_lot(0.0))
+    return value if type(value) is bool else None
+
+
+def in_inventory(obj):
+    """Read: whether the object is in an inventory (True), False, or None when unreadable."""
+    value = _read(lambda: obj.is_in_inventory())
+    return value if type(value) is bool else None
+
+
+def in_use(obj):
+    """Read: whether a Sim holds or uses the object (ReservationMixin.in_use): True, False, or None."""
+    value = _read(lambda: obj.in_use())
+    return value if type(value) is bool else None
+
+
+def value_of(obj):
+    """Read: the object's current value (ClientObjectMixin.current_value), an int, or None."""
+    return _count(_read(lambda: obj.current_value))
+
+
+def room_of(obj):
+    """Read: the room id the object stands in (room_at), as a string, or None."""
+    return room_at(obj, _read(lambda: obj.position), _read(lambda: obj.level))
+
+
+def lot_objects():
+    """Read: the objects standing on the active lot."""
+    return [obj for obj in _all_objects() if on_lot(obj) is True]
+
+
+def near_objects(obj, radius):
+    """Read: the other objects within radius metres of this one (on the floor plane): [{object_id, distance, portal,
+    window}], in the order the zone holds them (the caller sorts)."""
+    here = _read(lambda: obj.position)
+    found = []
+    for other in _all_objects():
+        if other is obj:
+            continue
+        there = _read(lambda: other.position)
+        if here is None or there is None:
+            continue
+        try:
+            dx, dz = there.x - here.x, there.z - here.z
+        except Exception:
+            continue
+        distance = (dx * dx + dz * dz) ** 0.5
+        if distance > radius:
+            continue
+        identity = _read(lambda: other.id)
+        found.append({"object_id": None if identity is None else str(identity),
+                      "distance": distance, "portal": is_portal(other),
+                      "window": "window" in class_name(other).lower()})
+    return found
+
+
+def spot_of(obj):
+    """Read: where the object stands now: {translation, orientation, routing_surface, slot} (slot None), or None."""
+    translation = _read(lambda: obj.position)
+    surface = _read(lambda: obj.routing_surface)
+    if translation is None or surface is None:
+        return None
+    return {"translation": translation, "orientation": _read(lambda: obj.orientation),
+            "routing_surface": surface, "slot": None}
+
+
+def spot_key(spot):
+    """Read: a spot's position as a tuple of rounded floats (to tell whether an object is where it was), or None."""
+    if spot is None or spot.get("translation") is None:
+        return None
+    try:
+        place = spot["translation"]
+        return (round(float(place.x), 3), round(float(place.y), 3), round(float(place.z), 3))
+    except Exception:
+        return None
+
+
+def _standable(obj, start, surface):
+    """Read: the game's own standable spot for an object near start (placement.find_good_location, as standable_spot
+    does for a Sim): {translation, orientation, routing_surface, slot} or None."""
+    if placement is None or start is None:
+        return None
+    try:
+        starting = placement.create_starting_location(position=start, routing_surface=surface)
+        context = placement.create_fgl_context_for_object(starting, obj)
+        found = placement.find_good_location(context)
+        position, orientation = found[0], found[1]
+    except Exception:
+        return None
+    if position is None:
+        return None
+    return {"translation": position, "orientation": orientation, "routing_surface": surface, "slot": None}
+
+
+def _slot_spot(target, obj):
+    """Read: a free runtime slot of the target that the object may go in (RuntimeSlot.empty and is_valid_for_placement),
+    as a spot with that slot; None when none is free or the slots cannot be read."""
+    slots = _read(lambda: list(target.get_runtime_slots_gen())) or []
+    definition = _read(lambda: obj.definition)
+    for slot in slots:
+        if _read(lambda: slot.empty) is not True:
+            continue
+        if _read(lambda: slot.is_valid_for_placement(obj, definition, ())) is True:
+            return {"translation": None, "orientation": None, "routing_surface": None, "slot": slot}
+    return None
+
+
+def find_spot(obj, sim, place):
+    """Read: the spot a placement names (home.py's place shape): on a free slot of a target, beside a target, or the
+    game's search from a room's middle (wall, in). None when the game finds none."""
+    rel = place.get("rel")
+    if rel == "on":
+        target = find_object(place.get("target_id"))
+        return None if target is None else _slot_spot(target, obj)
+    if rel == "beside":
+        target = find_object(place.get("target_id"))
+        start = _read(lambda: target.position) if target is not None else None
+    else:
+        start = _room_middle(place.get("room_id"))
+    return _standable(obj, start, _read(lambda: sim.routing_surface))
+
+
+def _room_middle(room_id):
+    """Read: the middle of a room, as a Vector3 of the mean position of the lot's objects in it (an estimate: the room's
+    own bounds are not read); None when there are none or Vector3 is not available."""
+    xs, ys, zs = [], [], []
+    for obj in lot_objects():
+        position = _read(lambda: obj.position)
+        if position is None or room_at(obj, position, _read(lambda: obj.level)) != str(room_id):
+            continue
+        try:
+            xs.append(position.x)
+            ys.append(position.y)
+            zs.append(position.z)
+        except Exception:
+            continue
+    if not xs or Vector3 is None:
+        return None
+    return Vector3(sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs))
+
+
+def place(obj, spot):
+    """Effect: put the object at a spot (a runtime slot's add_child, else the game's move_to with its overrides, as the
+    game's own replace code moves a new object). Raises when the game refuses."""
+    slot = spot.get("slot")
+    if slot is not None:
+        slot.add_child(obj, slot.slot_name_or_hash())
+        return
+    obj.move_to(routing_surface=spot["routing_surface"], translation=spot["translation"],
+                orientation=spot["orientation"])
+
+
+def definition(def_id):
+    """Read: the game's definition for a definition id, or None."""
+    try:
+        return services.definition_manager().get(int(def_id))
+    except Exception:
+        return None
+
+
+def definition_price(defn):
+    """Read: a definition's price (Definition.price), an int, or None."""
+    return _count(_read(lambda: defn.price))
+
+
+def definition_tags(defn):
+    """Read: a definition's tag names (Definition.get_tags), at most 32; [] when unreadable."""
+    names = []
+    for tag in _read(lambda: list(defn.get_tags())) or ():
+        names.append(str(_read(lambda: tag.name) or tag)[:64])
+        if len(names) >= 32:
+            break
+    return names
+
+
+def create_unplaced(defn):
+    """Effect: a new object of the definition (objects.system.create_object, as the game's replace code makes it),
+    not yet placed. None when the game cannot make it."""
+    if create_object is None or defn is None:
+        return None
+    return _read(lambda: create_object(defn))
+
+
+def remove_created(obj):
+    """Effect: remove an object this command just created, after a failed placement (money refunded first). The only
+    removal besides sell_object. False when the game refuses."""
+    try:
+        obj.destroy()
+    except Exception:
+        return False
+    return True
+
+
+def sell_object(obj):
+    """Effect: sell a household object (the removal is sell's; the money is paid by the caller first). Raises when the
+    game refuses, so the caller can take the money back."""
+    obj.destroy()
+
+
+def household_funds(household_id):
+    """Read: her household's funds (Household.funds), or None."""
+    household = _read(lambda: services.household_manager().get(int(household_id)))
+    return _read(lambda: household.funds) if household is not None else None
+
+
+def funds_money(funds):
+    """Read: the funds' money (_Funds.money), an int, or None."""
+    return _count(_read(lambda: funds.money))
+
+
+def can_afford(funds, amount):
+    """Read: whether the funds hold the amount (_Funds.can_afford); False when unreadable."""
+    return _read(lambda: funds.can_afford(amount)) is True
+
+
+def funds_try_remove(funds, amount, sim):
+    """Effect: take the whole amount from the funds (_Funds.try_remove, require_full_amount). True when it was taken."""
+    return _read(lambda: funds.try_remove(amount, FUNDS_REASON, sim, require_full_amount=True)) is True
+
+
+def funds_add(funds, amount, sim):
+    """Effect: pay the amount into the funds (_Funds.add, as the game's own cheat calls it with an amount and a reason).
+    The sim is not passed: the game's cheat does not pass one either."""
+    funds.add(amount, FUNDS_REASON)
+
+
+def save_slot():
+    """Read: (slot id, slot name, save locked, the lock's tooltip key). The name is passed on to the game's save and
+    never written. None where unreadable."""
+    persistence = _read(lambda: services.get_persistence_service())
+    buff = _read(lambda: persistence.get_save_slot_proto_buff())
+    slot_id = _count(_read(lambda: buff.slot_id))
+    slot_name = _read(lambda: buff.slot_name)
+    locked = _read(lambda: persistence.is_save_locked())
+    lock_key = None
+    if locked is True:
+        lock_key = observers._string_key(_read(lambda: persistence.get_save_lock_tooltip()))
+    return (slot_id, slot_name if type(slot_name) is str else None,
+            locked if type(locked) is bool else None, lock_key)
+
+
+def save_now(slot_id, slot_name):
+    """Effect: her save to her own slot, as the game's own save command makes it (PersistenceService.save_using with
+    save_game_gen and a SaveGameData for the slot). The game calls its save-complete callbacks when it has saved."""
+    from services.persistence_service import SaveGameData
+    persistence = services.get_persistence_service()
+    data = SaveGameData(slot_id, slot_name, True, None)
+    persistence.save_using(persistence.save_game_gen, data, send_save_message=True, check_cooldown=False)
+
+
+def things_rows():
+    """Read: the raw rows of the things list: her household's objects on her home lot (not Sims; home.things_items
+    leaves out walls, floors, roofs, stairs and terrain), and her inventory. None when she has no body. On a lot
+    that is not her home, only her inventory."""
+    sim_info, sim = _body()
+    if sim_info is None:
+        return None
+    rows = []
+    household = str(sim_info.household_id)
+    if at_home(sim_info.household_id) is True:
+        for obj in lot_objects():
+            if owner_of(obj) != household or is_sim(obj) is True:
+                continue
+            room = room_of(obj)
+            rows.append(_thing_raw(obj, "outside" if room is None else "room", room))
+    items = _read(lambda: list(sim.inventory_component)) or []
+    inventory = [_thing_raw(item, "inventory", None) for item in items]
+    stacks = {}
+    for row in inventory:
+        stacks[row["definition_id"]] = stacks.get(row["definition_id"], 0) + 1
+    for row in inventory:
+        row["count"] = stacks.get(row["definition_id"], 1)
+    return rows + inventory
+
+
+def _thing_raw(obj, where, room_id):
+    """Read: one thing's raw row (ids, name key, class, value, in use, and wall placement; floor and surface are not
+    read, so they stay None)."""
+    defn = _read(lambda: obj.definition)
+    wall = is_wall_placed(obj)
+    name = _maybe_call(_read(lambda: defn.name))
+    return {"object_id": _read(lambda: obj.id), "definition_id": _count(_read(lambda: defn.id)),
+            "name_key": observers._string_key(name), "class_name": class_name(obj),
+            "where": where, "room_id": room_id, "value": value_of(obj),
+            "made_by_her": None, "states": [], "in_use": in_use(obj), "count": None,
+            "placement": "wall" if wall is True else None}
+
+
+def catalog_rows():
+    """Read: the raw rows of the catalogue, every loaded definition with a price: its id, price, tags, class name and
+    whether it is a Sim. None when the definitions cannot be read. buy_category and placement are not read here (the
+    build_buy flag reads are not allowed by the guards), so they stay None."""
+    manager = _read(lambda: services.definition_manager())
+    definitions = _read(lambda: list(manager.loaded_definitions))
+    if definitions is None:
+        return None
+    rows = []
+    for defn in definitions:
+        rows.append({"definition_id": _read(lambda: defn.id), "price": definition_price(defn),
+                     "tags": definition_tags(defn), "class_name": _read(lambda: defn.cls.__name__) or "",
+                     "sim": _read(lambda: defn.is_sim) is True, "buy_category": None, "placement": None})
+    return rows
