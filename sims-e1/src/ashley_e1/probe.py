@@ -139,6 +139,12 @@ _MENU_DONE_ZONE = _NO_ZONE
 _MENU_FIRST = False
 # 2.37.1: when the first build in a zone last wrote its menu so far (act_menu.FIRST_PARTIAL_S).
 _MENU_PARTIAL_S = None
+# 2.39.0 (W12 C1, G1): the newest finished build of this zone (zone, build), read by the near part on her move;
+# the request of a look (request_menu_near); her body as the tick read it; the room the last tick saw.
+_MENU_LAST_BUILD = None
+_MENU_NEAR_REQUESTED = False
+_MENU_BODY = (None, None)
+_MENU_SEEN_ROOM = _NO_ZONE
 _SITUATION_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
@@ -315,9 +321,10 @@ def _dispatch_e2_trial(*args, _session_id=0, **kwargs):
     return _E2.cmd_trial(object_id, guid64, _session_id)
 
 
-def _dispatch_e2_act(act_id, object_id, guid64, _session_id=0, owner=False):
-    """8f: Ashley's chosen action (helper inbox only; cmdbox checked the shapes)."""
-    return _E2.cmd_act(act_id, object_id, guid64, _session_id, owner=owner)
+def _dispatch_e2_act(act_id, object_id, guid64, _session_id=0, owner=False, variant=None):
+    """8f: Ashley's chosen action (helper inbox only; cmdbox checked the shapes). 2.39.0 (W12 G1): variant names a pie
+    choice of that act (cmd_act checks it)."""
+    return _E2.cmd_act(act_id, object_id, guid64, _session_id, owner=owner, variant=variant)
 
 
 class _InboxReply:
@@ -713,7 +720,8 @@ def _inbox_dispatch(cmd, connection):
         return _dispatch_e2_trial(args['object_id'], args['guid64'], _session_id=connection)
     if name == 'act':
         return _dispatch_e2_act(args['act_id'], args['object_id'], args['guid64'],
-                                _session_id=connection, owner=args.get('owner') is True)
+                                _session_id=connection, owner=args.get('owner') is True,
+                                variant=args.get('variant'))
     if name == 'answer':
         return _E2.cmd_answer(args['act_id'], args['dialog_id'], args['pick'], connection,
                               rows=args.get('rows'), text=args.get('text'))
@@ -1889,8 +1897,10 @@ def _session_open_from(row):
     )
 
 
+
 def _menu_reset(keep_last=False):
-    global _MENU, _MENU_ZONE, _MENU_STARTED_S, _MENU_LAST, _MENU_ROOM, _MENU_DONE_ZONE
+    global _MENU, _MENU_ZONE, _MENU_STARTED_S, _MENU_LAST, _MENU_ROOM, _MENU_DONE_ZONE, _MENU_LAST_BUILD
+    global _MENU_SEEN_ROOM
     _MENU = None
     _MENU_ZONE = None
     _MENU_STARTED_S = None
@@ -1899,6 +1909,8 @@ def _menu_reset(keep_last=False):
         _MENU_ROOM = None
         _MENU_DONE_ZONE = _NO_ZONE  # 2.37.0 (W10 P2): the next build is the first of its zone again
         _MENU_FAR.clear()
+        _MENU_LAST_BUILD = None  # 2.39.0 (W12 C1): a zone's near part reads that zone's build only
+        _MENU_SEEN_ROOM = _NO_ZONE
 
 
 def _menu_hidden(affordance):
@@ -1911,29 +1923,77 @@ def _menu_hidden(affordance):
     return False
 
 
+
 def _menu_offers(item, sim, context):
-    """The candidate acts of one object: user-directed offers the trial guard does not
-    exclude and the game does not mark as a cheat, at most CANDIDATE_ACTS."""
+    """The candidate acts of one object: user-directed offers the trial guard does not exclude and the game does not
+    mark as a cheat, at most CANDIDATE_ACTS distinct texts. 2.39.0 (W12 C12): a text repeated is folded before the cap.
+    2.39.0 (W12 G1): a pie-menu act is not an act itself; each of its choices is one act, with its variant."""
     obj = item["obj"]
     jobs = []
+    folded = set()
     for affordance in _lot_affordances(obj, context):
-        if len(jobs) >= act_menu.CANDIDATE_ACTS:
+        if len(folded) >= act_menu.CANDIDATE_ACTS:
             break
         guid = tuned._class_plain(affordance, "guid64")
         if type(guid) is not int:
+            continue
+        if e2_actuator.is_pie(affordance):
+            if e2_actuator.user_directed(affordance) and not _menu_hidden(affordance):
+                jobs.extend(_pie_jobs(item, affordance, guid, sim, context, folded))
             continue
         if (e2_actuator.act_excluded(affordance, item.get("person") is True) is not None
                 or not e2_actuator.user_directed(affordance)):
             continue
         if _menu_hidden(affordance):
             continue
+        text_key = observers._string_key(tuned._class_plain(affordance, "display_name"))
+        name = _affordance_name(affordance)
+        fold = act_menu.fold_key({"text_key": text_key, "name": name, "guid64": str(guid)})
+        if fold in folded:
+            continue
+        folded.add(fold)
         jobs.append({
             "object_id": item["object_id"], "definition_id": item["definition_id"], "class": item["class"],
             "distance_m": item["distance_m"], "same_room": item["same_room"], "room": item.get("room"),
+            "on_lot": item.get("on_lot"),
             "person": item.get("person") is True,  # 2.37.0 (W10 P2): a Sim is never a far candidate (the cache)
-            "guid64": str(guid), "name": _affordance_name(affordance),
-            "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
+            "guid64": str(guid), "name": name, "text_key": text_key,
             "obj": obj, "affordance": affordance, "sim": sim, "context": context,
+        })
+    return jobs
+
+
+def _choice_name(choice):
+    """2.39.0 (W12 G1): a pie choice's affordance name ("" when unreadable)."""
+    try:
+        return _affordance_name(choice.affordance)
+    except Exception:
+        return ""
+
+
+def _pie_jobs(item, pie, guid, sim, context, folded):
+    """2.39.0 (W12 G1): one job per choice of a pie-menu act: the choice's own name and text, its variant (its place in
+    the game's list), and the choice itself, which is tested and later run as its own pair. A choice with no name key,
+    a choice the guard excludes, and a text already folded are left out."""
+    obj = item["obj"]
+    jobs = []
+    for index, choice in enumerate(e2_actuator.pie_choices(pie, obj, context)):
+        if len(folded) >= act_menu.CANDIDATE_ACTS:
+            break
+        text_key, key = e2_actuator.choice_names(choice, context)
+        if key is None:
+            continue
+        fold = act_menu.fold_key({"text_key": text_key, "name": key})
+        if fold in folded or e2_actuator.choice_excluded(choice) is not None:
+            continue
+        folded.add(fold)
+        jobs.append({
+            "object_id": item["object_id"], "definition_id": item["definition_id"], "class": item["class"],
+            "distance_m": item["distance_m"], "same_room": item["same_room"], "room": item.get("room"),
+            "on_lot": item.get("on_lot"), "person": False,
+            "guid64": str(guid), "name": _choice_name(choice),
+            "text_key": text_key, "variant": index, "variant_key": key,
+            "choice": choice, "obj": obj, "affordance": choice, "sim": sim, "context": context,
         })
     return jobs
 
@@ -1979,7 +2039,7 @@ def _menu_phone_offers(item, sim, context, excluded):
         name = _affordance_name(affordance)
         jobs.append({
             "object_id": item["object_id"], "definition_id": None, "class": "phone",
-            "distance_m": None, "same_room": None, "room": None, "phone": True,
+            "distance_m": None, "same_room": None, "room": None, "phone": True, "on_lot": True,
             "guid64": str(guid), "name": name if type(name) is str else "",
             "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
             "obj": sim, "affordance": affordance, "sim": sim, "context": context,
@@ -1997,13 +2057,15 @@ def _on_lot(obj):
 
 class _MenuJobs(object):
     """2.35.0 (D3): the jobs of one menu build, read lazily as _lazy_jobs reads them, with the spots the build has
-    found so far (the build's table; it is published when the build finishes)."""
+    found so far (the build's table; it is published when the build finishes). 2.39.0 (W12 C11): and the spot stage
+    counters, which the build writes into its part 0."""
 
-    def __init__(self, pairs, spots, excluded_phone):
+    def __init__(self, pairs, spots, excluded_phone, spot_stages=None):
         self._jobs = _lazy_jobs(pairs)
         self.spots = spots
         # 2.37.0 (W10 P3): her phone's acts the guard left out, named as the build reads them.
         self.excluded_phone = excluded_phone
+        self.spot_stages = {} if spot_stages is None else spot_stages
 
     def __iter__(self):
         return self
@@ -2088,19 +2150,28 @@ def _front_door_anchors(body_position, body_room):
     return []
 
 
-def _spot_offers(item, sim, body_position, terrain, spots, seen):
+
+def _spot_offers(item, sim, body_position, terrain, spots, seen, stages=None):
     """2.35.0 (D3): the Go Here act of one spot, for the build that asks for it. The game's standable search runs
     here, inside the build's steps, from the spot's anchor. The spot counts only in the room it was asked for, once
     per (room, level, kind), and only when the terrain offers Go Here at it; its id comes from the session's registry
-    and its record goes into the build's table under that id. A search that fails leaves the spot out."""
+    and its record goes into the build's table under that id. A search that fails leaves the spot out.
+    2.39.0 (W12 C11): each stage the spot reaches is counted in stages (found, room, target, go_here, offers)."""
+    stages = {} if stages is None else stages
+
+    def count(name):
+        stages[name] = stages.get(name, 0) + 1
+
     kind, room, level = item["spot"], item["room"], item["level"]
     surface = _routing_surface(item["obj"])
     found = e2_actuator.standable_spot(sim, e2_actuator.spot_start(item["obj"], kind, item.get("side", 1.0)), surface)
     if found is None:
         return []
+    count("found")
     position, orientation = found
     if e2_actuator.room_at(item["obj"], position, level) != room:
         return []
+    count("room")
     key = (room, level, kind)
     if key in seen or terrain is None:
         return []
@@ -2109,6 +2180,7 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen):
     point, spot_context = e2_actuator.spot_target(sim, spot)
     if point is None:
         return []
+    count("target")
     picked = []
     for affordance in e2_actuator.go_here_offered(terrain, spot_context):
         if len(picked) >= act_menu.CANDIDATE_ACTS:
@@ -2122,15 +2194,17 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen):
         picked.append((affordance, guid))
     if not picked:
         return []
+    count("go_here")
     spot_id = _E2.spot_ids.id_for(room, level, kind)
     if spot_id is None:
         return []
     seen.add(key)
     spots[str(spot_id)] = spot
+    count("offers")
     distance = observers._distance(_planar(position), body_position)
     return [{"object_id": str(spot_id), "definition_id": None, "class": "spot", "distance_m": distance,
              "same_room": item["same_room"], "room": room, "level": level, "spot": kind,
-             "guid64": str(guid), "name": e2_actuator.GO_HERE_NAME, "text_key": None,
+             "guid64": str(guid), "name": e2_actuator.GO_HERE_NAME, "text_key": None, "on_lot": True,
              "obj": point, "affordance": affordance, "sim": sim, "context": spot_context}
             for affordance, guid in picked]
 
@@ -2186,6 +2260,11 @@ def _menu_jobs(row):
     excluded_phone = []  # 2.37.0 (W10 P3): her phone's acts left out before the test, named
     terrain = e2_actuator.terrain_object()
     anchors = _spot_anchors(items, body_room) + _front_door_anchors(body_position, body_room)
+    # 2.39.0 (W12 C11): how far the spots got, counted as the build reads them (part 0 carries them).
+    spot_stages = {"anchors": len(anchors), "placement": e2_actuator.placement is not None,
+                   "terrain": terrain is not None}
+    for name in ("found", "room", "target", "go_here", "offers"):
+        spot_stages[name] = 0
     ordered = act_menu.ordered(items + anchors)
     phone = []
     if sim_id is not None and sim_id not in e2_control.EXCLUDED_OBJECT_IDS:
@@ -2199,7 +2278,7 @@ def _menu_jobs(row):
             if item.get("phone") is True:
                 return _menu_phone_offers(item, sim, context, excluded_phone)
             if item.get("spot") is not None:
-                return _spot_offers(item, sim, body_position, terrain, spots, seen)
+                return _spot_offers(item, sim, body_position, terrain, spots, seen, spot_stages)
             return _menu_offers(item, sim, context)
         except Exception:
             return []
@@ -2217,7 +2296,7 @@ def _menu_jobs(row):
         except Exception:
             item["definition_id"] = None
         item["class"] = situation._name(type(item["obj"])) or ""
-    return _MenuJobs(act_menu.iter_pick(phone + ordered, offers), spots, excluded_phone), body_room
+    return _MenuJobs(act_menu.iter_pick(phone + ordered, offers), spots, excluded_phone, spot_stages), body_room
 
 
 def _lazy_jobs(pairs):
@@ -2242,29 +2321,45 @@ def _menu_reach(job):
         job["reach"] = seen[job["object_id"]]
 
 
+
 def _menu_test(job):
-    """One candidate act: the game's own test of the push (its reach first, see _menu_reach)."""
+    """One candidate act: the game's own test of the push (its reach first, see _menu_reach). A pie choice is tested
+    as its own pair (2.39.0, G1); any other act by the game's preflight test."""
     _menu_reach(job)
-    ok, _reason, reason_key = e2_actuator.preflight_test(
-        job["sim"], job["obj"], job["affordance"], job["context"])
+    if job.get("choice") is not None:
+        ok, _reason, reason_key = e2_actuator.choice_test(job["choice"], job["context"])
+    else:
+        ok, _reason, reason_key = e2_actuator.preflight_test(
+            job["sim"], job["obj"], job["affordance"], job["context"])
     if not ok:
         # 2.35.0 (D3): a refusal (not an error) is named in the menu for her phone's offers (refused_phone).
+        # 2.39.0 (W12 C4): and for a near object's acts (refusals), by the act's own text and the game's reason.
         job["refused"], job["reason_key"] = True, reason_key
     return bool(ok)
 
 
+
 def _menu_tick(row):
-    """8f: one small step of the menu each sampling tick. A finished build is written
-    as an act_menu row when it differs from the last one; a new build starts when there
-    is none, her room changed, or REBUILD_S passed."""
+    """8f: one small step of the menu each sampling tick. A finished build is written as an act_menu row when it
+    differs from the last one; a new build starts when there is none, her room changed, or REBUILD_S passed.
+    2.39.0 (W12 C1): the near part is written on her move into another room and on a look (request_menu_near); each
+    build writes its near part as its far part starts. The pie choices of the menu are published with it (G1)."""
     global _MENU, _MENU_ZONE, _MENU_REV, _MENU_LAST, _MENU_STARTED_S, _MENU_ROOM
     global _MENU_FAR_ZONE, _MENU_DONE_ZONE, _MENU_FIRST, _MENU_PARTIAL_S
+    global _MENU_LAST_BUILD, _MENU_NEAR_REQUESTED, _MENU_BODY, _MENU_SEEN_ROOM
     now = _now_s()
-    room = (row.get("zone") or {}).get("room")
+    zone = row.get("zone") or {}
+    room = zone.get("room")
+    _MENU_BODY = (zone.get("position"), room)
     # 2.37.0 (W10 P2): the far cache belongs to one zone; a new zone starts it empty.
     if _current_zone() is not _MENU_FAR_ZONE:
         _MENU_FAR.clear()
         _MENU_FAR_ZONE = _current_zone()
+    moved = _MENU_SEEN_ROOM is not _NO_ZONE and room != _MENU_SEEN_ROOM
+    _MENU_SEEN_ROOM = room
+    if _MENU_NEAR_REQUESTED or moved:
+        _MENU_NEAR_REQUESTED = False
+        _menu_near_now()
     if _MENU is not None and not _MENU.done:
         _MENU.step()
         # 2.37.1: the first build in a zone writes what it has so far, so the house reaches her as it is tested.
@@ -2272,14 +2367,16 @@ def _menu_tick(row):
         if (_MENU_FIRST and not _MENU.done and _MENU_PARTIAL_S is not None and _MENU_ZONE is _current_zone()
                 and now - _MENU_PARTIAL_S >= act_menu.FIRST_PARTIAL_S):
             _MENU_PARTIAL_S = now
-            _menu_near_part(_MENU)
+            _menu_partial_part(_MENU)
     if _MENU is not None and _MENU.done:
-        build, zone = _MENU, _MENU_ZONE
+        build, build_zone = _MENU, _MENU_ZONE
         _MENU = None
-        if zone is _current_zone() and not build.failed:
+        if build_zone is _current_zone() and not build.failed:
             # 2.35.0 (D3): the spots of the build that finished are the ones an act may name (the newest build).
-            _E2.publish_spots(zone, build.spots)
+            _E2.publish_spots(build_zone, build.spots)
+            _E2.publish_variants(build_zone, build.variants)
             payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
+            _MENU_LAST_BUILD = (build_zone, build)
             # 2.37.0 (W10 P2): the first build in a zone is written whole even when it matches the last menu.
             if _MENU_FIRST or not act_menu.same_menu(payload, _MENU_LAST):
                 # 2.34.0 (F4): the menu is written in parts, each one record; it counts as written when all are.
@@ -2287,7 +2384,7 @@ def _menu_tick(row):
                 if all(written):
                     _MENU_REV += 1
                     _MENU_LAST = payload
-            _MENU_DONE_ZONE = zone
+            _MENU_DONE_ZONE = build_zone
     if _MENU is None and (_MENU_STARTED_S is None or room != _MENU_ROOM or
                           now - _MENU_STARTED_S >= act_menu.REBUILD_S):
         jobs, body_room = _menu_jobs(row)
@@ -2298,23 +2395,76 @@ def _menu_tick(row):
             # 2.37.0 (W10 P2): the first build in a zone writes its near part as its far part starts.
             _MENU_FIRST = _MENU_DONE_ZONE is not zone
             _MENU_PARTIAL_S = now
+            # 2.39.0 (W12 C1): every build writes its near part as its far part starts (on_near), not only the first.
             _MENU = act_menu.MenuBuild(jobs, _menu_test, spots=jobs.spots, excluded_phone=jobs.excluded_phone,
                                        budget_ms=act_menu.FIRST_BUDGET_MS if _MENU_FIRST else 8.0,
-                                       far=_MENU_FAR, on_near=_menu_near_part if _MENU_FIRST else None,
-                                       reach=_menu_reach)
+                                       far=_MENU_FAR, on_near=_menu_near_part, reach=_menu_reach,
+                                       stages=jobs.spot_stages)
             _MENU_ZONE = zone
 
 
+
 def _menu_near_part(build):
-    """2.37.1: also the menu so far, every act_menu.FIRST_PARTIAL_S seconds of the first build in a zone.
-    2.37.0 (W10 P2): her near part (her phone, her room, the people she can see) is written when the far part of
-    the first build in a zone starts, so her views have objects before the rest of the lot is tested. It has the
-    menu_rev the whole menu will have; the whole menu follows when the build finishes."""
+    """2.39.0 (W12 C1): her near part of this build, as far as it has got: her phone, her room, the Sims on her lot and
+    what is within NEAR_M, each distance and room read now (_near_refresh). It has the menu_rev the whole menu will
+    have; the whole menu follows when the build finishes. Written on every build, on her move and on a look.
+    2.37.0 (W10 P2): a build's near part is written as its far part starts, as it always was for the first build."""
+    if build.failed:
+        return
+    payload = build.payload(_MENU_REV + 1, _MENU_BODY[1], near=True, refresh=_near_refresh)
+    if not payload["objects"]:
+        return  # no near object: an empty part would only stand in for the menu; the whole menu follows
+    _E2.publish_variants(_current_zone(), build.variants)
+    for part in act_menu.parts(payload):
+        _E2._event("act_menu", part)
+
+
+def _menu_near_now():
+    """2.39.0 (W12 C1): the near part of the newest build of this zone, written now: the build in progress, else the
+    last one finished. Nothing when there is no build of this zone."""
+    if _MENU is not None:
+        build, build_zone = _MENU, _MENU_ZONE
+    elif _MENU_LAST_BUILD is not None:
+        build_zone, build = _MENU_LAST_BUILD
+    else:
+        return
+    if build_zone is not _current_zone():
+        return
+    _menu_near_part(build)
+
+
+def _near_refresh(head):
+    """2.39.0 (W12 C1): the fields a near part reads when it is written: an object's distance from her body and its
+    room (read now), and whether it is in her room. A phone and a spot keep what they were given."""
+    body_position, body_room = _MENU_BODY
+    if head.get("phone") is True or head.get("spot") is not None:
+        return {}
+    obj = head.get("obj")
+    if obj is None:
+        return {}
+    position = observers._position(obj)
+    distance = observers._distance(position, body_position)
+    room = head.get("room")
+    if head.get("on_lot") is True or (distance is not None and distance <= 20.0):
+        room = observers._room(obj, position)
+    return {"distance_m": distance, "room": room, "same_room": _same_room(room, body_room)}
+
+
+def _menu_partial_part(build):
+    """2.37.1: the menu so far, every act_menu.FIRST_PARTIAL_S seconds of the first build in a zone (the whole menu so
+    far, not only the near part). It has the menu_rev the whole menu will have."""
     payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
     if not payload["objects"]:
         return  # no near object: an empty part would only stand in for the menu; the whole menu follows
     for part in act_menu.parts(payload):
         _E2._event("act_menu", part)
+
+
+def request_menu_near():
+    """2.39.0 (W12 C1): the next menu tick writes a near part (her room, her phone, the Sims on her lot, and what is
+    within NEAR_M), its distances read then. Idempotent: several requests before one tick are one write."""
+    global _MENU_NEAR_REQUESTED
+    _MENU_NEAR_REQUESTED = True
 
 
 def _poll_tick(alarm_handle=None):

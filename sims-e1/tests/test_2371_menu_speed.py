@@ -102,7 +102,9 @@ class FarCacheUnitTests(unittest.TestCase):
         second = self.run_all(self.build([job("4", "9")], lambda candidate: self.fail("tested"), cache))
         self.assertEqual((second.tested, second.cached, second.refused), (0, 1, 1))
         payload = second.payload(1, "5")
-        self.assertEqual(payload["objects"], [])
+        # 2.39.0 (W12 C4): a near object whose acts were all refused is listed with the game's reason; a far one is not.
+        self.assertEqual([(item["acts"], [r["reason_key"] for r in item["refusals"]]) for item in payload["objects"]],
+                         [([], ["KEY_NO_WAY"])])
 
     def test_a_candidate_whose_test_raised_is_not_cached(self):
         cache = self.menu.FarCache(clock=self.clock)
@@ -177,10 +179,12 @@ class FarCacheUnitTests(unittest.TestCase):
                 "act_menu", telemetry_session_id="s", wall_timestamp_ms=1, monotonic_ns=1, e2=payload))
 
     def _menu_object(self, phone, count):
+        # 2.39.0 (W12): the object and act keys the writer always sends (on_lot, acts_cut, refusals; variant).
         return {"object_id": "7", "definition_id": None, "class": "phone" if phone else "chair", "distance_m": None,
                 "same_room": None, "room": None, "reach": None, "phone": True if phone else None, "spot": None,
-                "level": None, "acts": [{"guid64": str(9000 + i), "name": "act_%d" % i, "text_key": None}
-                                        for i in range(count)]}
+                "level": None, "on_lot": None, "acts_cut": 0, "refusals": None,
+                "acts": [{"guid64": str(9000 + i), "name": "act_%d" % i, "text_key": None, "variant": None}
+                         for i in range(count)]}
 
     def _validate_menu(self, objects):
         payload = {"menu_rev": 1, "room": None, "tested": 1, "cached": 0, "refused": 0, "build_ms": 1.0,
@@ -342,9 +346,11 @@ class W10MenuTests(unittest.TestCase):
         self.allowed = set()  # her near act is refused now; the far one is cached for 120 s
         self.build_at(125.0)
         menus = self.menus()
-        self.assertEqual(len(menus), 3)
-        self.assertEqual((menus[2]["menu_rev"], [item["object_id"] for item in menus[2]["objects"]]), (2, ["12"]))
-        self.assertEqual(menus[2]["cached"], 1)
+        # 2.39.0 (W12 C1): the later build writes its near part as its far part starts, then its whole menu.
+        self.assertEqual(len(menus), 4)
+        # 2.39.0 (W12 C4): her near object, all acts refused now, is listed with the game's reasons as well.
+        self.assertEqual((menus[3]["menu_rev"], [item["object_id"] for item in menus[3]["objects"]]), (2, ["11", "12"]))
+        self.assertEqual(menus[3]["cached"], 1)
 
     def test_a_far_candidate_is_not_tested_again_within_120_seconds_and_a_near_one_always_is(self):
         self.build_at(100.0)
@@ -459,8 +465,10 @@ class FarKindTests(unittest.TestCase):
             candidate["refused"], candidate["reason_key"] = True, "KEY_NO_WAY"
             return False
         self.run_all(self.build([self.kind_job("1", "71")], runner, cache))
-        second = self.run_all(self.build([self.kind_job("2", "71")], lambda candidate: self.fail("tested"), cache))
-        self.assertEqual((second.tested, second.cached, second.refused), (0, 1, 1))
+        # 2.39.0 (W12 C3): a refusal is kept by its object only; the identical object is tested again (one occupied
+        # object does not hide its kin). Only a pass is shared by definition.
+        second = self.run_all(self.build([self.kind_job("2", "71")], lambda candidate: True, cache))
+        self.assertEqual((second.tested, second.cached, second.refused), (1, 0, 0))
 
 
 if __name__ == "__main__":
