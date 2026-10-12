@@ -78,8 +78,8 @@ def full_self():
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 19)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v19")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 20)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v20")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)

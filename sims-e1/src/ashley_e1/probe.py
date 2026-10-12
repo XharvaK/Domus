@@ -694,12 +694,6 @@ def _pace_block(row):
         return None
 
 
-def request_menu_near():
-    """2.39.0 (W12 B9 stub, W12-PM): the near part of her act menu is written on a menu_near command. This is the
-    no-op hook until the menu worker fills it in; it answers OK and changes nothing."""
-    return True
-
-
 def _inbox_dispatch(cmd, connection):
     name, args = cmd['command'], cmd['args']
     if _CALIBRATE and name in _OBSERVE_REFUSED:
@@ -2462,9 +2456,11 @@ def _menu_partial_part(build):
 
 def request_menu_near():
     """2.39.0 (W12 C1): the next menu tick writes a near part (her room, her phone, the Sims on her lot, and what is
-    within NEAR_M), its distances read then. Idempotent: several requests before one tick are one write."""
+    within NEAR_M), its distances read then. Idempotent: several requests before one tick are one write. True: the
+    menu_near command is answered OK."""
     global _MENU_NEAR_REQUESTED
     _MENU_NEAR_REQUESTED = True
+    return True
 
 
 def _poll_tick(alarm_handle=None):

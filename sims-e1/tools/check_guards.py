@@ -90,6 +90,8 @@ ACTUATOR_ONLY_CALLS = {
     "push_super_affordance", "push_speed", "remove_request",
     "register_on_finishing_callback", "add_manual_save_complete_callback",
     "remove_manual_save_complete_callback", "cancel",
+    # 2.39.0 (W12 G1): a pie choice's own pair runs as a player's pick runs it; push_super_affordance is the same call.
+    "test_and_execute",
 }
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.

@@ -208,7 +208,7 @@ class ClosePauseTests(unittest.TestCase):
 
     def test_schema_accepts_the_fields_and_rejects_a_bad_resume(self):
         schema = self.probe.schema
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 19)
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 20)
 
         def row(**extra):
             payload = {
