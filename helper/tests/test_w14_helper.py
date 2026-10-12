@@ -191,3 +191,51 @@ def test_the_contract_refuses_a_choices_pending_that_is_not_true():
         validate_observation(dict(base, choices_pending=False), WALL)
     with pytest.raises(ContractError):
         validate_observation(dict(base, choices_pending="yes"), WALL)
+
+
+# ----------------------------------------------------------------- D5: room labels, never cut mid-word
+
+def _room_thing(object_id, room, key):
+    return {"object_id": str(object_id), "name_key": key, "where": "room", "room_id": room}
+
+
+def test_a_room_label_takes_as_many_names_as_fit_and_never_cuts_a_name_short():
+    from domus_helper import reach
+    names = {"k1": "Test Armchair Brocade Extraordinary", "k2": "Test Lamp Standing", "k3": "Test Sink",
+             "k4": "Test Armchair Brocade Extraordinary Walnut Rocking Chair"}
+    raw = [_room_thing(1, "4", "k1"), _room_thing(2, "4", "k2"), _room_thing(3, "4", "k3"),
+           _room_thing(4, "5", "k1"), _room_thing(5, "6", "k4")]
+    labels = reach.room_labels(raw, resolve=names.get)
+    # Three names are too long, two are too long, one fits: "the room with the A".
+    assert labels["4"] == "the room with the Test Armchair Brocade Extraordinary"
+    # Room 5 has the same base as room 4, so the " (2)" rule numbers it. Room 6's long name is cut at its last whole word.
+    assert labels["5"] == "the room with the Test Armchair Brocade Extraordinary (2)"
+    assert labels["6"] == "the room with the Test Armchair Brocade Extraordinary\u2026"
+
+
+def test_a_room_label_too_long_even_for_one_name_stops_at_its_last_whole_word_with_an_ellipsis():
+    from domus_helper import reach
+    names = {"k4": "Test Armchair Brocade Extraordinary Walnut Rocking Chair"}
+    labels = reach.room_labels([_room_thing(5, "6", "k4")], resolve=names.get)
+    assert labels == {"6": "the room with the Test Armchair Brocade Extraordinary\u2026"}
+    assert len(labels["6"]) <= reach.WHERE_LIMIT - 6
+
+
+def test_a_cut_label_is_a_whole_word_prefix_of_the_name_and_two_equal_labels_are_numbered():
+    from domus_helper import reach
+    text = "the room with the Test Armchair Brocade Extraordinary Walnut Rocking Chair"
+    names = {"k4": "Test Armchair Brocade Extraordinary Walnut Rocking Chair"}
+    raw = [_room_thing(5, "6", "k4"), _room_thing(6, "7", "k4")]
+    labels = reach.room_labels(raw, resolve=names.get)
+    assert labels["6"] != labels["7"]
+    assert labels["7"].endswith(" (2)")
+    base = labels["6"][:-1]
+    assert text.startswith(base) and text[len(base)] == " "
+    assert all(len(label) <= reach.WHERE_LIMIT for label in labels.values())
+
+
+def test_a_label_that_fits_is_kept_whole():
+    from domus_helper import reach
+    names = {"k1": "Test Bed", "k2": "Test Lamp"}
+    labels = reach.room_labels([_room_thing(1, "3", "k1"), _room_thing(2, "3", "k2")], resolve=names.get)
+    assert labels == {"3": "the room with the Test Bed and the Test Lamp"}
