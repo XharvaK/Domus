@@ -628,3 +628,25 @@ def test_a_helper_side_inbox_fault_is_not_her_args_invalid_and_an_envelope_refus
     courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
     refused = [event for event in courier._events if event["phase"] == "rejected"]
     assert refused[0]["detail"] == {"code": "ARGS_INVALID", "by": "helper", "detail": "BAD_ARGS"}
+
+
+# HELPER2-9: the decision log is written under one lock (the list post thread and the tick both write it, and a trim
+# unlinks other days' files).
+def test_the_decision_log_takes_its_lock_for_every_write(tmp_path):
+    from domus_helper.thalamus.log import DecisionLog
+
+    class Counting(object):
+        def __init__(self):
+            self.entered = 0
+
+        def __enter__(self):
+            self.entered += 1
+
+        def __exit__(self, *exc):
+            return False
+    log = DecisionLog(tmp_path, quota=10_000)
+    lock = Counting()
+    log._lock = lock
+    log.write({"wall_ms": 1_700_000_000_000, "trigger": "lists"})
+    assert lock.entered == 1
+    assert len(list((tmp_path / "thalamus").glob("decisions-*.jsonl"))) == 1
