@@ -658,17 +658,32 @@ def started(interaction):
         return None
 
 
-# 2.38.0 (W11 P2): a portal's class names (the menu's fixture rule reads "door" and "gate" too).
-PORTAL_PARTS = ("door", "gate", "archway")
+# 2.38.0 (W11 P2): a portal's class names (the menu's fixture rule reads "door" and "gate" too). 2.40.0 (W13 P2 fix,
+# HOME-7): matched as the last CamelCase word of the class name, so "IndoorPlant" is not a door.
+PORTAL_WORDS = ("door", "gate", "archway")
+
+
+def _last_word(name):
+    """The last CamelCase word of a class name, lower case ('' when there is none): 'FrontDoor' gives 'door'."""
+    words, current = [], ""
+    for ch in str(name):
+        if ch.isupper() and current:
+            words.append(current.lower())
+            current = ""
+        if ch.isalnum():
+            current += ch
+    if current:
+        words.append(current.lower())
+    return words[-1] if words else ""
 
 
 def is_portal(obj):
-    """Read: whether the object is a door, gate or archway, by its class name. False when unreadable."""
+    """Read: whether the object is a door, gate or archway, by the last word of its class name. False when unreadable."""
     try:
-        name = type(obj).__name__.lower()
+        name = type(obj).__name__
     except Exception:
         return False
-    return any(part in name for part in PORTAL_PARTS)
+    return _last_word(name) in PORTAL_WORDS
 
 
 # 2.39.0 (W12 C6): the game's PlacementFlags bits that put an object on a wall (build_buy.PlacementFlags, read from the

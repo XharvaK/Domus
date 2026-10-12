@@ -1166,6 +1166,25 @@ class RoomSearchTests(unittest.TestCase):
                                                             z=spot["translation"].z)))
 
 
+class PortalNameTests(unittest.TestCase):
+    """HOME-7: a portal is a door, gate or archway by the last word of its class name, never by a substring: an
+    'IndoorPlant' or an 'OutdoorBench' is not a door."""
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+
+    def named(self, name):
+        return type(name, (object,), {})()
+
+    def test_a_door_gate_or_archway_is_a_portal(self):
+        for name in ("Door", "FrontDoor", "SlidingDoor", "Gate", "WroughtIronGate", "Archway"):
+            self.assertTrue(self.actuator.is_portal(self.named(name)), name)
+
+    def test_a_name_that_only_contains_door_is_not_a_portal(self):
+        for name in ("IndoorPlant", "OutdoorBench", "Doorbell", "DoorMat"):
+            self.assertFalse(self.actuator.is_portal(self.named(name)), name)
+
+
 class ActuatorReadTests(unittest.TestCase):
     """The game's members as the actuator reads them: in_use is a property (27 reads in the game's code, none called),
     and a runtime slot's name is a property too. A read that fails is None, never a guess."""
