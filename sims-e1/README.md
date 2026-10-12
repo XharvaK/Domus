@@ -59,7 +59,7 @@ menu's `part` and `parts` are new; the observation schema is 16 and the helper a
 are looked at, then four are read per tick). An act that is past its time is refused as an act: an `act_event`
 REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the command reply.
 
-The source is version `2.40.0` (`src/ashley_e1/__init__.py`,
+The source is version `2.41.0` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 21; the helper accepts schema 4 to 21). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
@@ -216,8 +216,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.40.0
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.40.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.41.0
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.41.0
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under
