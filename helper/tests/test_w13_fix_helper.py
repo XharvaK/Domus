@@ -421,3 +421,21 @@ def test_the_phone_percepts_in_the_fixture_reach_the_wire_with_what_natalis_read
         assert len(wire) == 1, name
         assert {key: wire[0]["facts"].get(key) for key in case["wire"]} == case["wire"], name
         assert "kind" not in wire[0]["facts"], name
+
+
+# HELPER2-2 / SEAM2-8: two rooms with the same long name get two labels, each within the 64 characters Natalis shows, and
+# a place named by a label finds its own room (the label is not cut a second time).
+def test_two_rooms_with_the_same_long_names_get_distinct_labels_that_each_place_finds_its_own_room():
+    from domus_helper.acts import _place_args
+    names = {"k1": "Invented Long Piece Of Furniture Alpha", "k2": "Invented Long Piece Of Furniture Beta",
+             "k3": "Invented Long Piece Of Furniture Gamma"}
+    raw = [{"object_id": str(room * 100 + index), "where": "room", "room_id": room, "name_key": key, "made_by_her": False}
+           for room in (5, 6) for index, key in enumerate(names)]
+    labels = reach.room_labels(raw, resolve=names.get)
+    assert labels["5"] != labels["6"]
+    assert all(len(label) <= reach.WHERE_LIMIT for label in labels.values())
+    things = reach.list_words("things", raw, refs=RefBook(), rooms=labels, resolve=names.get)
+    assert {thing["where"] for thing in things if thing["id"] in ("500", "501", "502")} == {labels["5"]}
+    assert {thing["where"] for thing in things if thing["id"] in ("600", "601", "602")} == {labels["6"]}
+    assert _place_args({"place": {"room": labels["5"]}}, labels)["place"]["room_id"] == "5"
+    assert _place_args({"place": {"room": labels["6"]}}, labels)["place"]["room_id"] == "6"

@@ -228,7 +228,7 @@ def _where(item, rooms):
         return kind
     if kind == "room" and room is not None:
         label = (rooms or {}).get(room)
-        return label[:WHERE_LIMIT] if isinstance(label, str) and label else None
+        return label if isinstance(label, str) and label else None
     return None
 
 
@@ -274,7 +274,8 @@ def room_labels(raw, *, resolve=None, catalog=None):
             names.setdefault(room, set()).add(name)
     labels, counts = {}, {}
     for room in sorted(names, key=int):
-        base = ("the room with the %s" % " and the ".join(sorted(names[room], key=str.casefold)[:3]))[:WHERE_LIMIT]
+        # The base is cut before the " (n)" suffix, so a label is never longer than WHERE_LIMIT (HELPER2-2).
+        base = ("the room with the %s" % " and the ".join(sorted(names[room], key=str.casefold)[:3]))[:WHERE_LIMIT - 6]
         counts[base] = counts.get(base, 0) + 1
         labels[room] = base if counts[base] == 1 else "%s (%d)" % (base, counts[base])
     return labels

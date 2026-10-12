@@ -718,7 +718,7 @@ def test_every_list_built_from_fake_probe_rows_keeps_natalis_bounds_and_an_unnam
     things.append({"object_id": "901", "name_key": "2", "where": "outside", "value": 3})
     things.append({"object_id": "902", "name_key": "1", "where": "inventory", "value": 4})
     skipped = []
-    thing_words = reach.list_words("things", things, refs=RefBook(), rooms={"3": "R" * 80},
+    thing_words = reach.list_words("things", things, refs=RefBook(), rooms={"3": "R" * 64},
                                    resolve={"1": long_name}.get, skipped=skipped)
     _check_list_items("things", thing_words)
     assert len(thing_words) == 600 and skipped.count("name") == 1 and "value" not in skipped
