@@ -194,8 +194,9 @@ _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
                      "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk", "pace",
                      "go", "event")
-# 2.40.0 (W13 P2, home): her save, home edits and the catalogue dump are refused in calibrate mode too.
-_OBSERVE_REFUSED = _OBSERVE_REFUSED + home.COMMANDS
+# 2.40.0 (W13 P2, home): her save and her home edits are refused in calibrate mode too. The catalogue dump only
+# writes the catalogue record (read only), so it is allowed (CORE-15).
+_OBSERVE_REFUSED = _OBSERVE_REFUSED + tuple(name for name in home.COMMANDS if name != "catalog_dump")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None

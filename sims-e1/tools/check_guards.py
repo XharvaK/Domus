@@ -23,6 +23,8 @@ PRODUCTION_MODULES = (
     "reach",
     # 2.40.0 (W13 P2): the home verbs and the things and catalogue lists.
     "home",
+    # 2.40.0 (W13 P2 fix, CORE-16): the build tables, the atlas and the menu, which the shipped build also carries.
+    "atlas", "tuned", "act_menu",
 )
 # DS3: build_buy also holds world mutators; only its read-only room lookup may be
 # imported, and only by name (never `import build_buy`).
@@ -113,6 +115,10 @@ ACTUATOR_ONLY_CALLS = {
     # removal of a household object: destroy is called by sell_object, and by remove_created (an object the same
     # command just made, after a failed placement). Nothing else removes anything.
     "save_using", "destroy",
+    # 2.40.0 (W13 P2 fix, CORE-6/HOME-2): the placement of an object (move_to, add_child, the game's create) and the
+    # inventory's own removal and put-back. e2_actuator.py only.
+    "create_object", "move_to", "add_child", "try_remove_object_by_id", "clear_previous_inventory",
+    "player_try_add_object",
 }
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.

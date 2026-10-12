@@ -1226,6 +1226,36 @@ class SellTests(HomeCase):
         self.assertEqual(self.actuator.funds.money, 500)
 
 
+class GuardListTests(unittest.TestCase):
+    """CORE-6/16 and HOME-2: the placement and inventory calls are the actuator's alone, and the archive check requires
+    the build modules too; the object creator is the one name imported from objects.system."""
+
+    def test_placement_and_inventory_calls_are_actuator_only(self):
+        for name in ("create_object", "move_to", "add_child", "try_remove_object_by_id",
+                     "clear_previous_inventory", "player_try_add_object", "save_using", "destroy"):
+            self.assertIn(name, guards.ACTUATOR_ONLY_CALLS, name)
+
+    def test_a_placement_call_outside_the_actuator_is_a_finding(self):
+        findings = guards.scan_text("def place(obj):\n    obj.move_to(translation=None)\n", "home.py")
+        self.assertTrue(any("move_to" in finding for finding in findings), findings)
+
+    def test_the_object_creator_is_the_only_name_narrowed_from_objects_system(self):
+        self.assertEqual(guards.NARROW_GAME_IMPORTS["objects.system"], {"create_object"})
+        findings = guards.scan_text("from objects.system import create_object, destroy_all\n", "home.py")
+        self.assertTrue(findings, findings)
+
+    def test_the_build_modules_are_in_the_archive_check(self):
+        for name in ("atlas", "tuned", "act_menu", "home", "reach"):
+            self.assertIn(name, guards.PRODUCTION_MODULES)
+
+    def test_a_result_list_item_is_at_most_twenty_characters(self):
+        """CORE-14: a result's list item is a game id (at most 20 digits) or a short word; longer is refused."""
+        schema = modules()[3]
+        schema._validate_result({"beside": ["1" * 20]})
+        with self.assertRaises(schema.SchemaError):
+            schema._validate_result({"beside": ["1" * 21]})
+
+
 class DispatchTests(HomeCase):
     def test_an_exception_inside_a_command_is_unknown_for_its_act(self):
         def broken(*args):
@@ -1592,7 +1622,12 @@ class ProbeRouteTests(unittest.TestCase):
 
     def test_calibrate_refuses_her_home_edits(self):
         self.assertIn("save", self.probe._OBSERVE_REFUSED)
-        self.assertIn("catalog_dump", self.probe._OBSERVE_REFUSED)
+        self.assertIn("buy", self.probe._OBSERVE_REFUSED)
+        self.assertIn("sell", self.probe._OBSERVE_REFUSED)
+
+    def test_calibrate_allows_the_read_only_catalogue_dump(self):
+        """CORE-15: the catalogue dump writes the catalogue record only; it is not an act."""
+        self.assertNotIn("catalog_dump", self.probe._OBSERVE_REFUSED)
 
     def test_a_save_reaches_home_and_is_recorded(self):
         saved = []
