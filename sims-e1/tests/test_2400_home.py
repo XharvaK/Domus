@@ -556,6 +556,25 @@ class ThingsWiringTests(HomeCase):
             self.schema.validate_record(record)
 
 
+class CatalogSchemaTests(unittest.TestCase):
+    """S3: a catalogue item's placement is exactly one word (wall, surface or floor), or None when unread."""
+
+    def item(self, placement):
+        return {"definition_id": "77", "price": 120, "buy_category": ["DECOR"], "placement": placement,
+                "tags": [], "purchasable": True}
+
+    def test_one_placement_word_is_accepted(self):
+        schema = modules()[3]
+        schema._validate_catalog_record({"catalog_rev": "1.128", "part": 0, "parts": 1,
+                                         "items": [self.item(["wall"]), self.item(None)]})
+
+    def test_two_placement_words_are_refused(self):
+        schema = modules()[3]
+        with self.assertRaises(schema.SchemaError):
+            schema._validate_catalog_record({"catalog_rev": "1.128", "part": 0, "parts": 1,
+                                             "items": [self.item(["wall", "floor"])]})
+
+
 class CatalogTests(HomeCase):
     def raw(self, **overrides):
         row = {"definition_id": 77, "price": 120, "tags": ["Comfort"], "class_name": "Sofa", "sim": False,

@@ -1945,7 +1945,8 @@ def _validate_catalog_record(payload):
         _require(_is_digits(item["definition_id"]), "catalog definition_id")
         _require(type(item["price"]) is int and item["price"] >= 0, "catalog price")
         _require(type(item["buy_category"]) is list or item["buy_category"] is None, "catalog buy_category")
-        _require(item["placement"] is None or (type(item["placement"]) is list and
+        # S3: a placement is exactly one word (wall, surface or floor), or None when it was unread.
+        _require(item["placement"] is None or (type(item["placement"]) is list and len(item["placement"]) == 1 and
                  all(flag in PLACEMENT_WORDS for flag in item["placement"])), "catalog placement")
         _require(type(item["tags"]) is list and len(item["tags"]) <= 8, "catalog tags")
         _require(type(item["purchasable"]) is bool, "catalog purchasable")
