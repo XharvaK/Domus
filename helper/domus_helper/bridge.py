@@ -825,7 +825,8 @@ class Bridge:
         Natalis refuses waits LIST_RETRY_MS for each of its first refusals; after LIST_REFUSALS of the same digest it
         waits LIST_REFUSED_WAIT_MS, and its reason is logged once, at that point."""
         now = self._mono()
-        if now < self._list_retry_ms.get(kind, 0):
+        # HELPER2-7: a refusal's wait belongs to its digest; a failed round trip's wait belongs to the kind.
+        if now < self._list_retry_ms.get(kind, 0) or now < self._list_retry_ms.get((kind, entry["digest"]), 0):
             return
         body = {"v": 1, "helper_session": helper_session, "kind": kind, "digest": entry["digest"],
                 "items": entry["items"], "total": entry.get("total", len(entry["items"]))}
@@ -840,15 +841,14 @@ class Bridge:
             held_digest, refusals = self._list_refusals.get(kind, [None, 0])
             refusals = refusals + 1 if held_digest == entry["digest"] else 1
             self._list_refusals[kind] = [entry["digest"], refusals]
-            if refusals >= LIST_REFUSALS:
-                self._list_retry_ms[kind] = now + LIST_REFUSED_WAIT_MS
-                if refusals == LIST_REFUSALS:
-                    self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "refused",
-                                     "kind": kind, "reason": sent.reason or "unknown", "refusals": refusals})
-                return
-        else:
-            self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "not_sent",
-                             "kind": kind})
+            # HELPER2-7: a refused digest waits by itself; a corrected list of the kind is not held back by it.
+            wait = LIST_REFUSED_WAIT_MS if refusals >= LIST_REFUSALS else LIST_RETRY_MS
+            self._list_retry_ms[(kind, entry["digest"])] = now + wait
+            if refusals == LIST_REFUSALS:
+                self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "refused",
+                                 "kind": kind, "reason": sent.reason or "unknown", "refusals": refusals})
+            return
+        self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "not_sent", "kind": kind})
         self._list_retry_ms[kind] = now + LIST_RETRY_MS
 
     def _catalog_search(self, words, max_price, placement):

@@ -574,3 +574,33 @@ def test_the_catalogue_asks_kept_as_answered_are_bounded(monkeypatch):
                                           search=lambda words, max_price, placement: (0, []), start=lambda run: run())
     assert len(catalog_ask._HANDLED) == catalog_ask.HANDLED_LIMIT
     assert "ask-0" not in catalog_ask._HANDLED and "ask-%d" % (catalog_ask.HANDLED_LIMIT + 9) in catalog_ask._HANDLED
+
+
+# HELPER2-7: the ten-minute wait after three refusals belongs to one digest; a corrected list of the same kind is sent at once.
+def test_a_corrected_list_of_a_kind_is_sent_at_once_after_the_refusals_of_an_earlier_digest(paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    from domus_helper.transport import SyncRefused
+    from test_w13_helper import _Mint, _people_row, _settle
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_people_row(1)])
+    attempts = []
+
+    class Refusing(_Mint):
+        def post_lists(self, body):
+            attempts.append(body["digest"])
+            return SyncRefused("bad_items")
+    mono = {"ms": 0}
+    bridge = _bridge(paths, mono, client=Refusing())
+    bridge.tick(WALL)
+    _settle(bridge)
+    for step in range(1, 6):
+        mono["ms"] = step * bridge_module.LIST_RETRY_MS
+        bridge.tick(WALL + step * bridge_module.LIST_RETRY_MS)
+        _settle(bridge)
+    assert len(attempts) == 3
+    _append(paths, [_people_row(2, sim="502", name="Other")])
+    mono["ms"] += 1000
+    bridge.tick(WALL + mono["ms"])
+    _settle(bridge)
+    assert len(attempts) == 4 and attempts[3] != attempts[0]
