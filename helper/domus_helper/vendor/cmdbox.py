@@ -4,7 +4,7 @@ import json
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
             'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
-            'cancel', 'camera', 'talk', 'pace')
+            'cancel', 'camera', 'talk', 'pace', 'menu_near')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -108,9 +108,11 @@ def parse(raw_bytes, now_ms, used_ids):
                 _digits(args.get('object_id')) and _digits(args.get('guid64')))
     elif good and name == 'act':
         # 2.24.0: owner is present (and true) only when her Thought said the User asked for it.
-        good = (set(args) in ({'act_id', 'object_id', 'guid64'}, {'act_id', 'object_id', 'guid64', 'owner'}) and
+        # 2.39.0 (W12 G1): variant is present only for a pie-menu choice: an int from 0 to 999.
+        good = (set(args) - {'owner', 'variant'} == {'act_id', 'object_id', 'guid64'} and
                 valid_hex(args.get('act_id'), 32) and _digits(args.get('object_id')) and
-                _digits(args.get('guid64')) and ('owner' not in args or args['owner'] is True))
+                _digits(args.get('guid64')) and ('owner' not in args or args['owner'] is True) and
+                ('variant' not in args or (type(args['variant']) is int and 0 <= args['variant'] <= 999)))
     elif good and name == 'answer':
         # 2.18.0: her answer to a game dialog: a picker row (digits) or a button by name.
         # 2.31.0: optional rows (several picked rows, each with its count) and text (one value per

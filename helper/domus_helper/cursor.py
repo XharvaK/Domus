@@ -3,9 +3,10 @@ import json
 
 from .telemetry import latest_session, segments
 
-# W12 (F2): one tick reads at most this many lines, and no more than this many bytes of a segment at a time.
+# W12 (F2): one tick reads at most this many lines, and no more than this many bytes of a segment at a time. A segment
+# is at most 8 MiB (the probe's writer rolls it), so one read always holds a whole line and the cursor never stalls.
 LINES_PER_TICK = 500
-CHUNK_BYTES = 4 * 1024 * 1024
+CHUNK_BYTES = 8 * 1024 * 1024
 
 
 def _segment_index(session, path):
