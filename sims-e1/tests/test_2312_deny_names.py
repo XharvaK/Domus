@@ -41,12 +41,14 @@ class DenyNameTests(unittest.TestCase):
     def test_the_kept_exclusions_still_deny(self):
         cases = {
             "CheatMoney": "cheat", "CheatSheet": "cheat", "DebugTeleport": "debug", "TestingTools": "testing",
-            "TutorialStart": "tutorial", "GoToLot": "go_to", "GoHere": "go_here", "TravelToLot": "travel",
+            "TutorialStart": "tutorial", "GoToLot": "go_to", "TravelToLot": "travel",
             "LeaveLot": "leave",
         }
         for name, entry in cases.items():
             with self.subTest(name=name):
                 self.assertEqual(self.trial.denied_name(name), entry)
+        # R3 (PROBE3-10): a walk on the lot is not a trip, so Go Here is hers to choose.
+        self.assertIsNone(self.trial.denied_name("GoHere"))
 
     def test_a_career_leave_is_not_hidden_and_leaving_the_lot_still_is(self):
         # 2.40.0 (W13 R2, Q-a): the career acts that leave early are hers; leaving the lot stays out by name.
@@ -113,10 +115,12 @@ class SocialAndPhoneWordTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIsNone(part(name, social))
         cases = {"CheatSim": "cheat", "Cheating_Chat": "cheating", "DebugChat": "debug",
-                 "TravelingSocial": "traveling", "VacationInvite": "vacation", "PhoneCall": "phone"}
+                 "TravelingSocial": "traveling", "VacationInvite": "vacation"}
         for name, entry in cases.items():
             with self.subTest(name=name):
                 self.assertEqual(part(name, social), entry)
+        # R3 (PROBE3-10): a phone social is hers to choose (the word phone is not a reason to keep it out).
+        self.assertIsNone(part("PhoneCall", social))
         for name in ("KillSim", "TryBaby", "Move_In_Sim", "CareersTalk", "AdoptionTalk", "BurnSocial"):
             with self.subTest(name=name):
                 self.assertIsNone(part(name, social))
@@ -129,8 +133,9 @@ class SocialAndPhoneWordTests(unittest.TestCase):
         self.assertIsNone(part("Debugger_Chat", phone))
         self.assertEqual(part("Debug_Sample", phone), "debug")
         self.assertEqual(part("Cheating_Phone", phone), "cheating")
-        self.assertEqual(part("Autonomous_Call", phone), "autonomous")
-        self.assertEqual(part("Phone_NPC_Call", phone), "npc")
+        # R3 (PROBE3-10, CONTRA3-3): autonomous and npc acts are not named out.
+        self.assertIsNone(part("Autonomous_Call", phone))
+        self.assertIsNone(part("Phone_NPC_Call", phone))
         # 2.37.1: the judgement names are hers; a phone act with them is on her menu.
         for name in ("Move_In_Sim", "Try_For_Baby", "Jobs_Board", "Ordering_Food"):
             with self.subTest(name=name):

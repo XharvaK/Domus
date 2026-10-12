@@ -60,7 +60,9 @@ E2_CONTROL_ONLY_MODULES = frozenset(("protocolbuffers", "ui.ui_dialog", "ui.ui_d
 # 2.31.0 (W3p): her pace. The decay-rate modifier on each motive she has (added and removed, each followed by
 # its progress message), and the clock sync after the game clock's normal speed is set. e2_control only.
 E2_CONTROL_ONLY_CALLS = frozenset(("dialog_cancel", "add_decay_rate_modifier", "remove_decay_rate_modifier",
-                                   "send_commodity_progress_msg", "_sync_clock_and_broadcast_gameclock"))
+                                   "send_commodity_progress_msg", "_sync_clock_and_broadcast_gameclock",
+                                   # R3 (PROBE3-14): the interaction cancel of a pushed act, the cancel path (e2_control only).
+                                   "cancel_user"))
 # 2.31.0 adds dialog_text_input (every text field) and dialog_pick_result_def_ids_and_counts (counted rows).
 # 2.23.0, cmd_answer only. Reviewed path: ui/ui_dialog_service._dialog_cancel_internal
 # (Dialog_pb2.UiDialogCloseRequest, Consts_pb2.MSG_UI_DIALOG_CLOSE, Distributor.add_event
@@ -119,6 +121,8 @@ ACTUATOR_ONLY_CALLS = {
     # inventory's own removal and put-back. e2_actuator.py only.
     "create_object", "move_to", "add_child", "try_remove_object_by_id", "clear_previous_inventory",
     "player_try_add_object",
+    # R3 (PROBE3-14): a guest added to an event's guest list (the event's own list, made by the actuator).
+    "add_guest_info",
 }
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.
@@ -239,6 +243,11 @@ def scan_text(source, filename):
             if leaf in E2_CONTROL_ONLY_CALLS and os.path.basename(filename).lower() != ANSWER_ONLY_FILE:
                 findings.append("%s:%d %s allowed only in %s" % (
                     filename, node.lineno, leaf, ANSWER_ONLY_FILE))
+            # R3 (PROBE3-14): money is credited only by the actuator's own funds call (a funds object's add, whether
+            # it is named or read from a household: funds_of(household).add, household.funds.add).
+            if (leaf == "add" and isinstance(node.func, ast.Attribute) and not is_actuator and
+                    _mentions(node.func.value, "funds")):
+                findings.append("%s:%d funds credit allowed only in %s" % (filename, node.lineno, ACTUATOR_FILE))
             if leaf == "getattr" or leaf == "__import__":
                 findings.append("%s:%d reflective dispatch" % (filename, node.lineno))
             if leaf == "open" and os.path.basename(filename).lower() != "writer.py":
@@ -248,6 +257,16 @@ def scan_text(source, filename):
 
     _scan_calls(tree, ())
     return findings
+
+
+def _mentions(node, word):
+    """True when an expression names (a name or an attribute) something whose name contains word (R3, PROBE3-14)."""
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and word in child.id.lower():
+            return True
+        if isinstance(child, ast.Attribute) and word in child.attr.lower():
+            return True
+    return False
 
 
 def _call_target(function):

@@ -170,8 +170,8 @@ def offers_for(obj, context, guid64):
 # changes zones, so a phone act that travels is not offered in this version.
 # 2.37.0 (W10 P3): 256 (was 64), so the menu's own phone cap (act_menu.PHONE_CANDIDATES) is the one that binds.
 PHONE_SCAN_LIMIT = 256
-PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "askon", "vacation",
-                      "lodging")
+# R3 (PROBE3-10, CONTRA3-2): a trip only. A date or invite act (askon) and a call to lodging are not trips.
+PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "vacation")
 # 2.29.0: her phone is how she calls, texts and invites people over, so the blanket name bans that
 # kept every phone act out (call_, phone_call, invite, social) do not apply to it. What still stays
 # out by name: testers' acts, money, jobs, emergencies and the acts that change a life in one click.
@@ -179,7 +179,8 @@ PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "askon", "vacat
 # hand (autonomous, npc); money, jobs, family and the rest are hers to choose.
 # 2.31.0 (W4): whole words (e2_trial.denied_part), so the plural and -ing forms and the two-word forms
 # stay listed where the old substring match caught them.
-PHONE_DENY_PARTS = ("debug", "cheat", "cheats", "cheating", "testing", "tutorial", "autonomous", "npc")
+# R3 (PROBE3-10, CONTRA3-3): autonomous and npc are not named out (the game's user-directed flag decides those).
+PHONE_DENY_PARTS = ("debug", "cheat", "cheats", "cheating", "testing", "tutorial")
 
 
 def phone_affordances(sim):
@@ -498,13 +499,11 @@ def event_guest_list(host_sim_id, guest_ids, job_type):
 def create_event(zone_id, situation, guest_list, scheduled_time=None):
     """Act: the zone's situation manager makes the event she planned, user-facing, at scheduled_time (None: now).
     Returns the new situation's id (digits), or None when the game made none. The game's create_situation returns
-    the id itself (an int), not the situation."""
-    try:
-        manager = services.get_zone_situation_manager(int(zone_id))
-        created = manager.create_situation(situation, guest_list, user_facing=True, zone_id=int(zone_id),
-                                           scheduled_time=scheduled_time)
-    except Exception:
-        return None
+    the id itself (an int), not the situation. R3 (PROBE3-6): an exception is not "no event": it is raised, so the
+    caller writes UNKNOWN (the event may exist) and refunds nothing."""
+    manager = services.get_zone_situation_manager(int(zone_id))
+    created = manager.create_situation(situation, guest_list, user_facing=True, zone_id=int(zone_id),
+                                       scheduled_time=scheduled_time)
     return None if created is None else str(created)
 
 
@@ -566,12 +565,19 @@ def scheduled_at(absolute_minutes):
 
 def refund(household, amount, sim, reason):
     """Act: the money a charge took goes back to the household's funds (the game's own add), when a later step failed.
-    Not counted as earnings (the game's count_as_earnings is True by default). False when the game's call fails."""
+    Not counted as earnings. R3 (PROBE3-9): True only when the money went up by exactly the amount, read before and
+    after (as funds_add does); when the money cannot be read, True when the add did not raise."""
+    funds = funds_of(household)
+    before = funds_money(funds)
     try:
-        funds_of(household).add(amount, reason, sim, tags=None, count_as_earnings=False)
+        funds.add(amount, reason, sim, tags=None, count_as_earnings=False)
+        added = True
     except Exception:
-        return False
-    return True
+        added = False
+    after = funds_money(funds)
+    if before is not None and after is not None:
+        return after - before == amount
+    return added
 
 
 PHONE_TESTS_MAX = 64
@@ -697,31 +703,18 @@ def started(interaction):
 
 
 # 2.38.0 (W11 P2): a portal's class names (the menu's fixture rule reads "door" and "gate" too). 2.40.0 (W13 P2 fix,
-# HOME-7): matched as the last CamelCase word of the class name, so "IndoorPlant" is not a door.
+# HOME-7): matched as the kind word of the class name (e2_trial.kind_word: the word after "object", else the last
+# CamelCase word), so "IndoorPlant" is not a door and "object_door_double" is.
 PORTAL_WORDS = ("door", "gate", "archway")
 
 
-def _last_word(name):
-    """The last CamelCase word of a class name, lower case ('' when there is none): 'FrontDoor' gives 'door'."""
-    words, current = [], ""
-    for ch in str(name):
-        if ch.isupper() and current:
-            words.append(current.lower())
-            current = ""
-        if ch.isalnum():
-            current += ch
-    if current:
-        words.append(current.lower())
-    return words[-1] if words else ""
-
-
 def is_portal(obj):
-    """Read: whether the object is a door, gate or archway, by the last word of its class name. False when unreadable."""
+    """Read: whether the object is a door, gate or archway, by the kind word of its class name. False when unreadable."""
     try:
         name = type(obj).__name__
     except Exception:
         return False
-    return _last_word(name) in PORTAL_WORDS
+    return e2_trial.kind_word(name) in PORTAL_WORDS
 
 
 # 2.39.0 (W12 C6): the game's PlacementFlags bits that put an object on a wall (build_buy.PlacementFlags, read from the
@@ -729,7 +722,8 @@ def is_portal(obj):
 WALL_PLACEMENT_FLAGS = (1, 2, 4, 8388608, 268435456)
 # 2.39.0 (W12 G1): a pie choice's list is read at most this far (the game's pie menus are short).
 PIE_CHOICES_MAX = 16
-PIE_HIDDEN_FLAGS = ("cheat", "debug", "automation")
+# R3 (PROBE3-10): the game's cheat and debug flags only; automation is not a reason to keep an act from her.
+PIE_HIDDEN_FLAGS = ("cheat", "debug")
 
 
 def is_wall_placed(obj):
