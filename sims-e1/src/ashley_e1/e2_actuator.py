@@ -16,6 +16,7 @@ from interactions.priority import Priority  # TARGET_BYTECODE 1.128.
 
 from . import e2_trial
 from . import observers
+from . import tuned
 
 # 2.35.0 (D3): going places. The game's Go Here (terrain-gohere) and its standable-spot search. Read from the game's
 # own code offline (no install is read here); each name is optional, so a missing one turns spots off and nothing
@@ -424,18 +425,49 @@ def is_portal(obj):
     return any(part in name for part in PORTAL_PARTS)
 
 
+# 2.39.0 (W12 C6): the game's PlacementFlags bits that put an object on a wall (build_buy.PlacementFlags, read from the
+# game's bytecode: CENTER_ON_WALL, EDGE_AGAINST_WALL, ADJUST_HEIGHT_ON_WALL, GROUNDED_AGAINST_WALL, ON_WALL_TOP).
+WALL_PLACEMENT_FLAGS = (1, 2, 4, 8388608, 268435456)
+# 2.39.0 (W12 G1): a pie choice's list is read at most this far (the game's pie menus are short).
+PIE_CHOICES_MAX = 16
+PIE_HIDDEN_FLAGS = ("cheat", "debug", "automation")
+
+
+def is_wall_placed(obj):
+    """2.39.0 (W12 C6): whether the object is placed on a wall (a mirror, a wall light): BaseObject._has_placement_flag
+    for each wall flag. When the flag cannot be read, the class name says so (the game's wall classes are named
+    *_wall). False when unknown."""
+    try:
+        reader = obj._has_placement_flag
+    except Exception:
+        reader = None
+    if callable(reader):
+        try:
+            for flag in WALL_PLACEMENT_FLAGS:
+                if reader(flag) is True:
+                    return True
+            return False
+        except Exception:
+            pass
+    try:
+        return "wall" in type(obj).__name__.lower()
+    except Exception:
+        return False
+
+
 def reachable(sim, obj):
     """Read: whether the game sees a way from her to the object, by the check its own autonomy
     makes before it picks one (autonomy_request._check_object_connectivity_and_rules calls
     ScriptObject.is_connected). True, False, or None when unreadable.
     2.38.0 (W11 P2, live 2026-10-12: every door read False, the front door and both double doors too, while a chair
     46 m away read True): the check does not give a door a way, so a portal never reads False. True when the game
-    says so, else None (unknown). No probe API reads a way to a portal's side, so none is computed."""
+    says so, else None (unknown). No probe API reads a way to a portal's side, so none is computed.
+    2.39.0 (W12 C6): the same for a wall-placed object (a mirror, a wall light): its False says nothing about a way."""
     try:
         value = obj.is_connected(sim)
     except Exception:
         return None
-    if is_portal(obj):
+    if is_portal(obj) or is_wall_placed(obj):
         return True if value is True else None
     return value if type(value) is bool else None
 
@@ -596,3 +628,113 @@ def spot_target(sim, spot, owner=False):
     if point is None:
         return None, None
     return point, build_context(sim, owner=owner, pick=pick)
+
+
+# 2.39.0 (W12 G1): pie-menu choices. A pie act (its name carries "PieMenu") is not an act a push can complete: its
+# choices are what the player picks. The game lists them with affordance.potential_interactions(target, context),
+# each an affordance-object pair (its affordance, its target, its interaction parameters, and its own test and
+# execute). A choice runs as that pair, so its parameters travel with it. Every function here is a read, except
+# push_choice, which runs one choice the way a player's pick runs it.
+
+def is_pie(affordance):
+    """Read: whether an affordance is a pie-menu act (its name carries PieMenu, as act_excluded reads it)."""
+    try:
+        low = str(affordance.__name__).lower()
+    except Exception:
+        return False
+    return "piemenu" in low
+
+
+def pie_choices(affordance, target, context):
+    """2.39.0 (W12 G1): the choices a pie-menu act offers for this target and context, as the game enumerates them
+    now (at most PIE_CHOICES_MAX). [] when they cannot be read. Never raises."""
+    try:
+        reader = affordance.potential_interactions(target, context)
+    except Exception:
+        return []
+    choices = []
+    try:
+        for choice in reader:
+            if len(choices) >= PIE_CHOICES_MAX:
+                break
+            if choice is not None:
+                choices.append(choice)
+    except Exception:
+        pass
+    return choices
+
+
+def choice_names(choice, context):
+    """2.39.0 (W12 G1): a pie choice's (text key, match key). The text key is the key of its name as the game builds
+    it (choice.name(context), a localized string's hash); the match key is the text key, else the choice's affordance
+    name. (None, None) when neither reads. A push finds the choice again by its match key (variant_choice)."""
+    try:
+        text = observers._string_key(choice.name(context))
+    except Exception:
+        text = None
+    try:
+        name = str(choice.affordance.__name__)
+    except Exception:
+        name = ""
+    key = text if text is not None else (name or None)
+    return text, key
+
+
+def variant_choice(affordance, target, context, expected):
+    """2.39.0 (W12 G1): the pie's choice whose match key is expected, enumerated again now; None when no choice has
+    it (the push refuses VARIANT_GONE)."""
+    if expected is None:
+        return None
+    for choice in pie_choices(affordance, target, context):
+        if choice_names(choice, context)[1] == expected:
+            return choice
+    return None
+
+
+def choice_excluded(choice):
+    """2.39.0 (W12 G1): None when a pie choice may be an act, else why. Its affordance is read by the same rules as an
+    object's act (act_excluded: pickers and deny names), and the game's cheat, debug and automation flags stay out."""
+    try:
+        affordance = choice.affordance
+    except Exception:
+        affordance = None
+    if affordance is None:
+        return "not_user_directed"
+    reason = act_excluded(affordance, False)
+    if reason is not None:
+        return reason
+    for flag in PIE_HIDDEN_FLAGS:
+        if tuned._class_plain(affordance, flag) is True:
+            return "hidden"
+    return None
+
+
+def choice_test(choice, context):
+    """2.39.0 (W12 G1): whether the game would run this pie choice now, by the choice's own test (no run): (ok, reason,
+    reason_key), as preflight_test reads an affordance."""
+    try:
+        result = choice.test(context)
+    except Exception as error:
+        return False, _bounded(repr(error)), None
+    if result:
+        return True, None, None
+    return False, _bounded(str(result)), refusal_key(result)
+
+
+def push_choice(choice, context):
+    """2.39.0 (W12 G1): the pie choice run as its own pair (its test, then its execute with its interaction parameters),
+    as a player's pick runs it. Returns (interaction_or_None, detail, kind, reason_key) as push_affordance_ex does. The
+    sim's push takes no parameters, so pushing the proxy affordance alone would lose the pick (the 2.19.1 vanish)."""
+    try:
+        outcome = choice.test_and_execute(context)
+    except Exception as error:
+        return None, _bounded(repr(error)), "failed", None
+    if not outcome:
+        return None, _bounded(str(outcome)), "refused", refusal_key(outcome)
+    try:
+        interaction = outcome.interaction
+    except Exception:
+        interaction = None
+    if interaction is None:
+        return None, _bounded(repr(outcome)), "failed", None
+    return interaction, None, None, None

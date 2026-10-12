@@ -656,6 +656,10 @@ class E2Control:
         self.spot_ids = act_menu.SpotIds()
         self.spots = {}
         self.spots_zone = None
+        # 2.39.0 (W12 G1): the pie choices the newest menu of this zone showed: {(object id, guid64, variant): the key
+        # the choice is matched by}. An act's variant is looked up here, then the choice is found again by its key.
+        self.variants = {}
+        self.variants_zone = None
         # 2.34.0 (F1): {"act": her act's record or None} while her act is being pushed, else None. A window or
         # screen that arrives meanwhile about her Sim is hers, before _watch_act has recorded the act.
         self.pushing = None
@@ -1086,7 +1090,7 @@ class E2Control:
         payload["phase"] = phase
         return self._event("act_event", payload)
 
-    def _act_check(self, object_id, guid64, owner=False):
+    def _act_check(self, object_id, guid64, owner=False, variant=None):
         """None when her chosen action may be pushed now, else (code, detail).
 
         Unlike a trial there is no lab-only gate, no busy gate (it queues like a
@@ -1136,6 +1140,9 @@ class E2Control:
         if not offers:
             return ("NOT_OFFERED", None), None
         affordance = offers[0]
+        if variant is not None:
+            return self._variant_check(sim, obj, affordance, context, object_id, guid64, variant,
+                                       spot=spot is not None or own_phone)
         try:
             person = obj.is_sim is True and obj is not sim
         except Exception:
@@ -1156,9 +1163,31 @@ class E2Control:
             if observers.build_mode() is True:
                 return ("BUILD_MODE_REFUSED", reason, reason_key), None
             return ("GAME_REFUSED", reason, reason_key), None
-        return None, (sim, obj, affordance, context)
+        return None, (sim, obj, affordance, context, False)
 
-    def cmd_act(self, act_id, object_id, guid64, connection, owner=False):
+    def _variant_check(self, sim, obj, pie, context, object_id, guid64, variant, spot=False):
+        """2.39.0 (W12 G1): the check of a pie choice. The pie is enumerated again now and the choice whose match key the
+        menu gave this variant is found by that key; none (or no menu entry for the variant) is VARIANT_GONE. The choice
+        is then checked as its own pair, the way the menu checked it. A spot or her own phone has no pie choices."""
+        if spot or not e2_actuator.is_pie(pie):
+            return ("VARIANT_GONE", None), None
+        key = self.variant_key(object_id, guid64, variant)
+        choice = None if key is None else e2_actuator.variant_choice(pie, obj, context, key)
+        if choice is None:
+            return ("VARIANT_GONE", None), None
+        excluded = e2_actuator.choice_excluded(choice)
+        if excluded is not None:
+            return ("EXCLUDED", excluded), None
+        ok, reason, reason_key = e2_actuator.choice_test(choice, context)
+        if not ok:
+            if observers.fire_active() is True:
+                return ("FIRE_REFUSED", reason, reason_key), None
+            if observers.build_mode() is True:
+                return ("BUILD_MODE_REFUSED", reason, reason_key), None
+            return ("GAME_REFUSED", reason, reason_key), None
+        return None, (sim, obj, choice, context, True)
+
+    def cmd_act(self, act_id, object_id, guid64, connection, owner=False, variant=None):
         """8f: push exactly the game action Ashley chose; never another, never twice.
 
         ACCEPTED is written before the push, so a failure in between leaves
@@ -1168,13 +1197,18 @@ class E2Control:
             return False
         self.act_ids.add(act_id)
         base = {"object_id": object_id, "guid64": guid64}
+        # 2.39.0 (W12 G1): a variant is a menu index (an int from 0 to MENU_MAX_VARIANT), never a bool or a string.
+        if variant is not None and (type(variant) is not int or not 0 <= variant <= schema.MENU_MAX_VARIANT):
+            self._act_event(act_id, "REJECTED", code="BAD_VARIANT", **base)
+            self._say(connection, "ACT_REJECT BAD_VARIANT")
+            return False
         if not self.available():
             self._act_event(act_id, "REJECTED", code="E2_UNAVAILABLE", **base)
             self._say(connection, "ACT_REJECT E2_UNAVAILABLE")
             return False
         accepted = False
         try:
-            refusal, bound = self._act_check(object_id, guid64, owner=owner)
+            refusal, bound = self._act_check(object_id, guid64, owner=owner, variant=variant)
             if refusal is not None:
                 code, detail = refusal[0], refusal[1]
                 reason_key = refusal[2] if len(refusal) > 2 else None
@@ -1183,15 +1217,19 @@ class E2Control:
                                 reason_key=reason_key, **base)
                 self._say(connection, "ACT_REJECT %s" % code)
                 return False
-            sim, obj, affordance, context = bound
-            tuning_name = _tuning_name(affordance)
+            sim, obj, affordance, context, is_choice = bound
+            # 2.39.0 (W12 G1): a pie choice is named by its own affordance; it runs as its own pair (push_choice).
+            tuning_name = _tuning_name(affordance.affordance if is_choice else affordance)
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
             accepted = True
             queued_before = _queued_interactions(sim)
             self._push_mark({"act_id": act_id, "interaction_id": None, "tuning_name": tuning_name, "base": base})
             try:
-                interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
-                    sim, obj, affordance, context)
+                if is_choice:
+                    interaction, detail, kind, reason_key = e2_actuator.push_choice(affordance, context)
+                else:
+                    interaction, detail, kind, reason_key = e2_actuator.push_affordance_ex(
+                        sim, obj, affordance, context)
             finally:
                 self.pushing = None
             # 2.28.0 (live 2026-10-08: a picker's push returned 704 while her queue gained 703, and
@@ -2212,6 +2250,16 @@ class E2Control:
     def publish_spots(self, zone, spots):
         """2.35.0 (D3): the spots of a menu build that finished in this zone are the ones an act may name now."""
         self.spots, self.spots_zone = dict(spots), zone
+
+    def publish_variants(self, zone, variants):
+        """2.39.0 (W12 G1): the pie choices of the menu just written in this zone are the ones an act may name now."""
+        self.variants, self.variants_zone = dict(variants), zone
+
+    def variant_key(self, object_id, guid64, variant):
+        """2.39.0 (W12 G1): the match key of a pie choice the menu of this zone showed, or None (VARIANT_GONE)."""
+        if self.variants_zone is None or self._get_zone() is not self.variants_zone:
+            return None
+        return self.variants.get((str(object_id), str(guid64), variant))
 
     def _spot_of(self, object_id):
         """2.35.0 (D3): the spot the newest finished menu build gave this id, while she is in the zone it was found

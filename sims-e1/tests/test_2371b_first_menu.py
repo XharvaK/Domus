@@ -146,7 +146,10 @@ class FirstMenuTests(unittest.TestCase):
             seconds += 15.0
             written.append(self.written_by(seconds))
         self.assertTrue(build.done)
-        self.assertEqual(written[:-1], [0] * (len(written) - 1))  # nothing while it is built
+        # 2.39.0 (W12 C1): the build's near part is written as its far part starts (the first step), then nothing
+        # while it is built, then the whole menu when it is done.
+        self.assertGreater(written[0], 0)
+        self.assertEqual(written[1:-1], [0] * (len(written) - 2))
         self.assertGreater(written[-1], 0)  # the whole menu when it is done
 
 

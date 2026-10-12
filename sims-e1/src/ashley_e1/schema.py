@@ -88,8 +88,9 @@ E2_PAYLOAD_KEYS = {
     # 2.35.0 (D3): refused_phone is on part 0 (None on the other parts, and on older rows).
     # 2.37.0 (schema 19, W10): cached (candidates the far cache answered; None on older rows) and excluded_phone
     # (part 0 only, like refused_phone).
+    # 2.39.0 (W12 C8, C11): dropped and spot_stages are on part 0 (None on the other parts, and on older rows).
     "act_menu": ("menu_rev", "room", "objects", "tested", "cached", "refused", "build_ms", "part", "parts",
-                 "refused_phone", "excluded_phone"),
+                 "refused_phone", "excluded_phone", "dropped", "spot_stages"),
 }
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
 # 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
@@ -99,7 +100,8 @@ RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
                   "other_dialog_open", "failed")
 # 2.19.0: 12 left the kitchen and the bedroom out of a nine-room house.
 # 2.34.0 (N8, F4): every object on the lot with acts for her (the probe keeps rows under the record limit in parts).
-MENU_MAX_OBJECTS = 256
+# 2.39.0 (W12 C8): 512 (was 256: whole rooms were dropped); what the cap leaves out is counted in part 0's dropped.
+MENU_MAX_OBJECTS = 512
 MENU_MAX_PARTS = 64
 MENU_MAX_ACTS = 8
 # 2.37.0 (W10 P3): her phone is one entry for all its acts, so it has its own cap (call and invite came after the 8th).
@@ -119,6 +121,18 @@ MENU_MAX_EXCLUDED_PHONE = 64
 MENU_EXCLUDED_KEYS = ("name", "why")
 MENU_EXCLUDED_WHY = ("pie_picker", "deny_name", "travel", "not_user_directed", "hidden")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
+# 2.39.0 (W12 G1, C4, C10, C12): optional on older rows. An act's variant is a pie-menu choice's index (0..999);
+# an object's on_lot (bool or None), acts_cut (passing acts the per-object cap left out, after folding texts) and
+# refusals (near objects only: at most 8 {text_key, reason_key} of the acts the game refused).
+MENU_ACT_OPTIONAL_KEYS = ("variant",)
+MENU_MAX_VARIANT = 999
+MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals")
+MENU_MAX_REFUSALS = 8
+MENU_REFUSAL_KEYS = ("text_key", "reason_key")
+# 2.39.0 (W12 C8, C11): part 0's dropped {objects, rooms} and spot_stages counters.
+MENU_DROPPED_KEYS = ("objects", "rooms")
+MENU_MAX_DROPPED_ROOMS = 64
+MENU_MAX_SPOT_STAGES = 16
 EXPERIMENT_PHASES = (
     "SIGNATURE_LEARNED", "CONTINUATION_LEARNED", "PREPARE_OK", "PREPARE_REJECT",
     "ADMIT_REJECT", "PUSHED", "PUSH_FAILED", "CLAIM", "FINISHED_CALLBACK",
@@ -602,6 +616,10 @@ def _validate_e2(row):
         for key in ("cached", "excluded_phone"):
             if key not in payload:
                 payload[key] = None
+        # 2.39.0 (W12): dropped and spot_stages are optional; rows before schema 20 omit them.
+        for key in ("dropped", "spot_stages"):
+            if key not in payload:
+                payload[key] = None
         # 2.25.0: reach is optional; older menu rows omit it. 2.29.0: so is phone. 2.35.0: so are spot and level.
         for item in payload.get("objects") or ():
             if isinstance(item, dict):
@@ -613,6 +631,13 @@ def _validate_e2(row):
                     item["spot"] = None
                 if "level" not in item:
                     item["level"] = None
+                # 2.39.0 (W12): on_lot, acts_cut and refusals are optional; a variant is optional on each act.
+                for key in MENU_OBJECT_OPTIONAL_KEYS:
+                    if key not in item:
+                        item[key] = None
+                for act in item.get("acts") or ():
+                    if isinstance(act, dict) and "variant" not in act:
+                        act["variant"] = None
     elif kind == "lineage_event" and isinstance(payload, dict):
         # 2.32.0: reason is optional; rows before schema 15 omit it.
         if "reason" not in payload:
@@ -747,9 +772,12 @@ def _validate_menu(payload):
             _require(isinstance(item, dict) and set(item) == set(MENU_EXCLUDED_KEYS), "menu excluded shape")
             bounded_string(item["name"], 128, "menu excluded name", False)
             _require(item["why"] in MENU_EXCLUDED_WHY, "menu excluded why")
+    _menu_dropped(payload.get("dropped"))
+    _menu_spot_stages(payload.get("spot_stages"))
     _require(isinstance(objects, list) and len(objects) <= MENU_MAX_OBJECTS, "menu objects")
     for item in objects:
-        _require(isinstance(item, dict) and set(item) == set(MENU_OBJECT_KEYS), "menu object shape")
+        _require(isinstance(item, dict) and set(item) - set(MENU_OBJECT_OPTIONAL_KEYS) == set(MENU_OBJECT_KEYS),
+                 "menu object shape")
         _require(isinstance(item["object_id"], str), "menu object_id")
         string_id(item["object_id"], "menu object_id")
         if item["room"] is not None:
@@ -768,15 +796,58 @@ def _validate_menu(payload):
         _require(item["spot"] is None or item["class"] == "spot", "menu spot class")
         acts = item["acts"]
         cap = MENU_MAX_PHONE_ACTS if item["phone"] is True else MENU_MAX_ACTS
-        _require(isinstance(acts, list) and 1 <= len(acts) <= cap, "menu acts")
+        _require(item.get("on_lot") in (True, False, None), "menu on_lot")
+        if item.get("acts_cut") is not None:
+            _require(type(item["acts_cut"]) is int and item["acts_cut"] >= 0, "menu acts_cut")
+        _menu_refusals(item.get("refusals"))
+        _require(isinstance(acts, list) and len(acts) <= cap and (acts or item.get("refusals")), "menu acts")
         for act in acts:
-            _require(isinstance(act, dict) and set(act) == set(MENU_ACT_KEYS), "menu act shape")
+            _require(isinstance(act, dict) and set(act) - set(MENU_ACT_OPTIONAL_KEYS) == set(MENU_ACT_KEYS),
+                     "menu act shape")
+            if act.get("variant") is not None:
+                _require(type(act["variant"]) is int and 0 <= act["variant"] <= MENU_MAX_VARIANT, "menu variant")
             _require(isinstance(act["guid64"], str), "menu guid64")
             string_id(act["guid64"], "menu guid64")
             bounded_string(act["name"], 128, "menu act name", False)
             if act["text_key"] is not None:
                 _require(isinstance(act["text_key"], str), "menu text_key")
                 string_id(act["text_key"], "menu text_key")
+
+
+def _menu_dropped(dropped):
+    """2.39.0 (W12 C8): None, or {objects: int, rooms: [room ids]} for what the object cap left out."""
+    if dropped is None:
+        return
+    _require(isinstance(dropped, dict) and set(dropped) == set(MENU_DROPPED_KEYS), "menu dropped shape")
+    _require(type(dropped["objects"]) is int and dropped["objects"] >= 0, "menu dropped objects")
+    rooms = dropped["rooms"]
+    _require(type(rooms) is list and len(rooms) <= MENU_MAX_DROPPED_ROOMS, "menu dropped rooms")
+    for room in rooms:
+        _require(isinstance(room, str), "menu dropped room")
+        string_id(room, "menu dropped room")
+
+
+def _menu_spot_stages(stages):
+    """2.39.0 (W12 C11): None, or a small dict of counters and flags (how far each spot got)."""
+    if stages is None:
+        return
+    _require(isinstance(stages, dict) and len(stages) <= MENU_MAX_SPOT_STAGES, "menu spot_stages")
+    for key, value in stages.items():
+        _require(isinstance(key, str) and len(key) <= 32, "menu spot_stages key")
+        _require(isinstance(value, bool) or (type(value) is int and value >= 0), "menu spot_stages value")
+
+
+def _menu_refusals(refusals):
+    """2.39.0 (W12 C4): None (a far object), or at most MENU_MAX_REFUSALS refusals of a near object's acts."""
+    if refusals is None:
+        return
+    _require(type(refusals) is list and len(refusals) <= MENU_MAX_REFUSALS, "menu refusals")
+    for item in refusals:
+        _require(isinstance(item, dict) and set(item) == set(MENU_REFUSAL_KEYS), "menu refusal shape")
+        for key in MENU_REFUSAL_KEYS:
+            if item[key] is not None:
+                _require(isinstance(item[key], str), "menu refusal key")
+                string_id(item[key], "menu refusal key")
 
 
 def _validate_motives(value):

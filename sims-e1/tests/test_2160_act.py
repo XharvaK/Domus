@@ -244,7 +244,7 @@ class MenuBuildTests(unittest.TestCase):
     def job(self, object_id, guid, distance=1.0, same_room=True):
         return {"object_id": object_id, "definition_id": "7", "class": "object_bookshelf",
                 "distance_m": distance, "same_room": same_room, "guid64": guid,
-                "name": "bookshelf_Read_%s" % guid, "text_key": "123"}
+                "name": "bookshelf_Read_%s" % guid, "text_key": "1" + guid}  # 2.39.0 (C12): texts fold; each act's own
 
     def test_her_room_then_her_lot_then_off_the_lot(self):
         # 2.16.2 (live 2026-10-05): on the sidewalk the street came first and she was blind.
@@ -564,7 +564,8 @@ class MenuSenseTests(unittest.TestCase):
         self.probe._menu_tick(self.row)   # finishes it and writes the menu
         menus = self.base.e2("act_menu")
         self.assertEqual(len(menus), 1)
-        self.assertEqual(menus[0]["objects"][0]["acts"], [{"guid64": GUID, "name": "ReadBook", "text_key": None}])
+        self.assertEqual(menus[0]["objects"][0]["acts"],
+                         [{"guid64": GUID, "name": "ReadBook", "text_key": None, "variant": None}])
         self.assertEqual(menus[0]["menu_rev"], 1)
         for row in self.base.rows("act_menu"):
             self.probe.schema.validate_record(row)
@@ -578,7 +579,13 @@ class MenuSenseTests(unittest.TestCase):
         self.probe._menu_tick(dict(self.row, zone=dict(self.row["zone"], room="5")))
         self.probe._menu_tick(self.row)
         menus = self.base.e2("act_menu")
-        self.assertEqual((len(menus), menus[-1]["objects"], menus[-1]["room"], menus[-1]["menu_rev"]), (2, [], "5", 2))
+        # 2.39.0 (W12 C1, C4): her move writes her near part at once (the room is hers now), and the rebuild that
+        # follows lists the near object with the game's refusals, since no act passes any more.
+        self.assertEqual(len(menus), 3)
+        self.assertEqual((menus[1]["room"], menus[1]["menu_rev"]), ("5", 2))
+        self.assertEqual((menus[-1]["room"], menus[-1]["menu_rev"]), ("5", 2))
+        self.assertEqual([(item["acts"], item["refusals"] is not None) for item in menus[-1]["objects"]],
+                         [([], True)])
 
     def test_a_menu_failure_never_stops_sampling(self):
         self.base.LedgerWriter.records = [self.base.continuing()[0]]
