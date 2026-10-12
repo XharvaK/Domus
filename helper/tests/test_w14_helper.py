@@ -93,7 +93,7 @@ def test_a_near_set_and_a_whole_set_of_the_same_revision_do_not_mix():
 def _menu_row(seq, e2, session="sess-1"):
     return {"event_kind": "act_menu", "written_sequence": seq, "wall_timestamp_ms": WALL,
             "monotonic_ns": WALL * 1_000_000, "telemetry_session_id": session, "sims_build": BUILD,
-            "probe_version": "2.41.0", "e2": e2}
+            "probe_version": "2.40.0", "e2": e2}
 
 
 def _tick(bridge, mono, wall):
