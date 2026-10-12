@@ -21,8 +21,11 @@ PLACEMENTS = ("floor", "wall", "surface")
 ITEMS_SHOWN = 12
 # A send that did not reach Natalis is tried once more after this long.
 RETRY_WAIT_S = 5
-# Ask ids this process has already answered (process-local, as the memory asks' are).
-_HANDLED = set()
+# Ask ids this process has already answered (process-local, as the memory asks' are), oldest first, at most
+# HANDLED_LIMIT of them; and the ids claimed whose answer is not sent yet (HELPER2-6).
+HANDLED_LIMIT = 256
+_HANDLED = {}
+_PENDING = set()
 _LOCK = threading.Lock()
 
 
@@ -42,17 +45,28 @@ def _ask(item):
 
 
 def _claim_new(asks):
+    """The asks not answered yet and not being answered: each is claimed until its answer is sent or given up (HELPER2-6)."""
     if not isinstance(asks, list):
         return []
     fresh = []
     with _LOCK:
         for item in asks:
             ask = _ask(item)
-            if ask is None or ask[0] in _HANDLED:
+            if ask is None or ask[0] in _HANDLED or ask[0] in _PENDING:
                 continue
-            _HANDLED.add(ask[0])
+            _PENDING.add(ask[0])
             fresh.append(ask)
     return fresh
+
+
+def _settle_claim(ask_id, sent):
+    """An ask whose answer was sent is kept as answered; one that was not is released, and the next sync hands it again."""
+    with _LOCK:
+        _PENDING.discard(ask_id)
+        if sent:
+            _HANDLED[ask_id] = True
+            while len(_HANDLED) > HANDLED_LIMIT:
+                del _HANDLED[next(iter(_HANDLED))]
 
 
 def answer_body(helper_session, ask_id, matched, items, refs):
@@ -97,11 +111,17 @@ def _send(client, ask_id, body):
 
 def _answer_all(asks, client, helper_session, search, refs):
     for ask_id, words, max_price, placement in asks:
-        body = _answer(helper_session, ask_id, words, max_price, placement, search, refs)
-        if not _send(client, ask_id, body):
-            time.sleep(RETRY_WAIT_S)
-            if not _send(client, ask_id, body):
-                log.warning("catalogue answer %s not sent after a retry", ask_id)
+        sent = False
+        try:
+            body = _answer(helper_session, ask_id, words, max_price, placement, search, refs)
+            sent = _send(client, ask_id, body)
+            if not sent:
+                time.sleep(RETRY_WAIT_S)
+                sent = _send(client, ask_id, body)
+                if not sent:
+                    log.warning("catalogue answer %s not sent after a retry", ask_id)
+        finally:
+            _settle_claim(ask_id, sent)
 
 
 def handle_asks_in_background(asks, client, *, helper_session, refs, search, start=None):

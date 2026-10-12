@@ -522,3 +522,55 @@ def test_a_verb_that_ends_asks_for_fresh_lists_at_most_once_per_ten_seconds_and_
     assert asks() == [("lists_now", {}), ("lists_now", {})]
     bridge.tick(WALL + 30_000)
     assert len(asks()) == 2
+
+
+# HELPER2-6: a catalogue ask is claimed while it is answered, and claimed for good only once its answer was sent; two
+# failed sends release it, so the next sync hands it again. The ids kept are bounded.
+def test_a_catalogue_ask_whose_answer_never_reaches_natalis_is_handed_again_and_one_that_was_sent_is_not(monkeypatch):
+    from domus_helper import catalog_ask
+    monkeypatch.setattr(catalog_ask, "RETRY_WAIT_S", 0)
+    monkeypatch.setattr(catalog_ask, "_HANDLED", {})
+    monkeypatch.setattr(catalog_ask, "_PENDING", set())
+
+    class Down(object):
+        def __init__(self):
+            self.calls = 0
+
+        def post_catalog(self, body):
+            self.calls += 1
+            raise OSError("down")
+
+    class Up(object):
+        def __init__(self):
+            self.posted = []
+
+        def post_catalog(self, body):
+            self.posted.append(body)
+            return {"status": "ok"}
+
+    def search(words, max_price, placement):
+        return 0, []
+    ask = [{"ask_id": "ask-down-1", "words": "chair"}]
+    down = Down()
+    catalog_ask.handle_asks_in_background(ask, down, helper_session="h", refs=RefBook(), search=search,
+                                          start=lambda run: run())
+    assert down.calls == 2 and "ask-down-1" not in catalog_ask._HANDLED
+    up = Up()
+    catalog_ask.handle_asks_in_background(ask, up, helper_session="h", refs=RefBook(), search=search,
+                                          start=lambda run: run())
+    assert [body["ask_id"] for body in up.posted] == ["ask-down-1"]
+    catalog_ask.handle_asks_in_background(ask, up, helper_session="h", refs=RefBook(), search=search,
+                                          start=lambda run: run())
+    assert len(up.posted) == 1
+
+
+def test_the_catalogue_asks_kept_as_answered_are_bounded(monkeypatch):
+    from domus_helper import catalog_ask
+    monkeypatch.setattr(catalog_ask, "_HANDLED", {})
+    monkeypatch.setattr(catalog_ask, "_PENDING", set())
+    client = type("Up", (), {"post_catalog": lambda self, body: {"status": "ok"}})()
+    asks = [{"ask_id": "ask-%d" % number, "words": "chair"} for number in range(catalog_ask.HANDLED_LIMIT + 10)]
+    catalog_ask.handle_asks_in_background(asks, client, helper_session="h", refs=RefBook(),
+                                          search=lambda words, max_price, placement: (0, []), start=lambda run: run())
+    assert len(catalog_ask._HANDLED) == catalog_ask.HANDLED_LIMIT
+    assert "ask-0" not in catalog_ask._HANDLED and "ask-%d" % (catalog_ask.HANDLED_LIMIT + 9) in catalog_ask._HANDLED
