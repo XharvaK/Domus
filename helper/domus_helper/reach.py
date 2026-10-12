@@ -211,16 +211,10 @@ def _place(item, refs, households=None, **_):
 
 
 def _placed(item):
-    """W13 (H, S5): a thing's place as the probe writes it: (kind, room id as digits). The kind is inventory, outside,
-    room or None (unreadable); the room id is set only for a room."""
-    where = item.get("where")
-    kind, room = None, _ident(item.get("room_id"))
-    if isinstance(where, dict):
-        kind = where.get("where") or where.get("kind") or ("room" if where.get("room_id") is not None else None)
-        if where.get("room_id") is not None:
-            room = _ident(where.get("room_id"))
-    elif isinstance(where, str):
-        kind = where
+    """W13 (H, S5): a thing's place as the probe writes it: `where` (a word) and `room_id` (digits). The kind is inventory,
+    outside, room or None (unreadable); the room id is set only for a room. A dict place is not a place (HELPER2-11)."""
+    kind = item.get("where") if isinstance(item.get("where"), str) else None
+    room = _ident(item.get("room_id"))
     if kind == "room" or (kind is None and room is not None):
         return "room", room
     return kind, None

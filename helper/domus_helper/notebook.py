@@ -282,19 +282,6 @@ class Notebook:
                 rows)
         return len(rows)
 
-    def room_labels(self, world):
-        """HE6: an interim name for each room, from the object families of its open object_room facts: "the room
-        with the fridge and the stove". The game's own room names are not read (UNKNOWN whether it exposes them).
-        A room with no known object has no label."""
-        families = {}
-        for row in self._con.execute(
-                "SELECT value, label FROM facts WHERE world = ? AND kind = 'object_room'"
-                " AND valid_until_ms IS NULL", (world,)).fetchall():
-            if row["label"]:
-                families.setdefault(row["value"], set()).add(row["label"])
-        return {room: "the room with the " + " and the ".join(sorted(names)[:3])
-                for room, names in families.items()}
-
     def slice(self, world, payload, now_ms):
         offered = set()
         if isinstance(payload, dict):

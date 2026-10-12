@@ -75,11 +75,11 @@ def test_a_place_in_a_room_is_sent_with_its_room_id_as_digits_the_probe_accepts(
 
 def test_room_labels_come_from_the_things_in_each_room_and_equal_labels_are_numbered_in_room_order():
     names = {"111": "Test Bed", "222": "Test Lamp", "333": "Test Stool", "444": "Test Sink"}
-    raw = [{"object_id": "1", "name_key": "111", "where": {"where": "room", "room_id": 3}},
-           {"object_id": "2", "name_key": "222", "where": {"where": "room", "room_id": "3"}},
-           {"object_id": "3", "name_key": "111", "where": {"where": "room", "room_id": "7"}},
-           {"object_id": "4", "name_key": "111", "where": {"where": "room", "room_id": "5"}},
-           {"object_id": "5", "name_key": "999", "where": {"where": "room", "room_id": "9"}},
+    raw = [{"object_id": "1", "name_key": "111", "where": "room", "room_id": 3},
+           {"object_id": "2", "name_key": "222", "where": "room", "room_id": "3"},
+           {"object_id": "3", "name_key": "111", "where": "room", "room_id": "7"},
+           {"object_id": "4", "name_key": "111", "where": "room", "room_id": "5"},
+           {"object_id": "5", "name_key": "999", "where": "room", "room_id": "9"},
            {"object_id": "6", "name_key": "333", "where": "inventory"},
            {"object_id": "7", "name_key": "444", "room_id": "8"}]
     assert reach.room_labels(raw, resolve=names.get) == {
@@ -91,8 +91,8 @@ def test_room_labels_come_from_the_things_in_each_room_and_equal_labels_are_numb
 
 def test_a_thing_is_placed_in_its_room_label_and_one_in_an_unlabelled_room_is_left_out_never_a_room():
     names = {"111": "Test Bed"}
-    raw = [{"object_id": "10", "name_key": "111", "where": {"where": "room", "room_id": "4"}, "value": 5},
-           {"object_id": "11", "name_key": "111", "where": {"where": "room", "room_id": "3"}, "value": 5}]
+    raw = [{"object_id": "10", "name_key": "111", "where": "room", "room_id": "4", "value": 5},
+           {"object_id": "11", "name_key": "111", "where": "room", "room_id": "3", "value": 5}]
     skipped = []
     words = reach.list_words("things", raw, refs=RefBook(), rooms={"3": "the room with the Test Bed"},
                              resolve=names.get, skipped=skipped)
@@ -672,3 +672,13 @@ def test_a_list_built_in_an_earlier_game_session_is_not_posted_after_the_session
     bridge._lists_session = "sess-1"
     bridge._post_list("people", entry, client, "h")
     assert len(client.posted["lists"]) == 1
+
+
+# HELPER2-11: the probe writes a thing's place as a string (`where`) and its room id beside it; a dict place is not a place.
+# The dead notebook room-label source is gone (S5's labels come from the things list only).
+def test_a_thing_whose_place_is_a_dict_is_not_placed_in_a_room_and_the_notebook_has_no_room_label_source():
+    from domus_helper.notebook import Notebook
+    names = {"111": "Test Bed"}
+    raw = [{"object_id": "1", "name_key": "111", "where": {"where": "room", "room_id": 3}}]
+    assert reach.room_labels(raw, resolve=names.get) == {}
+    assert not hasattr(Notebook, "room_labels")

@@ -1,33 +1,6 @@
-"""2.32.0 (HE6): a room is named by the object families in it ("the room with the fridge and the stove"), and that
-name reaches her portrait where a room number used to be. A room with no known object has no name."""
-from domus_helper.notebook import Notebook
+"""2.32.0 (HE6): a room is named in her portrait by its label where a room number used to be, and that name is never a
+number. The labels come from the things list (reach.room_labels, S5); the portrait only reads them."""
 from domus_helper.thalamus import observation
-
-
-def _near(*items):
-    return {"objects": {"near_rooms": [{"object_id": oid, "class": klass, "room": room}
-                                       for oid, klass, room in items], "moved": []}}
-
-
-def test_a_room_is_named_by_the_families_of_its_objects(tmp_path):
-    book = Notebook(tmp_path / "notebook.db")
-    book.observe_near_rooms("w", _near(("1", "object_fridge_A", "4"), ("2", "object_stove_B", "4"),
-                                       ("3", "object_bed_C", "9")), 1_000)
-    assert book.room_labels("w") == {"4": "the room with the fridge and the stove",
-                                     "9": "the room with the bed"}
-    assert book.room_labels("other-world") == {}
-    book.close()
-
-
-def test_a_moved_object_renames_the_rooms_it_left_and_entered(tmp_path):
-    book = Notebook(tmp_path / "notebook.db")
-    book.observe_near_rooms("w", _near(("1", "object_fridge_A", "4")), 1_000)
-    book.observe_near_rooms("w", {"objects": {"near_rooms": [{"object_id": "1", "class": "object_fridge_A",
-                                                              "room": "9"}],
-                                              "moved": [{"object_id": "1", "class": "object_fridge_A",
-                                                         "from_room": "4", "to_room": "9"}]}}, 2_000)
-    assert book.room_labels("w") == {"9": "the room with the fridge"}
-    book.close()
 
 
 def test_the_portrait_names_her_room_and_the_company_rooms_in_words_never_numbers():

@@ -313,7 +313,7 @@ def test_places_say_their_kind_and_whose_home_a_household_place_is():
 
 def test_things_name_their_room_or_inventory_and_one_with_no_readable_place_is_left_out():
     names = {"111": "Test Chair"}
-    raw = [{"object_id": 77, "definition_id": 9, "name_key": "111", "where": {"where": "room", "room_id": 3},
+    raw = [{"object_id": 77, "definition_id": 9, "name_key": "111", "where": "room", "room_id": 3,
             "value": 60, "made_by_her": True, "states": [{"state": "Dirty", "value": "Dirty"}],
             "in_use": False, "count": None, "placement": "floor"},
            {"object_id": "78", "name_key": "111", "where": "inventory", "in_use": True, "count": 2, "value": 20},
@@ -711,10 +711,10 @@ def test_every_list_built_from_fake_probe_rows_keeps_natalis_bounds_and_an_unnam
     _check_list_items("places", place_words)
     assert place_words[1]["what"] == "B" * 40 and place_words[1]["name"] == ("B" * 70 + "'s home")[:64]
 
-    things = [{"object_id": str(50 + n), "name_key": "1", "where": {"where": "room", "room_id": 3},
+    things = [{"object_id": str(50 + n), "name_key": "1", "where": "room", "room_id": 3,
                "value": n, "made_by_her": None, "states": [{"state": "x", "value": long_state}] * 6,
                "in_use": False, "count": 2, "placement": "floor, wall, surface"} for n in range(610)]
-    things.append({"object_id": "900", "name_key": "1", "where": {"where": "room", "room_id": 3}, "value": None})
+    things.append({"object_id": "900", "name_key": "1", "where": "room", "room_id": 3, "value": None})
     things.append({"object_id": "901", "name_key": "2", "where": "outside", "value": 3})
     things.append({"object_id": "902", "name_key": "1", "where": "inventory", "value": 4})
     skipped = []
