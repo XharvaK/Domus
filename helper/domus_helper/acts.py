@@ -184,7 +184,16 @@ def _object_name(item, resolve, catalog, people=None):
 
 
 DIALOG_PREFIX = "dialog:"
-DIALOG_ROWS_SHOWN = 12
+# W12 (A7): the probe keeps 40 rows of a picker; the helper shows them all and says "N of M" when it shows fewer.
+DIALOG_ROWS_SHOWN = 40
+# W12 (C2, C9): room 0 is the outside of the house. It is never "near" by its room, and it is named "outside".
+OUTSIDE_ROOM = "0"
+OUTSIDE_NAME = "outside"
+OUTSIDE_WHERE = "outside"
+OUTSIDE_ON_LOT_WHERE = "outside, on your lot"
+OUTSIDE_OFF_LOT_WHERE = "outside, off your lot"
+OFF_LOT_WHERE = "off your lot"
+REFUSALS_SHOWN = 8
 QUEUE_OBJECT_ID = "queue:her"
 QUEUE_SHOWN = 6
 # Posture plumbing is not something she chose or the client shows to stop.
@@ -297,7 +306,9 @@ def dialog_options(row, resolve=None, refs=None):
             continue
         rules = answer_rules(dialog, resolve)
         acts = []
-        for entry in [r for r in dialog.get("rows") or [] if isinstance(r, dict) and r.get("enabled")][:DIALOG_ROWS_SHOWN]:
+        enabled = [r for r in dialog.get("rows") or [] if isinstance(r, dict) and r.get("enabled")]
+        shown = enabled[:DIALOG_ROWS_SHOWN]
+        for entry in shown:
             text = _text(resolve, entry.get("name_key")) or "choice %s" % entry.get("option_id")
             if isinstance(entry.get("price"), int):
                 text = "%s (§%d)" % (text, entry["price"])
@@ -307,15 +318,23 @@ def dialog_options(row, resolve=None, refs=None):
             name = response.get("response") if isinstance(response, dict) else None
             if not isinstance(name, str) or (acts and name == "ok" and rules is None):
                 continue  # with rows, picking a row is the ok (unless her answer has rules)
+            # W12: a custom button the probe names response_<N> reads as choice N, never a bare name or number.
+            custom = name[len("response_"):] if name.startswith("response_") and name[len("response_"):].isdigit() else None
+            words = _text(resolve, response.get("text_key")) or ("choice %s" % custom if custom else name)
             acts.append({"ref": refs.ref(("dialog", str(dialog["dialog_id"]), "response", name)), "guid64": name,
-                         "text": _text(resolve, response.get("text_key")) or name})
+                         "text": words})
         if acts:
             title = _text(resolve, dialog.get("title_key")) or _text(resolve, dialog.get("text_key"))
+            where = "asked now" if len(shown) == len(enabled) else "asked now, %d of %d choices" % (len(shown), len(enabled))
             entry = {"object": "The game asks: %s" % (title or "a question"),
                      "object_id": DIALOG_PREFIX + str(dialog["dialog_id"]),
-                     "where": "asked now", "acts": acts}
+                     "where": where, "acts": acts}
             if rules is not None:
                 entry["answer_rules"] = rules
+            # W12 (hold_left_s): the whole seconds until the window's fallback hands it to the User.
+            held_for = dialog.get("hold_left_s")
+            if type(held_for) is int and held_for >= 0:
+                entry["hold_left_s"] = held_for
             result.append(entry)
     return result
 
@@ -379,13 +398,38 @@ def _where(item, menu_room, room):
     return "elsewhere" if same is True else "nearby"
 
 
+def _is_outside(item):
+    """W12 (C2, C9): an object in room 0 is outside the house."""
+    return item.get("room") is not None and str(item.get("room")) == OUTSIDE_ROOM
+
+
 def _in_her_room(item, room):
     """N8 (F4): whether an object is in the room she is in now. The probe's room id for the object decides
-    when both are known; an older menu without one is judged by the probe's same_room flag."""
+    when both are known; an older menu without one is judged by the probe's same_room flag.
+    W12 (C2): outside is no room: an outdoor object is not near her by its room, nor is one indoors when she is out."""
     object_room = item.get("room")
+    if _is_outside(item) or (room is not None and str(room) == OUTSIDE_ROOM):
+        return False
     if object_room is not None and room is not None:
         return str(object_room) == str(room)
     return item.get("same_room") is True
+
+
+def _refusals(item, resolve, near):
+    """W12 (C4): the acts the game refused on an object near her, in the game's own words: "<act>: refused: <reason>".
+    Only near objects carry them (the probe sends them for those alone); at most REFUSALS_SHOWN."""
+    if near is not True or not isinstance(item.get("refusals"), list):
+        return []
+    found = []
+    for refusal in item["refusals"]:
+        if not isinstance(refusal, dict):
+            continue
+        act = _text(resolve, refusal.get("text_key")) or humanize("act")
+        reason = _sentence(resolve, refusal.get("reason_key")) or "no reason given"
+        found.append(("%s: refused: %s" % (act, reason))[:240])
+        if len(found) >= REFUSALS_SHOWN:
+            break
+    return found
 
 
 def _near(item, room):
@@ -395,10 +439,13 @@ def _near(item, room):
 
 
 def _room_label(item, room_labels):
-    """N8 (F4): the room's label when it is known; None when it is not (the object then names no room)."""
+    """N8 (F4): the room's label when it is known; None when it is not (the object then names no room).
+    W12 (C9): the outside of the house is named outside, whatever the notebook says."""
     object_room = item.get("room")
     if object_room is None:
         return None
+    if str(object_room) == OUTSIDE_ROOM:
+        return OUTSIDE_NAME
     return (room_labels or {}).get(str(object_room))
 
 
@@ -482,6 +529,11 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         where = _where(item, menu.get("room"), room)
         if item.get("class") == "sim" and heard is not None and str(item.get("object_id")) in heard:
             where = HEARD_WHERE  # 2.38.0 (W11 H2): a Sim she hears on her lot, not seen: the room word does not apply
+        elif _is_outside(item):
+            # W12 (C9, G3): outside the house, and on her lot or not. A meal left at the step is a thing with acts.
+            where = {True: OUTSIDE_ON_LOT_WHERE, False: OUTSIDE_OFF_LOT_WHERE}.get(item.get("on_lot"), OUTSIDE_WHERE)
+        elif item.get("on_lot") is False:
+            where = OFF_LOT_WHERE  # W12 (C10): a neighbour's thing is said to be off her lot
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
         if item.get("phone") is True:
@@ -498,25 +550,35 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if text in texts:
                 continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
             texts.add(text)
+            guid = str(act["guid64"])
+            if type(act.get("variant")) is int and not isinstance(act.get("variant"), bool):
+                # W12 (G1): a pie-menu choice is its own act; its guid64 carries its variant ("<guid64>v<variant>").
+                guid = "%sv%d" % (guid, act["variant"])
             if is_spot:
                 # 2.35.0 (D3): a spot's ref is its room, level and kind, not the probe's number (it can change).
                 ref_key = ("spot", str(item.get("room")), item.get("level"), item.get("spot"))
             else:
-                ref_key = ("act", str(item.get("object_id")), str(act["guid64"]))
-            listed = {"ref": refs.ref(ref_key), "guid64": str(act["guid64"]), "text": text}
+                ref_key = ("act", str(item.get("object_id")), guid)
+            listed = {"ref": refs.ref(ref_key), "guid64": guid, "text": text}
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
             acts.append(listed)
         if acts:
             label = _room_label(item, room_labels)
             name = _spot_name(item, label) if is_spot else _object_name(item, resolve, catalog, people)
+            near = _near(item, room)
             entry = {"object": name, "object_id": str(item.get("object_id")), "where": where, "acts": acts,
-                     "near": _near(item, room)}
+                     "near": near}
             if label:
                 entry["room"] = label[:64]
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
+            refused = _refusals(item, resolve, near)
+            if refused:
+                entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)
+            if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
+                entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
             where_named = label[:64] if label else (str(item["room"])[:64] if item.get("room") is not None else None)
             room_id = None if item.get("room") is None else str(item["room"])
@@ -533,10 +595,23 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     result = _fold(result)
     while result and (len(result) > objects_limit or _bytes([row[0] for row in result]) > limit):
         left_out.append(result.pop()[1])
-    if cut is not None and left_out:
-        cut["objects"] = len(left_out)
-        cut["rooms"] = sorted({name for name in left_out if name})[:16]
+    # W12 (C8): what the probe's own object cap left out joins the cut, named by room (labels when known).
+    dropped = menu.get("dropped") if isinstance(menu.get("dropped"), dict) else {}
+    dropped_objects = dropped.get("objects") if type(dropped.get("objects")) is int and dropped["objects"] > 0 else 0
+    dropped_rooms = [_probe_room_name(value, room_labels) for value in (dropped.get("rooms") or [])[:16]
+                     if isinstance(value, (str, int)) and not isinstance(value, bool)]
+    if cut is not None and (left_out or dropped_objects):
+        cut["objects"] = len(left_out) + dropped_objects
+        cut["rooms"] = sorted({name for name in left_out + dropped_rooms if name})[:16]
     return [row[0] for row in result]
+
+
+def _probe_room_name(value, room_labels):
+    """W12 (C8, C9): a room the probe names by its id, in words: its label, outside, or "room <id>"."""
+    if str(value) == OUTSIDE_ROOM:
+        return OUTSIDE_NAME
+    label = (room_labels or {}).get(str(value))
+    return (label if isinstance(label, str) and label else "room %s" % str(value))[:64]
 
 
 def _version(probe):
