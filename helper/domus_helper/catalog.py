@@ -12,6 +12,8 @@ and none of the game's text is written into a repository.
     python -m domus_helper.catalog --id 9929
 """
 import argparse
+import json
+import re
 import sqlite3
 import struct
 import zlib
@@ -28,6 +30,10 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS catalog (definition_id INTEGER PRIMARY KEY, name_key INTEGER,
     description_key INTEGER, price INTEGER, source TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- W13 (H): the probe's flags for each buyable item, per game version, beside the names above.
+CREATE TABLE IF NOT EXISTS catalog_flags (game_version TEXT NOT NULL, definition_id INTEGER NOT NULL,
+    price INTEGER, buy_category TEXT NOT NULL, placement TEXT NOT NULL, tags TEXT NOT NULL,
+    purchasable INTEGER NOT NULL, PRIMARY KEY (game_version, definition_id));
 """
 
 
@@ -184,6 +190,137 @@ class Catalog(object):
         if len(self._cache) < 4096:
             self._cache[number] = entry
         return entry
+
+
+# W13 (H): the game's buy categories of furniture and decor (build_buy), surfaces (tables, counters) among them. Build
+# items (walls, floors, doors, windows, stairs, roofs, terrain) and vehicles are none of them, so the search never
+# offers them.
+FURNITURE = frozenset({"APPLIANCES", "COMFORT", "DECOR", "ELECTRONICS", "ENTERTAINMENT", "KIDS", "LIGHTING",
+                       "PLUMBING", "STORAGE", "SURFACE"})
+SEARCH_SHOWN = 12
+_WORDS = re.compile(r"[\W_]+")
+_DIGITS = re.compile(r"[0-9]{1,20}")
+
+
+def _strings(value, limit):
+    """W13 (H): the probe's list of names, at most limit of them (the non-text ones dropped)."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item][:limit]
+
+
+def _definition(value):
+    """W13 (H, A6-2): a definition id from the probe as an int: the probe writes its ids as digit strings, and a
+    plain int is taken too. Anything else is None."""
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str) and _DIGITS.fullmatch(value):
+        return int(value)
+    return None
+
+
+def store_flags(paths, game_version, items):
+    """W13 (H): the probe's catalogue flags for one game version, replacing that version's earlier ones. An item
+    without a definition id is skipped. The rows are built first: a dump with no usable row keeps the earlier flags, and
+    the replace is one transaction. Returns the number of items stored."""
+    rows = []
+    for item in items if isinstance(items, list) else []:
+        definition = _definition(item.get("definition_id")) if isinstance(item, dict) else None
+        if definition is None:
+            continue
+        price = item.get("price") if type(item.get("price")) is int else None
+        rows.append((game_version, definition, price,
+                     json.dumps(_strings(item.get("buy_category"), 4)),
+                     json.dumps(_strings(item.get("placement"), 1)),
+                     json.dumps(_strings(item.get("tags"), 8)),
+                     1 if item.get("purchasable") is True else 0))
+    if not rows:
+        return 0
+    target = index_path(paths)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(target)
+    try:
+        connection.executescript(SCHEMA)
+        with connection:
+            connection.execute("DELETE FROM catalog_flags WHERE game_version = ?", (game_version,))
+            connection.executemany("INSERT INTO catalog_flags VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    finally:
+        connection.close()
+    return len(rows)
+
+
+def _read_only(paths):
+    return sqlite3.connect("file:%s?mode=ro" % index_path(paths).as_posix(), uri=True)
+
+
+def has_flags(paths, game_version):
+    """W13 (H): whether the catalogue holds the probe's flags for this game version."""
+    if game_version is None or not index_path(paths).is_file():
+        return False
+    connection = _read_only(paths)
+    try:
+        return connection.execute("SELECT 1 FROM catalog_flags WHERE game_version = ? LIMIT 1",
+                                  (game_version,)).fetchone() is not None
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        connection.close()
+
+
+def search(paths, game_version, words, *, max_price=None, placement=None, resolve=None, shown=SEARCH_SHOWN):
+    """W13 (H): the purchasable furniture and decor whose names share words with `words`, filtered by max_price and
+    placement, ordered by how many of the words each name has (then by name). Returns (matched, items): the count of
+    every match, and at most `shown` items as {definition_id, name, price, placement, category}. Items are matched on
+    their names only; nothing ranks by taste, price or what suits her. resolve gives the game's text for a name key."""
+    query = set(word for word in _WORDS.split(words.casefold()) if word) if isinstance(words, str) else set()
+    if not query or not index_path(paths).is_file():
+        return 0, []
+    connection = _read_only(paths)
+    try:
+        rows = connection.execute(
+            "SELECT f.definition_id, f.price, f.buy_category, f.placement, c.name_key, c.price "
+            "FROM catalog_flags f JOIN catalog c ON c.definition_id = f.definition_id "
+            "WHERE f.game_version = ? AND f.purchasable = 1", (game_version,)).fetchall()
+    except sqlite3.OperationalError:
+        return 0, []
+    finally:
+        connection.close()
+    found = []
+    for definition_id, probe_price, categories_raw, placements_raw, name_key, catalog_price in rows:
+        categories = [name for name in json.loads(categories_raw) if name in FURNITURE]
+        placements = json.loads(placements_raw)
+        if not categories or (placement is not None and placement not in placements):
+            continue
+        price = probe_price if probe_price is not None else catalog_price
+        if price is None or (max_price is not None and price > max_price):
+            continue
+        text = resolve(str(name_key)) if resolve is not None else None
+        name = clean_name(text)
+        if name is None:
+            continue
+        score = len(query & set(word for word in _WORDS.split(name.casefold()) if word))
+        if score:
+            found.append((score, name, definition_id, price, placements, categories))
+    found.sort(key=lambda row: (-row[0], row[1].casefold(), row[2]))
+    items = [{"definition_id": definition_id, "name": name, "price": price,
+              "placement": _placement_text(placements),
+              "category": ", ".join(kind.lower() for kind in sorted(categories))[:40]}
+             for _score, name, definition_id, price, placements, categories in found[:shown]]
+    return len(found), items
+
+
+def _placement_text(placements):
+    """W13 (H, S3): the one placement word of an item (floor, wall or surface), or None when it has none."""
+    return placements[0] if placements else None
+
+
+def clean_name(text):
+    """W13 (H): a game name in words, cut to 64 characters, or None when nothing is left."""
+    from .acts import clean_text
+    if not isinstance(text, str):
+        return None
+    cleaned = clean_text(text)
+    return cleaned[:64] if cleaned else None
 
 
 def main(argv=None):

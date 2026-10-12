@@ -224,6 +224,17 @@ def _with_sentence(value, tuning, actors):
     return value
 
 
+def _job(item, resolve):
+    """2.19.0: one of her jobs in the game's words; at_work while her shift runs. W13 (D5.2): until_min, the game
+    minute her current work session ends (on the game clock), when it is readable."""
+    job = {"job": _resolve(resolve, item.get("text_key")) or item.get("career"),
+           "title": _resolve(resolve, item.get("title_key")),
+           "level": item.get("level"), "at_work": item.get("at_work") is True}
+    if type(item.get("until_min")) is int and item["until_min"] >= 0:
+        job["until_min"] = item["until_min"]
+    return job
+
+
 def _company_actors(item, names, body, unseen=()):
     """SS4-v3: the actors of a seen Sim's own act, in words. Their name first; then whoever it is aimed at:
     "you" for her, the name of a Sim she sees, "someone" for a Sim she only hears. An object, or nobody, is not named."""
@@ -239,6 +250,15 @@ def _company_actors(item, names, body, unseen=()):
     if key in unseen:
         return [name, "someone"]
     return [name]
+
+
+def _waiting(item):
+    """W13 (A6-8): a company entry is waiting when the presence item says so, or any of its situations does (the probe
+    writes the flag inside the situation)."""
+    if item.get("waiting") is True:
+        return True
+    return any(isinstance(situation, dict) and situation.get("waiting") is True
+               for situation in item.get("situations") or ())
 
 
 def _company_seen(item, resolve, labels=None):
@@ -258,6 +278,8 @@ def _company_seen(item, resolve, labels=None):
         entry["occult"] = [kind for kind in item["occult_kinds"] if isinstance(kind, str)]
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
+    if _waiting(item):
+        entry["waiting"] = True  # W13 (D4.2): a visitor waiting at her door (from the visitor's situation job)
     if item.get("situations"):
         # 2.15.2: the game situations they are in (a visit, a party) and their role.
         entry["situations"] = [dict(situation) for situation in item["situations"]
@@ -298,6 +320,8 @@ def _company_heard(item, seen, labels=None):
         entry["room_label"] = _room_label(item.get("room"), labels)
     if item.get("on_lot") is not None:
         entry["on_lot"] = item["on_lot"]
+    if _waiting(item):
+        entry["waiting"] = True  # W13 (D4.2): a visitor waiting at her door, heard and not seen
     return entry
 
 
@@ -589,11 +613,7 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
                                         for key in ("age", "pregnant", "sick", "dead", "ghost", "npc")}
         if isinstance(own.get("careers"), list):
             # 2.19.0: her jobs, in the game's words; at_work while her shift runs.
-            portrait["self"]["jobs"] = [
-                {"job": _resolve(resolve, item.get("text_key")) or item.get("career"),
-                 "title": _resolve(resolve, item.get("title_key")),
-                 "level": item.get("level"), "at_work": item.get("at_work") is True}
-                for item in own["careers"] if isinstance(item, dict)]
+            portrait["self"]["jobs"] = [_job(item, resolve) for item in own["careers"] if isinstance(item, dict)]
         if isinstance(own.get("wants"), list):
             # 2.30.0: what she wants and fears now, in the game's words.
             wants = []

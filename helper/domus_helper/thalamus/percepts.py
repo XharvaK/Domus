@@ -189,6 +189,10 @@ class Extractor:
         self._presence = None
         # HE3: who each present Sim was (name and last room), so "left" can say who and where.
         self._presence_names = {}
+        # W13 (H): the names of the people she knows (sim id -> name), set by the bridge from her people list; not saved.
+        self.people_names = {}
+        # W13 (S1): the act words of the newest menu by guid64 (set by the bridge; never saved).
+        self.act_words = {}
         self._on_lot = set()
         self._social = set()
         self._asked = set()
@@ -216,6 +220,10 @@ class Extractor:
             percepts.append(self._lineage(row))
         if kind == "act_event":
             percepts.extend(self._act(row))
+        if kind == "phone":
+            phone = self._phone(row)
+            if phone is not None:
+                percepts.append(phone)
         if kind in ("presence_snapshot", "session_open"):
             percepts.extend(self._snapshot(row))
         if type(seq) is int:
@@ -266,6 +274,29 @@ class Extractor:
                         facts=_facts(None, (("code", e2.get("code")), ("detail", e2.get("detail")),
                                             ("tuning_name", e2.get("tuning_name")),
                                             ("finishing_type", e2.get("finishing_type")), ("origin", "her_choice"))))]
+
+    def _phone(self, row):
+        """W13 (D4.3, S1): her phone, as a fact. A notice (the game's phone notification) names the phone act it is about,
+        by the act words of the newest menu; a call held for her names its caller when the caller's name is known. The
+        probe's row names a sender by sim id; the name is ours to look up, never the id's."""
+        e2 = row.get("e2") if isinstance(row.get("e2"), dict) else row
+        kind = e2.get("kind")
+        if kind not in ("notice", "call"):
+            return None
+        facts = [("kind", kind)]
+        if kind == "call":
+            sender = e2.get("from_sim_id")
+            name = None
+            if sender is not None:
+                sender = str(sender)
+                name = (self._presence_names.get(sender) or {}).get("name") or (self.people_names or {}).get(sender)
+            if isinstance(name, str) and name:
+                facts.append(("from", str(name)[:64]))
+        elif e2.get("notifies") is not None:
+            act = (self.act_words or {}).get(str(e2["notifies"]))
+            if isinstance(act, str) and act:
+                facts.append(("act", act[:64]))
+        return Percept("phone", "", "", "", urgency="normal", lineage=self.lineage_id, facts=tuple(facts))
 
     def _gap(self, session, lost=None):
         self._seen_row = True

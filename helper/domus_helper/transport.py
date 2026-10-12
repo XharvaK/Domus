@@ -79,6 +79,15 @@ class AshleyClient:
         """D7b: the world's memory answer for one of her asks. The parsed 200 response, or None."""
         return self._round_trip("/domus/memory", body)
 
+    def post_lists(self, body):
+        """W13 (H): one of her lists (people, places, things or events) in words. The parsed 200 response; SyncRefused
+        with Natalis's reason when it refused the list (a 400); None when the round trip failed."""
+        return self._round_trip("/domus/lists", body, refusals=True)
+
+    def post_catalog(self, body):
+        """W13 (H): the catalogue matches for one of her asks. The parsed 200 response, or None."""
+        return self._round_trip("/domus/catalog", body)
+
     def post_snapshot(self, body):
         """SNAPSHOT: one requested picture, or the reason there is none. HE15: a TransportResult whose kind is
         "sent" when Ashley took it, and otherwise why not (the same kinds as the other posts)."""
