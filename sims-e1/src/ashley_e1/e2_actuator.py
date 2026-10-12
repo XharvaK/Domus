@@ -403,11 +403,12 @@ def needs_sim(affordance):
 
 def picker_parameters(sim_info, sim_id):
     """2.40.0: the interaction parameters that make a Sim picker choose this Sim (picked_item_ids, included_override,
-    as the game's picker reads them), or None when the Sim cannot be named."""
+    as the game's picker reads them), or None when the Sim cannot be named.
+    2.40.0 (W13 R2): included_override holds the sim id, not the sim info: the game's picker reads the ids."""
     if sim_info is None:
         return None
     try:
-        return {"picked_item_ids": frozenset((int(sim_id),)), "included_override": [sim_info]}
+        return {"picked_item_ids": frozenset((int(sim_id),)), "included_override": [int(sim_id)]}
     except (TypeError, ValueError):
         return None
 

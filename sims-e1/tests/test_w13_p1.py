@@ -386,7 +386,7 @@ class ActorActuatorTests(unittest.TestCase):
         e2_actuator = self._actuator()
         info = ActorSims(123)
         self.assertEqual(e2_actuator.picker_parameters(info, "123"),
-                         {"picked_item_ids": frozenset({123}), "included_override": [info]})
+                         {"picked_item_ids": frozenset({123}), "included_override": [123]})
         self.assertIsNone(e2_actuator.picker_parameters(None, "123"))
 
 
@@ -457,7 +457,7 @@ class ReachActTests(unittest.TestCase):
                 _patched(self.probe.observers, "her_sim_info", lambda: None):
             ok, connection = self.act(sim_id="123")
         self.assertTrue(ok)
-        self.assertEqual(self.pushed, [{"picked_item_ids": frozenset({123}), "included_override": [info]}])
+        self.assertEqual(self.pushed, [{"picked_item_ids": frozenset({123}), "included_override": [123]}])
         self.assertEqual(self.act_events()[-1]["phase"], "PUSHED")
 
     def test_a_sim_given_to_an_act_that_is_not_a_picker_is_refused(self):
