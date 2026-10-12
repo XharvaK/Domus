@@ -316,10 +316,17 @@ def test_no_string_she_or_her_is_in_the_helper_text_except_the_user_screens_and_
     import tokenize
     from pathlib import Path
     pattern = re.compile(r"\b(she|her|hers|herself|She|Her|Hers)\b")
-    allowed_files = {"overlay.py", "overlay_page.py", "talk.py"}
+    allowed_files = {"overlay.py", "overlay_page.py", "talk.py"}  # the page is checked on its own below
     allowed_strings = {'"queue:her"', '"hers"'}
     root = Path(__file__).resolve().parents[1] / "domus_helper"
     found = []
+    # HELPER3-18: the overlay page is the User's screen. Its text is the quoted strings of its script (the keys and class
+    # names are identifiers, not screen text), and none of those says she or her.
+    page = (root / "overlay_page.py").read_text(encoding="utf-8")
+    for line_no, line in enumerate(page.splitlines(), start=1):
+        for quoted in re.findall(r'"[^"]*"', line):
+            if pattern.search(quoted):
+                found.append(("overlay_page.py", line_no, quoted[:60]))
     for path in sorted(root.rglob("*.py")):
         if "vendor" in path.parts or path.name in allowed_files:
             continue

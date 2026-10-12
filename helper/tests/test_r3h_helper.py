@@ -446,3 +446,42 @@ def test_a_relationship_says_its_labels_and_no_track_number_and_a_track_with_no_
     assert _how(["friend"], {"Romance": 40, "Trust": {"label": "trusted"}, "Anger": -3}) == "friend; trusted"
     assert _how([], {"Romance": 40}) == ""
     assert _how(None, None) == ""
+
+
+# ----------------------------------------------------------------- lineage: a save that continues her life, and a death (VOICE3-4, R3)
+
+def _life(seq, record, lineage_class, **e2):
+    from test_thalamus_percepts import _row
+    return _row(seq, kind="lineage_event", e2=dict({"slot_id": 3, "guid": "abc", "lineage_class": lineage_class,
+                                                    "record": record}, **e2))
+
+
+def test_a_save_that_only_continues_her_life_does_not_wake_her_and_a_body_gone_always_does():
+    from domus_helper.thalamus.percepts import Extractor
+    ext = Extractor()
+    first = [p for p in ext.step(_life(1, "CLASSIFIED", "HOUSEHOLD")) if p.kind == "lineage"]
+    assert first[0].urgency == "wake"  # a first classification is news
+    again = [p for p in ext.step(_life(2, "CLASSIFIED", "HOUSEHOLD")) if p.kind == "lineage"]
+    assert again[0].urgency == "normal"  # the same class after a save: her life goes on, nothing to wake for
+    changed = [p for p in ext.step(_life(3, "CLASSIFIED", "LOADED")) if p.kind == "lineage"]
+    assert changed[0].urgency == "wake"
+    gone = [p for p in ext.step(_life(4, "BODY_GONE", "BODY_GONE", reason="DEAD", death_type="Drowning"))
+            if p.kind == "lineage"]
+    assert gone[0].urgency == "wake" and dict(gone[0].facts) == {"reason": "DEAD", "death_type": "Drowning"}
+
+
+def test_a_death_type_is_a_fact_only_when_the_game_gave_one_and_it_is_at_most_forty_characters():
+    from domus_helper.thalamus.percepts import Extractor
+    ext = Extractor()
+    no_type = [p for p in ext.step(_life(1, "BODY_GONE", "BODY_GONE", reason="GHOST")) if p.kind == "lineage"]
+    assert dict(no_type[0].facts) == {"reason": "GHOST"}
+    long = [p for p in ext.step(_life(2, "BODY_GONE", "BODY_GONE", reason="DEAD", death_type="d" * 60))
+            if p.kind == "lineage"]
+    assert dict(long[0].facts)["death_type"] == "d" * 40
+
+
+def test_the_overlay_page_says_ashleys_queue_choice_and_body_not_her():
+    from domus_helper import overlay_page
+    text = overlay_page.PAGE
+    assert "in Ashley's queue" in text and "Ashley's choice" in text and "Ashley's body" in text
+    assert "in her queue" not in text and '"her body"' not in text
