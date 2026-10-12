@@ -3,7 +3,7 @@
 An object's catalogue entry (COBJ, type 0x319E4F1D) shares its definition's instance id.
 COBJ starts with its version, the common block version, then the name and description
 string keys and the price (verified 2026-10-05 against live definitions: 9929 reads
-"Pure Simplicity Sink"). Delta packages carry newer copies of FullBuild entries, so a
+a display name). Delta packages carry newer copies of FullBuild entries, so a
 Delta copy wins. Only the package index is read whole; each entry is read by seeking.
 The index lives in the helper's data folder; names resolve through the S0 string index,
 and none of the game's text is written into a repository.
@@ -195,8 +195,9 @@ class Catalog(object):
 # W13 (H): the game's buy categories of furniture and decor (build_buy), surfaces (tables, counters) among them. Build
 # items (walls, floors, doors, windows, stairs, roofs, terrain) and vehicles are none of them, so the search never
 # offers them.
+# Q-f (the User, 2026-10-12): a vehicle is searched like furniture (VEHICLE joins the set).
 FURNITURE = frozenset({"APPLIANCES", "COMFORT", "DECOR", "ELECTRONICS", "ENTERTAINMENT", "KIDS", "LIGHTING",
-                       "PLUMBING", "STORAGE", "SURFACE"})
+                       "PLUMBING", "STORAGE", "SURFACE", "VEHICLE"})
 SEARCH_SHOWN = 12
 _WORDS = re.compile(r"[\W_]+")
 _DIGITS = re.compile(r"[0-9]{1,20}")
@@ -223,17 +224,19 @@ def store_flags(paths, game_version, items):
     """W13 (H): the probe's catalogue flags for one game version, replacing that version's earlier ones. An item
     without a definition id is skipped. The rows are built first: a dump with no usable row keeps the earlier flags, and
     the replace is one transaction. Returns the number of items stored."""
-    rows = []
+    by_definition = {}
     for item in items if isinstance(items, list) else []:
         definition = _definition(item.get("definition_id")) if isinstance(item, dict) else None
         if definition is None:
             continue
         price = item.get("price") if type(item.get("price")) is int else None
-        rows.append((game_version, definition, price,
-                     json.dumps(_strings(item.get("buy_category"), 4)),
-                     json.dumps(_strings(item.get("placement"), 1)),
-                     json.dumps(_strings(item.get("tags"), 8)),
-                     1 if item.get("purchasable") is True else 0))
+        # HELPER2-14: one row per definition; a repeated id keeps its last row (no failed insert of the whole part).
+        by_definition[definition] = (game_version, definition, price,
+                                     json.dumps(_strings(item.get("buy_category"), 4)),
+                                     json.dumps(_strings(item.get("placement"), 1)),
+                                     json.dumps(_strings(item.get("tags"), 8)),
+                                     1 if item.get("purchasable") is True else 0)
+    rows = list(by_definition.values())
     if not rows:
         return 0
     target = index_path(paths)

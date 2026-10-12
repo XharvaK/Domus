@@ -6,6 +6,7 @@ import re
 import threading
 
 from . import snapshot
+from .commands import EnvelopeInvalid
 from .transport import SyncRefused
 
 # N8 (F4): the options of one view: at most 160 objects and 32,768 bytes (contract.py takes the same).
@@ -34,8 +35,12 @@ PROBE_NEEDS = {"cancel": (2, 20, 0), "answer": (2, 18, 0), "act": (2, 18, 0), "o
                "move": (2, 40, 0), "sell": (2, 40, 0), "sim": (2, 40, 0)}
 # W13 (H): the verb acts Natalis may send (SyncAct.verb); each is the probe command of the same name.
 VERBS = ("go", "save", "event", "buy", "place", "move", "sell")
-# W13 (H): a verb act's args are the probe command's args, as Natalis wrote them; this bounds what is forwarded.
-VERB_ARGS_BYTES = 4096
+# W13 (H): a verb act's args are the probe command's args, as Natalis wrote them; this bounds what is forwarded. It is
+# measured as the probe measures the envelope (ASCII JSON, HELPER2-13), with about 200 bytes left for the envelope's own
+# fields under the probe's 4096-byte limit.
+VERB_ARGS_BYTES = 3500
+# Q-d (the User, 2026-10-12): an event may start up to this many days ahead (the game's drama scheduler takes any time).
+EVENT_DAYS_MAX = 99
 # W13 (H): the most characters of a result's words the sync event carries (the contract's detail.result).
 RESULT_WORDS_MAX = 400
 # W13 (H): a sync event's whole detail is under this many bytes of JSON (Natalis's limit).
@@ -89,8 +94,10 @@ class MenuParts(object):
         # belong to the whole menu, whichever part came last.
         head = self._pieces[0]
         self._key, self._pieces = None, {}
+        # T2: the phone's lists are on part 0 too (the probe writes them there only).
         return dict(e2, objects=objects, part=0, parts=1, dropped=head.get("dropped"),
-                    spot_stages=head.get("spot_stages"))
+                    spot_stages=head.get("spot_stages"), refused_phone=head.get("refused_phone"),
+                    excluded_phone=head.get("excluded_phone"))
 
 
 class RefBook(object):
@@ -118,6 +125,11 @@ class RefBook(object):
 
 def _bytes(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _ascii_bytes(value):
+    """The size of a value as the probe reads it: ASCII JSON (its envelope limit is measured so; HELPER2-13)."""
+    return len(json.dumps(value, separators=(",", ":")).encode("ascii"))
 
 
 def humanize(name):
@@ -554,6 +566,30 @@ def _fold(rows):
     return kept
 
 
+PHONE_LEFT_OUT_LINES = 12
+PHONE_LEFT_OUT_CHARS = 160
+
+
+def _phone_left_out(menu, resolve):
+    """T2: her phone's acts the newest menu left out, in words: "<act>: left out: <reason>" for each excluded one (the
+    guard's reason), then "<act>: refused: <reason>" for each one the game refused (its own sentence). At most
+    PHONE_LEFT_OUT_LINES lines of PHONE_LEFT_OUT_CHARS characters; past that the last line is "and <n> more"."""
+    lines = []
+    for item in menu.get("excluded_phone") if isinstance(menu.get("excluded_phone"), list) else []:
+        if isinstance(item, dict):
+            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
+            why = humanize(item["why"]) if isinstance(item.get("why"), str) and item["why"] else "not said"
+            lines.append(("%s: left out: %s" % (act, why))[:PHONE_LEFT_OUT_CHARS])
+    for item in menu.get("refused_phone") if isinstance(menu.get("refused_phone"), list) else []:
+        if isinstance(item, dict):
+            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
+            reason = _sentence(resolve, item.get("reason_key")) or "no reason given"
+            lines.append(("%s: refused: %s" % (act, reason))[:PHONE_LEFT_OUT_CHARS])
+    if len(lines) > PHONE_LEFT_OUT_LINES:
+        lines = lines[:PHONE_LEFT_OUT_LINES - 1] + ["and %d more" % (len(lines) - (PHONE_LEFT_OUT_LINES - 1))]
+    return lines
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
             room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
@@ -569,6 +605,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     refs = RefBook() if refs is None else refs
     result = []
     left_out = []
+    phone_left_out = _phone_left_out(menu, resolve)
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
@@ -633,6 +670,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             refused = _refusals(item, resolve, near)
             if refused:
                 entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)
+            if item.get("phone") is True and phone_left_out:
+                entry["left_out"] = list(phone_left_out)  # T2: her phone's acts left out of the menu, and why
             if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
                 entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
@@ -763,7 +802,7 @@ def _verb_args(args):
     are checked here; the probe checks the values. Nothing it carries is ever logged."""
     if args is None:
         return {}
-    if type(args) is not dict or not all(type(key) is str for key in args) or _bytes(args) > VERB_ARGS_BYTES:
+    if type(args) is not dict or not all(type(key) is str for key in args) or _ascii_bytes(args) > VERB_ARGS_BYTES:
         raise ArgsInvalid("args")
     return dict(args)
 
@@ -806,7 +845,7 @@ def _start_of(args):
     if start == "now":
         return "now"
     if (type(start) is dict and set(start) == {"day_offset", "hour", "minute"} and type(start["day_offset"]) is int
-            and start["day_offset"] in (0, 1) and type(start["hour"]) is int and 0 <= start["hour"] <= 23
+            and 0 <= start["day_offset"] <= EVENT_DAYS_MAX and type(start["hour"]) is int and 0 <= start["hour"] <= 23
             and type(start["minute"]) is int and 0 <= start["minute"] <= 59):
         return {"day_offset": start["day_offset"], "hour": start["hour"], "minute": start["minute"]}
     return None
@@ -868,7 +907,7 @@ class ActCourier(object):
     variant is gated on the probe."""
 
     def __init__(self, spool, publish, resolve=None, memory=None, *, reply=None, log=None, say=None, her_name=None,
-                 answered=None, result_words=None, rooms=None):
+                 answered=None, result_words=None, rooms=None, ended=None):
         self._spool = spool
         self._publish = publish
         self._resolve = resolve
@@ -886,6 +925,8 @@ class ActCourier(object):
         self._result_words = result_words
         # W13 (H, D9.3): the room labels of her view (a room id to its label), so a place's room name is an id.
         self._rooms = rooms
+        # HELPER2-4: called (no arguments) when a verb act ends, so her lists can be asked for again.
+        self._ended = ended
         raw = spool.get_kv("acts_known")
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
@@ -923,6 +964,11 @@ class ActCourier(object):
         if detail:
             event["detail"] = detail
         self._events.append(event)
+
+    def _verb_ended(self, known):
+        """HELPER2-4: a verb act (her buy, place, move, sell, save, trip or event) that ended may have changed her lists."""
+        if known is not None and known.get("verb") and self._ended is not None:
+            self._ended()
 
     def _log_line(self, now_ms, trigger, error, count):
         """W12 (B4, F6): one line per failed round trip (the decision log's record; never raises)."""
@@ -1032,6 +1078,7 @@ class ActCourier(object):
             known["answered"] = True
             if phase in _TERMINAL:
                 known["terminal"] = True
+                self._verb_ended(known)
         self._save()
 
     def _words_of_result(self, result, start=None):
@@ -1065,6 +1112,7 @@ class ActCourier(object):
                 self._event(act_id, "rejected", now_ms, {"code": _refusal_code(reply), "by": "probe"})
                 known["answered"] = True
                 known["terminal"] = True
+                self._verb_ended(known)
 
     def tick(self, client, helper_session, now_ms, attached, probe=None):
         """One round trip: send what happened, receive what to do. Returns the acts written.
@@ -1076,6 +1124,7 @@ class ActCourier(object):
                 if now_ms - known["written_ms"] >= PROBE_REPLY_MS:
                     known["timed_out"] = True
                     self._event(act_id, "unknown", now_ms, {"code": "NO_PROBE_REPLY"})
+                    self._verb_ended(known)
             elif not attached:
                 # A9-1: a short detach (a zone load, a sleep, a stale telemetry stall) is not the end of an act
                 # the game may still finish; the verdict is a guess only after DETACH_GRACE_MS.
@@ -1083,10 +1132,12 @@ class ActCourier(object):
                 if now_ms - known["detached_ms"] >= DETACH_GRACE_MS:
                     known["timed_out"] = True
                     self._event(act_id, "unknown", now_ms, {"code": "GAME_DETACHED"})
+                    self._verb_ended(known)
             elif now_ms - known["written_ms"] >= ACT_CEILING_MS:
                 # GL8: the probe began it, and no end came.
                 known["timed_out"] = True
                 self._event(act_id, "unknown", now_ms, {"code": "NO_END_REPORTED"})
+                self._verb_ended(known)
             else:
                 known.pop("detached_ms", None)
         self._read_replies(now_ms)
@@ -1126,7 +1177,7 @@ class ActCourier(object):
         ARGS_INVALID, with the code in its detail. Any other error is not changed."""
         try:
             return self._publish(command, args)
-        except ValueError as error:
+        except EnvelopeInvalid as error:
             raise EnvelopeRefused(str(error)[:40]) from error
 
     def _send_alone(self, client, helper_session, now_ms, attached, probe):
@@ -1230,6 +1281,8 @@ class ActCourier(object):
                 self._event(act_id, "rejected", now_ms, detail)
                 continue
             known = {"written_ms": now_ms, "object": object_id if object_id.isdigit() else None}
+            if verb is not None:
+                known["verb"] = True  # HELPER2-4: a verb act's end is told to the bridge (it may change her lists)
             if isinstance(command, str):
                 known["cmd"] = command  # W12 (B3): the probe's reply to this command, read on the next ticks
             if verb == "event":

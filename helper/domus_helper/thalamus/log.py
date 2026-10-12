@@ -1,5 +1,6 @@
 """Append-only decision log with a byte quota. Never deletes today's file."""
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,16 +11,19 @@ class DecisionLog:
     def __init__(self, data_dir, quota=DECISION_LOG_QUOTA_BYTES):
         self.dir = Path(data_dir) / "thalamus"
         self.quota = quota
+        self._lock = threading.Lock()
 
     def write(self, record):
-        self.dir.mkdir(parents=True, exist_ok=True)
-        wall_ms = int(record["wall_ms"])
-        day = datetime.fromtimestamp(wall_ms / 1000.0, timezone.utc).strftime("%Y%m%d")
-        path = self.dir / ("decisions-%s.jsonl" % day)
-        line = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-        self._trim(day)
+        # HELPER2-9: the tick and the list post thread both write; a write and its trim run under one lock.
+        with self._lock:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            wall_ms = int(record["wall_ms"])
+            day = datetime.fromtimestamp(wall_ms / 1000.0, timezone.utc).strftime("%Y%m%d")
+            path = self.dir / ("decisions-%s.jsonl" % day)
+            line = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+            self._trim(day)
 
     def _trim(self, today):
         while self._total() > self.quota:

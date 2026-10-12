@@ -1,4 +1,8 @@
-"""Unattended one-at-a-time probe trials against the lab save."""
+"""Unattended one-at-a-time probe trials against the lab save.
+
+Lab only: it refuses to start unless it gets --lab on its command line (the User's ruling, 2026-10-12: the lab drivers
+never run against HOME). Usage: python -m domus_helper.crawl --lab [--dry-run] [--per-hour N] ...
+"""
 import argparse
 import json
 import sqlite3
@@ -678,7 +682,9 @@ def _live_rows(paths):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, usage="%(prog)s --lab [options]")
+    parser.add_argument("--lab", action="store_true",
+                        help="required: the trials run against the lab save only, never HOME (the User, 2026-10-12)")
     parser.add_argument("--per-hour", type=int, default=30)
     parser.add_argument("--max-trials", type=int, default=200)
     parser.add_argument("--dry-run", action="store_true")
@@ -692,6 +698,9 @@ def main(argv=None):
     # Telemetry, not her policy: measure a low need's cure before the next trial.
     parser.add_argument("--relief-survey", action="store_true")
     args = parser.parse_args(argv)
+    if not args.lab:
+        print("refused: the crawl runs only against the lab save; pass --lab", file=sys.stderr)
+        return 2
     paths = Paths.from_env()
     try:
         if args.tuned_file:

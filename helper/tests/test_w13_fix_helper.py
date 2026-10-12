@@ -1,9 +1,10 @@
 """W13 fixes (helper, 2026-10-12): the probe's real shapes, checked against the helper. The probe is read here only as
 its wire shape (digit-string ids, one-word placements, names of buy categories); every name is invented and the game
-is a fake. The room id rule (cmdbox `_digits`) is copied, because the vendored cmdbox is still the 2.39.0 copy."""
+is a fake. Every command the helper sends is checked by the vendored probe module (domus_helper.vendor.cmdbox, 2.40.0), through
+commands.envelope, which parses the envelope the way the probe does (HELPER2-5)."""
 import json
 
-from domus_helper import catalog, catalog_ask, reach
+from domus_helper import catalog, catalog_ask, commands, reach
 from domus_helper.acts import RefBook
 from test_w13_helper import CATALOG_NAMES, VERB_ACT, _catalog_db, _courier, _flag, _Mint, _settle, _verb
 
@@ -54,32 +55,16 @@ def test_a_probe_placement_list_keeps_one_word_and_a_category_list_keeps_its_nam
 
 
 
-def test_a_surface_such_as_a_table_or_counter_is_furniture_she_can_find_but_a_vehicle_is_not(tmp_path, monkeypatch):
+def test_a_surface_such_as_a_table_or_counter_and_a_vehicle_are_found_by_their_words(tmp_path, monkeypatch):
+    # Q-f (the User, 2026-10-12): VEHICLE joins the search set, so a vehicle is found like furniture.
     paths = _catalog_db(tmp_path, monkeypatch, [(301, 1301)])
     catalog.store_flags(paths, "1.128", [_probe_flag(301, ["SURFACE"], ["floor"], 80)])
     assert catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get)[0] == 1
     catalog.store_flags(paths, "1.128", [_probe_flag(301, ["VEHICLE"], ["floor"], 80)])
-    assert catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get) == (0, [])
+    found = catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get)
+    assert found[0] == 1 and found[1][0]["definition_id"] == 301
 
 # W13 (H, S4/S5): a room is a digit string on every wire, and a room's label comes from the things in it.
-def _digits(value):
-    """cmdbox._digits (2.40.0): a copy of the probe's rule, for the vendored cmdbox is still 2.39.0."""
-    return type(value) is str and 1 <= len(value) <= 20 and all(ch in "0123456789" for ch in value)
-
-
-def _probe_place_ok(place):
-    """cmdbox._place_ok (2.40.0): a copy of the probe's rule for a wall or in place; facing is an id or 'room'."""
-    if type(place) is not dict or 'rel' not in place:
-        return False
-    if place['rel'] not in ('wall', 'in'):
-        return False
-    if set(place) - {'rel', 'room_id', 'facing'} or 'room_id' not in place:
-        return False
-    if not _digits(place['room_id']):
-        return False
-    return 'facing' not in place or place['facing'] == 'room' or _digits(place['facing'])
-
-
 def test_a_place_in_a_room_is_sent_with_its_room_id_as_digits_the_probe_accepts(tmp_path):
     courier, sent = _courier(tmp_path, rooms=lambda: {"3": "the room with the Test Bed"})
     place = {"rel": "wall", "room": "The Room With The Test Bed", "facing": "room"}
@@ -87,16 +72,16 @@ def test_a_place_in_a_room_is_sent_with_its_room_id_as_digits_the_probe_accepts(
     assert len(sent) == 1
     moved = sent[0][1]["place"]
     assert moved == {"rel": "wall", "room_id": "3", "facing": "room"}
-    assert _probe_place_ok(moved)
+    commands.envelope("buy", {"act_id": VERB_ACT, "definition_id": "7", "place": moved}, "helper")
 
 
 def test_room_labels_come_from_the_things_in_each_room_and_equal_labels_are_numbered_in_room_order():
     names = {"111": "Test Bed", "222": "Test Lamp", "333": "Test Stool", "444": "Test Sink"}
-    raw = [{"object_id": "1", "name_key": "111", "where": {"where": "room", "room_id": 3}},
-           {"object_id": "2", "name_key": "222", "where": {"where": "room", "room_id": "3"}},
-           {"object_id": "3", "name_key": "111", "where": {"where": "room", "room_id": "7"}},
-           {"object_id": "4", "name_key": "111", "where": {"where": "room", "room_id": "5"}},
-           {"object_id": "5", "name_key": "999", "where": {"where": "room", "room_id": "9"}},
+    raw = [{"object_id": "1", "name_key": "111", "where": "room", "room_id": 3},
+           {"object_id": "2", "name_key": "222", "where": "room", "room_id": "3"},
+           {"object_id": "3", "name_key": "111", "where": "room", "room_id": "7"},
+           {"object_id": "4", "name_key": "111", "where": "room", "room_id": "5"},
+           {"object_id": "5", "name_key": "999", "where": "room", "room_id": "9"},
            {"object_id": "6", "name_key": "333", "where": "inventory"},
            {"object_id": "7", "name_key": "444", "room_id": "8"}]
     assert reach.room_labels(raw, resolve=names.get) == {
@@ -108,13 +93,32 @@ def test_room_labels_come_from_the_things_in_each_room_and_equal_labels_are_numb
 
 def test_a_thing_is_placed_in_its_room_label_and_one_in_an_unlabelled_room_is_left_out_never_a_room():
     names = {"111": "Test Bed"}
-    raw = [{"object_id": "10", "name_key": "111", "where": {"where": "room", "room_id": "4"}, "value": 5},
-           {"object_id": "11", "name_key": "111", "where": {"where": "room", "room_id": "3"}, "value": 5}]
+    raw = [{"object_id": "10", "name_key": "111", "where": "room", "room_id": "4", "value": 5},
+           {"object_id": "11", "name_key": "111", "where": "room", "room_id": "3", "value": 5}]
     skipped = []
     words = reach.list_words("things", raw, refs=RefBook(), rooms={"3": "the room with the Test Bed"},
                              resolve=names.get, skipped=skipped)
     assert [item["where"] for item in words] == ["the room with the Test Bed"]
     assert skipped == ["where"]
+
+
+def test_every_verb_the_helper_sends_passes_the_vendored_probe_envelope(tmp_path):
+    rooms = {"3": "the room with the Test Bed"}
+    places = [{"rel": "wall", "room": "The Room With The Test Bed", "facing": "room"},
+              {"rel": "in", "room": "the room with the test bed"},
+              {"rel": "on", "target_id": "12"}, {"rel": "beside", "target_id": "13", "facing": "14"},
+              {"rel": "instead", "target_id": "15", "facing": "room"}]
+    acts = [_verb("buy", {"definition_id": "7", "place": place, "max_price": 90}) for place in places]
+    acts += [_verb("place", {"object_id": "9", "place": places[0]}), _verb("move", {"object_id": "9", "place": places[2]}),
+             _verb("sell", {"object_id": "9"}), _verb("save", {}), _verb("go", {"zone_id": "4"}),
+             _verb("event", {"situation_id": "5", "guests": ["6", "7"], "start": "now"}),
+             _verb("event", {"situation_id": "5", "guests": [], "start": {"day_offset": 1, "hour": 9, "minute": 30}})]
+    acts = [dict(act, act_id="%032x" % (number + 1)) for number, act in enumerate(acts)]
+    courier, sent = _courier(tmp_path, rooms=lambda: rooms)
+    courier.tick(_Mint(acts=acts), "h", 1000, True, probe="2.40.0")
+    assert len(sent) == len(acts)
+    for command, args in sent:
+        commands.envelope(command, args, "helper")  # raises ValueError when the probe would refuse the envelope
 
 
 def test_an_unknown_room_names_the_rooms_she_knows_and_no_more_than_eight(tmp_path):
@@ -148,8 +152,10 @@ def test_an_envelope_refusal_is_args_invalid_with_the_probes_code_in_its_detail(
     from domus_helper.acts import ActCourier
     from domus_helper.spool import Spool
 
+    from domus_helper.commands import EnvelopeInvalid
+
     def publish(command, args):
-        raise ValueError("BAD_ARGS")
+        raise EnvelopeInvalid("BAD_ARGS")
     courier = ActCourier(Spool(tmp_path / "spool.db"), publish)
     courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
     refused = [event for event in courier._events if event["phase"] == "rejected"]
@@ -352,9 +358,9 @@ def test_a_notice_on_her_phone_is_a_fact_naming_the_phone_act_it_is_about():
     row = {"event_kind": "phone", "telemetry_session_id": "s", "written_sequence": 1, "wall_timestamp_ms": 1000,
            "e2": {"kind": "notice", "from_sim_id": None, "notifies": "4242"}}
     phone = [p for p in extractor.step(row) if p.kind == "phone"]
-    assert len(phone) == 1 and dict(phone[0].facts) == {"kind": "notice", "act": "Test Phone Act"}
+    assert len(phone) == 1 and dict(phone[0].facts) == {"what": "notice", "act": "Test Phone Act"}
     unnamed = dict(row, written_sequence=2, e2={"kind": "notice", "from_sim_id": None, "notifies": "9999"})
-    assert [dict(p.facts) for p in extractor.step(unnamed) if p.kind == "phone"] == [{"kind": "notice"}]
+    assert [dict(p.facts) for p in extractor.step(unnamed) if p.kind == "phone"] == [{"what": "notice"}]
 
 
 def test_a_call_held_for_her_is_a_fact_with_its_callers_name_when_it_is_known():
@@ -364,9 +370,9 @@ def test_a_call_held_for_her_is_a_fact_with_its_callers_name_when_it_is_known():
     row = {"event_kind": "phone", "telemetry_session_id": "s", "written_sequence": 1, "wall_timestamp_ms": 1000,
            "e2": {"kind": "call", "from_sim_id": "501", "notifies": None}}
     assert [dict(p.facts) for p in extractor.step(row) if p.kind == "phone"] == [
-        {"kind": "call", "from": "Test Person"}]
+        {"what": "call", "from": "Test Person"}]
     unknown = dict(row, written_sequence=2, e2={"kind": "call", "from_sim_id": None, "notifies": None})
-    assert [dict(p.facts) for p in extractor.step(unknown) if p.kind == "phone"] == [{"kind": "call"}]
+    assert [dict(p.facts) for p in extractor.step(unknown) if p.kind == "phone"] == [{"what": "call"}]
     text = dict(row, written_sequence=3, e2={"kind": "text", "from_sim_id": "501", "notifies": None})
     assert [p for p in extractor.step(text) if p.kind == "phone"] == []
 
@@ -391,3 +397,444 @@ def test_the_bridge_names_a_notices_act_from_the_newest_menu(paths, tmp_path, mo
     bridge = _bridge(paths, {"ms": WALL})
     bridge.tick(WALL)
     assert bridge._extractor.act_words == {"4242": "phone Read"}  # humanized, as the menu has no words for it
+
+
+# HELPER2-1: her phone percepts reach Natalis with `what` (notice or call), the key her view reads. The fixture holds the
+# probe's phone rows; the test builds the wire percepts from them through the observation builder.
+def test_the_phone_percepts_in_the_fixture_reach_the_wire_with_what_natalis_reads():
+    from pathlib import Path
+    from types import SimpleNamespace
+    from domus_helper.contract import validate_observation as check
+    from domus_helper.thalamus import observation
+    from domus_helper.thalamus.percepts import Extractor
+    cases = json.loads((Path(__file__).parent / "fixtures" / "phone_percepts.json").read_text(encoding="utf-8"))
+    assert set(cases) == {"notice", "call"}
+    for name, case in cases.items():
+        extractor = Extractor()
+        extractor.act_words = case["act_words"]
+        extractor.people_names = case["people_names"]
+        percepts = tuple((p, 0.5) for p in extractor.step(case["row"]) if p.kind == "phone")
+        assert len(percepts) == 1, name
+        obs = observation.build(SimpleNamespace(percepts=percepts), {
+            "helper_session": "a" * 32, "obs_seq": 0, "slot_id": 3, "guid": "abc", "lineage_class": "load",
+            "row": {"written_sequence": 2, "wall_timestamp_ms": 5_000, "telemetry_session_id": "test-session",
+                    "body": {"sim_id": "1", "posture": {"posture_name": "stand"}},
+                    "game": {"clock_speed": "NORMAL", "paused": False}, "zone": {"zone_id": 7, "lot_id": 9},
+                    "motives": [{"id": "hunger", "value": 40, "band": "ok"}]},
+        })
+        check(obs, 5_000)
+        wire = [item for item in obs["percepts"] if item["kind"] == "phone"]
+        assert len(wire) == 1, name
+        assert {key: wire[0]["facts"].get(key) for key in case["wire"]} == case["wire"], name
+        assert "kind" not in wire[0]["facts"], name
+
+
+# HELPER2-2 / SEAM2-8: two rooms with the same long name get two labels, each within the 64 characters Natalis shows, and
+# a place named by a label finds its own room (the label is not cut a second time).
+def test_two_rooms_with_the_same_long_names_get_distinct_labels_that_each_place_finds_its_own_room():
+    from domus_helper.acts import _place_args
+    names = {"k1": "Invented Long Piece Of Furniture Alpha", "k2": "Invented Long Piece Of Furniture Beta",
+             "k3": "Invented Long Piece Of Furniture Gamma"}
+    raw = [{"object_id": str(room * 100 + index), "where": "room", "room_id": room, "name_key": key, "made_by_her": False}
+           for room in (5, 6) for index, key in enumerate(names)]
+    labels = reach.room_labels(raw, resolve=names.get)
+    assert labels["5"] != labels["6"]
+    assert all(len(label) <= reach.WHERE_LIMIT for label in labels.values())
+    things = reach.list_words("things", raw, refs=RefBook(), rooms=labels, resolve=names.get)
+    assert {thing["where"] for thing in things if thing["id"] in ("500", "501", "502")} == {labels["5"]}
+    assert {thing["where"] for thing in things if thing["id"] in ("600", "601", "602")} == {labels["6"]}
+    assert _place_args({"place": {"room": labels["5"]}}, labels)["place"]["room_id"] == "5"
+    assert _place_args({"place": {"room": labels["6"]}}, labels)["place"]["room_id"] == "6"
+
+
+# HELPER2-3 / T1: a list post carries `total`: the probe's total when it sent one, else the count before the helper's own
+# byte cut. The digest covers the total, so a total that changes alone is sent again.
+def test_a_list_parts_total_is_kept_with_the_list_and_none_when_the_probe_sent_none():
+    parts = reach.ListParts()
+    assert parts.take("things", {"list_rev": 1, "part": 0, "parts": 1, "digest": "e" * 64, "count": 1, "total": 900,
+                                 "items": [{"x": 1}]}) == [{"x": 1}]
+    assert parts.totals["things"] == 900
+    assert parts.take("things", {"list_rev": 2, "part": 0, "parts": 1, "digest": "f" * 64, "count": 1,
+                                 "items": [{"x": 2}]}) == [{"x": 2}]
+    assert parts.totals["things"] is None
+
+
+def test_a_list_post_carries_the_probes_total_or_the_count_before_the_byte_cut_and_the_digest_covers_it(
+        paths, tmp_path, monkeypatch):
+    from domus_helper import tokens
+    from test_w13_helper import _Mint, _people_row
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    row = _people_row(1)
+    row["e2"]["total"] = 5
+    _append(paths, [row])
+    client = _Mint()
+    bridge = _bridge(paths, {"ms": WALL}, client=client)
+    bridge.tick(WALL)
+    _settle(bridge)
+    body = client.posted["lists"][0]
+    assert body["total"] == 5 and body["digest"] == reach.digest(body["items"], 5)
+    assert reach.digest(body["items"], 6) != body["digest"]
+    bridge._resolve_text = tokens.Words(lambda key: "T" * 64)
+    things = [{"object_id": str(number), "name_key": "1", "where": "inventory", "value": 3, "made_by_her": False,
+               "states": [{"value": "s" * 40}] * 4, "in_use": False, "placement": "floor"} for number in range(600)]
+    bridge._store_list("things", things)
+    held = bridge._lists["things"]
+    assert held["total"] == 600 and 0 < len(held["items"]) < 600
+    bridge._store_list("things", things, total=900)
+    assert bridge._lists["things"]["total"] == 900
+
+
+# HELPER2-4: a verb act that ends (her list may have changed) asks the probe for fresh lists, at most once per 10 s; an
+# ask that falls in the wait is made when the wait is over.
+def test_a_verb_act_that_ends_tells_the_bridge_and_an_act_that_is_not_a_verb_does_not(tmp_path):
+    from test_w13_helper import _requested
+    ended = []
+    courier, _sent = _courier(tmp_path, ended=lambda: ended.append(1))
+    courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"}), _requested()]), "h", 1000, True, probe="2.40.0")
+    for act_id in (VERB_ACT, "f" * 32):
+        courier.on_row({"event_kind": "act_event", "telemetry_session_id": "s", "wall_timestamp_ms": 2000,
+                        "e2": {"act_id": act_id, "phase": "FINISHED"}})
+    assert ended == [1]
+
+
+def test_a_verb_that_ends_asks_for_fresh_lists_at_most_once_per_ten_seconds_and_the_ask_in_the_wait_is_made_later(
+        paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    from test_w13_helper import _Mint, _people_row
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    row = _people_row(1)
+    row["probe_version"] = "2.40.0"
+    _append(paths, [row])
+    sent = []
+    monkeypatch.setattr(bridge_module.commands, "publish",
+                        lambda command, args, issuer, **kw: sent.append((command, args)) or "cmd")
+
+    def asks():
+        return [item for item in sent if item[0] == "lists_now"]
+    bridge = _bridge(paths, {"ms": WALL}, client=_Mint())
+    bridge.tick(WALL)
+    assert asks() == []
+    bridge._verb_act_ended()
+    bridge.tick(WALL + 1000)
+    assert asks() == [("lists_now", {})]
+    bridge._verb_act_ended()
+    bridge.tick(WALL + 5000)
+    assert len(asks()) == 1
+    bridge.tick(WALL + 11_000)
+    assert asks() == [("lists_now", {}), ("lists_now", {})]
+    bridge.tick(WALL + 30_000)
+    assert len(asks()) == 2
+
+
+# HELPER2-6: a catalogue ask is claimed while it is answered, and claimed for good only once its answer was sent; two
+# failed sends release it, so the next sync hands it again. The ids kept are bounded.
+def test_a_catalogue_ask_whose_answer_never_reaches_natalis_is_handed_again_and_one_that_was_sent_is_not(monkeypatch):
+    from domus_helper import catalog_ask
+    monkeypatch.setattr(catalog_ask, "RETRY_WAIT_S", 0)
+    monkeypatch.setattr(catalog_ask, "_HANDLED", {})
+    monkeypatch.setattr(catalog_ask, "_PENDING", set())
+
+    class Down(object):
+        def __init__(self):
+            self.calls = 0
+
+        def post_catalog(self, body):
+            self.calls += 1
+            raise OSError("down")
+
+    class Up(object):
+        def __init__(self):
+            self.posted = []
+
+        def post_catalog(self, body):
+            self.posted.append(body)
+            return {"status": "ok"}
+
+    def search(words, max_price, placement):
+        return 0, []
+    ask = [{"ask_id": "ask-down-1", "words": "chair"}]
+    down = Down()
+    catalog_ask.handle_asks_in_background(ask, down, helper_session="h", refs=RefBook(), search=search,
+                                          start=lambda run: run())
+    assert down.calls == 2 and "ask-down-1" not in catalog_ask._HANDLED
+    up = Up()
+    catalog_ask.handle_asks_in_background(ask, up, helper_session="h", refs=RefBook(), search=search,
+                                          start=lambda run: run())
+    assert [body["ask_id"] for body in up.posted] == ["ask-down-1"]
+    catalog_ask.handle_asks_in_background(ask, up, helper_session="h", refs=RefBook(), search=search,
+                                          start=lambda run: run())
+    assert len(up.posted) == 1
+
+
+def test_the_catalogue_asks_kept_as_answered_are_bounded(monkeypatch):
+    from domus_helper import catalog_ask
+    monkeypatch.setattr(catalog_ask, "_HANDLED", {})
+    monkeypatch.setattr(catalog_ask, "_PENDING", set())
+    client = type("Up", (), {"post_catalog": lambda self, body: {"status": "ok"}})()
+    asks = [{"ask_id": "ask-%d" % number, "words": "chair"} for number in range(catalog_ask.HANDLED_LIMIT + 10)]
+    catalog_ask.handle_asks_in_background(asks, client, helper_session="h", refs=RefBook(),
+                                          search=lambda words, max_price, placement: (0, []), start=lambda run: run())
+    assert len(catalog_ask._HANDLED) == catalog_ask.HANDLED_LIMIT
+    assert "ask-0" not in catalog_ask._HANDLED and "ask-%d" % (catalog_ask.HANDLED_LIMIT + 9) in catalog_ask._HANDLED
+
+
+# HELPER2-7: the ten-minute wait after three refusals belongs to one digest; a corrected list of the same kind is sent at once.
+def test_a_corrected_list_of_a_kind_is_sent_at_once_after_the_refusals_of_an_earlier_digest(paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    from domus_helper.transport import SyncRefused
+    from test_w13_helper import _Mint, _people_row, _settle
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_people_row(1)])
+    attempts = []
+
+    class Refusing(_Mint):
+        def post_lists(self, body):
+            attempts.append(body["digest"])
+            return SyncRefused("bad_items")
+    mono = {"ms": 0}
+    bridge = _bridge(paths, mono, client=Refusing())
+    bridge.tick(WALL)
+    _settle(bridge)
+    for step in range(1, 6):
+        mono["ms"] = step * bridge_module.LIST_RETRY_MS
+        bridge.tick(WALL + step * bridge_module.LIST_RETRY_MS)
+        _settle(bridge)
+    assert len(attempts) == 3
+    _append(paths, [_people_row(2, sim="502", name="Other")])
+    mono["ms"] += 1000
+    bridge.tick(WALL + mono["ms"])
+    _settle(bridge)
+    assert len(attempts) == 4 and attempts[3] != attempts[0]
+
+
+# HELPER2-8: only the probe's envelope refusal is her act's ARGS_INVALID; a fault of the helper's own (an inbox that is
+# not usable) keeps its own code and is never said to be her arguments.
+def test_a_helper_side_inbox_fault_is_not_her_args_invalid_and_an_envelope_refusal_still_is(tmp_path):
+    from domus_helper import commands
+    from domus_helper.acts import ActCourier
+    from domus_helper.spool import Spool
+
+    def inbox_redirected(command, args):
+        raise ValueError("inbox must not be redirected by a symlink")
+    courier = ActCourier(Spool(tmp_path / "spool.db"), inbox_redirected)
+    courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
+    refused = [event for event in courier._events if event["phase"] == "rejected"]
+    assert refused[0]["detail"]["code"] == "INBOX_ValueError"
+
+    def probe_refused(command, args):
+        raise commands.EnvelopeInvalid("BAD_ARGS")
+    courier = ActCourier(Spool(tmp_path / "spool2.db"), probe_refused)
+    courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
+    refused = [event for event in courier._events if event["phase"] == "rejected"]
+    assert refused[0]["detail"] == {"code": "ARGS_INVALID", "by": "helper", "detail": "BAD_ARGS"}
+
+
+# HELPER2-9: the decision log is written under one lock (the list post thread and the tick both write it, and a trim
+# unlinks other days' files).
+def test_the_decision_log_takes_its_lock_for_every_write(tmp_path):
+    from domus_helper.thalamus.log import DecisionLog
+
+    class Counting(object):
+        def __init__(self):
+            self.entered = 0
+
+        def __enter__(self):
+            self.entered += 1
+
+        def __exit__(self, *exc):
+            return False
+    log = DecisionLog(tmp_path, quota=10_000)
+    lock = Counting()
+    log._lock = lock
+    log.write({"wall_ms": 1_700_000_000_000, "trigger": "lists"})
+    assert lock.entered == 1
+    assert len(list((tmp_path / "thalamus").glob("decisions-*.jsonl"))) == 1
+
+
+# HELPER2-10: a list is posted only while it belongs to the game session it was built from; a post whose list came from an
+# older session is dropped (its digest is never taken as Natalis's).
+def test_a_list_built_in_an_earlier_game_session_is_not_posted_after_the_session_changes(paths, tmp_path, monkeypatch):
+    from test_w13_helper import _Mint, _people_row, _settle
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_people_row(1)])
+    client = _Mint()
+    bridge = _bridge(paths, {"ms": WALL}, client=client)
+    bridge.tick(WALL)
+    _settle(bridge)
+    client.posted["lists"] = []  # the tick's own post is not the one under test
+    entry = bridge._lists["people"]
+    assert entry.get("session") == "sess-1"
+    bridge._lists_session = "sess-2"
+    bridge._post_list("people", entry, client, "h")
+    assert client.posted["lists"] == []
+    bridge._lists_session = "sess-1"
+    bridge._post_list("people", entry, client, "h")
+    assert len(client.posted["lists"]) == 1
+
+
+# HELPER2-11: the probe writes a thing's place as a string (`where`) and its room id beside it; a dict place is not a place.
+# The dead notebook room-label source is gone (S5's labels come from the things list only).
+def test_a_thing_whose_place_is_a_dict_is_not_placed_in_a_room_and_the_notebook_has_no_room_label_source():
+    from domus_helper.notebook import Notebook
+    names = {"111": "Test Bed"}
+    raw = [{"object_id": "1", "name_key": "111", "where": {"where": "room", "room_id": 3}}]
+    assert reach.room_labels(raw, resolve=names.get) == {}
+    assert not hasattr(Notebook, "room_labels")
+
+
+# HELPER2-12: a sale's `value` is what she was paid, and her words say so ("Sold for"); "Worth" is for a stored worth,
+# and the probe stores none in a result.
+def test_a_sale_is_worded_as_sold_for_what_she_was_paid():
+    assert reach.result_words({"value": 40, "funds": 500}) == "Sold for §40; you have §500."
+    assert reach.result_words({"value": 0}) == "Sold for §0."
+
+
+# HELPER2-13: a verb's args are bounded as the probe measures the envelope (ASCII JSON), with room for the envelope's own
+# fields; non-ASCII args are measured as the probe measures them, not by their UTF-8 size.
+def test_verb_args_are_bounded_as_the_probe_measures_its_envelope(tmp_path):
+    courier, sent = _courier(tmp_path)
+    fits = _verb("save", {"note": "x" * 3400})
+    too_big = _verb("save", {"note": "é" * 700})  # 1400 bytes as UTF-8, 4200 as the probe's ASCII JSON
+    courier.tick(_Mint(acts=[fits, dict(too_big, act_id="%032x" % 7)]), "h", 1000, True, probe="2.40.0")
+    assert len(sent) == 1 and sent[0][1]["note"] == "x" * 3400
+    refused = [event for event in courier._events if event["phase"] == "rejected"]
+    assert len(refused) == 1 and refused[0]["detail"]["code"] == "ARGS_INVALID"
+
+
+# HELPER2-14: a duplicate definition id keeps the last row and stores the rest (no failed transaction); a catalogue part
+# that cannot be stored because the game build is unknown is logged once, with its reason.
+def test_a_duplicate_definition_id_keeps_its_last_row_and_the_rest_are_stored(tmp_path, monkeypatch):
+    paths = _catalog_db(tmp_path, monkeypatch, [(301, 1301), (302, 1302)])
+    rows = [_probe_flag(301, ["COMFORT"], ["floor"], 80), _probe_flag(302, ["COMFORT"], ["floor"], 90),
+            _probe_flag(301, ["COMFORT"], ["floor"], 95)]
+    assert catalog.store_flags(paths, "1.128", rows) == 2
+    assert catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get)[1][0]["price"] == 95
+
+
+def test_a_catalogue_part_with_no_game_build_is_logged_once_with_its_reason(paths, tmp_path, monkeypatch):
+    from test_bridge_thalamus import WALL, _bridge, _data, _log_lines
+    data = _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL}, client=_Mint())
+    bridge.detected_build = None
+    record = {"event_kind": "catalog", "telemetry_session_id": "sess-1", "wall_timestamp_ms": WALL,
+              "e2": {"catalog_rev": "r1", "part": 0, "parts": 1, "items": [_probe_flag(301, ["COMFORT"], ["floor"], 80)]}}
+    bridge._reach_row("catalog", record, WALL)
+    bridge._reach_row("catalog", dict(record), WALL + 1)
+    lines = [line for line in _log_lines(data) if line.get("trigger") == "catalog"]
+    assert len(lines) == 1 and lines[0]["error"] == "no_build"
+
+
+# HOME2-6 (helper half): a catalogue dump answered with no usable row is recorded for its game build, and the dump is
+# asked again only when the build changes.
+def test_a_catalogue_dump_answered_with_no_rows_is_not_asked_again_until_the_build_changes(paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    from test_bridge_thalamus import WALL, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(bridge_module.commands, "publish",
+                        lambda command, args, issuer, **kw: sent.append(command) or "cmd")
+    bridge = _bridge(paths, {"ms": WALL}, client=type("Up", (), {})())
+    bridge.detected_build = "1.128"
+    bridge._state = "attached"
+    empty = {"event_kind": "catalog", "telemetry_session_id": "sess-1", "wall_timestamp_ms": WALL,
+             "e2": {"catalog_rev": "r1", "part": 0, "parts": 1, "items": []}}
+    bridge._reach_row("catalog", empty, WALL)
+    bridge._catalog_dump(WALL + 20 * 60_000, "2.40.0")
+    assert sent.count("catalog_dump") == 0
+    bridge._catalog_dump(WALL + 40 * 60_000, "2.40.0")
+    assert sent.count("catalog_dump") == 0
+    bridge.detected_build = "1.129"
+    bridge._catalog_dump(WALL + 60 * 60_000, "2.40.0")
+    assert sent.count("catalog_dump") == 1
+
+
+# T2 / HELPER2-?: her phone's acts the menu left out, and why, on the phone's option object: "<act>: left out: <reason>" for
+# each excluded phone act, "<act>: refused: <reason>" for each refused one; at most 12 strings of 160 characters, the last
+# one "and <n> more" past 12.
+def _phone_menu(excluded=None, refused=None, acts=None):
+    phone = {"object_id": "11", "class": "object_phone", "phone": True, "distance_m": 0.0, "same_room": True,
+             "acts": acts if acts is not None else [{"guid64": "4242", "name": "phone_Read", "text_key": None}]}
+    return {"menu_rev": 1, "room": "4", "objects": [phone], "excluded_phone": excluded, "refused_phone": refused}
+
+
+def test_the_phone_option_object_names_the_phone_acts_left_out_and_refused_with_their_reasons():
+    from domus_helper.acts import options
+    menu = _phone_menu(excluded=[{"name": "phone_Call", "why": "travel"}],
+                       refused=[{"name": "phone_Plan", "reason_key": None}])
+    listed = options(menu, resolve={}.get, refs=RefBook())
+    assert len(listed) == 1 and listed[0]["left_out"] == [
+        "phone Call: left out: travel", "phone Plan: refused: no reason given"]
+
+
+def test_the_phone_left_out_lines_are_at_most_twelve_of_at_most_160_characters_and_the_last_counts_the_rest():
+    from domus_helper.acts import options
+    excluded = [{"name": "phone_Act%02d" % number + "x" * 150, "why": "hidden"} for number in range(14)]
+    listed = options(_phone_menu(excluded=excluded), resolve={}.get, refs=RefBook())
+    left_out = listed[0]["left_out"]
+    assert len(left_out) == 12 and all(len(line) <= 160 for line in left_out)
+    assert left_out[-1] == "and 3 more"
+    assert "left_out" not in options(_phone_menu(), resolve={}.get, refs=RefBook())[0]
+
+
+def test_the_phone_lists_of_a_menu_in_parts_come_from_its_first_part_whichever_part_came_last():
+    from domus_helper.acts import MenuParts
+    parts = MenuParts()
+    head = {"menu_rev": 3, "room": "4", "part": 0, "parts": 2, "objects": [], "refused_phone": [],
+            "excluded_phone": [{"name": "phone_Call", "why": "travel"}], "dropped": None, "spot_stages": None}
+    tail = {"menu_rev": 3, "room": "4", "part": 1, "parts": 2, "objects": [], "refused_phone": None,
+            "excluded_phone": None, "dropped": None, "spot_stages": None}
+    assert parts.take("s", head) is None
+    whole = parts.take("s", tail)
+    assert whole["excluded_phone"] == [{"name": "phone_Call", "why": "travel"}]
+
+
+# Q-7 (the User, 2026-10-12): the lab drivers never run against HOME. The crawl refuses to start without --lab, before it
+# touches the game or the paths; its usage line says so.
+def test_the_lab_crawl_refuses_to_start_without_the_lab_flag_and_its_usage_says_so(capsys, monkeypatch):
+    from domus_helper import crawl
+
+    def touched(**kwargs):
+        raise AssertionError("the game was touched")
+    monkeypatch.setattr(crawl, "DomusTools", touched)
+    assert crawl.main(["--dry-run"]) == 2
+    assert "--lab" in capsys.readouterr().err
+    assert "--lab" in crawl.__doc__
+    try:
+        crawl.main(["--help"])
+    except SystemExit:
+        pass
+    usage = capsys.readouterr().out
+    assert usage.startswith("usage:") and "--lab" in usage.split(chr(10))[0]
+
+
+
+# Q-7: the food scan and the hunger trial drive the game too, so they refuse to start without --lab as the crawl does.
+def test_the_food_driver_refuses_to_start_without_the_lab_flag(capsys, monkeypatch):
+    from domus_helper import food
+
+    def touched(**kwargs):
+        raise AssertionError("the game was touched")
+    monkeypatch.setattr(food, "DomusTools", touched)
+    assert food.main(["--scan"]) == 2
+    assert "--lab" in capsys.readouterr().err
+    assert "--lab" in food.__doc__
+
+# Q-d (the User, 2026-10-12): an event may start up to 99 days ahead; its start words say the day, and the game's own
+# limits (the guests) are the probe's to check. The helper keeps a start within 0..99 days and says "in N days" past one.
+def test_an_event_start_up_to_ninety_nine_days_ahead_is_worded_and_one_past_it_is_not():
+    from domus_helper.acts import _start_of
+    nine_thirty = {"day_offset": 5, "hour": 9, "minute": 30}
+    assert reach.result_words({"price": 5}, start={"day_offset": 0, "hour": 9, "minute": 30}) == (
+        "Costs §5. Starts at 09:30 today.")
+    assert reach.result_words({"price": 5}, start={"day_offset": 1, "hour": 9, "minute": 30}) == (
+        "Costs §5. Starts at 09:30 tomorrow.")
+    assert reach.result_words({"price": 5}, start=nine_thirty) == "Costs §5. Starts at 09:30 in 5 days."
+    assert reach.result_words({"price": 5}, start={"day_offset": 99, "hour": 0, "minute": 5}) == (
+        "Costs §5. Starts at 00:05 in 99 days.")
+    assert reach.result_words({"price": 5}, start={"day_offset": 100, "hour": 0, "minute": 5}) == "Costs §5."
+    assert _start_of({"start": nine_thirty}) == nine_thirty
+    assert _start_of({"start": {"day_offset": 100, "hour": 9, "minute": 30}}) is None

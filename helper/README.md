@@ -188,8 +188,8 @@ tick when wall time jumps more than 30 seconds ahead of the monotonic clock),
 The lab save must be `LAB_E1_FORK`, with aging off and **autonomy off** so foreign roots do not drown attribution. Keep speed at normal or 3, and keep the Sim fed.
 
 ```powershell
-python -m domus_helper.crawl --per-hour 30 --max-trials 200 --verdict-timeout-s 600
-python -m domus_helper.crawl --dry-run --tuned-file C:\path\tuned.jsonl
+python -m domus_helper.crawl --lab --per-hour 30 --max-trials 200 --verdict-timeout-s 600
+python -m domus_helper.crawl --lab --dry-run --tuned-file C:\path\tuned.jsonl
 ```
 
 `--per-hour` defaults to 30 and cannot exceed 60. It is the minimum spacing between `trial` sends. `--dry-run` prints the plan and sends nothing. The driver sends only when status is `SAMPLING`, the armed save is `LAB_E1_FORK`, and calibrate is off. Otherwise it waits 10 seconds. `BODY_BUSY` and `CLOCK_PAUSED` wait 15 seconds and retry the same candidate without a ledger row.

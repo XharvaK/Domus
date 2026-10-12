@@ -47,6 +47,8 @@ _PACE_PROBE = (2, 31, 0)
 _NEAR_PROBE = (2, 39, 0)
 # W13 (H): the verb acts, the Sim picker and the catalogue dump need the probe that writes and reads them.
 _VERB_PROBE = (2, 40, 0)
+# HELPER2-4: after a verb act ends, the probe is asked for fresh lists no more often than this.
+LISTS_NOW_EVERY_MS = 10_000
 # W13 (H): the catalogue dump is asked for again no sooner than this, while the catalogue still lacks the game's flags.
 CATALOG_DUMP_EVERY_MS = 10 * 60_000
 # W13 (H): a list Natalis did not take is sent again no sooner than this.
@@ -153,12 +155,15 @@ class Bridge:
         self._lists_busy = False  # W13 (A4-9): one post pass at a time
         self._index = reach.index({})
         self._catalog_checked_ms = None
+        self._catalog_no_build_logged = False  # HELPER2-14
+        self._lists_now_owed = False  # HELPER2-4: a verb act ended and the lists are not asked for yet
+        self._lists_now_sent_ms = None
         self._acts = None if self.client is None else ActCourier(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
             resolve=self._resolve_text, memory=self._answer_memory,
             reply=lambda command_id: commands.read_reply(command_id, paths=self.paths), log=self._log.write,
             say=self._say_words, her_name=self._her_first, answered=self._answered,
-            result_words=self._result_words, rooms=self._room_labels)
+            result_words=self._result_words, rooms=self._room_labels, ended=self._verb_act_ended)
         # W12 (B2): the refs are kept for one game session; the view's attachment says which epoch of refs it uses.
         self._refs_epoch = 0
         self._refs_session = None
@@ -249,6 +254,7 @@ class Bridge:
                                  "count": self.spool.last_expired})  # W12 (F3): the newest state goes in the next view
         self._pace_tick(now, probe)
         self._catalog_dump(now, probe)
+        self._lists_now_due(now, probe)
         self.overlay.poll(self.client, self.helper_session, now)
         self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
@@ -726,16 +732,24 @@ class Bridge:
             list_kind = e2.get("kind")
             raw = self._list_parts.take(list_kind, e2) if list_kind in reach.KINDS else None
             if raw is not None:
-                self._store_list(list_kind, raw)
+                self._store_list(list_kind, raw, total=self._list_parts.totals.get(list_kind))
         else:
             raw = self._list_parts.take("catalog", e2, rev_key="catalog_rev")
             if raw is not None and self.detected_build is not None:
-                catalog.store_flags(self.paths, self.detected_build, raw)
+                stored = catalog.store_flags(self.paths, self.detected_build, raw)
                 self._log.write({"wall_ms": clock_ms, "trigger": "catalog", "items": len(raw)})
+                if stored == 0:
+                    # HOME2-6: the game answered the dump with no usable row for this build; it is not asked again for it.
+                    self.spool.put_kv("catalog_answered", self.detected_build)
+            elif raw is not None and not self._catalog_no_build_logged:
+                # HELPER2-14: the catalogue is not stored without the game's build; said once, not per part.
+                self._catalog_no_build_logged = True
+                self._log.write({"wall_ms": clock_ms, "trigger": "catalog", "error": "no_build", "items": len(raw)})
 
-    def _store_list(self, kind, raw):
+    def _store_list(self, kind, raw, total=None):
         """W13 (H): a whole list, in words, held as Natalis will hold it. Its digest is what the sync answer is checked
-        against, so a list is sent again only when its words change."""
+        against, so a list is sent again only when its words change. total is the probe's count of the list (HELPER2-3);
+        without one, the total is the count before the helper's own byte cut."""
         if kind == "people":
             self._households = reach.households_of(raw)
         if kind == "things":
@@ -746,6 +760,8 @@ class Bridge:
         words = reach.list_words(kind, raw, refs=self._refs, rooms=self._room_labels(), resolve=self._resolve_text.raw,
                                  catalog=self._catalog_lookup(), households=self._households, skipped=skipped)
         items = reach.fit(words)
+        # Natalis takes a total no smaller than the items it is sent (T1): the probe's total, or the words before the cut.
+        total = max(total if total is not None else len(words), len(items))
         if skipped or len(items) < len(words):
             # W13 (H): what Natalis's shape left out, by reason and count (never the names).
             reasons = {}
@@ -754,7 +770,9 @@ class Bridge:
             self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "kind": kind,
                              "skipped": reasons, "cut": len(words) - len(items)})
         with self._lists_lock:
-            self._lists[kind] = {"digest": reach.digest(items), "items": items}
+            # HELPER2-10: the game session the list was built from; a post after the session changed is dropped.
+            self._lists[kind] = {"digest": reach.digest(items, total), "items": items, "total": total,
+                                 "session": self._lists_session}
         self._set_index()
         self._spool_lists()
 
@@ -817,10 +835,16 @@ class Bridge:
         Natalis refuses waits LIST_RETRY_MS for each of its first refusals; after LIST_REFUSALS of the same digest it
         waits LIST_REFUSED_WAIT_MS, and its reason is logged once, at that point."""
         now = self._mono()
-        if now < self._list_retry_ms.get(kind, 0):
+        with self._lists_lock:
+            built = entry.get("session")
+            current = self._lists_session
+        if built is not None and built != current:
+            return  # HELPER2-10: an older game's list is not Natalis's list of this one
+        # HELPER2-7: a refusal's wait belongs to its digest; a failed round trip's wait belongs to the kind.
+        if now < self._list_retry_ms.get(kind, 0) or now < self._list_retry_ms.get((kind, entry["digest"]), 0):
             return
         body = {"v": 1, "helper_session": helper_session, "kind": kind, "digest": entry["digest"],
-                "items": entry["items"]}
+                "items": entry["items"], "total": entry.get("total", len(entry["items"]))}
         try:
             sent = client.post_lists(body)
         except Exception:
@@ -832,15 +856,14 @@ class Bridge:
             held_digest, refusals = self._list_refusals.get(kind, [None, 0])
             refusals = refusals + 1 if held_digest == entry["digest"] else 1
             self._list_refusals[kind] = [entry["digest"], refusals]
-            if refusals >= LIST_REFUSALS:
-                self._list_retry_ms[kind] = now + LIST_REFUSED_WAIT_MS
-                if refusals == LIST_REFUSALS:
-                    self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "refused",
-                                     "kind": kind, "reason": sent.reason or "unknown", "refusals": refusals})
-                return
-        else:
-            self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "not_sent",
-                             "kind": kind})
+            # HELPER2-7: a refused digest waits by itself; a corrected list of the kind is not held back by it.
+            wait = LIST_REFUSED_WAIT_MS if refusals >= LIST_REFUSALS else LIST_RETRY_MS
+            self._list_retry_ms[(kind, entry["digest"])] = now + wait
+            if refusals == LIST_REFUSALS:
+                self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "refused",
+                                 "kind": kind, "reason": sent.reason or "unknown", "refusals": refusals})
+            return
+        self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "error": "not_sent", "kind": kind})
         self._list_retry_ms[kind] = now + LIST_RETRY_MS
 
     def _catalog_search(self, words, max_price, placement):
@@ -859,12 +882,32 @@ class Bridge:
         if self._catalog_checked_ms is not None and now - self._catalog_checked_ms < CATALOG_DUMP_EVERY_MS:
             return
         self._catalog_checked_ms = now
-        if catalog.has_flags(self.paths, self.detected_build):
+        if catalog.has_flags(self.paths, self.detected_build) or self.spool.get_kv("catalog_answered") == self.detected_build:
             return
         try:
             commands.publish("catalog_dump", {}, "helper", paths=self.paths)
         except (ValueError, OSError) as error:
             print("catalogue dump not asked: %s" % type(error).__name__)
+
+    def _verb_act_ended(self):
+        """HELPER2-4: a verb act ended, so her lists may have changed: they are asked for on the next tick (see
+        _lists_now_due)."""
+        self._lists_now_owed = True
+
+    def _lists_now_due(self, now, probe):
+        """HELPER2-4: the probe is asked for fresh lists (lists_now) once a verb act has ended, at most once per
+        LISTS_NOW_EVERY_MS; an ask that falls inside that wait is made when the wait is over. Needs a probe with the
+        command."""
+        if not self._lists_now_owed or self.client is None or not _probe_ok(probe, _VERB_PROBE):
+            return
+        if self._lists_now_sent_ms is not None and now - self._lists_now_sent_ms < LISTS_NOW_EVERY_MS:
+            return
+        self._lists_now_owed = False
+        self._lists_now_sent_ms = now
+        try:
+            commands.publish("lists_now", {}, "helper", paths=self.paths)
+        except (ValueError, OSError) as error:
+            self._log.write({"wall_ms": now, "trigger": "lists_now", "error": type(error).__name__})
 
     def _notebook_quietly(self, fn):
         try:

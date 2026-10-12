@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-from .acts import RESULT_WORDS_MAX, clean_text, humanize
+from .acts import EVENT_DAYS_MAX, RESULT_WORDS_MAX, clean_text, humanize
 
 KINDS = ("people", "places", "things", "events")
 # The probe writes at most this many items per part, and at most this many parts (a list of 600 is 5 parts).
@@ -40,9 +40,11 @@ SESSION_NAME = re.compile(r"[0-9A-Za-z_-]{1,64}")
 _DIGITS = re.compile(r"[0-9]{1,32}")
 
 
-def digest(items):
-    """SHA-256 hex of the canonical items: the list as Natalis holds it."""
-    raw = json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def digest(items, total=None):
+    """SHA-256 hex of the canonical items (and their total, when given): the list as Natalis holds it. The total is part
+    of what is sent, so a total that changes alone is sent again (HELPER2-3)."""
+    value = items if total is None else {"items": items, "total": total}
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -67,6 +69,7 @@ class ListParts(object):
 
     def __init__(self):
         self._pieces = {}
+        self.totals = {}  # kind -> the probe's `total` of the list take() last completed (None when it sent none)
 
     def take(self, kind, e2, rev_key="list_rev"):
         parts, part, rev = e2.get("parts"), e2.get("part"), e2.get(rev_key)
@@ -83,18 +86,21 @@ class ListParts(object):
         held = self._pieces.get(kind)
         if held is None or held["rev"] != rev or held["parts"] != parts or held["digest"] != content or held["count"] != count:
             held = self._pieces[kind] = {"rev": rev, "parts": parts, "digest": content, "count": count,
-                                         "items": {}, "sizes": {}}
+                                         "items": {}, "sizes": {}, "total": None}
         items = e2.get("items")
         items = items if isinstance(items, list) else []
         cap = CATALOG_PART_ITEMS if kind == "catalog" else PART_ITEMS
         held["sizes"][part] = len(items)
         held["items"][part] = [item for item in items if isinstance(item, dict)][:cap]
+        if type(e2.get("total")) is int and e2["total"] >= 0:
+            held["total"] = e2["total"]
         if len(held["items"]) < parts:
             return None
         kept = [item for index in range(parts) for item in held["items"][index]]
         if listed and (sum(held["sizes"].values()) != count or len(kept) != count):
             return None
         del self._pieces[kind]
+        self.totals[kind] = held["total"]
         return kept
 
 
@@ -205,16 +211,10 @@ def _place(item, refs, households=None, **_):
 
 
 def _placed(item):
-    """W13 (H, S5): a thing's place as the probe writes it: (kind, room id as digits). The kind is inventory, outside,
-    room or None (unreadable); the room id is set only for a room."""
-    where = item.get("where")
-    kind, room = None, _ident(item.get("room_id"))
-    if isinstance(where, dict):
-        kind = where.get("where") or where.get("kind") or ("room" if where.get("room_id") is not None else None)
-        if where.get("room_id") is not None:
-            room = _ident(where.get("room_id"))
-    elif isinstance(where, str):
-        kind = where
+    """W13 (H, S5): a thing's place as the probe writes it: `where` (a word) and `room_id` (digits). The kind is inventory,
+    outside, room or None (unreadable); the room id is set only for a room. A dict place is not a place (HELPER2-11)."""
+    kind = item.get("where") if isinstance(item.get("where"), str) else None
+    room = _ident(item.get("room_id"))
     if kind == "room" or (kind is None and room is not None):
         return "room", room
     return kind, None
@@ -228,7 +228,7 @@ def _where(item, rooms):
         return kind
     if kind == "room" and room is not None:
         label = (rooms or {}).get(room)
-        return label[:WHERE_LIMIT] if isinstance(label, str) and label else None
+        return label if isinstance(label, str) and label else None
     return None
 
 
@@ -274,7 +274,8 @@ def room_labels(raw, *, resolve=None, catalog=None):
             names.setdefault(room, set()).add(name)
     labels, counts = {}, {}
     for room in sorted(names, key=int):
-        base = ("the room with the %s" % " and the ".join(sorted(names[room], key=str.casefold)[:3]))[:WHERE_LIMIT]
+        # The base is cut before the " (n)" suffix, so a label is never longer than WHERE_LIMIT (HELPER2-2).
+        base = ("the room with the %s" % " and the ".join(sorted(names[room], key=str.casefold)[:3]))[:WHERE_LIMIT - 6]
         counts[base] = counts.get(base, 0) + 1
         labels[room] = base if counts[base] == 1 else "%s (%d)" % (base, counts[base])
     return labels
@@ -388,13 +389,17 @@ def _names(ids, name_of, kinds=None):
 
 
 def _start_words(start):
-    """W13 (S7): an event's start in words, from the act's own start: "Starts now.", or the game time and today or
-    tomorrow (its day offset). Never a day count."""
+    """W13 (S7): an event's start in words, from the act's own start: "Starts now.", or the game time and its day: today,
+    tomorrow, or "in N days" (Q-d: up to EVENT_DAYS_MAX days ahead)."""
     if start == "now":
         return "Starts now."
     if not isinstance(start, dict) or not all(type(start.get(key)) is int for key in ("hour", "minute", "day_offset")):
         return None
-    return "Starts at %02d:%02d %s." % (start["hour"], start["minute"], "tomorrow" if start["day_offset"] == 1 else "today")
+    day = start["day_offset"]
+    if not 0 <= day <= EVENT_DAYS_MAX:
+        return None
+    when = "today" if day == 0 else "tomorrow" if day == 1 else "in %d days" % day
+    return "Starts at %02d:%02d %s." % (start["hour"], start["minute"], when)
 
 
 def result_words(result, *, name_of=None, room_of=None, place_of=None, start=None):
@@ -433,7 +438,8 @@ def result_words(result, *, name_of=None, room_of=None, place_of=None, start=Non
     value = result.get("value")
     funds = result.get("funds") if type(result.get("funds")) is int else None
     if type(value) is int:
-        sentences.append("Worth §%d%s." % (value, "; you have §%d" % funds if funds is not None else ""))
+        # HELPER2-12: the result's value is a sale's payment (the probe's sell_facts), so it reads as what she was paid.
+        sentences.append("Sold for §%d%s." % (value, "; you have §%d" % funds if funds is not None else ""))
     elif type(cost) is int:
         sentences.append("Costs §%d%s." % (cost, "; you have §%d" % funds if funds is not None else ""))
     elif funds is not None:

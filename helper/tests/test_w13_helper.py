@@ -313,7 +313,7 @@ def test_places_say_their_kind_and_whose_home_a_household_place_is():
 
 def test_things_name_their_room_or_inventory_and_one_with_no_readable_place_is_left_out():
     names = {"111": "Test Chair"}
-    raw = [{"object_id": 77, "definition_id": 9, "name_key": "111", "where": {"where": "room", "room_id": 3},
+    raw = [{"object_id": 77, "definition_id": 9, "name_key": "111", "where": "room", "room_id": 3,
             "value": 60, "made_by_her": True, "states": [{"state": "Dirty", "value": "Dirty"}],
             "in_use": False, "count": None, "placement": "floor"},
            {"object_id": "78", "name_key": "111", "where": "inventory", "in_use": True, "count": 2, "value": 20},
@@ -386,7 +386,7 @@ def test_a_purchase_says_where_it_is_what_it_is_beside_what_it_faces_and_what_it
 
 
 def test_a_sale_an_event_and_a_trip_say_their_money_and_their_time():
-    assert reach.result_words({"value": 40, "funds": 500}) == "Worth §40; you have §500."
+    assert reach.result_words({"value": 40, "funds": 500}) == "Sold for §40; you have §500."
     assert reach.result_words({"cost": 150, "funds": 350}, start={"day_offset": 1, "hour": 19, "minute": 5}) == (
         "Costs §150; you have §350. Starts at 19:05 tomorrow.")
     assert reach.result_words({"zone_id": 4}, place_of={"4": "Test Lot"}.get) == "Now in Test Lot."
@@ -458,11 +458,11 @@ def test_the_flags_are_kept_per_game_version_and_a_dump_replaces_its_own(tmp_pat
 def test_a_search_offers_purchasable_furniture_and_decor_by_words_in_order_and_names_its_price(tmp_path, monkeypatch):
     paths = _catalog_fixture(tmp_path, monkeypatch)
     matched, items = catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get)
-    assert matched == 3
-    assert [item["definition_id"] for item in items] == [301, 307, 302]
+    assert matched == 4  # Q-f: the vehicle (306) is searched like furniture, found by its words
+    assert [item["definition_id"] for item in items] == [301, 307, 302, 306]
     assert items[0] == {"definition_id": 301, "name": "Test Chair", "price": 80, "placement": "floor",
                         "category": "comfort"}
-    assert catalog.search(paths, "1.128", "test chair", max_price=200, resolve=CATALOG_NAMES.get)[0] == 2
+    assert catalog.search(paths, "1.128", "test chair", max_price=200, resolve=CATALOG_NAMES.get)[0] == 3
     matched, items = catalog.search(paths, "1.128", "lamp", placement="wall", resolve=CATALOG_NAMES.get)
     assert matched == 1 and items[0]["placement"] == "wall" and items[0]["category"] == "lighting"
     assert catalog.search(paths, "1.128", "lamp", placement="floor", resolve=CATALOG_NAMES.get) == (0, [])
@@ -522,9 +522,9 @@ def test_a_text_or_a_call_on_her_phone_is_a_percept_with_its_senders_name():
     row = {"event_kind": "phone", "telemetry_session_id": "s", "written_sequence": 1, "wall_timestamp_ms": WALL,
            "e2": {"kind": "call", "from_sim_id": "501", "notifies": None}}
     phone = [p for p in extractor.step(row) if p.kind == "phone"]
-    assert len(phone) == 1 and dict(phone[0].facts) == {"kind": "call", "from": "Test Person"}
+    assert len(phone) == 1 and dict(phone[0].facts) == {"what": "call", "from": "Test Person"}
     unknown = dict(row, e2={"kind": "call", "from_sim_id": "777", "notifies": None})
-    assert dict((p.kind, dict(p.facts)) for p in extractor.step(unknown))["phone"] == {"kind": "call"}
+    assert dict((p.kind, dict(p.facts)) for p in extractor.step(unknown))["phone"] == {"what": "call"}
     assert [p for p in extractor.step(dict(row, e2={"kind": "email", "from_sim_id": "501"})) if p.kind == "phone"] == []
 
 
@@ -571,7 +571,7 @@ def test_a_list_is_sent_in_words_until_natalis_holds_its_digest_and_not_sent_aga
     assert body["kind"] == "people" and body["helper_session"] == bridge.helper_session
     assert body["items"] == [{"ref": "p1", "id": "501", "name": "Test Person", "how": "Friend", "home": False,
                               "here": True, "waiting": False}]
-    assert body["digest"] == reach.digest(body["items"])
+    assert body["digest"] == reach.digest(body["items"], body["total"])
     client.answer["lists"] = {"people": body["digest"]}
     bridge.tick(WALL + 1000)
     assert len(client.posted["lists"]) == 1
@@ -711,14 +711,14 @@ def test_every_list_built_from_fake_probe_rows_keeps_natalis_bounds_and_an_unnam
     _check_list_items("places", place_words)
     assert place_words[1]["what"] == "B" * 40 and place_words[1]["name"] == ("B" * 70 + "'s home")[:64]
 
-    things = [{"object_id": str(50 + n), "name_key": "1", "where": {"where": "room", "room_id": 3},
+    things = [{"object_id": str(50 + n), "name_key": "1", "where": "room", "room_id": 3,
                "value": n, "made_by_her": None, "states": [{"state": "x", "value": long_state}] * 6,
                "in_use": False, "count": 2, "placement": "floor, wall, surface"} for n in range(610)]
-    things.append({"object_id": "900", "name_key": "1", "where": {"where": "room", "room_id": 3}, "value": None})
+    things.append({"object_id": "900", "name_key": "1", "where": "room", "room_id": 3, "value": None})
     things.append({"object_id": "901", "name_key": "2", "where": "outside", "value": 3})
     things.append({"object_id": "902", "name_key": "1", "where": "inventory", "value": 4})
     skipped = []
-    thing_words = reach.list_words("things", things, refs=RefBook(), rooms={"3": "R" * 80},
+    thing_words = reach.list_words("things", things, refs=RefBook(), rooms={"3": "R" * 64},
                                    resolve={"1": long_name}.get, skipped=skipped)
     _check_list_items("things", thing_words)
     assert len(thing_words) == 600 and skipped.count("name") == 1 and "value" not in skipped

@@ -283,7 +283,7 @@ class Extractor:
         kind = e2.get("kind")
         if kind not in ("notice", "call"):
             return None
-        facts = [("kind", kind)]
+        facts = [("what", kind)]
         if kind == "call":
             sender = e2.get("from_sim_id")
             name = None

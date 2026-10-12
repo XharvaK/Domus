@@ -4,7 +4,8 @@ Telemetry, not Ashley's policy (Owner, 2026-10-04). With real needs on, when a b
 need is low the crawl pushes one probe-approved cure for it (toilet, bed, shower,
 the fridge's snack) and logs needs before, at the verdict, and when she finishes.
 That is the reference Ashley reads; her own Thought decides what she does. Off
-unless `crawl --relief-survey`. Relief names are the probe's own (vendored e2_trial).
+unless `crawl --relief-survey`, and that crawl runs only with `--lab` (the lab save, never HOME: the User, 2026-10-12).
+This module has no entry point of its own. Relief names are the probe's own (vendored e2_trial).
 """
 from .vendor import e2_trial
 
