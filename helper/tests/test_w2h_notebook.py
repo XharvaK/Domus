@@ -40,7 +40,7 @@ def test_her_menu_keeps_such_an_act_listed_and_marks_it():
     result = options(MENU, withheld={"vase_Arrange"})
     acts = result[0]["acts"]
     assert [act["guid64"] for act in acts] == ["4242", "4243"]
-    assert acts[0]["opens"] == OPENS_SCREEN == "a screen only the User's hands can use"
+    assert acts[0]["opens"] == OPENS_SCREEN == "a screen only your summoner can use"
     assert "opens" not in acts[1]
     assert "opens" not in options(MENU)[0]["acts"][0]
 

@@ -371,3 +371,45 @@ def test_a_fuzz_of_bad_rows_never_ends_the_bridge_and_each_row_is_passed_over(pa
     _append(paths, [_snap(900, "low", WALL + 2000, 20)])
     _tick(bridge, mono, WALL + 2000)
     assert bridge._last_rowid == bridge.spool.row_count()
+
+
+# ----------------------------------------------------------------- left-out wording (HELPER3-17, SEAM3-16/17, CONTRA3-2/3, VOICE3-8/9)
+
+def test_a_phone_act_is_named_in_the_game_words_when_the_menu_has_them_and_the_cut_takes_the_name_first():
+    from domus_helper.acts import _phone_left_out
+    menu = {"objects": [{"object_id": "11", "class": "object_phone", "phone": True,
+                         "acts": [{"guid64": "1", "name": "phone_Call", "text_key": "key.call"}]}],
+            "excluded_phone": [{"name": "phone_Call", "why": "travel"},
+                               {"name": "phone_" + "Long" * 40, "why": "hidden"}]}
+    lines = _phone_left_out(menu, {"key.call": "Call {0.SimFirstName}"}.get)
+    assert lines[0] == "Call: left out: it can take you off the lot"
+    assert lines[1].endswith(": left out: the game keeps it out of your menu") and len(lines[1]) <= 160
+
+
+def test_a_debug_or_empty_act_name_is_an_act_and_a_deny_name_act_is_never_named():
+    from domus_helper.acts import _phone_left_out
+    menu = {"excluded_phone": [{"name": "DEBUG_thing", "why": "hidden"}, {"name": "", "why": "hidden"},
+                               {"name": "phone_Cheat", "why": "deny_name"}],
+            "refused_phone": [{"name": "*star", "reason_key": None}]}
+    assert _phone_left_out(menu, {}.get) == [
+        "an act: left out: the game keeps it out of your menu",
+        "an act: left out: the game keeps it out of your menu",
+        "an act: left out: a debug, cheat or test act",
+        "an act: refused: no reason given"]
+
+
+def test_the_left_out_cut_adds_one_line_per_reason_for_the_rest_and_no_more_than_twelve():
+    from domus_helper.acts import _phone_left_out
+    excluded = [{"name": "phone_Act%02d" % number, "why": "travel" if number % 2 else "hidden"} for number in range(20)]
+    lines = _phone_left_out({"excluded_phone": excluded}, {}.get)
+    assert len(lines) <= 12
+    summaries = [line for line in lines if " more acts: left out: " in line]
+    assert len(summaries) == 2
+    counts = {line.split(" more acts")[0]: line for line in summaries}
+    assert sum(int(line.split(" more acts")[0]) for line in summaries) == 20 - (12 - len(summaries))
+    assert any(line.endswith("it can take you off the lot") for line in summaries)
+
+
+def test_the_act_on_her_phone_and_the_screen_marker_say_your_summoner_not_the_user():
+    from domus_helper.acts import OPENS_SCREEN
+    assert OPENS_SCREEN == "a screen only your summoner can use"

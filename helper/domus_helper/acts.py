@@ -489,7 +489,7 @@ def people_heard(row, seen_ids):
     return heard
 
 
-OPENS_SCREEN = "a screen only the User's hands can use"
+OPENS_SCREEN = "a screen only your summoner can use"  # VOICE3-9: her words name you, not the User
 # N8 (F2): interactions that open such a screen, so they are marked before the notebook has seen one end on it:
 # the event planner (phone), Create a Sim (terrain, every age and sex), Change Sim, outfit planning and try-on.
 # Tuning names as the game's atlas lists them; the notebook adds to this list, it never removes from it.
@@ -629,35 +629,66 @@ def _fold(rows):
 PHONE_LEFT_OUT_LINES = 12
 PHONE_LEFT_OUT_CHARS = 160
 # W14 (D7): the plain-words reason of each code the probe gives a left-out phone act (its excluded_phone "why"). A code
-# with no words here is shown as the code itself.
+# with no words here is shown as the code itself. R3-H (CONTRA3-2, CONTRA3-3): "travel" is any part that can take her off
+# the lot, not every phone act, so the words say "can"; the debug words cover cheat, debug and test acts only.
 LEFT_OUT_REASONS = {
     "pie_picker": "it opens a menu of choices, not an act",
-    "deny_name": "a debug or cheat act",
-    "travel": "it takes you off the lot",
+    "deny_name": "a debug, cheat or test act",
+    "travel": "it can take you off the lot",
     "not_user_directed": "only the game starts it, not you",
     "hidden": "the game keeps it out of your menu",
 }
+AN_ACT = "an act"
+
+
+def _phone_act(item, words, code):
+    """R3-H (HELPER3-17, SEAM3-16/17, VOICE3-8): a phone act's name in her words. The game's act words when the menu has them,
+    else the humanized name. A name that fails game_name, or any act the guard left out for its name, is "an act"."""
+    name = item.get("name") if isinstance(item.get("name"), str) else ""
+    if code == "deny_name" or game_name(name) is None:
+        return AN_ACT
+    return words(name)[:64] or AN_ACT
+
+
+def _phone_line(act, verb, reason):
+    """One left-out or refused line: the act is cut first, and the reason is kept whole."""
+    tail = ": %s: %s" % (verb, reason)
+    room = max(PHONE_LEFT_OUT_CHARS - len(tail), 0)
+    return (act[:room].rstrip() or AN_ACT) + tail
 
 
 def _phone_left_out(menu, resolve):
-    """T2: her phone's acts the newest menu left out, in words: "<act>: left out: <reason>" for each excluded one (the
-    guard's reason), then "<act>: refused: <reason>" for each one the game refused (its own sentence). At most
-    PHONE_LEFT_OUT_LINES lines of PHONE_LEFT_OUT_CHARS characters; past that the last line is "and <n> more"."""
-    lines = []
+    """T2, R3-H (R5): her phone's acts the newest menu left out, in words: "<act>: left out: <reason>" for each excluded one
+    (the guard's reason), then "<act>: refused: <reason>" for each one the game refused (its own sentence). At most
+    PHONE_LEFT_OUT_LINES lines. When the cap cuts lines, each reason of the cut left-out lines gets one line instead:
+    "<N> more acts: left out: <reason>", and the cut refusals get "and <N> more"."""
+    words = act_names(menu, resolve)
+    entries = []
     for item in menu.get("excluded_phone") if isinstance(menu.get("excluded_phone"), list) else []:
         if isinstance(item, dict):
-            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
-            # W14 (D7): the reason in plain words, so the line never shows the probe's code ("deny name").
             code = item.get("why") if isinstance(item.get("why"), str) else None
             why = LEFT_OUT_REASONS.get(code) or code or "not said"
-            lines.append(("%s: left out: %s" % (act, why))[:PHONE_LEFT_OUT_CHARS])
+            entries.append(("left", why, _phone_line(_phone_act(item, words, code), "left out", why)))
     for item in menu.get("refused_phone") if isinstance(menu.get("refused_phone"), list) else []:
         if isinstance(item, dict):
-            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
             reason = _sentence(resolve, item.get("reason_key")) or "no reason given"
-            lines.append(("%s: refused: %s" % (act, reason))[:PHONE_LEFT_OUT_CHARS])
-    if len(lines) > PHONE_LEFT_OUT_LINES:
-        lines = lines[:PHONE_LEFT_OUT_LINES - 1] + ["and %d more" % (len(lines) - (PHONE_LEFT_OUT_LINES - 1))]
+            entries.append(("refused", reason, _phone_line(_phone_act(item, words, None), "refused", reason)))
+    if len(entries) <= PHONE_LEFT_OUT_LINES:
+        return [line for _kind, _reason, line in entries]
+    keep = PHONE_LEFT_OUT_LINES
+    while True:
+        tail = entries[keep:]
+        reasons = list(dict.fromkeys(reason for kind, reason, _line in tail if kind == "left"))
+        refused = sum(1 for kind, _reason, _line in tail if kind == "refused")
+        if keep + len(reasons) + (1 if refused else 0) <= PHONE_LEFT_OUT_LINES or keep == 0:
+            break
+        keep -= 1
+    lines = [line for _kind, _reason, line in entries[:keep]]
+    for reason in reasons:
+        count = sum(1 for kind, why, _line in tail if kind == "left" and why == reason)
+        lines.append("%d more acts: left out: %s" % (count, reason))
+    if refused:
+        lines.append("and %d more" % refused)
     return lines
 
 

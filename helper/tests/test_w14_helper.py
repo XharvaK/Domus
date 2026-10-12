@@ -280,8 +280,8 @@ def test_each_left_out_code_the_probe_sends_is_said_in_plain_words_and_an_unknow
     lines = listed[0]["left_out"]
     assert lines == [
         "phone Act0: left out: it opens a menu of choices, not an act",
-        "phone Act1: left out: a debug or cheat act",
-        "phone Act2: left out: it takes you off the lot",
+        "an act: left out: a debug, cheat or test act",
+        "phone Act2: left out: it can take you off the lot",
         "phone Act3: left out: only the game starts it, not you",
         "phone Act4: left out: the game keeps it out of your menu",
         "phone Act5: left out: a_new_code"]
@@ -294,7 +294,7 @@ def test_the_left_out_words_never_show_the_debug_code_or_an_internal_name():
     for words in LEFT_OUT_REASONS.values():
         assert "_" not in words and "DEBUG" not in words and words[0].islower()
     lines = _phone_left_out({"excluded_phone": [{"name": "phone_Cheat", "why": "deny_name"}]}, {}.get)
-    assert lines == ["phone Cheat: left out: a debug or cheat act"]
+    assert lines == ["an act: left out: a debug, cheat or test act"]
 
 
 # ----------------------------------------------------------------- D8: her body is "you" in every text that reaches her
