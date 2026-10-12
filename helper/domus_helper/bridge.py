@@ -1,5 +1,6 @@
 """Helper bridge: spool telemetry, heartbeat, and flush the observation outbox."""
 import argparse
+import hashlib
 import json
 import secrets
 import sqlite3
@@ -64,6 +65,20 @@ REQUEUE_LIMIT = 3
 PACE_RETRY_MS = 30_000
 # HE17: the newest row is kept in the spool when it changed, and at most this often.
 ROW_WRITE_EVERY_MS = 30_000
+
+
+def _view(payload):
+    """The menu as it is shown and kept: the probe's markers (near, partial) are not part of the view (R1, W14 D3)."""
+    return {key: value for key, value in payload.items() if key not in ("near", "partial")}
+
+
+def _choices_key(session, payload):
+    """SEAM3-7: a digest of a whole menu's choices (its objects and their acts) in its session. A view that carries the same
+    key as the last one sent has nothing new to say about the choices."""
+    objects = payload.get("objects") if isinstance(payload, dict) else None
+    listed = [[str(item.get("object_id")), [str(act.get("guid64")) for act in item.get("acts") or [] if isinstance(act, dict)]]
+              for item in objects or [] if isinstance(item, dict)]
+    return hashlib.sha256(json.dumps([session, listed], separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _body_sample(record):
@@ -142,7 +157,8 @@ class Bridge:
         # W14 (D3): the last whole menu of the session (kept under its telemetry session), which a near part is merged with.
         self._whole_menu = None
         # W14 (S2): no whole menu has arrived in this helper session yet (the view says the choices are still coming).
-        self._whole_seen = False
+        self._choices_sent = None  # SEAM3-7: the choices key of the last view sent (a view goes when a new key comes)
+        self._choices_due = False
         self._refs = RefBook()  # N8 (F3): the refs of this helper session (reset at each attachment)
         self._menu_parts = MenuParts()  # N8 (F4): a menu arrives in parts; the whole one is the menu
         self._catalog = None
@@ -270,17 +286,33 @@ class Bridge:
         self.talk.tick(now, self._state == "attached" and _probe_ok(probe, _TALK_PROBE))
 
     def _menu_shown(self, session, payload, clock_ms):
-        """W14 (D3, S2): the menu she sees for a complete set of menu parts. A whole menu replaces everything and is kept
-        as the session's whole menu. A near part is merged with that whole menu (acts.merge_near): her room and what is
-        near her come from the near part, the far rooms from the whole. Any whole menu marks the choices as come."""
+        """W14 (D3, S2), R1-R3: the menu she sees for a complete set of menu parts. A final whole menu replaces everything
+        and is kept as the session's whole menu. A first-build partial (R1) is shown and is the merge base for the next near
+        part, but it is not the whole, so the choices stay pending. A near part is merged with the whole menu of its zone
+        (acts.merge_near): her room and what is near her come from the near part, the rest from the whole. A near part of
+        another zone drops the old whole (R2). The view carries neither the near nor the partial marker."""
+        if payload.get("partial") is True:
+            self._whole_menu = {"session": session, "payload": payload, "at_ms": clock_ms, "final": False}
+            return _view(payload)
         if payload.get("near") is not True:
-            self._whole_seen = True
-            self._whole_menu = {"session": session, "payload": payload, "at_ms": clock_ms}
-            return payload
+            key = _choices_key(session, payload)
+            self._whole_menu = {"session": session, "payload": payload, "at_ms": clock_ms, "final": True, "key": key}
+            if key != self._choices_sent:
+                self._choices_due = True  # SEAM3-7: the first whole of a session, or a whole whose act list changed
+            return _view(payload)
         whole = self._whole_menu
         if not isinstance(whole, dict) or whole.get("session") != session:
-            return payload
-        return merge_near(payload, whole.get("payload"))
+            return _view(payload)
+        if (whole.get("payload") or {}).get("zone_id") != payload.get("zone_id"):
+            self._whole_menu = None  # R2: another zone's menu is not the base of this near part
+            return _view(payload)
+        return _view(merge_near(payload, whole.get("payload")))
+
+    def _choices_pending(self, session):
+        """S2 (HELPER3-13/14, SEAM3-2/19): the choices are pending until a final whole menu of this telemetry session is held,
+        a restored one included. A partial menu (R1) does not end it."""
+        whole = self._whole_menu
+        return not (isinstance(whole, dict) and whole.get("final", True) is True and whole.get("session") == session)
 
     def _options(self, row, cut=None):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
@@ -529,7 +561,7 @@ class Bridge:
 
     def _flush_views(self, wall_ms):
         """D2: a view goes when the coalescer says so; nothing pending sends nothing. W12 (F3): not from a restored row."""
-        reason = coalesce.due(self._coalesced, wall_ms)
+        reason = coalesce.due(self._coalesced, wall_ms, choices=self._choices_due)
         if reason is None or self._body_is_restored(wall_ms):
             return
         percepts, self._coalesced = coalesce.take(self._coalesced)
@@ -573,6 +605,7 @@ class Bridge:
         """One view of her body now, carrying these changes. Salience is 0: the view says what changed, not what
         matters. One line in the decision log per view sent. event: the row the view is about (default the newest)."""
         self._fires += 1
+        self._choices_due = False  # SEAM3-7: one attempt per reason; a refused view is not retried for the choices alone
         self._last_fire_reason = trigger
         self._last_fire_wall_ms = wall_ms
         enqueued = False
@@ -598,6 +631,7 @@ class Bridge:
             if refusal is None:
                 enqueued = True
                 self._requeued = 0
+                self._choices_sent = (self._whole_menu or {}).get("key") if isinstance(self._whole_menu, dict) else None
                 self._pace_log.observed(_ticks(self._last_body_row or self._last_row))
                 observation_id = obs["observation_id"]
                 self._obs_seq += 1
@@ -681,7 +715,7 @@ class Bridge:
             "seen": self._seen,
             "options": self._options(body, cut=options_cut),
             "options_cut": options_cut,
-            "choices_pending": not self._whole_seen,  # W14 (S2): the game's choices have not come in this session
+            "choices_pending": self._choices_pending(session),  # W14 (S2): no final whole menu of this session yet
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
             "pace": pace.portrait(self._pace_block, self._pace_log.costs()),

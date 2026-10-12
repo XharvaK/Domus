@@ -84,7 +84,9 @@ class MenuParts(object):
         # W14 (D3): a set is one menu revision in one count of parts, whole or near. A row that differs in any of
         # those starts a new set, so pieces of a 17-part write never mix with a 3-part write of the same revision.
         near = e2.get("near") is True
-        key = (session, e2.get("menu_rev"), parts, near)
+        # R1 (the probe's first build): a partial set is the menu so far; it is its own set, never mixed with a whole.
+        partial = e2.get("partial") is True
+        key = (session, e2.get("menu_rev"), parts, near, partial)
         if key != self._key:
             self._key, self._pieces = key, {}
         self._pieces[part] = e2
@@ -107,24 +109,43 @@ class MenuParts(object):
         return whole
 
 
-# W14 (D3): an object is far from her when it is not in her room, not her phone, and more than NEAR_M metres away.
-def _far(item):
+def _same_room(item, near_room):
+    """R3-H merge: whether an object is in the near part's room. A room unknown on either side keeps the whole's flag."""
+    room = item.get("room")
+    if room is None or near_room is None:
+        return item.get("same_room")
+    return str(room) == str(near_room)
+
+
+def _was_near(item):
     distance = item.get("distance_m")
-    return (item.get("same_room") is not True and item.get("phone") is not True
-            and isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance > NEAR_M)
+    close = isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance <= NEAR_M
+    return item.get("same_room") is True or item.get("phone") is True or close
+
+
+def _carried(item, near_room):
+    """An object of the whole menu that the near part does not test. Its room flag is judged against the near part's room.
+    Its distance is cleared when the room flag changed or the object was near in the whole: the whole's reading is stale."""
+    same = _same_room(item, near_room)
+    out = dict(item, same_room=same)
+    if same != item.get("same_room") or _was_near(item):
+        out["distance_m"] = None
+    return out
 
 
 def merge_near(near, whole):
-    """W14 (D3): the menu she sees after a near part: the near part's objects first, then the objects of the last
-    whole menu of the session that the near part leaves out and that were far from her in that whole. With no whole
-    menu, the near part alone. A whole menu replaces everything; it never reaches this function."""
-    if not isinstance(whole, dict):
+    """W14 (D3), merge rule (R3-H): the menu she sees after a near part: the near part's objects first, then EVERY object
+    of the whole menu that the near part does not test (a far room, a thing with no distance, a same-room thing a build
+    in progress has not tested yet). The whole's dropped count is kept. A near part with no whole, or with a whole of
+    another zone (R2), is the near part alone."""
+    if not isinstance(whole, dict) or whole.get("zone_id") != near.get("zone_id"):
         return near
     near_objects = [item for item in near.get("objects") or [] if isinstance(item, dict)]
     near_ids = {str(item.get("object_id")) for item in near_objects}
-    far = [item for item in whole.get("objects") or []
-           if isinstance(item, dict) and str(item.get("object_id")) not in near_ids and _far(item)]
-    return dict(near, objects=near_objects + far)
+    near_room = near.get("room")
+    carried = [_carried(item, near_room) for item in whole.get("objects") or []
+               if isinstance(item, dict) and str(item.get("object_id")) not in near_ids]
+    return dict(near, objects=near_objects + carried, dropped=whole.get("dropped"))
 
 
 class RefBook(object):

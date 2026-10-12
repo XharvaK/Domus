@@ -39,20 +39,20 @@ def _ids(payload):
 
 # ----------------------------------------------------------------- D3: the merge rule and the set keys
 
-def test_a_near_part_keeps_the_far_objects_of_the_last_whole_menu():
+def test_a_near_part_keeps_the_objects_of_the_last_whole_menu_that_it_does_not_test():
     whole = _menu(5, [_obj(11, 2.0, True), _obj(22, 9.0, False), _obj(33, phone=True)])
     near = _menu(6, [_obj(11, 1.0, True, guid=110), _obj(44, 3.0, True)], near=True)
     shown = merge_near(near, whole)
-    assert _ids(shown) == ["11", "44", "22"]
+    assert _ids(shown) == ["11", "44", "22", "33"]
     assert shown["objects"][0]["acts"][0]["guid64"] == "110"  # the near part's own read wins
     assert shown["menu_rev"] == 6
 
 
-def test_the_far_rule_is_more_than_near_m_away_and_not_her_room_or_phone():
+def test_a_near_part_with_no_objects_keeps_every_object_of_the_whole_menu():
     whole = _menu(5, [_obj(1, NEAR_M, False), _obj(2, NEAR_M + 0.5, False), _obj(3, None, False),
                       _obj(4, 9.0, True), _obj(5, phone=True), _obj(6, 9.0, None), _obj(7, 9.0, False)])
     shown = merge_near(_menu(6, [], near=True), whole)
-    assert _ids(shown) == ["2", "6", "7"]
+    assert _ids(shown) == ["1", "2", "3", "4", "5", "6", "7"]
 
 
 def test_a_near_part_with_no_whole_menu_is_the_near_part_alone():

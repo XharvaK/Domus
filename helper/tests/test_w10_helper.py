@@ -107,7 +107,9 @@ def test_a_refusal_of_anything_else_is_not_retried_and_is_logged(paths, tmp_path
     calls = []
     _refuse_when(bridge, lambda obs: calls.append(1) or True, lambda: ContractError("clock_skew"))
     _second_tick(bridge, mono)
-    assert len(calls) == 1
+    # R3-H (SEAM3-7): the menu's arrival sends its own choices view at once (one attempt), and the quiet view after it is
+    # the only other attempt; a refused view is never retried on a timer.
+    assert len(calls) == 2
     assert _log_lines(data)[-1]["error"] == "ContractError: clock_skew"
 
 
