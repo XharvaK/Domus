@@ -176,3 +176,162 @@ def test_a_look_waits_for_the_near_part_it_asked_for_and_sends_after_three_secon
     assert bridge._fires == fires + 1 and bridge._look_hold is not None
     _tick(bridge, mono, WALL + 8100)
     assert bridge._fires == fires + 2 and bridge._look_hold is None
+
+
+# ----------------------------------------------------------------- her thoughts in the game (HELPER3-5/6/7/12/20)
+
+def _chosen(pass_id, line, at_ms=None):
+    return {"inputs": "chosen", "pass": pass_id, "line": line, "at_ms": at_ms}
+
+
+class _Feed(object):
+    def __init__(self, items):
+        self.items = items
+
+    def post_feed(self, body):
+        return {"status": "ok", "items": self.items}
+
+
+W14_NOW = 1_800_000_000_000
+
+
+def _overlay(tmp_path, now_ms):
+    from domus_helper import overlay
+    from domus_helper.spool import Spool
+    spool = Spool(tmp_path / "spool.db")
+    return spool, overlay.Overlay(spool, tmp_path, now_ms - overlay.HUMAN_HAND_MS - 1)
+
+
+def test_a_line_said_before_a_restart_is_not_said_again_after_it(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        view.poll(_Feed([_chosen("p1", "The toast smells good.", W14_NOW - 1000)]), "h1", W14_NOW)
+        assert view.take_thoughts() == ["The toast smells good."]
+        again = overlay.Overlay(spool, tmp_path, W14_NOW - overlay.HUMAN_HAND_MS - 1)
+        again.poll(_Feed([_chosen("p1", "The toast smells good.", W14_NOW - 1000)]), "h1",
+                   W14_NOW + overlay.FEED_EVERY_MS)
+        assert again.take_thoughts() == []
+    finally:
+        spool.close()
+
+
+def test_the_said_pass_ids_are_kept_to_the_last_two_hundred(tmp_path):
+    import json
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        for index in range(overlay.SAID_LIMIT + 5):
+            view.poll(_Feed([_chosen("p%d" % index, "Line %d." % index, W14_NOW - 1000)]), "h1",
+                      W14_NOW + index * overlay.FEED_EVERY_MS)
+            view.take_thoughts()
+        kept = json.loads(spool.get_kv(overlay.SAID_KEY))
+        assert len(kept) == overlay.SAID_LIMIT and kept[-1] == "p%d" % (overlay.SAID_LIMIT + 4) and kept[0] == "p5"
+    finally:
+        spool.close()
+
+
+def test_the_curtain_on_means_nothing_of_hers_is_said_in_the_game(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        spool.put_kv(overlay.CURTAIN_KEY, "on")
+        view.poll(_Feed([_chosen("p1", "Hidden line.", W14_NOW - 1000)]), "h1", W14_NOW)
+        assert view.take_thoughts() == []
+        spool.put_kv(overlay.CURTAIN_KEY, "off")
+        view.poll(_Feed([_chosen("p1", "Hidden line.", W14_NOW - 1000)]), "h1", W14_NOW + overlay.FEED_EVERY_MS)
+        assert view.take_thoughts() == []  # said once or not at all: the curtain's pass is not a new one later
+    finally:
+        spool.close()
+
+
+def test_the_passes_seen_in_one_process_are_capped(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        for index in range(overlay.PASSES_SEEN_LIMIT + 10):
+            view._accept([_chosen("q%d" % index, "x", W14_NOW - 1000)], W14_NOW, False)
+        assert len(view._passes_seen) == overlay.PASSES_SEEN_LIMIT
+    finally:
+        spool.close()
+
+
+def test_a_line_waits_in_the_overlay_while_her_sim_id_is_unknown(paths, tmp_path, monkeypatch):
+    from test_bridge_thalamus import _Client
+    _data(paths, tmp_path, monkeypatch)
+
+    class _FeedClient(_Client):
+        def __init__(self, items):
+            self.items = items
+
+        def post_feed(self, body):
+            return {"status": "ok", "items": self.items}
+
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono, client=_FeedClient([_chosen("p9", "Waiting line.", WALL - 1000)]))
+    said = []
+    bridge.talk.say = lambda text, sim_id=None: said.append((text, sim_id))
+    _append(paths, [_lineage(1, WALL)])
+    _tick(bridge, mono, WALL)
+    assert said == []
+    snap = _snap(2, "ok", WALL + 100, 10)
+    snap["body"]["sim_id"] = "118245043779534862"
+    _append(paths, [snap])
+    _tick(bridge, mono, WALL + 200)
+    assert said == [("Waiting line.", "118245043779534862")]
+
+
+def _talk_reply(lines, command_id):
+    return {"id": command_id, "status": "REJECTED", "code": None, "result": {"ok": False, "lines": lines}}
+
+
+def test_a_talk_line_the_probe_refuses_as_too_soon_is_sent_once_more_and_no_more(tmp_path):
+    from domus_helper.talk import Talk
+    sent, replies = [], {}
+
+    def publish(command, args):
+        sent.append(args["text"])
+        command_id = "c%d" % len(sent)
+        replies[command_id] = _talk_reply(["TALK_REJECT TOO_SOON"], command_id)
+        return command_id
+
+    from domus_helper.spool import Spool
+    spool = Spool(tmp_path / "spool.db")
+    talk = Talk(spool, publish, reply=lambda command_id: replies.get(command_id))
+    try:
+        talk.say("First line.", sim_id="7")
+        talk.tick(WALL, True)
+        talk.tick(WALL + 3000, True)  # the refusal is read: the line goes once more
+        talk.tick(WALL + 6000, True)
+        talk.tick(WALL + 9000, True)
+        assert sent == ["First line.", "First line."]
+    finally:
+        spool.close()
+
+
+def test_a_talk_line_the_probe_accepts_is_not_sent_again_and_one_with_no_answer_is_given_up(tmp_path):
+    from domus_helper.talk import REPLY_WAIT_MS, Talk
+    from domus_helper.spool import Spool
+    sent, replies = [], {}
+
+    def publish(command, args):
+        sent.append(args["text"])
+        command_id = "c%d" % len(sent)
+        if len(sent) == 1:
+            replies[command_id] = _talk_reply(["TALK_OK"], command_id)
+        return command_id
+
+    spool = Spool(tmp_path / "spool.db")
+    talk = Talk(spool, publish, reply=lambda command_id: replies.get(command_id))
+    try:
+        talk.say("Accepted.", sim_id="7")
+        talk.say("Never answered.", sim_id="7")
+        talk.tick(WALL, True)
+        talk.tick(WALL + 3000, True)  # the answer to the first line is read, and the second goes
+        assert sent == ["Accepted.", "Never answered."]
+        talk.tick(WALL + 6000, True)  # no answer to the second: it is given up after the wait, and never sent again
+        talk.tick(WALL + 6000 + REPLY_WAIT_MS, True)
+        talk.tick(WALL + 9000 + REPLY_WAIT_MS, True)
+        assert sent == ["Accepted.", "Never answered."]
+    finally:
+        spool.close()

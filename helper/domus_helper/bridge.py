@@ -200,7 +200,8 @@ class Bridge:
         self.director = None if self.client is None else Director(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
         # 2.26.0: social talk on the User's screen; local only, so it works without Ashley too.
-        self.talk = Talk(self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
+        self.talk = Talk(self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
+                         reply=lambda command_id: commands.read_reply(command_id, paths=self.paths))  # HELPER3-12
         if self._acts is not None:
             self.overlay.answered = self._acts.answered_dialogs
         self.notebook = notebook.Notebook(self.paths.data_dir / notebook.DB_NAME)
@@ -280,8 +281,10 @@ class Bridge:
         self._catalog_dump(now, probe)
         self._lists_now_due(now, probe)
         self.overlay.poll(self.client, self.helper_session, now)
-        for line in self.overlay.take_thoughts():  # W14 (S4): a line she chose shows in the game once, as her words
-            self.talk.say(line, sim_id=self._her_sim_id())
+        sim = self._her_sim_id()
+        if sim is not None:  # HELPER3-7: a line she chose waits, unsaid, until her own Sim is known
+            for line in self.overlay.take_thoughts():  # W14 (S4): a line she chose shows in the game once, as her words
+                self.talk.say(line, sim_id=sim)
         self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
