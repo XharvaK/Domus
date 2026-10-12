@@ -352,9 +352,9 @@ def test_a_notice_on_her_phone_is_a_fact_naming_the_phone_act_it_is_about():
     row = {"event_kind": "phone", "telemetry_session_id": "s", "written_sequence": 1, "wall_timestamp_ms": 1000,
            "e2": {"kind": "notice", "from_sim_id": None, "notifies": "4242"}}
     phone = [p for p in extractor.step(row) if p.kind == "phone"]
-    assert len(phone) == 1 and dict(phone[0].facts) == {"kind": "notice", "act": "Test Phone Act"}
+    assert len(phone) == 1 and dict(phone[0].facts) == {"what": "notice", "act": "Test Phone Act"}
     unnamed = dict(row, written_sequence=2, e2={"kind": "notice", "from_sim_id": None, "notifies": "9999"})
-    assert [dict(p.facts) for p in extractor.step(unnamed) if p.kind == "phone"] == [{"kind": "notice"}]
+    assert [dict(p.facts) for p in extractor.step(unnamed) if p.kind == "phone"] == [{"what": "notice"}]
 
 
 def test_a_call_held_for_her_is_a_fact_with_its_callers_name_when_it_is_known():
@@ -364,9 +364,9 @@ def test_a_call_held_for_her_is_a_fact_with_its_callers_name_when_it_is_known():
     row = {"event_kind": "phone", "telemetry_session_id": "s", "written_sequence": 1, "wall_timestamp_ms": 1000,
            "e2": {"kind": "call", "from_sim_id": "501", "notifies": None}}
     assert [dict(p.facts) for p in extractor.step(row) if p.kind == "phone"] == [
-        {"kind": "call", "from": "Test Person"}]
+        {"what": "call", "from": "Test Person"}]
     unknown = dict(row, written_sequence=2, e2={"kind": "call", "from_sim_id": None, "notifies": None})
-    assert [dict(p.facts) for p in extractor.step(unknown) if p.kind == "phone"] == [{"kind": "call"}]
+    assert [dict(p.facts) for p in extractor.step(unknown) if p.kind == "phone"] == [{"what": "call"}]
     text = dict(row, written_sequence=3, e2={"kind": "text", "from_sim_id": "501", "notifies": None})
     assert [p for p in extractor.step(text) if p.kind == "phone"] == []
 
@@ -391,3 +391,33 @@ def test_the_bridge_names_a_notices_act_from_the_newest_menu(paths, tmp_path, mo
     bridge = _bridge(paths, {"ms": WALL})
     bridge.tick(WALL)
     assert bridge._extractor.act_words == {"4242": "phone Read"}  # humanized, as the menu has no words for it
+
+
+# HELPER2-1: her phone percepts reach Natalis with `what` (notice or call), the key her view reads. The fixture holds the
+# probe's phone rows; the test builds the wire percepts from them through the observation builder.
+def test_the_phone_percepts_in_the_fixture_reach_the_wire_with_what_natalis_reads():
+    from pathlib import Path
+    from types import SimpleNamespace
+    from domus_helper.contract import validate_observation as check
+    from domus_helper.thalamus import observation
+    from domus_helper.thalamus.percepts import Extractor
+    cases = json.loads((Path(__file__).parent / "fixtures" / "phone_percepts.json").read_text(encoding="utf-8"))
+    assert set(cases) == {"notice", "call"}
+    for name, case in cases.items():
+        extractor = Extractor()
+        extractor.act_words = case["act_words"]
+        extractor.people_names = case["people_names"]
+        percepts = tuple((p, 0.5) for p in extractor.step(case["row"]) if p.kind == "phone")
+        assert len(percepts) == 1, name
+        obs = observation.build(SimpleNamespace(percepts=percepts), {
+            "helper_session": "a" * 32, "obs_seq": 0, "slot_id": 3, "guid": "abc", "lineage_class": "load",
+            "row": {"written_sequence": 2, "wall_timestamp_ms": 5_000, "telemetry_session_id": "test-session",
+                    "body": {"sim_id": "1", "posture": {"posture_name": "stand"}},
+                    "game": {"clock_speed": "NORMAL", "paused": False}, "zone": {"zone_id": 7, "lot_id": 9},
+                    "motives": [{"id": "hunger", "value": 40, "band": "ok"}]},
+        })
+        check(obs, 5_000)
+        wire = [item for item in obs["percepts"] if item["kind"] == "phone"]
+        assert len(wire) == 1, name
+        assert {key: wire[0]["facts"].get(key) for key in case["wire"]} == case["wire"], name
+        assert "kind" not in wire[0]["facts"], name

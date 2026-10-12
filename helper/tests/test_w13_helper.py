@@ -522,9 +522,9 @@ def test_a_text_or_a_call_on_her_phone_is_a_percept_with_its_senders_name():
     row = {"event_kind": "phone", "telemetry_session_id": "s", "written_sequence": 1, "wall_timestamp_ms": WALL,
            "e2": {"kind": "call", "from_sim_id": "501", "notifies": None}}
     phone = [p for p in extractor.step(row) if p.kind == "phone"]
-    assert len(phone) == 1 and dict(phone[0].facts) == {"kind": "call", "from": "Test Person"}
+    assert len(phone) == 1 and dict(phone[0].facts) == {"what": "call", "from": "Test Person"}
     unknown = dict(row, e2={"kind": "call", "from_sim_id": "777", "notifies": None})
-    assert dict((p.kind, dict(p.facts)) for p in extractor.step(unknown))["phone"] == {"kind": "call"}
+    assert dict((p.kind, dict(p.facts)) for p in extractor.step(unknown))["phone"] == {"what": "call"}
     assert [p for p in extractor.step(dict(row, e2={"kind": "email", "from_sim_id": "501"})) if p.kind == "phone"] == []
 
 
