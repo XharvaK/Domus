@@ -30,6 +30,9 @@ COMMANDS = ("save", "buy", "place", "move", "sell", "catalog_dump")
 # 2.40.0: the save floor (15 real minutes between her saves, the User's ruling of 2026-10-12).
 SAVE_FLOOR_S = 15 * 60
 SAVE_CONFIRM_S = 120
+# A removal the game has queued (a sale, or an object made for a purchase that failed) is confirmed gone within this
+# many real seconds; after that it is UNKNOWN, and its money is not moved (HOME-9, S6).
+GONE_CONFIRM_S = 30
 THINGS_MAX = 600
 # The catalogue parts: at most this many items, and about this many bytes of JSON (a record is 48 KiB). The things
 # list is written by the probe's lists tick (reach.ListWriter), not here.
@@ -61,12 +64,14 @@ HIDDEN_TAG_WORDS = ("cheat", "debug", "hidden")
 
 class HomeState(object):
     """What the home commands remember for one controller: the time of her last save, the save still waiting for its
-    result, the objects she vacated (for `instead`), and whether the save-complete callback is subscribed."""
+    result, the objects she vacated (for `instead`), the removals waiting for the game to finish them (object id ->
+    what to do then), and whether the save-complete callback is subscribed."""
 
     def __init__(self):
         self.saved_at = None
         self.pending_save = None
         self.vacated = {}
+        self.pending_gone = {}
         self.subscribed = False
         self.callback = None
 
@@ -503,7 +508,7 @@ def cmd_save(control, args, connection):
     if not _start(control, act_id, connection):
         return False
     base = {"object_id": None, "guid64": None}
-    _expire_save(control, connection)
+    _expire_save(control)
     code, sim_info, _sim = _body(control)
     if code is not None:
         return _reject(control, act_id, connection, code, **base)
@@ -557,15 +562,56 @@ def _save_complete(control):
     _finish(control, act_id, connection, "FINISHED", "SAVED", object_id=None, guid64=None)
 
 
-def _expire_save(control, connection):
+def _expire_save(control, now=None):
     """A save with no callback after SAVE_CONFIRM_S is UNKNOWN: the game may have saved or not."""
     state = state_of(control)
     pending = state.pending_save
-    if pending is None or time.time() - pending[1] < SAVE_CONFIRM_S:
+    now = time.time() if now is None else now
+    if pending is None or now - pending[1] < SAVE_CONFIRM_S:
         return
     state.pending_save = None
     act_id, _at, old_connection = pending
     _finish(control, act_id, old_connection, "UNKNOWN", "SAVE_UNCONFIRMED", object_id=None, guid64=None)
+
+
+def tick(control, now=None):
+    """2.40.0 (W13 P2, home): the home work of every sampling tick (probe's reach tick): a save with no callback after
+    SAVE_CONFIRM_S, and the removals the game has to finish (a sale, an undone purchase). Never raises into sampling."""
+    now = time.time() if now is None else now
+    _expire_save(control, now)
+    _settle_removals(control, now)
+
+
+def _settle_removals(control, now):
+    """Each removal waiting for the game: when the object is gone, its act settles (the sale is paid now; an undone
+    purchase is refunded now, if it was charged); after GONE_CONFIRM_S with the object still there, UNKNOWN and no money
+    moved (a failed path never refunds while an object may still exist)."""
+    state = state_of(control)
+    for key, pending in list(state.pending_gone.items()):
+        gone = e2_actuator.object_gone(key)
+        if gone is True:
+            del state.pending_gone[key]
+            _settled(control, pending)
+        elif now - pending["at"] >= GONE_CONFIRM_S:
+            del state.pending_gone[key]
+            code = "SELL_UNCONFIRMED" if pending["kind"] == "sale" else "REMOVE_UNCONFIRMED"
+            _finish(control, pending["act_id"], pending["connection"], "UNKNOWN", code, **pending["base"])
+
+
+def _settled(control, pending):
+    """A removal the game has finished: the sale is paid (and FINISHED SOLD), or the undone purchase is refunded (its
+    REJECTED row says so when the refund fails)."""
+    e2_actuator.forget_rooms()
+    act_id, connection, base = pending["act_id"], pending["connection"], pending["base"]
+    if pending["kind"] == "sale":
+        if not e2_actuator.funds_add(pending["funds"], pending["value"], pending["sim"]):
+            return _finish(control, act_id, connection, "UNKNOWN", "SELL_FAILED", detail="not paid", **base)
+        return _finish(control, act_id, connection, "FINISHED", "SOLD",
+                       result=sell_facts(pending["value"], e2_actuator.funds_money(pending["funds"])), **base)
+    refund = pending.get("refund")
+    if refund is not None and not e2_actuator.funds_add(refund["funds"], refund["amount"], refund["sim"]):
+        return _finish(control, act_id, connection, "REJECTED", pending["code"], detail="refund failed", **base)
+    return _finish(control, act_id, connection, "REJECTED", pending["code"], **base)
 
 
 def cmd_buy(control, args, connection):
@@ -684,7 +730,8 @@ def cmd_move(control, args, connection):
 
 
 def cmd_sell(control, args, connection):
-    """2.40.0: sell an object of hers: she is paid its value, then it is removed (refunded if the removal fails)."""
+    """2.40.0: sell an object of hers. The game queues its removal; she is paid, and FINISHED SOLD, only once the game
+    has finished the removal (tick). A removal the game refuses now is REJECTED and nothing is paid."""
     act_id = args["act_id"]
     if not _start(control, act_id, connection):
         return False
@@ -705,14 +752,14 @@ def cmd_sell(control, args, connection):
         return _reject(control, act_id, connection, "NOT_SELLABLE", detail="value unreadable", **base)
     _row(control, act_id, "ACCEPTED", **base)
     _vacate(control, obj)
-    e2_actuator.funds_add(funds, value, sim)
     try:
         e2_actuator.sell_object(obj)
     except Exception as error:
-        e2_actuator.funds_try_remove(funds, value, sim)
         return _finish(control, act_id, connection, "REJECTED", "SELL_FAILED", detail=type(error).__name__, **base)
-    return _finish(control, act_id, connection, "FINISHED", "SOLD",
-                   result=sell_facts(value, e2_actuator.funds_money(funds)), **base)
+    state_of(control).pending_gone[str(obj.id)] = {
+        "kind": "sale", "act_id": act_id, "connection": connection, "base": base, "at": time.time(),
+        "value": value, "funds": funds, "sim": sim}
+    return True
 
 
 def _result(facts):

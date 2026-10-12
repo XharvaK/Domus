@@ -1522,9 +1522,18 @@ def remove_created(obj):
 
 
 def sell_object(obj):
-    """Effect: sell a household object (the removal is sell's; the money is paid by the caller first). Raises when the
-    game refuses, so the caller can take the money back."""
+    """Effect: remove a household object for a sale (destroy: the game queues the removal, and it is finished on a
+    later tick; the money is paid only once it is gone, home.py). Raises when the game refuses now."""
     obj.destroy()
+
+
+def object_gone(object_id):
+    """Read: True when the zone's object manager no longer holds the object (its removal is finished), False while it
+    holds it, None when the manager cannot be read."""
+    try:
+        return services.object_manager().get(int(object_id)) is None
+    except Exception:
+        return None
 
 
 def household_funds(household_id):
@@ -1549,9 +1558,20 @@ def funds_try_remove(funds, amount, sim):
 
 
 def funds_add(funds, amount, sim):
-    """Effect: pay the amount into the funds (_Funds.add, as the game's own cheat calls it with an amount and a reason).
-    The sim is not passed: the game's cheat does not pass one either."""
-    funds.add(amount, FUNDS_REASON)
+    """Effect (HOME-12): pay the amount into the funds (_Funds.add with an amount and a reason, as the game's own cheat
+    calls it; the sim is not passed, as the cheat does not either). True when the money went up by exactly the amount,
+    read before and after, so a notice that raises after the money moved still counts; when the money cannot be read,
+    True when the add did not raise."""
+    before = funds_money(funds)
+    try:
+        funds.add(amount, FUNDS_REASON)
+        added = True
+    except Exception:
+        added = False
+    after = funds_money(funds)
+    if before is not None and after is not None:
+        return after - before == amount
+    return added
 
 
 def save_slot():

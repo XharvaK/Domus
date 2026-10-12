@@ -144,6 +144,8 @@ class FakeActuator(object):
         self.placement_flags = 0
         self.wall_items = []
         self.rooms_forgotten = 0
+        self.removal_queued = False
+        self.queued = []
 
     # reads
     def at_home(self, household_id):
@@ -253,6 +255,7 @@ class FakeActuator(object):
     def funds_add(self, funds, amount, sim):
         self.calls.append(("add", amount))
         funds.add(amount, "x")
+        return True
 
     def create_unplaced(self, defn):
         self.calls.append(("create",))
@@ -294,7 +297,19 @@ class FakeActuator(object):
         if self.sell_error is not None:
             raise self.sell_error
         obj.removed = True
-        self.objects.pop(obj.id, None)
+        if self.removal_queued:
+            self.queued.append(obj.id)
+        else:
+            self.objects.pop(obj.id, None)
+
+    def process_queue(self):
+        """The game finishes the removals it queued (its reset service), so the object is gone from the zone."""
+        for object_id in self.queued:
+            self.objects.pop(object_id, None)
+        self.queued = []
+
+    def object_gone(self, object_id):
+        return str(object_id) not in self.objects
 
     def save_now(self, slot_id, slot_name):
         self.calls.append(("save", slot_id, slot_name))
@@ -958,23 +973,54 @@ class MoveTests(HomeCase):
 
 
 class SellTests(HomeCase):
+    """HOME-9: a sale is paid only once the game has finished the removal (destroy only queues it); the act is FINISHED
+    SOLD on a later tick, and UNKNOWN SELL_UNCONFIRMED, not paid, when the object is still there after 30 s."""
+
     def setUp(self):
         super(SellTests, self).setUp()
         self.chair = FakeObj("41", value=40)
         self.actuator.objects["41"] = self.chair
 
-    def test_a_sale_pays_the_value_then_removes_the_object(self):
+    def tick(self, now):
+        self.home.tick(self.control, now)
+
+    def test_a_sale_is_accepted_and_not_paid_until_the_game_has_removed_it(self):
+        self.actuator.removal_queued = True
         self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
-        calls = [c[0] for c in self.actuator.calls]
-        self.assertEqual(calls, ["add", "sell"])
-        self.assertTrue(self.chair.removed)
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.tick(1000.0)
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_once_the_removal_is_finished_the_sale_is_paid_and_finished(self):
+        self.actuator.removal_queued = True
+        self.run_cmd("sell", {"object_id": "41"})
+        self.actuator.process_queue()
+        self.tick(1001.0)
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("FINISHED", "SOLD")])
         result = self.control.events[-1]["result"]
         self.assertEqual((result["value"], result["funds"]), (40, 540))
-        self.assertEqual(self.control.phases()[-1], ("FINISHED", "SOLD"))
+        self.assertEqual(self.actuator.funds.money, 540)
+        self.tick(1002.0)
+        self.assertEqual(len(self.control.events), 2)
 
-    def test_a_sale_never_uses_the_create_removal(self):
+    def test_a_sale_completes_on_the_next_tick_when_the_game_removes_at_once(self):
+        self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.tick(1000.0)
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "SOLD"))
+        self.assertEqual(self.actuator.funds.money, 540)
+
+    def test_an_object_still_there_after_thirty_seconds_is_unknown_and_not_paid(self):
+        self.actuator.removal_queued = True
         self.run_cmd("sell", {"object_id": "41"})
-        self.assertNotIn("remove_created", [c[0] for c in self.actuator.calls])
+        self.tick(1000.0)
+        self.tick(1029.0)
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.tick(1031.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "SELL_UNCONFIRMED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "41")
+        self.assertEqual(self.actuator.funds.money, 500)
 
     def test_a_sim_is_not_sold(self):
         self.chair.is_sim = True
@@ -1000,10 +1046,11 @@ class SellTests(HomeCase):
         self.assertFalse(self.run_cmd("sell", {"object_id": "41"}))
         self.assertEqual(self.control.events[-1]["detail"], "value unreadable")
 
-    def test_a_removal_the_game_refuses_gives_the_money_back(self):
+    def test_a_removal_the_game_refuses_now_is_rejected_and_not_paid(self):
         self.actuator.sell_error = RuntimeError("no")
         self.assertFalse(self.run_cmd("sell", {"object_id": "41"}))
         self.assertEqual(self.control.phases()[-1], ("REJECTED", "SELL_FAILED"))
+        self.tick(1000.0)
         self.assertEqual(self.actuator.funds.money, 500)
 
 
@@ -1244,6 +1291,36 @@ class NearObjectTests(unittest.TestCase):
         self.assertEqual(self.near(subject), [])
 
 
+class FundsEffectTests(unittest.TestCase):
+    """HOME-12: a payment or a refund is paid only when the money went up by exactly the amount (read before and after):
+    a notice that raises after the money moved still counts; a payment that did not move the money does not."""
+
+    class Funds(object):
+        def __init__(self, money, notice_raises=False, adds=True):
+            self.money = money
+            self.notice_raises = notice_raises
+            self.adds = adds
+
+        def add(self, amount, reason):
+            if self.adds:
+                self.money += amount
+            if self.notice_raises:
+                raise RuntimeError("notice")
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+
+    def test_a_payment_counts_when_the_money_moved_even_if_the_notice_raised(self):
+        funds = self.Funds(500, notice_raises=True)
+        self.assertTrue(self.actuator.funds_add(funds, 40, None))
+        self.assertEqual(funds.money, 540)
+
+    def test_a_payment_that_did_not_move_the_money_is_not_paid(self):
+        funds = self.Funds(500, adds=False)
+        self.assertFalse(self.actuator.funds_add(funds, 40, None))
+        self.assertEqual(funds.money, 500)
+
+
 class ActuatorReadTests(unittest.TestCase):
     """The game's members as the actuator reads them: in_use is a property (27 reads in the game's code, none called),
     and a runtime slot's name is a property too. A read that fails is None, never a guess."""
@@ -1356,6 +1433,16 @@ class ProbeRouteTests(unittest.TestCase):
         for row in self.base.rows("act_event"):
             self.probe.schema.validate_record(row)
         self.assertEqual([e["phase"] for e in self.base.e2("act_event") if e["act_id"] == ACT], ["ACCEPTED"])
+
+    def test_every_sampling_tick_runs_the_home_tick_even_when_nothing_else_is_due(self):
+        """HOME-14: the save's confirmation and the removals run on each sample, before the zone check."""
+        calls = []
+        original = self.probe.home.tick
+        self.probe.home.tick = lambda control, now: calls.append(now)
+        self.addCleanup(setattr, self.probe.home, "tick", original)
+        self.probe._reach_tick({"event_kind": "not_a_presence_snapshot"})
+        self.probe._reach_tick({"event_kind": "not_a_presence_snapshot"})
+        self.assertEqual(len(calls), 2)
 
     def test_the_catalogue_dump_says_the_definitions_cannot_be_read_in_a_test(self):
         ok, connection = self.inbox("catalog_dump", {})

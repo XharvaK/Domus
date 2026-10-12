@@ -2552,6 +2552,11 @@ def _reach_tick(row):
     a lists_now). A sense: the caller catches what it raises."""
     global _LISTS_ZONE, _LISTS_FORCE, _DISCOVERY_ZONE
     _E2.tick_verbs()
+    # 2.40.0 (W13 P2, home): her save's confirmation and the removals the game finishes, on every sampling tick.
+    try:
+        home.tick(_E2, time.time())
+    except Exception:
+        pass
     if row.get("event_kind") != "presence_snapshot" or not _E2._zone_running():
         return
     zone = _current_zone()
