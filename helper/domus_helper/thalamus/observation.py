@@ -746,4 +746,6 @@ def build(decision, ctx):
                               room_labels=ctx.get("room_labels")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
         **({"options_cut": ctx["options_cut"]} if ctx.get("options_cut") else {}),
+        # W14 (S2): true while no whole menu of this helper session has come; absent otherwise.
+        **({"choices_pending": True} if ctx.get("choices_pending") is True else {}),
     }

@@ -81,7 +81,10 @@ class MenuParts(object):
         part = e2.get("part") if type(e2.get("part")) is int else 0
         if not 1 <= parts <= 64 or not 0 <= part < parts:
             return None
-        key = (session, e2.get("menu_rev"))
+        # W14 (D3): a set is one menu revision in one count of parts, whole or near. A row that differs in any of
+        # those starts a new set, so pieces of a 17-part write never mix with a 3-part write of the same revision.
+        near = e2.get("near") is True
+        key = (session, e2.get("menu_rev"), parts, near)
         if key != self._key:
             self._key, self._pieces = key, {}
         self._pieces[part] = e2
@@ -95,9 +98,33 @@ class MenuParts(object):
         head = self._pieces[0]
         self._key, self._pieces = None, {}
         # T2: the phone's lists are on part 0 too (the probe writes them there only).
-        return dict(e2, objects=objects, part=0, parts=1, dropped=head.get("dropped"),
-                    spot_stages=head.get("spot_stages"), refused_phone=head.get("refused_phone"),
-                    excluded_phone=head.get("excluded_phone"))
+        whole = dict(e2, objects=objects, part=0, parts=1, dropped=head.get("dropped"),
+                     spot_stages=head.get("spot_stages"), refused_phone=head.get("refused_phone"),
+                     excluded_phone=head.get("excluded_phone"))
+        # W14 (D3): a whole menu carries no near key; a near set keeps it (merge_near places it).
+        if not near:
+            whole.pop("near", None)
+        return whole
+
+
+# W14 (D3): an object is far from her when it is not in her room, not her phone, and more than NEAR_M metres away.
+def _far(item):
+    distance = item.get("distance_m")
+    return (item.get("same_room") is not True and item.get("phone") is not True
+            and isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance > NEAR_M)
+
+
+def merge_near(near, whole):
+    """W14 (D3): the menu she sees after a near part: the near part's objects first, then the objects of the last
+    whole menu of the session that the near part leaves out and that were far from her in that whole. With no whole
+    menu, the near part alone. A whole menu replaces everything; it never reaches this function."""
+    if not isinstance(whole, dict):
+        return near
+    near_objects = [item for item in near.get("objects") or [] if isinstance(item, dict)]
+    near_ids = {str(item.get("object_id")) for item in near_objects}
+    far = [item for item in whole.get("objects") or []
+           if isinstance(item, dict) and str(item.get("object_id")) not in near_ids and _far(item)]
+    return dict(near, objects=near_objects + far)
 
 
 class RefBook(object):
