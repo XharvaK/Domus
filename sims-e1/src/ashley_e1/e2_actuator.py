@@ -1101,12 +1101,16 @@ def lot_objects():
 
 
 def near_objects(obj, radius):
-    """Read: the other objects within radius metres of this one (on the floor plane): [{object_id, distance, portal,
-    window}], in the order the zone holds them (the caller sorts)."""
+    """Read: the other objects within radius metres of this one (on the floor plane), on its level, standing on the lot,
+    not a Sim and not in an inventory (HOME-26): [{object_id, distance, portal, window}], in the order the zone holds
+    them (the caller sorts)."""
     here = _read(lambda: obj.position)
+    level = _level_of(obj)
     found = []
     for other in _all_objects():
-        if other is obj:
+        if other is obj or _level_of(other) != level:
+            continue
+        if on_lot(other) is not True or in_inventory(other) is True or is_sim(other) is True:
             continue
         there = _read(lambda: other.position)
         if here is None or there is None:

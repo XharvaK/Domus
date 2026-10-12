@@ -477,9 +477,12 @@ def _spot(control, obj, sim, place, wall_item=False):
         target = str(place["target_id"])
         vacated = state_of(control).vacated.get(target)
         target_obj = e2_actuator.find_object(target)
-        if target_obj is not None and vacated is not None and \
-                e2_actuator.spot_key(e2_actuator.spot_of(target_obj)) == e2_actuator.spot_key(vacated):
-            return None, "NOT_FREE"
+        if target_obj is not None:
+            # The target still stands: its spot is free only when she moved it away first (A6-19).
+            if vacated is None or e2_actuator.spot_key(e2_actuator.spot_of(target_obj)) == \
+                    e2_actuator.spot_key(vacated):
+                return None, "NOT_FREE"
+            return vacated, None
         if vacated is None:
             return None, "NO_SPOT"
         return vacated, None

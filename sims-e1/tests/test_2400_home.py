@@ -872,6 +872,19 @@ class PlaceTests(HomeCase):
         self.assertFalse(self.run_cmd("place", self.args(place={"rel": "instead", "target_id": "77"})))
         self.assertEqual(self.control.phases()[-1], ("REJECTED", "NOT_FREE"))
 
+    def test_instead_on_a_target_that_stands_and_was_never_moved_is_not_free(self):
+        """A6-19: the target still stands and she never moved or sold it: NOT_FREE, not NO_SPOT."""
+        self.actuator.objects["77"] = FakeObj("77", spot={"translation": (1.0, 0.0, 2.0)})
+        self.assertFalse(self.run_cmd("place", self.args(place={"rel": "instead", "target_id": "77"})))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "NOT_FREE"))
+
+    def test_instead_on_a_target_moved_away_takes_the_spot_it_left(self):
+        self.actuator.objects["77"] = FakeObj("77", spot={"translation": (5.0, 0.0, 5.0)})
+        self.home.state_of(self.control).vacated["77"] = {"translation": (1.0, 0.0, 2.0), "orientation": None,
+                                                          "routing_surface": None, "slot": None}
+        self.assertTrue(self.run_cmd("place", self.args(place={"rel": "instead", "target_id": "77"})))
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "PLACED"))
+
     def test_instead_takes_the_spot_a_moved_or_sold_target_left(self):
         self.home.state_of(self.control).vacated["77"] = {"translation": (1.0, 0.0, 2.0), "orientation": None,
                                                           "routing_surface": None, "slot": None}
@@ -1183,6 +1196,52 @@ class PortalNameTests(unittest.TestCase):
     def test_a_name_that_only_contains_door_is_not_a_portal(self):
         for name in ("IndoorPlant", "OutdoorBench", "Doorbell", "DoorMat"):
             self.assertFalse(self.actuator.is_portal(self.named(name)), name)
+
+
+class NearObjectTests(unittest.TestCase):
+    """HOME-26: what is beside a placed object is another object on the same level, on the lot, that is not a Sim and
+    not in an inventory: a sofa on the floor above, her own Sim and an item in her pocket are not beside it."""
+
+    class Point(object):
+        def __init__(self, x, z):
+            self.x, self.y, self.z = x, 0.0, z
+
+    class Thing(object):
+        def __init__(self, object_id, x, z, level=0, sim=False, inventory=False, lot=True):
+            self.id = object_id
+            self.position = NearObjectTests.Point(x, z)
+            self.level = level
+            self.is_sim = sim
+            self._inventory = inventory
+            self._lot = lot
+
+        def is_on_active_lot(self, margin):
+            return self._lot
+
+        def is_in_inventory(self):
+            return self._inventory
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+        self.things = []
+        patch = mock.patch.object(self.actuator, "_all_objects", lambda: list(self.things))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def near(self, subject):
+        return sorted(item["object_id"] for item in self.actuator.near_objects(subject, 1.5))
+
+    def test_a_chair_on_the_same_level_on_the_lot_is_beside(self):
+        subject = self.Thing("1", 0.0, 0.0)
+        self.things = [subject, self.Thing("2", 0.5, 0.0)]
+        self.assertEqual(self.near(subject), ["2"])
+
+    def test_the_floor_above_a_Sim_an_inventory_item_and_off_lot_things_are_not_beside(self):
+        subject = self.Thing("1", 0.0, 0.0)
+        self.things = [subject, self.Thing("2", 0.0, 0.0, level=1), self.Thing("3", 0.2, 0.0, sim=True),
+                       self.Thing("4", 0.2, 0.0, inventory=True), self.Thing("5", 0.2, 0.0, lot=False),
+                       self.Thing("6", 9.0, 0.0)]
+        self.assertEqual(self.near(subject), [])
 
 
 class ActuatorReadTests(unittest.TestCase):
