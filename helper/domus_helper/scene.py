@@ -79,7 +79,7 @@ def _text(resolve, key):
 def _name(row, resolve, catalog=None):
     """The game's display name: the recipe's for crafted things (multi_serving_name is
     the portion label, "Party Size (8)", never the dish's name), else the catalogue's
-    ("Pure Simplicity Sink"), else the tuning name."""
+    (the catalogue's display name), else the tuning name."""
     craft = row.get("craft") or {}
     text = _text(resolve, craft.get("name_key"))
     if text:

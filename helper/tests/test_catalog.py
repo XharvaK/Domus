@@ -75,12 +75,12 @@ def test_scene_names_furniture_from_the_catalogue():
             "states": {"Dirty": "Dirty_Clean"}, "stats": {}, "craft": None}
     lamp = dict(sink, object_id="2", definition_id="1", class_="x")
     lamp["class"] = "object_light_ceiling"
-    texts = {"111": "Pure Simplicity Sink"}
+    texts = {"111": "Plain Basin Sink"}
     table = {"9929": {"name_key": "111", "description_key": "222", "price": 130}}
     result = scene.layers({"body": body}, [sink, lamp], resolve=texts.get,
                           catalog=lambda definition_id: table.get(str(definition_id)))
     first, second = result["near"]
     assert (first["name"], first["name_source"], first["kind"]) == (
-        "Pure Simplicity Sink", "CATALOG", "sinkCounterFC")
+        "Plain Basin Sink", "CATALOG", "sinkCounterFC")
     assert first["catalog_price"] == 130
     assert (second["name"], second["name_source"]) == ("object_light_ceiling", "TUNING_NAME")

@@ -3,7 +3,7 @@
 An object's catalogue entry (COBJ, type 0x319E4F1D) shares its definition's instance id.
 COBJ starts with its version, the common block version, then the name and description
 string keys and the price (verified 2026-10-05 against live definitions: 9929 reads
-"Pure Simplicity Sink"). Delta packages carry newer copies of FullBuild entries, so a
+a display name). Delta packages carry newer copies of FullBuild entries, so a
 Delta copy wins. Only the package index is read whole; each entry is read by seeking.
 The index lives in the helper's data folder; names resolve through the S0 string index,
 and none of the game's text is written into a repository.
