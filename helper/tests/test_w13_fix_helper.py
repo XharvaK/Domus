@@ -748,3 +748,43 @@ def test_a_catalogue_dump_answered_with_no_rows_is_not_asked_again_until_the_bui
     bridge.detected_build = "1.129"
     bridge._catalog_dump(WALL + 60 * 60_000, "2.40.0")
     assert sent.count("catalog_dump") == 1
+
+
+# T2 / HELPER2-?: her phone's acts the menu left out, and why, on the phone's option object: "<act>: left out: <reason>" for
+# each excluded phone act, "<act>: refused: <reason>" for each refused one; at most 12 strings of 160 characters, the last
+# one "and <n> more" past 12.
+def _phone_menu(excluded=None, refused=None, acts=None):
+    phone = {"object_id": "11", "class": "object_phone", "phone": True, "distance_m": 0.0, "same_room": True,
+             "acts": acts if acts is not None else [{"guid64": "4242", "name": "phone_Read", "text_key": None}]}
+    return {"menu_rev": 1, "room": "4", "objects": [phone], "excluded_phone": excluded, "refused_phone": refused}
+
+
+def test_the_phone_option_object_names_the_phone_acts_left_out_and_refused_with_their_reasons():
+    from domus_helper.acts import options
+    menu = _phone_menu(excluded=[{"name": "phone_Call", "why": "travel"}],
+                       refused=[{"name": "phone_Plan", "reason_key": None}])
+    listed = options(menu, resolve={}.get, refs=RefBook())
+    assert len(listed) == 1 and listed[0]["left_out"] == [
+        "phone Call: left out: travel", "phone Plan: refused: no reason given"]
+
+
+def test_the_phone_left_out_lines_are_at_most_twelve_of_at_most_160_characters_and_the_last_counts_the_rest():
+    from domus_helper.acts import options
+    excluded = [{"name": "phone_Act%02d" % number + "x" * 150, "why": "hidden"} for number in range(14)]
+    listed = options(_phone_menu(excluded=excluded), resolve={}.get, refs=RefBook())
+    left_out = listed[0]["left_out"]
+    assert len(left_out) == 12 and all(len(line) <= 160 for line in left_out)
+    assert left_out[-1] == "and 3 more"
+    assert "left_out" not in options(_phone_menu(), resolve={}.get, refs=RefBook())[0]
+
+
+def test_the_phone_lists_of_a_menu_in_parts_come_from_its_first_part_whichever_part_came_last():
+    from domus_helper.acts import MenuParts
+    parts = MenuParts()
+    head = {"menu_rev": 3, "room": "4", "part": 0, "parts": 2, "objects": [], "refused_phone": [],
+            "excluded_phone": [{"name": "phone_Call", "why": "travel"}], "dropped": None, "spot_stages": None}
+    tail = {"menu_rev": 3, "room": "4", "part": 1, "parts": 2, "objects": [], "refused_phone": None,
+            "excluded_phone": None, "dropped": None, "spot_stages": None}
+    assert parts.take("s", head) is None
+    whole = parts.take("s", tail)
+    assert whole["excluded_phone"] == [{"name": "phone_Call", "why": "travel"}]

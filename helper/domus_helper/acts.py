@@ -92,8 +92,10 @@ class MenuParts(object):
         # belong to the whole menu, whichever part came last.
         head = self._pieces[0]
         self._key, self._pieces = None, {}
+        # T2: the phone's lists are on part 0 too (the probe writes them there only).
         return dict(e2, objects=objects, part=0, parts=1, dropped=head.get("dropped"),
-                    spot_stages=head.get("spot_stages"))
+                    spot_stages=head.get("spot_stages"), refused_phone=head.get("refused_phone"),
+                    excluded_phone=head.get("excluded_phone"))
 
 
 class RefBook(object):
@@ -562,6 +564,30 @@ def _fold(rows):
     return kept
 
 
+PHONE_LEFT_OUT_LINES = 12
+PHONE_LEFT_OUT_CHARS = 160
+
+
+def _phone_left_out(menu, resolve):
+    """T2: her phone's acts the newest menu left out, in words: "<act>: left out: <reason>" for each excluded one (the
+    guard's reason), then "<act>: refused: <reason>" for each one the game refused (its own sentence). At most
+    PHONE_LEFT_OUT_LINES lines of PHONE_LEFT_OUT_CHARS characters; past that the last line is "and <n> more"."""
+    lines = []
+    for item in menu.get("excluded_phone") if isinstance(menu.get("excluded_phone"), list) else []:
+        if isinstance(item, dict):
+            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
+            why = humanize(item["why"]) if isinstance(item.get("why"), str) and item["why"] else "not said"
+            lines.append(("%s: left out: %s" % (act, why))[:PHONE_LEFT_OUT_CHARS])
+    for item in menu.get("refused_phone") if isinstance(menu.get("refused_phone"), list) else []:
+        if isinstance(item, dict):
+            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
+            reason = _sentence(resolve, item.get("reason_key")) or "no reason given"
+            lines.append(("%s: refused: %s" % (act, reason))[:PHONE_LEFT_OUT_CHARS])
+    if len(lines) > PHONE_LEFT_OUT_LINES:
+        lines = lines[:PHONE_LEFT_OUT_LINES - 1] + ["and %d more" % (len(lines) - (PHONE_LEFT_OUT_LINES - 1))]
+    return lines
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
             room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
@@ -577,6 +603,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     refs = RefBook() if refs is None else refs
     result = []
     left_out = []
+    phone_left_out = _phone_left_out(menu, resolve)
     for item in menu["objects"]:
         if not isinstance(item, dict) or not isinstance(item.get("acts"), list):
             continue
@@ -641,6 +668,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             refused = _refusals(item, resolve, near)
             if refused:
                 entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)
+            if item.get("phone") is True and phone_left_out:
+                entry["left_out"] = list(phone_left_out)  # T2: her phone's acts left out of the menu, and why
             if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
                 entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
