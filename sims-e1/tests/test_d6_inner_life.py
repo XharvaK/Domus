@@ -426,7 +426,7 @@ class SchemaEighteenTests(_Base):
     def test_version_and_self_shapes(self):
         self.assertEqual((self.schema.OBSERVATION_SCHEMA_VERSION, self.schema.TELEMETRY_SCHEMA_ID),
                          (19, "e1.telemetry/v19"))
-        self.assertEqual(self.schema.PROBE_VERSION, "2.37.1")
+        self.assertEqual(self.schema.PROBE_VERSION, "2.38.0")
         self.assertIn(18, self.schema.ACCEPTED_SCHEMA_VERSIONS)
 
     def test_the_self_fields_validate_and_bad_ones_are_refused(self):
