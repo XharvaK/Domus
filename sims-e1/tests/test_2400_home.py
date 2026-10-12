@@ -161,6 +161,7 @@ class FakeActuator(object):
         self.money_hidden = False
         self.money_hidden_after_charge = False
         self.refund_refused = False
+        self.spot_error = None
 
     # reads
     def at_home(self, household_id):
@@ -219,6 +220,8 @@ class FakeActuator(object):
     def find_spot(self, obj, sim, place, wall_item=False):
         self.calls.append(("find_spot", place["rel"]))
         self.wall_items.append(wall_item)
+        if self.spot_error is not None:
+            raise self.spot_error
         return self.spot
 
     def object_placement_flags(self, obj):
@@ -1008,13 +1011,59 @@ class BuyTests(HomeCase):
         self.assertEqual(self.control.events[-1]["object_id"], "9000")
         self.assertEqual(self.actuator.funds.money, 350)
 
-    def test_a_charge_that_cannot_be_read_is_unknown_and_the_object_is_kept(self):
-        """HOME-10: she may have paid, so the object stays (never removed unpaid) and the act is UNKNOWN."""
+    def test_a_charge_that_cannot_be_read_removes_the_object_and_refunds_nothing(self):
+        """HOME-10 / SEAM2-5 / T4: whether she paid is not known, so the object is removed (no refund) and the act says so."""
         self.actuator.money_hidden_after_charge = True
         self.assertFalse(self.run_cmd("buy", self.args))
         self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "CHARGE_UNKNOWN"))
+        self.assertIn("not refunded", self.control.events[-1]["detail"])
+        self.assertTrue(self.actuator.created[0].removed)
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_charge_removal_the_game_queues_is_settled_once_it_is_gone(self):
+        self.actuator.money_hidden_after_charge = True
+        self.actuator.removal_queued = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.actuator.process_queue()
+        self.home.tick(self.control, 1001.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "CHARGE_UNKNOWN"))
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_charge_removal_still_there_after_thirty_seconds_says_remove_unconfirmed(self):
+        self.actuator.money_hidden_after_charge = True
+        self.actuator.removal_queued = True
+        self.run_cmd("buy", self.args)
+        self.home.tick(self.control, 1000.0)
+        self.home.tick(self.control, 1031.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
         self.assertEqual(self.control.events[-1]["object_id"], "9000")
-        self.assertFalse(self.actuator.created[0].removed)
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_charge_the_game_will_not_remove_is_unknown_with_the_object_id(self):
+        self.actuator.money_hidden_after_charge = True
+        self.actuator.remove_refused = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+
+    def test_a_spot_search_that_raises_removes_what_it_made_and_says_spot_failed(self):
+        """HOME2-2 / T4: nothing is charged before the spot is found, so a search that raises removes the object."""
+        self.actuator.spot_error = RuntimeError("points")
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("REJECTED", "SPOT_FAILED")])
+        self.assertEqual(self.control.events[-1]["detail"], "RuntimeError")
+        self.assertTrue(self.actuator.created[0].removed)
+        self.assertNotIn("try_remove", [c[0] for c in self.actuator.calls])
+        self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_a_spot_failure_whose_removal_is_refused_keeps_the_object_id(self):
+        self.actuator.spot_error = RuntimeError("points")
+        self.actuator.remove_refused = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+        self.assertEqual(self.actuator.funds.money, 500)
 
     def test_a_charge_the_funds_refuse_removes_the_object_and_takes_nothing(self):
         self.actuator.charge_refused = True

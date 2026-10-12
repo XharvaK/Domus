@@ -634,18 +634,20 @@ def _settled(control, pending):
     refund = pending.get("refund")
     if refund is not None and not e2_actuator.funds_add(refund["funds"], refund["amount"], refund["sim"]):
         detail = "refund failed"
-    return _finish(control, act_id, connection, "REJECTED", pending["code"], detail=detail, **base)
+    return _finish(control, act_id, connection, pending.get("phase", "REJECTED"), pending["code"], detail=detail,
+                   **base)
 
 
-def _undo(control, act_id, connection, obj, code, detail=None, refund=None):
+def _undo(control, act_id, connection, obj, code, detail=None, refund=None, phase="REJECTED"):
     """A purchase that failed after its object was made: the object is removed, and the act settles only once the game
     has finished the removal (tick). The money is refunded then, never before (a failed path never refunds while the
-    object may still exist). A removal the game refuses is UNKNOWN with the object's id, and nothing is refunded."""
+    object may still exist). A removal the game refuses is UNKNOWN with the object's id, and nothing is refunded.
+    phase is the act's end: REJECTED, or UNKNOWN when the money is not known (CHARGE_UNKNOWN)."""
     key = str(obj.id)
     if not e2_actuator.remove_created(obj):
         return _finish(control, act_id, connection, "UNKNOWN", "REMOVE_UNCONFIRMED", object_id=key, guid64=None)
     pending = {"kind": "undo", "act_id": act_id, "connection": connection, "base": {"object_id": None, "guid64": None},
-               "at": time.time(), "code": code, "detail": detail, "refund": refund}
+               "at": time.time(), "code": code, "detail": detail, "refund": refund, "phase": phase}
     if e2_actuator.object_gone(key) is True:
         _settled(control, pending)
     else:
@@ -687,16 +689,22 @@ def cmd_buy(control, args, connection):
     obj = e2_actuator.create_unplaced(definition)
     if obj is None:
         return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", **base)
-    spot, refused = _spot(control, obj, sim, args["place"],
-                          wall_item=_wall_item(e2_actuator.definition_placement_flags(definition)))
+    try:
+        spot, refused = _spot(control, obj, sim, args["place"],
+                              wall_item=_wall_item(e2_actuator.definition_placement_flags(definition)))
+    except Exception as error:
+        # 2.40.0 (W13 R2, HOME2-2): a search that raises removes what it made; nothing has been charged.
+        return _undo(control, act_id, connection, obj, "SPOT_FAILED", detail=type(error).__name__)
     if refused is not None or spot is None:
         return _undo(control, act_id, connection, obj, refused or "NO_SPOT")
     money_before = e2_actuator.funds_money(funds)
     e2_actuator.funds_try_remove(funds, price, sim)
     money_after = e2_actuator.funds_money(funds)
     if money_after is None:
-        # The charge cannot be read: she may have paid, so the object stays and the act is UNKNOWN (never refunded).
-        return _finish(control, act_id, connection, "UNKNOWN", "CHARGE_UNKNOWN", object_id=str(obj.id), guid64=None)
+        # 2.40.0 (W13 R2, SEAM2-5 / T4): the money cannot be read, so whether she paid is not known. The object is
+        # removed as a failed purchase is, with no refund, and the act says so.
+        return _undo(control, act_id, connection, obj, "CHARGE_UNKNOWN", phase="UNKNOWN",
+                     detail="the money could not be read; the object was removed and not refunded")
     if not charge_made(money_before, money_after, price):
         return _undo(control, act_id, connection, obj, "NO_FUNDS")
     refund = {"funds": funds, "amount": price, "sim": sim}
