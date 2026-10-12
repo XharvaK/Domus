@@ -753,6 +753,8 @@ class E2Control:
         # 2.31.0 (PR8): the load path. Arming reads the world as it is loaded; an act an earlier
         # session left pushed is resolved as LOADED here, not dropped silently by the reset.
         self._resolve_pushed("LOADED")
+        # 2.40.0 (W13 R2): a trip still pending when she is armed again has no zone change left to watch for.
+        self._close_trip("TRAVEL_UNSEEN")
         self._pace_release()
         self._reset_state()
         if not self.available():
@@ -789,10 +791,17 @@ class E2Control:
         self.tokens.clear()
         # 2.40.0 (W13 P1 fix): a trip still pending when the sampler stops is UNKNOWN. A zone change is not a stop for
         # it: the next sampling tick checks the zone (tick_verbs), so the trip stays pending across the loading screen.
-        if reason != "ZONE_CHANGE" and self._go is not None:
-            pending = self._go
-            self._go = None
-            self._act_event_safe(pending["act_id"], "UNKNOWN", code="SAMPLER_STOPPED", object_id=None, guid64=None)
+        if reason != "ZONE_CHANGE":
+            self._close_trip("SAMPLER_STOPPED")
+
+    def _close_trip(self, code):
+        """2.40.0 (W13 R2): the pending trip, if there is one, is closed UNKNOWN with this code and cleared (one terminal
+        row for the trip)."""
+        pending = self._go
+        if pending is None:
+            return
+        self._go = None
+        self._act_event_safe(pending["act_id"], "UNKNOWN", code=code, object_id=None, guid64=None)
 
     def on_disarm(self):
         self.on_stop("DISARM")
@@ -1132,12 +1141,13 @@ class E2Control:
 
     def _act_event_safe(self, act_id, phase, **payload):
         """2.40.0 (W13 P1 fix): an act row for a verb. When the schema refuses the row, the act is closed as UNKNOWN
-        ROW_INVALID with no result, so no verb ends without a terminal row. Same arguments as _act_event; True when a
-        row was written."""
+        ROW_INVALID with no result, so no verb ends without a terminal row. Same arguments as _act_event; True only when
+        the row asked for was written. 2.40.0 (W13 R2): a fallback is False, so the verb stops (no later phase row)."""
         if self._act_event(act_id, phase, **payload):
             return True
-        return self._act_event(act_id, "UNKNOWN", code="ROW_INVALID", object_id=payload.get("object_id"),
-                               guid64=payload.get("guid64"))
+        self._act_event(act_id, "UNKNOWN", code="ROW_INVALID", object_id=payload.get("object_id"),
+                        guid64=payload.get("guid64"))
+        return False
 
     def _act_check(self, object_id, guid64, owner=False, variant=None, sim_id=None):
         """None when her chosen action may be pushed now, else (code, detail).
@@ -1190,6 +1200,9 @@ class E2Control:
             return ("NOT_OFFERED", None), None
         affordance = offers[0]
         if variant is not None:
+            # 2.40.0 (W13 R2): a pie choice takes no Sim; a Sim named with a variant is refused, never dropped.
+            if sim_id is not None:
+                return ("NOT_A_SIM_ACT", None), None
             return self._variant_check(sim, obj, affordance, context, object_id, guid64, variant,
                                        spot=spot is not None or own_phone)
         try:
@@ -1400,6 +1413,7 @@ class E2Control:
         word (she asks the User first); the host records it and never gates it on its own."""
         base = {"object_id": None, "guid64": None}
         accepted = False
+        tracked = None
         try:
             body = self._verb_body(act_id, base, connection)
             if body is None:
@@ -1408,17 +1422,28 @@ class E2Control:
             code = self._go_refusal(sim_info, zone_id, known_zones)
             if code is not None:
                 return self._reject(act_id, base, connection, code)
-            self._act_event_safe(act_id, "ACCEPTED", tuning_name="travel", **base)
+            # 2.40.0 (W13 R2): a verb stops when one of its rows fell back to UNKNOWN (no later phase row follows it).
+            if not self._act_event_safe(act_id, "ACCEPTED", tuning_name="travel", **base):
+                self._say(connection, "ACT_UNKNOWN ROW_INVALID")
+                return False
             accepted = True
             if e2_actuator.travel(sim_info.id, zone_id) is not True:
                 self._act_event_safe(act_id, "REJECTED", code="PUSH_FAILED", **base)
                 self._say(connection, "ACT_REJECT PUSH_FAILED")
                 return False
-            self._act_event_safe(act_id, "PUSHED", tuning_name="travel", **base)
-            self._go = {"act_id": act_id, "zone_id": str(zone_id), "at": time.monotonic()}
+            if not self._act_event_safe(act_id, "PUSHED", tuning_name="travel", **base):
+                self._say(connection, "ACT_UNKNOWN ROW_INVALID")
+                return False
+            # 2.40.0 (W13 R2): the trip is tracked only once its PUSHED row is written.
+            tracked = {"act_id": act_id, "zone_id": str(zone_id), "at": time.monotonic()}
+            self._go = tracked
             self._say(connection, "ACT_PUSHED %s travel" % act_id)
             return True
         except Exception as error:
+            # 2.40.0 (W13 R2 / SEAM2-12): a trip this act tracked is cleared here, so the arrival never writes a second
+            # terminal row after the UNKNOWN below. An earlier trip is never this act's to clear.
+            if tracked is not None and self._go is tracked:
+                self._go = None
             code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
             self._act_event_safe(act_id, "UNKNOWN" if accepted else "REJECTED", code=code, **base)
             self._say(connection, "ACT_%s %s" % ("UNKNOWN" if accepted else "REJECTED", code))
@@ -1465,17 +1490,21 @@ class E2Control:
 
     def cmd_event(self, act_id, situation_id, guests, start, connection, known_events=()):
         """2.40.0 (W13 P1): a planned event (a situation the game makes user-facing, and one the newest events list
-        offers): her as host, the guests invited, now or at a time today or tomorrow. The cost comes from her household's
-        funds first (the game's own try_remove); a failed creation gives the money back. ACCEPTED, then FINISHED CREATED
-        with its cost, her funds and the start."""
+        offers): her as host, the guests invited, now or at a time today or tomorrow. ACCEPTED, then FINISHED CREATED
+        with the money that fell, her funds and the start.
+        2.40.0 (W13 R2): the game takes the price itself when it makes the event: the type's cost plus the guest list's
+        hire cost, from her household, all or nothing. The host pre-checks that price, reads the money before and after
+        the game's call, and gives back what fell when no event was made (not as earnings). It never charges itself."""
         base = {"object_id": None, "guid64": None}
         accepted = False
-        charged = None
         try:
             body = self._verb_body(act_id, base, connection)
             if body is None:
                 return False
             sim_info, sim = body
+            # 2.40.0 (W13 R2): an event made in the zone she is leaving would be made where she is not; it waits.
+            if self._go is not None:
+                return self._reject(act_id, base, connection, "TRAVEL_PENDING")
             if str(situation_id) not in known_events:
                 return self._reject(act_id, base, connection, "NOT_AN_EVENT")
             situation = e2_actuator.situation_type(situation_id)
@@ -1491,36 +1520,45 @@ class E2Control:
             if cost is None:
                 # 2.40.0 (W13 P1 fix): an unread cost is refused, never taken for a free event.
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "cost unread")
-            household = _read(lambda: sim_info.household)
-            money = observers.household_money(sim_info)
-            if cost > 0 and (money is None or money < cost):
-                return self._reject(act_id, base, connection, "NO_FUNDS")
-            guest_ids = reach.sim_ids(list(guests), reach.EVENT_GUESTS_MAX)
+            # 2.40.0 (W13 R2): the guest cap is named on the refusal (the wire bound is the same number).
+            if type(guests) is list and len(guests) > reach.EVENT_GUESTS_MAX:
+                return self._reject(act_id, base, connection, "CREATE_FAILED",
+                                    "too many guests (at most %d)" % reach.EVENT_GUESTS_MAX)
+            guest_ids = reach.sim_ids(guests, reach.EVENT_GUESTS_MAX)
             if guest_ids is None:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "guests")
             guest_list = e2_actuator.event_guest_list(sim_info.id, guest_ids, e2_actuator.default_job(situation))
             if guest_list is None:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "guest list")
-            self._act_event_safe(act_id, "ACCEPTED", tuning_name="event", **base)
+            # 2.40.0 (W13 R2): the game takes the hire cost too; an unread hire cost is refused before anything.
+            hire = e2_actuator.hire_cost(guest_list)
+            if hire is None:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "cost unread")
+            household = _read(lambda: sim_info.household)
+            money = observers.household_money(sim_info)
+            if money is None:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "funds unread")
+            if cost + hire > money:
+                return self._reject(act_id, base, connection, "NO_FUNDS")
+            if not self._act_event_safe(act_id, "ACCEPTED", tuning_name="event", **base):
+                self._say(connection, "ACT_UNKNOWN ROW_INVALID")
+                return False
             accepted = True
-            if cost > 0:
-                charged = e2_actuator.charge(household, cost, sim, reach.FUNDS_REASON)
-                if charged is None:
-                    return self._reject(act_id, base, connection, "CREATE_FAILED", "funds unread")
-                if charged is False:
-                    return self._reject(act_id, base, connection, "NO_FUNDS")
             created = e2_actuator.create_event(_read(lambda: services.current_zone_id()), situation, guest_list,
                                                scheduled)
+            after = observers.household_money(sim_info)
+            # 2.40.0 (W13 R2): the money that fell over the game's call is the price; unread after it, nothing is known.
+            fell = None if after is None else max(0, money - after)
             if created is None:
-                # 2.40.0 (W13 P1 fix): a refund that fails is said on the refusal (she was charged and got nothing).
-                refunded = True
-                if charged:
-                    refunded = e2_actuator.refund(household, cost, sim, reach.FUNDS_REASON)
+                if fell is None:
+                    return self._reject(act_id, base, connection, "CREATE_FAILED", "funds unread")
+                if fell == 0:
+                    return self._reject(act_id, base, connection, "CREATE_FAILED", "create")
+                refunded = e2_actuator.refund(household, fell, sim, reach.FUNDS_REASON)
                 return self._reject(act_id, base, connection, "CREATE_FAILED",
-                                    "create" if refunded else "refund failed")
-            funds = observers.household_money(sim_info)
+                                    ("refunded %d" % fell) if refunded else "refund failed")
             self._act_event_safe(act_id, "FINISHED", code="CREATED",
-                                 result={"cost": cost, "funds": funds, "start_min": start_min}, **base)
+                                 result={"cost": fell, "funds": after, "start_min": start_min}, **base)
             self._say(connection, "ACT_FINISHED %s CREATED" % act_id)
             return True
         except Exception as error:
