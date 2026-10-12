@@ -781,6 +781,8 @@ def _validate_e2(row):
 RESULT_MAX_KEYS = 16
 RESULT_MAX_BYTES = 512
 RESULT_LIST_MAX = 4
+# A list item in a result is a game id (at most 20 digits, as _is_digits allows) or a short word: 20 characters.
+RESULT_LIST_ITEM_MAX = 20
 DISCOVERY_MAX_RECORD_BYTES = 40 * 1024 + 4096
 LIST_PART_MAX = 128
 LIST_KIND_NAMES = ("people", "places", "things", "events")
@@ -803,7 +805,7 @@ def _validate_result(value):
             _require(len(item) <= 64, "act result word")
             continue
         _require(type(item) is list and len(item) <= RESULT_LIST_MAX and
-                 all(type(x) is str and len(x) <= 20 for x in item), "act result value")
+                 all(type(x) is str and len(x) <= RESULT_LIST_ITEM_MAX for x in item), "act result value")
     _require(len(json.dumps(value, separators=(",", ":"))) <= RESULT_MAX_BYTES, "act result size")
     _validate_home_facts(value)
 
@@ -1890,11 +1892,11 @@ THING_KEYS = ("object_id", "definition_id", "name_key", "where", "room_id", "val
 THING_MAX_STATES = 4
 CATALOG_KEYS = ("definition_id", "price", "buy_category", "placement", "tags", "purchasable")
 CATALOG_MAX_PART_ITEMS = 256
-LIST_MAX_PART_ITEMS = 128
 LIST_MAX_PARTS = 64
 PLACEMENT_WORDS = ("floor", "wall", "surface")
 ROUTE_WORDS = ("door", "bed", "toilet", "fridge")
-RESULT_KEYS = ("room_id", "wall", "wall_has", "beside", "facing_id", "routes_lost", "price", "funds", "value")
+RESULT_KEYS = ("room_id", "wall", "wall_has", "wall_kinds", "beside", "facing_id", "routes_lost", "price", "funds",
+               "value")
 # Every key an act result may carry: the home facts (P2) and the go/event facts (P1).
 RESULT_KEY_NAMES = frozenset(RESULT_KEYS + ("zone_id", "cost", "start_min"))
 RESULT_MAX_IDS = 4
@@ -1961,6 +1963,12 @@ def _validate_home_facts(result):
         if ids is not None:
             _require(type(ids) is list and len(ids) <= RESULT_MAX_IDS and all(_is_digits(i) for i in ids),
                      "act result %s" % key)
+    kinds = result.get("wall_kinds")
+    if kinds is not None:
+        # S2: one word per wall_has id, parallel to it: a door or a window.
+        _require(type(kinds) is list and len(kinds) <= RESULT_MAX_IDS and
+                 all(kind in ("door", "window") for kind in kinds) and
+                 len(kinds) == len(result.get("wall_has") or ()), "act result wall_kinds")
     lost = result.get("routes_lost")
     if lost is not None:
         _require(type(lost) is list and all(word in ROUTE_WORDS for word in lost), "act result routes_lost")

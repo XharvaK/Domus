@@ -7,7 +7,8 @@ import zipfile
 
 
 APPROVED_STDLIB_IMPORTS = {
-    "hashlib", "json", "os", "pathlib", "queue", "struct", "sys",
+    # "math": 2.40.0 (W13 P2 fix, HOME-5): the yaw angle of a facing (e2_actuator's search); pure arithmetic.
+    "hashlib", "json", "math", "os", "pathlib", "queue", "struct", "sys",
     "threading", "time", "uuid",
 }
 APPROVED_GAME_ROOTS = {

@@ -7,6 +7,7 @@ remove_manual_save_complete_callback, cancel (our own trial interaction only,
 A25). Everything else here is a read.
 """
 
+import math
 import services  # TARGET_BYTECODE 1.128: object_manager, game_clock_service, get_persistence_service.
 
 from clock import ClockSpeedMode, GameSpeedChangeSource  # TARGET_BYTECODE 1.128.
@@ -44,6 +45,11 @@ try:
     from build_buy import get_object_buy_category_flags, get_object_placement_flags
 except ImportError:
     get_object_buy_category_flags = get_object_placement_flags = None
+# 2.40.0 (W13 P2 fix, HOME-6): the game's yaw quaternion for an angle (sims4.math, a rotation about the up axis).
+try:
+    from sims4.math import angle_to_yaw_quaternion
+except ImportError:
+    angle_to_yaw_quaternion = None
 try:
     from interactions.context import PickInfo, PickType
 except ImportError:
@@ -82,6 +88,17 @@ TRIAL_END_REASON = "ashley_e2_trial_end"
 GO_HERE_NAME = "terrain-gohere"
 GO_HERE_CLASS = "GoHereSuperInteraction"
 FRONT_DOOR_STEP_M = 1.0
+# 2.40.0 (W13 P2 fix, HOME-5/24/25): rooms and walls by sampling the lot. The game's own room lookup (get_room_id) at
+# the lot's sample points ROOM_GRID_M apart, read once per zone and level and dropped after a home edit (forget_rooms).
+# At most ROOM_GRID_MAX points per axis, ROOM_LEVELS_MAX levels, ROOM_GRIDS_MAX cached grids. A wall is within
+# WALL_NEAR_M of a room's border cell; a wall search tries WALL_STARTS starts.
+ROOM_GRID_M = 1.0
+ROOM_GRID_MAX = 64
+ROOM_LEVELS_MAX = 4
+ROOM_GRIDS_MAX = 16
+WALL_NEAR_M = 1.0
+WALL_STARTS = 6
+_ROOM_GRIDS = {}
 
 
 def build_context(sim, owner=False, pick=None):
@@ -1114,13 +1131,18 @@ def spot_key(spot):
         return None
 
 
-def _standable(obj, start, surface):
+def _standable(obj, start, surface, orientation=None):
     """Read: the game's own standable spot for an object near start (placement.find_good_location, as standable_spot
-    does for a Sim): {translation, orientation, routing_surface, slot} or None."""
+    does for a Sim), searched from a start that faces orientation (when given): {translation, orientation,
+    routing_surface, slot} or None."""
     if placement is None or start is None:
         return None
     try:
-        starting = placement.create_starting_location(position=start, routing_surface=surface)
+        if orientation is None:
+            starting = placement.create_starting_location(position=start, routing_surface=surface)
+        else:
+            starting = placement.create_starting_location(position=start, orientation=orientation,
+                                                          routing_surface=surface)
         context = placement.create_fgl_context_for_object(starting, obj)
         found = placement.find_good_location(context)
         position, orientation = found[0], found[1]
@@ -1144,38 +1166,248 @@ def _slot_spot(target, obj):
     return None
 
 
-def find_spot(obj, sim, place):
-    """Read: the spot a placement names (home.py's place shape): on a free slot of a target, beside a target, or the
-    game's search from a room's middle (wall, in). None when the game finds none."""
+def _level_of(obj):
+    """Read: the level an object stands on (an int), or None when unreadable."""
+    return _count(_read(lambda: obj.level))
+
+
+def _zone_id():
+    """Read: the current zone's id, or None."""
+    return _read(lambda: services.current_zone_id())
+
+
+def _room_at_point(zone_id, position, level):
+    """Read: the room id at a point on a level (build_buy.get_room_id), as a string; None when unknown."""
+    if get_room_id is None or zone_id is None or position is None or level is None:
+        return None
+    room = _read(lambda: get_room_id(zone_id, position, level))
+    if isinstance(room, bool) or not isinstance(room, int):
+        return None
+    return str(room)
+
+
+def forget_rooms():
+    """Effect-free cache drop (HOME-5): the room grids are read again by the next search, after any home edit."""
+    _ROOM_GRIDS.clear()
+
+
+def _grid_points():
+    """Read: the lot's sample points, ROOM_GRID_M apart (world.lot's get_uniform_sampling_of_points, which returns them
+    z-major), as (points, nx, nz); None when the lot cannot be read. At most ROOM_GRID_MAX points per axis."""
+    lot = _read(lambda: services.active_lot())
+    if lot is None:
+        return None
+    size_x = _read(lambda: float(lot.size_x))
+    size_z = _read(lambda: float(lot.size_z))
+    if size_x is None or size_z is None or not (size_x > 0 and size_z > 0):
+        return None
+    nx = min(ROOM_GRID_MAX, max(1, int(round(size_x / ROOM_GRID_M))))
+    nz = min(ROOM_GRID_MAX, max(1, int(round(size_z / ROOM_GRID_M))))
+    points = _read(lambda: list(lot.get_uniform_sampling_of_points(nx, nz)))
+    if points is None or len(points) != nx * nz:
+        return None
+    return points, nx, nz
+
+
+def _room_grid(zone_id, level):
+    """Read: the rooms of the lot's sample grid on one level: {points, rooms (a room id or None per point), nx, nz}.
+    Cached per zone and level until forget_rooms; None when the lot or the room lookup cannot be read (not cached)."""
+    key = (zone_id, level)
+    if key in _ROOM_GRIDS:
+        return _ROOM_GRIDS[key]
+    sampled = _grid_points() if zone_id is not None and get_room_id is not None else None
+    if sampled is None:
+        return None
+    points, nx, nz = sampled
+    grid = {"points": points, "rooms": [_room_at_point(zone_id, point, level) for point in points],
+            "nx": nx, "nz": nz}
+    if len(_ROOM_GRIDS) >= ROOM_GRIDS_MAX:
+        _ROOM_GRIDS.clear()
+    _ROOM_GRIDS[key] = grid
+    return grid
+
+
+def _grid_levels(first=None):
+    """The levels the room grids cover: the first (her Sim's or the target's), level 0, and each level a lot object
+    stands on, in that order, at most ROOM_LEVELS_MAX."""
+    levels = []
+    for value in [first, 0] + [_level_of(obj) for obj in lot_objects()]:
+        if type(value) is int and value not in levels:
+            levels.append(value)
+    return levels[:ROOM_LEVELS_MAX]
+
+
+def _find_room(zone_id, room_id, levels):
+    """Read: (level, grid, cell indexes) of a room on the first level that has it; None when none does."""
+    for level in levels:
+        grid = _room_grid(zone_id, level)
+        if grid is None:
+            continue
+        cells = [index for index, room in enumerate(grid["rooms"]) if room == room_id]
+        if cells:
+            return level, grid, cells
+    return None
+
+
+def _is_border(grid, index, room_id):
+    """True when a room cell has a 4-neighbour outside the room (another room, or past the sampled lot)."""
+    nx, nz, rooms = grid["nx"], grid["nz"], grid["rooms"]
+    x, z = index % nx, index // nx
+    for step_x, step_z in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        near_x, near_z = x + step_x, z + step_z
+        if not (0 <= near_x < nx and 0 <= near_z < nz):
+            return True
+        if rooms[near_z * nx + near_x] != room_id:
+            return True
+    return False
+
+
+def _room(zone_id, room_id, levels):
+    """Read: a room of the lot as the search needs it: its level, grid, cells, border cells, and the middle (the mean of
+    its cells; an empty room has cells too). None when no level of the grid has the room."""
+    if room_id is None or zone_id is None:
+        return None
+    room_id = str(room_id)
+    found = _find_room(zone_id, room_id, levels)
+    if found is None:
+        return None
+    level, grid, cells = found
+    points = grid["points"]
+    border = [index for index in cells if _is_border(grid, index, room_id)]
+    count = float(len(cells))
+    middle = (sum(points[i].x for i in cells) / count, sum(points[i].y for i in cells) / count,
+              sum(points[i].z for i in cells) / count)
+    return {"room_id": room_id, "level": level, "grid": grid, "cells": cells, "border": border,
+            "middle_xz": (middle[0], middle[2])}
+
+
+def _nearest(room, indexes, origin_xz):
+    """The cell indexes nearest a point on the ground plane (x, z), nearest first, at most WALL_STARTS."""
+    points = room["grid"]["points"]
+
+    def gap(index):
+        return (points[index].x - origin_xz[0]) ** 2 + (points[index].z - origin_xz[1]) ** 2
+
+    return sorted(indexes, key=gap)[:WALL_STARTS]
+
+
+def _yaw_toward(start, target_xz):
+    """Read: the start orientation that faces a point on the ground plane from the start (sims4.math.
+    angle_to_yaw_quaternion of the angle of the direction, in the Sims' yaw convention: forward is (sin, cos)). None when
+    there is no target, the target is on the start, or the game's call is missing."""
+    if angle_to_yaw_quaternion is None or start is None or target_xz is None:
+        return None
+    dx, dz = target_xz[0] - start.x, target_xz[1] - start.z
+    if dx * dx + dz * dz < 1e-9:
+        return None
+    return _read(lambda: angle_to_yaw_quaternion(math.atan2(dx, dz)))
+
+
+def _facing(place, room_middle_xz):
+    """(facing id, target point) for a place's facing: 'room' is the room's middle, an object id is that object's
+    position. (None, None) when there is no facing, or the object is gone or its position is unreadable."""
+    facing = place.get("facing")
+    if facing is None:
+        return None, None
+    if facing == "room":
+        return None, room_middle_xz
+    target = find_object(facing)
+    position = _read(lambda: target.position) if target is not None else None
+    if position is None:
+        return None, None
+    return str(facing), (position.x, position.z)
+
+
+def _surface_at(sim, level):
+    """Read: the routing surface of a level: her Sim's when she stands on it, else that of a lot object on it; None."""
+    if _level_of(sim) == level:
+        surface = _read(lambda: sim.routing_surface)
+        if surface is not None:
+            return surface
+    for other in lot_objects():
+        if _level_of(other) == level:
+            surface = _read(lambda: other.routing_surface)
+            if surface is not None:
+                return surface
+    return None
+
+
+def _room_search(obj, sim, zone_id, room, starts, place, wall):
+    """The game's standable search from each start cell (nearest first, up to WALL_STARTS): the first spot the game
+    finds that reads the room. A wall search (and a facing) turns each start toward its target; a facing is applied
+    only when its target is read. The spot carries facing_id when a facing object was applied, else None."""
+    surface = _surface_at(sim, room["level"])
+    facing_id, point = _facing(place, room["middle_xz"])
+    if point is None and wall:
+        point = room["middle_xz"]
+    points = room["grid"]["points"]
+    for index in starts:
+        start = points[index]
+        orientation = _yaw_toward(start, point)
+        spot = _standable(obj, start, surface, orientation)
+        if spot is None or _room_at_point(zone_id, spot["translation"], room["level"]) != room["room_id"]:
+            continue
+        spot["facing_id"] = facing_id if orientation is not None else None
+        return spot
+    return None
+
+
+def _room_of_object(zone_id, obj):
+    """Read: the room id of an object's position on its level (the zone's lookup, as the sampling makes it), or None."""
+    return _room_at_point(zone_id, _read(lambda: obj.position), _level_of(obj))
+
+
+def against_wall(obj):
+    """Read (HOME-24): whether the object stands within WALL_NEAR_M of a border cell of its room, so that it backs on a
+    wall: True, False, or None when the room or the object cannot be read."""
+    zone_id = _zone_id()
+    position = _read(lambda: obj.position)
+    room = None
+    if position is not None:
+        room = _room(zone_id, _room_of_object(zone_id, obj), _grid_levels(_level_of(obj)))
+    if room is None or not room["border"]:
+        return None
+    points = room["grid"]["points"]
+    gap = min((points[index].x - position.x) ** 2 + (points[index].z - position.z) ** 2
+              for index in room["border"])
+    return gap <= WALL_NEAR_M ** 2
+
+
+def find_spot(obj, sim, place, wall_item=False):
+    """Read: the spot a placement names (home.py's place shape). ON a free slot of the target. BESIDE the target: at its
+    side, or, when the target and the item are both wall-placed, along the target's room border. IN a room, or WALL
+    (against a room's border), by the game's search from the room's cells, nearest the middle first; a wall search
+    faces the room's middle, and a facing turns the start toward its target. The rooms come from sampling the lot
+    (cached until forget_rooms). None when the game finds none."""
     rel = place.get("rel")
     if rel == "on":
         target = find_object(place.get("target_id"))
         return None if target is None else _slot_spot(target, obj)
+    zone_id = _zone_id()
     if rel == "beside":
         target = find_object(place.get("target_id"))
-        start = _read(lambda: target.position) if target is not None else None
-    else:
-        start = _room_middle(place.get("room_id"))
-    return _standable(obj, start, _read(lambda: sim.routing_surface))
-
-
-def _room_middle(room_id):
-    """Read: the middle of a room, as a Vector3 of the mean position of the lot's objects in it (an estimate: the room's
-    own bounds are not read); None when there are none or Vector3 is not available."""
-    xs, ys, zs = [], [], []
-    for obj in lot_objects():
-        position = _read(lambda: obj.position)
-        if position is None or room_at(obj, position, _read(lambda: obj.level)) != str(room_id):
-            continue
-        try:
-            xs.append(position.x)
-            ys.append(position.y)
-            zs.append(position.z)
-        except Exception:
-            continue
-    if not xs or Vector3 is None:
+        position = _read(lambda: target.position) if target is not None else None
+        if position is None:
+            return None
+        room = _room(zone_id, _room_of_object(zone_id, target), _grid_levels(_level_of(target)))
+        if wall_item and is_wall_placed(target):
+            if room is None:
+                return None
+            return _room_search(obj, sim, zone_id, room, _nearest(room, room["border"], (position.x, position.z)),
+                                place, wall=True)
+        facing_id, point = _facing(place, None if room is None else room["middle_xz"])
+        orientation = _yaw_toward(position, point)
+        spot = _standable(obj, position, _read(lambda: target.routing_surface), orientation)
+        if spot is not None:
+            spot["facing_id"] = facing_id if orientation is not None else None
+        return spot
+    room = _room(zone_id, place.get("room_id"), _grid_levels(_level_of(sim)))
+    if room is None:
         return None
-    return Vector3(sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs))
+    if rel == "wall":
+        starts = _nearest(room, room["border"], room["middle_xz"])
+        return _room_search(obj, sim, zone_id, room, starts, place, wall=True)
+    return _room_search(obj, sim, zone_id, room, _nearest(room, room["cells"], room["middle_xz"]), place, wall=False)
 
 
 def place(obj, spot):
@@ -1235,6 +1467,11 @@ def definition_placement_flags(defn):
     if get_object_placement_flags is None or defn is None:
         return None
     return _count(_read(lambda: int(get_object_placement_flags(_read(lambda: defn.id)))))
+
+
+def object_placement_flags(obj):
+    """Read: the placement flags of an object's definition (definition_placement_flags), as an int; None when unreadable."""
+    return definition_placement_flags(_read(lambda: obj.definition))
 
 
 def definition_tags(defn):

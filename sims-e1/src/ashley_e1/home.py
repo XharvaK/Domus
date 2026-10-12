@@ -301,21 +301,21 @@ def routes_lost(before, after):
 
 def placement_facts(room_id, wall, near, facing_id=None, lost=(), price=None, funds=None):
     """2.40.0: the plain facts of a home edit's result. near is a list of {object_id, distance, portal, window}, read
-    for the placed object. wall_has (a door or a window on its wall) only when it backs on a wall. beside: the nearest
-    other objects within NEAR_M. Nothing here is text."""
+    for the placed object. wall (it backs on a wall, HOME-24) names wall_has: the doors and windows on its wall, and
+    wall_kinds says for each whether it is a door or a window (S2). beside: the nearest other objects within NEAR_M.
+    Nothing here is text."""
     near = sorted((item for item in (near or ()) if item.get("distance") is not None and
                    item["distance"] <= NEAR_M and item.get("object_id")),
                   key=lambda item: item["distance"])
-    wall_has = []
+    wall_has, wall_kinds = [], []
     if wall is True:
-        wall_has = [item["object_id"] for item in near if item.get("portal") or item.get("window")][:WALL_LIMIT]
+        on_wall = [item for item in near if item.get("portal") or item.get("window")][:WALL_LIMIT]
+        wall_has = [item["object_id"] for item in on_wall]
+        wall_kinds = ["door" if item.get("portal") else "window" for item in on_wall]
     beside = [item["object_id"] for item in near if item["object_id"] not in wall_has][:NEAR_LIMIT]
-    return {"room_id": _digits(room_id), "wall": _bool_or_none(wall), "wall_has": wall_has, "beside": beside,
-            "facing_id": _digits(facing_id), "routes_lost": list(lost), "price": _int_or_none(price),
-            "funds": _int_or_none(funds)}
-
-
-RESULT_KEYS = ("room_id", "wall", "wall_has", "beside", "facing_id", "routes_lost", "price", "funds", "value")
+    return {"room_id": _digits(room_id), "wall": _bool_or_none(wall), "wall_has": wall_has,
+            "wall_kinds": wall_kinds, "beside": beside, "facing_id": _digits(facing_id),
+            "routes_lost": list(lost), "price": _int_or_none(price), "funds": _int_or_none(funds)}
 
 
 def sell_facts(value, funds):
@@ -438,12 +438,23 @@ def sellable(obj):
     return movable(obj)
 
 
-def _facts(obj, sim, before, price=None, funds=None):
-    """The result facts of a placed object: room, wall, what is near, and the routes cut since `before`."""
-    after = _route_reach(sim)
-    near = e2_actuator.near_objects(obj, NEAR_M)
-    return placement_facts(e2_actuator.room_of(obj), e2_actuator.is_wall_placed(obj), near,
-                           lost=routes_lost(before, after), price=price, funds=funds)
+def _guarded(read, default):
+    """A read for a result fact: its value, or the default when it cannot be read (HOME-13: a fact that fails leaves
+    the fact out; the act still finishes)."""
+    try:
+        return read()
+    except Exception:
+        return default
+
+
+def _facts(obj, sim, before, price=None, funds=None, facing_id=None):
+    """The result facts of a placed object: room, wall (against a wall of its room), what is near, the facing it was
+    given, and the routes cut since `before`. Each read is guarded (HOME-13)."""
+    lost = _guarded(lambda: routes_lost(before, _route_reach(sim)), [])
+    near = _guarded(lambda: e2_actuator.near_objects(obj, NEAR_M), [])
+    room = _guarded(lambda: e2_actuator.room_of(obj), None)
+    wall = _guarded(lambda: e2_actuator.against_wall(obj), None)
+    return placement_facts(room, wall, near, facing_id=facing_id, lost=lost, price=price, funds=funds)
 
 
 def _vacate(control, obj):
@@ -454,7 +465,12 @@ def _vacate(control, obj):
         state.vacated[str(obj.id)] = spot
 
 
-def _spot(control, obj, sim, place):
+def _wall_item(flags):
+    """True when a thing is a wall item by its placement flags (S3): it is placed against a wall."""
+    return placement_word(flags) == "wall"
+
+
+def _spot(control, obj, sim, place, wall_item=False):
     """(spot, refusal). `instead` names the spot its target vacated, and is refused NOT_FREE while the target still
     stands there; the other relations are the game's own search for a spot."""
     if place["rel"] == "instead":
@@ -467,7 +483,7 @@ def _spot(control, obj, sim, place):
         if vacated is None:
             return None, "NO_SPOT"
         return vacated, None
-    return e2_actuator.find_spot(obj, sim, place), None
+    return e2_actuator.find_spot(obj, sim, place, wall_item=wall_item), None
 
 
 def _finish(control, act_id, connection, phase, code, result=None, **base):
@@ -575,7 +591,7 @@ def cmd_buy(control, args, connection):
     obj = e2_actuator.create_unplaced(definition)
     if obj is None:
         return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", **base)
-    spot, refused = _spot(control, obj, sim, args["place"])
+    spot, refused = _spot(control, obj, sim, args["place"], wall_item=_wall_item(e2_actuator.definition_placement_flags(definition)))
     if refused is not None or spot is None:
         e2_actuator.remove_created(obj)
         return _finish(control, act_id, connection, "REJECTED", refused or "NO_SPOT", **base)
@@ -589,7 +605,9 @@ def cmd_buy(control, args, connection):
         e2_actuator.remove_created(obj)
         return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", detail=type(error).__name__,
                        **base)
-    facts = _facts(obj, sim, before, price=price, funds=e2_actuator.funds_money(funds))
+    e2_actuator.forget_rooms()
+    facts = _facts(obj, sim, before, price=price, funds=e2_actuator.funds_money(funds),
+                   facing_id=spot.get("facing_id"))
     return _finish(control, act_id, connection, "FINISHED", "PLACED", result=_result(facts),
                    object_id=str(obj.id), guid64=None)
 
@@ -608,7 +626,7 @@ def cmd_place(control, args, connection):
         return _reject(control, act_id, connection, "NOT_IN_INVENTORY", **base)
     _row(control, act_id, "ACCEPTED", **base)
     before = _route_reach(sim)
-    spot, refused = _spot(control, obj, sim, args["place"])
+    spot, refused = _spot(control, obj, sim, args["place"], wall_item=_wall_item(e2_actuator.object_placement_flags(obj)))
     if refused is not None or spot is None:
         return _finish(control, act_id, connection, "REJECTED", refused or "NO_SPOT", **base)
     try:
@@ -624,7 +642,8 @@ def cmd_place(control, args, connection):
             return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", detail=type(error).__name__,
                            **base)
         return _finish(control, act_id, connection, "UNKNOWN", "PLACE_FAILED", detail="put back failed", **base)
-    facts = _facts(obj, sim, before)
+    e2_actuator.forget_rooms()
+    facts = _facts(obj, sim, before, facing_id=spot.get("facing_id"))
     return _finish(control, act_id, connection, "FINISHED", "PLACED", result=_result(facts), **base)
 
 
@@ -649,14 +668,15 @@ def cmd_move(control, args, connection):
     _row(control, act_id, "ACCEPTED", **base)
     before = _route_reach(sim)
     _vacate(control, obj)
-    spot, refused = _spot(control, obj, sim, args["place"])
+    spot, refused = _spot(control, obj, sim, args["place"], wall_item=_wall_item(e2_actuator.object_placement_flags(obj)))
     if refused is not None or spot is None:
         return _finish(control, act_id, connection, "REJECTED", refused or "NO_SPOT", **base)
     try:
         e2_actuator.place(obj, spot)
     except Exception as error:
         return _finish(control, act_id, connection, "REJECTED", "MOVE_FAILED", detail=type(error).__name__, **base)
-    facts = _facts(obj, sim, before)
+    e2_actuator.forget_rooms()
+    facts = _facts(obj, sim, before, facing_id=spot.get("facing_id"))
     return _finish(control, act_id, connection, "FINISHED", "MOVED", result=_result(facts), **base)
 
 
@@ -694,7 +714,7 @@ def cmd_sell(control, args, connection):
 
 def _result(facts):
     """The result of a finished home edit, keyed as the contract names it (only the keys a placement has)."""
-    return dict((key, facts.get(key)) for key in RESULT_KEYS if key != "value")
+    return dict((key, facts.get(key)) for key in schema.RESULT_KEYS if key != "value")
 
 
 def cmd_catalog_dump(control, args, connection):

@@ -6,6 +6,7 @@ Fakes only: the actuator, observers, services and the clock are replaced; no gam
 the real probe dispatch through the act harness (test_2160_act), so the commands reach home.py from the inbox."""
 import importlib.util
 import json
+import math
 import os
 import types
 import unittest
@@ -141,6 +142,8 @@ class FakeActuator(object):
         self.put_back_refused = False
         self.buy_flags = 128
         self.placement_flags = 0
+        self.wall_items = []
+        self.rooms_forgotten = 0
 
     # reads
     def at_home(self, household_id):
@@ -186,9 +189,19 @@ class FakeActuator(object):
     def find_object(self, object_id):
         return self.objects.get(str(object_id))
 
-    def find_spot(self, obj, sim, place):
+    def find_spot(self, obj, sim, place, wall_item=False):
         self.calls.append(("find_spot", place["rel"]))
+        self.wall_items.append(wall_item)
         return self.spot
+
+    def object_placement_flags(self, obj):
+        return self.placement_flags
+
+    def against_wall(self, obj):
+        return obj.wall
+
+    def forget_rooms(self):
+        self.rooms_forgotten += 1
 
     def spot_of(self, obj):
         return obj.spot
@@ -576,7 +589,7 @@ class ResultFactTests(HomeCase):
     def test_the_result_validates_as_an_act_event_row(self):
         facts = self.home.placement_facts("5", True, [{"object_id": "1", "distance": 0.2, "portal": True,
                                                       "window": False}], lost=["bed"], price=150, funds=350)
-        result = dict((key, facts[key]) for key in self.home.RESULT_KEYS if key != "value")
+        result = dict((key, facts[key]) for key in self.schema.RESULT_KEYS if key != "value")
         row = self.schema.make_record("act_event", telemetry_session_id="s" * 32, wall_timestamp_ms=1,
                                       monotonic_ns=2, e2=dict(act_id=ACT, phase="FINISHED", code="PLACED",
                                                               object_id="41", guid64=None, interaction_id=None,
@@ -807,6 +820,19 @@ class PlaceTests(HomeCase):
         self.assertFalse(self.run_cmd("place", self.args()))
         self.assertEqual(self.control.phases(), [("REJECTED", "NOT_IN_INVENTORY")])
 
+    def test_the_result_names_the_facing_object_and_whether_it_backs_on_a_wall(self):
+        self.actuator.spot = dict(self.actuator.spot, facing_id="9")
+        self.item.wall = True
+        self.assertTrue(self.run_cmd("place", self.args()))
+        result = self.control.events[-1]["result"]
+        self.assertEqual((result["facing_id"], result["wall"]), ("9", True))
+
+    def test_a_wall_item_is_searched_against_a_wall(self):
+        """HOME-5: the definition's wall flags reach the search, so a wall item is placed against a wall."""
+        self.actuator.placement_flags = 1
+        self.assertTrue(self.run_cmd("place", self.args()))
+        self.assertEqual(self.actuator.wall_items, [True])
+
     def test_an_inventory_item_leaves_her_inventory_when_it_is_placed(self):
         """HOME-2: the game's own removal from the inventory comes before the move, so the item is not in two places."""
         self.assertTrue(self.run_cmd("place", self.args()))
@@ -876,6 +902,10 @@ class MoveTests(HomeCase):
         self.assertFalse(self.run_cmd("move", self.args()))
         self.assertEqual(self.control.phases()[-1], ("REJECTED", "IN_INVENTORY"))
         self.assertNotIn("place", [c[0] for c in self.actuator.calls])
+
+    def test_a_move_forgets_the_sampled_rooms_after_the_edit(self):
+        self.assertTrue(self.run_cmd("move", self.args()))
+        self.assertEqual(self.actuator.rooms_forgotten, 1)
 
     def test_a_move_is_finished_and_names_the_bed_she_can_no_longer_reach(self):
         self.assertTrue(self.run_cmd("move", self.args()))
@@ -980,6 +1010,160 @@ class DispatchTests(HomeCase):
         self.assertNotIn(".destroy(", text)
         self.assertNotIn("save_using", text)
         self.assertNotIn("getattr", text)
+
+
+class RoomSearchTests(unittest.TestCase):
+    """HOME-5/6/24/25 and A6-6/18: rooms are found by sampling the lot with the game's own room lookup, a wall search
+    starts on the room's border and faces the room, a facing is passed into the start, and a spot must read the room.
+    Fakes shaped like the game: a lot's sampling (world.lot.get_uniform_sampling_of_points, z-major), get_room_id,
+    create_starting_location (with an orientation), find_good_location (here the start itself) and angle_to_yaw."""
+
+    class Point(object):
+        def __init__(self, x, y, z):
+            self.x, self.y, self.z = x, y, z
+
+    class Lot(object):
+        def __init__(self, size_x, size_z):
+            self.size_x, self.size_z = size_x, size_z
+            self.calls = []
+
+        def get_uniform_sampling_of_points(self, samples_x, samples_z):
+            self.calls.append((samples_x, samples_z))
+            step_x, step_z = self.size_x / float(samples_x), self.size_z / float(samples_z)
+            return [RoomSearchTests.Point((x + 0.5) * step_x, 0.0, (z + 0.5) * step_z)
+                    for z in range(samples_z) for x in range(samples_x)]
+
+    class Obj(object):
+        def __init__(self, object_id, x=0.0, z=0.0, level=0, wall_flag=False):
+            self.id = object_id
+            self.position = RoomSearchTests.Point(x, 0.0, z)
+            self.level = level
+            self.wall_flag = wall_flag
+            self.routing_surface = "surface"
+
+        def _has_placement_flag(self, flag):
+            return self.wall_flag and flag == 1
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+        self.lot = self.Lot(6.0, 6.0)
+        self.room_calls = []
+        self.yaw_calls = []
+        self.sim = self.Obj("7", x=0.0, z=0.0)
+        self.item = self.Obj("41")
+        self.objects = {"9": self.Obj("9", x=4.5, z=0.5)}
+        self.room_split = 2.0   # room 1 is x < 2 m, room 2 is the rest of the lot
+
+        def room_of(zone_id, position, level):
+            self.room_calls.append((zone_id, level))
+            return 1 if position.x < self.room_split else 2
+
+        class FakeFgl(object):
+            def create_starting_location(self_inner, position=None, orientation=None, routing_surface=None):
+                return {"position": position, "orientation": orientation, "surface": routing_surface}
+
+            def create_fgl_context_for_object(self_inner, starting, obj):
+                return starting
+
+            def find_good_location(self_inner, context):
+                return context["position"], context["orientation"], None
+
+        def yaw(angle):
+            self.yaw_calls.append(angle)
+            return ("yaw", round(angle, 6))
+
+        services = types.SimpleNamespace(active_lot=lambda: self.lot, current_zone_id=lambda: 7)
+        patches = [mock.patch.object(self.actuator, "services", services),
+                   mock.patch.object(self.actuator, "get_room_id", room_of),
+                   mock.patch.object(self.actuator, "placement", FakeFgl()),
+                   mock.patch.object(self.actuator, "angle_to_yaw_quaternion", yaw),
+                   mock.patch.object(self.actuator, "find_object",
+                                     lambda object_id: self.objects.get(str(object_id))),
+                   mock.patch.object(self.actuator, "lot_objects",
+                                     lambda: [self.sim, self.item] + list(self.objects.values()))]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.actuator.forget_rooms()
+        self.addCleanup(self.actuator.forget_rooms)
+
+    def room_of_spot(self, spot):
+        return "1" if spot["translation"].x < self.room_split else "2"
+
+    def test_an_empty_room_is_found_by_sampling(self):
+        spot = self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2"})
+        self.assertIsNotNone(spot)
+        self.assertEqual(self.room_of_spot(spot), "2")
+
+    def test_the_lot_is_sampled_once_per_zone_and_level_until_a_home_edit(self):
+        """The lot's grid (36 points at 1 m for a 6 m lot, one level) is read once, then kept until forget_rooms."""
+        self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2"})
+        self.assertEqual(self.lot.calls, [(6, 6)])
+        self.assertEqual(len(self.room_calls), 36 + 1)   # the grid, and the check that the spot reads the room
+        self.actuator.find_spot(self.item, self.sim, {"rel": "wall", "room_id": "1"})
+        self.assertEqual(len(self.lot.calls), 1)
+        self.actuator.forget_rooms()
+        self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2"})
+        self.assertEqual(self.lot.calls, [(6, 6), (6, 6)])
+
+    def test_the_sampling_is_capped_per_axis(self):
+        self.lot = self.Lot(200.0, 200.0)
+        self.actuator.forget_rooms()
+        self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2"})
+        self.assertEqual(self.lot.calls, [(self.actuator.ROOM_GRID_MAX, self.actuator.ROOM_GRID_MAX)])
+        self.assertLessEqual(len(self.room_calls), self.actuator.ROOM_GRID_MAX ** 2 + 1)
+
+    def test_a_wall_search_starts_on_a_border_cell_and_faces_the_room(self):
+        spot = self.actuator.find_spot(self.item, self.sim, {"rel": "wall", "room_id": "2"}, wall_item=True)
+        self.assertIsNotNone(spot)
+        self.assertEqual(self.room_of_spot(spot), "2")
+        self.assertTrue(self.actuator.against_wall(self.Obj("50", x=spot["translation"].x,
+                                                            z=spot["translation"].z)))
+        self.assertTrue(self.yaw_calls)
+        self.assertIsNone(spot["facing_id"])
+
+    def test_a_spot_in_the_middle_of_a_room_is_not_against_a_wall(self):
+        self.assertFalse(self.actuator.against_wall(self.Obj("50", x=4.0, z=3.0)))
+
+    def test_the_facing_object_is_applied_as_the_start_orientation(self):
+        spot = self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2", "facing": "9"})
+        self.assertEqual(spot["facing_id"], "9")
+        start = spot["translation"]
+        expected = math.atan2(4.5 - start.x, 0.5 - start.z)
+        self.assertAlmostEqual(self.yaw_calls[-1], expected, places=6)
+        self.assertEqual(spot["orientation"], ("yaw", round(expected, 6)))
+
+    def test_facing_the_room_applies_an_orientation_but_names_no_object(self):
+        spot = self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2", "facing": "room"})
+        self.assertIsNone(spot["facing_id"])
+        self.assertTrue(self.yaw_calls)
+
+    def test_a_facing_object_that_is_gone_is_not_applied(self):
+        spot = self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2", "facing": "99"})
+        self.assertIsNone(spot["facing_id"])
+        self.assertEqual(self.yaw_calls, [])
+
+    def test_a_spot_outside_the_room_is_refused(self):
+        self.actuator.get_room_id = lambda zone_id, position, level: 1
+        self.assertIsNone(self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2"}))
+
+    def test_a_room_the_lot_does_not_have_is_no_spot(self):
+        self.assertIsNone(self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "5"}))
+
+    def test_a_lot_that_cannot_be_read_is_no_spot(self):
+        services = types.SimpleNamespace(active_lot=lambda: None, current_zone_id=lambda: 7)
+        with mock.patch.object(self.actuator, "services", services):
+            self.actuator.forget_rooms()
+            self.assertIsNone(self.actuator.find_spot(self.item, self.sim, {"rel": "in", "room_id": "2"}))
+
+    def test_beside_a_wall_target_a_wall_item_starts_along_the_same_wall(self):
+        self.objects["9"] = self.Obj("9", x=5.5, z=3.5, wall_flag=True)
+        spot = self.actuator.find_spot(self.Obj("41", wall_flag=True), self.sim,
+                                       {"rel": "beside", "target_id": "9"}, wall_item=True)
+        self.assertIsNotNone(spot)
+        self.assertEqual(self.room_of_spot(spot), "2")
+        self.assertTrue(self.actuator.against_wall(self.Obj("50", x=spot["translation"].x,
+                                                            z=spot["translation"].z)))
 
 
 class ActuatorReadTests(unittest.TestCase):
