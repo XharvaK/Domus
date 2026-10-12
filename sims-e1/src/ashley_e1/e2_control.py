@@ -1495,7 +1495,7 @@ class E2Control:
 
     def cmd_event(self, act_id, situation_id, guests, start, connection, known_events=()):
         """2.40.0 (W13 P1): a planned event (a situation the game makes user-facing, and one the newest events list
-        offers): her as host, the guests invited, now or at a time today or tomorrow. ACCEPTED, then FINISHED CREATED
+        offers): her as host, the guests invited, now or at a time up to 99 days ahead (Q-d). ACCEPTED, then FINISHED CREATED
         with the money that fell, her funds and the start.
         2.40.0 (W13 R2): the game takes the price itself when it makes the event: the type's cost plus the guest list's
         hire cost, from her household, all or nothing. The host pre-checks that price, reads the money before and after
@@ -1526,13 +1526,15 @@ class E2Control:
                 # 2.40.0 (W13 P1 fix): an unread cost is refused, never taken for a free event.
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "cost unread")
             # 2.40.0 (W13 R2, Q-d): more guests than the event type takes (its max_participants; the wire bound of
-            # EVENT_GUESTS_MAX when that is unread) is refused, with the cap named.
+            # EVENT_GUESTS_MAX when that is unread) is refused, with the cap named. A guest named twice is one guest.
             cap = e2_actuator.guest_cap(situation) or reach.EVENT_GUESTS_MAX
-            if type(guests) is list and len(guests) > cap:
+            if type(guests) is list and len(guests) > reach.EVENT_GUESTS_MAX:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "too many guests (at most %d)" % cap)
             guest_ids = reach.sim_ids(guests, reach.EVENT_GUESTS_MAX)
             if guest_ids is None:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "guests")
+            if len(set(str(guest) for guest in guest_ids)) > cap:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "too many guests (at most %d)" % cap)
             guest_list = e2_actuator.event_guest_list(sim_info.id, guest_ids, e2_actuator.default_job(situation))
             if guest_list is None:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "guest list")
@@ -1542,9 +1544,11 @@ class E2Control:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "cost unread")
             household = _read(lambda: sim_info.household)
             money = observers.household_money(sim_info)
-            if money is None:
+            # A free event takes no money, so her funds need no reading for it (the cage lens: nothing to check).
+            free = cost + hire == 0
+            if money is None and not free:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "funds unread")
-            if cost + hire > money:
+            if not free and cost + hire > money:
                 return self._reject(act_id, base, connection, "NO_FUNDS")
             if not self._act_event_safe(act_id, "ACCEPTED", tuning_name="event", **base):
                 self._say(connection, "ACT_UNKNOWN ROW_INVALID")
@@ -1554,7 +1558,8 @@ class E2Control:
                                                scheduled)
             after = observers.household_money(sim_info)
             # 2.40.0 (W13 R2): the money that fell over the game's call is the price; unread after it, nothing is known.
-            fell = None if after is None else max(0, money - after)
+            fell = 0 if free and (money is None or after is None) else (
+                None if money is None or after is None else max(0, money - after))
             if created is None:
                 if fell is None:
                     return self._reject(act_id, base, connection, "CREATE_FAILED", "funds unread")
@@ -1575,7 +1580,7 @@ class E2Control:
 
     def _event_start(self, start, now):
         """2.40.0: (absolute game minute, scheduled time or None, refusal code or None) for a start: "now", or a day offset
-        (0 today, 1 tomorrow) with an hour and minute. START_PAST when it is before the clock; CREATE_FAILED when the game
+        (0 today, 1 tomorrow, up to 99) with an hour and minute. START_PAST when it is before the clock; CREATE_FAILED when the game
         cannot make the time."""
         if start == "now":
             return now, None, None

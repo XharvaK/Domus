@@ -208,6 +208,16 @@ class R2Tests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(self.act_events()[-1]["result"]["cost"], 0)
 
+    def test_a_free_event_is_made_when_her_money_cannot_be_read(self):
+        # The cage lens: a free event takes no money, so unread funds leave nothing to check.
+        self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
+        patches = self.event_patches(manager=_game_manager(self.funds, 0, True), hire=0, cost=0, money_read=False)
+        ok, _connection = self.run_with(patches, self.event_send)
+        self.assertTrue(ok)
+        last = self.act_events()[-1]
+        self.assertEqual((last["code"], last["result"]["cost"], last["result"]["funds"]), ("CREATED", 0, None))
+
     # ----------------------------------------------------------- REACH2-4: an event while a trip is pending
     def test_an_event_while_a_trip_is_pending_is_refused_as_travel_pending(self):
         self.ready()
@@ -412,6 +422,14 @@ class R2CapTests(unittest.TestCase):
         self.probe._KNOWN_EVENTS.add("9")
         patches = self.event_patches(manager=_game_manager(self.funds, 0, True), situation=_Small, cost=0, hire=0)
         ok, _connection = self.run_with(patches, lambda: self.event_send(guests=["1", "2", "3"]))
+        self.assertTrue(ok)
+        self.assertEqual(self.act_events()[-1]["code"], "CREATED")
+
+    def test_a_guest_named_twice_counts_once_against_the_cap(self):
+        self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
+        patches = self.event_patches(manager=_game_manager(self.funds, 0, True), situation=_Small, cost=0, hire=0)
+        ok, _connection = self.run_with(patches, lambda: self.event_send(guests=["1", "2", "3", "3"]))
         self.assertTrue(ok)
         self.assertEqual(self.act_events()[-1]["code"], "CREATED")
 
