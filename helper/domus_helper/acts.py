@@ -3,6 +3,7 @@ observation; her requested acts come back from Mint and go to the probe's inbox;
 probe recorded about them (act_event rows) goes back to Mint. Nothing here chooses."""
 import json
 import re
+import threading
 
 from . import snapshot
 from .transport import SyncRefused
@@ -27,7 +28,18 @@ DETACH_GRACE_MS = 2 * 60_000
 # (her dialog answers, with the menu they come from), act 2.18.0 (the menu's acts), owner 2.24.0 (the User's act first).
 # W12 (F5): a pie-menu choice (variant) and a numbered response need 2.39.0; every command is gated the same way.
 PROBE_NEEDS = {"cancel": (2, 20, 0), "answer": (2, 18, 0), "act": (2, 18, 0), "owner": (2, 24, 0),
-               "variant": (2, 39, 0), "response": (2, 39, 0)}
+               "variant": (2, 39, 0), "response": (2, 39, 0),
+               # W13 (D4, D5, D9): the verb acts (each its own probe command) and a Sim picked for a phone act.
+               "go": (2, 40, 0), "save": (2, 40, 0), "event": (2, 40, 0), "buy": (2, 40, 0), "place": (2, 40, 0),
+               "move": (2, 40, 0), "sell": (2, 40, 0), "sim": (2, 40, 0)}
+# W13 (H): the verb acts Natalis may send (SyncAct.verb); each is the probe command of the same name.
+VERBS = ("go", "save", "event", "buy", "place", "move", "sell")
+# W13 (H): a verb act's args are the probe command's args, as Natalis wrote them; this bounds what is forwarded.
+VERB_ARGS_BYTES = 4096
+# W13 (H): the most characters of a result's words the sync event carries (the contract's detail.result).
+RESULT_WORDS_MAX = 400
+# W13 (H): a sync event's whole detail is under this many bytes of JSON (Natalis's limit).
+DETAIL_BYTES = 1024
 _TERMINAL = ("finished", "rejected", "unknown")
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
@@ -83,18 +95,25 @@ class MenuParts(object):
 
 class RefBook(object):
     """N8 (F3): the refs of one helper session (one attachment). The first time a key is listed it gets the next
-    free number; it keeps that ref in every later view, and a number is never given to another key."""
+    free number; it keeps that ref in every later view, and a number is never given to another key.
+    W13 (H): one letter per kind of name, each numbered on its own from 1: a (a game act), p (a person she knows),
+    h (a place she can go), t (a thing of hers), e (an event type), c (a catalogue item). No two kinds share a letter.
+    The book is shared by the view and the lists, so a thread may ask for a ref while the tick does: a lock keeps
+    each number given once."""
 
     def __init__(self):
         self._numbers = {}
-        self._next = 1
+        self._next = {}
+        self._lock = threading.Lock()
 
-    def ref(self, key):
-        number = self._numbers.get(key)
-        if number is None:
-            number = self._numbers[key] = self._next
-            self._next += 1
-        return "a%d" % number
+    def ref(self, key, prefix="a"):
+        with self._lock:
+            number = self._numbers.get((prefix, key))
+            if number is None:
+                number = self._next.get(prefix, 1)
+                self._numbers[(prefix, key)] = number
+                self._next[prefix] = number + 1
+        return "%s%d" % (prefix, number)
 
 
 def _bytes(value):
@@ -520,7 +539,7 @@ def _fold(rows):
 
 
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
-            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None):
+            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
     (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
     of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
@@ -578,6 +597,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             listed = {"ref": refs.ref(ref_key), "guid64": guid, "text": text}
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
+            if act.get("needs_sim") is True:
+                listed["needs_sim"] = True  # W13 (D4.1): a phone act that opens a Sim picker; game_act names the Sim
             acts.append(listed)
         if acts:
             label = _room_label(item, room_labels)
@@ -590,6 +611,9 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
+            if states and not is_spot and str(item.get("object_id")) in states:
+                # W13 (D9.6): a thing that is broken or dirty says so, in the words of the things list (at most 4).
+                entry["states"] = list(states[str(item.get("object_id"))])[:4]
             refused = _refusals(item, resolve, near)
             if refused:
                 entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)
@@ -661,6 +685,14 @@ class AnswerInvalid(ValueError):
     """Her answer to a dialog is not the shape the contract allows (never its values)."""
 
 
+class ArgsInvalid(ValueError):
+    """W13 (H): a verb act's verb, args or sim id is not the shape the contract allows (never its values)."""
+
+
+class RoomUnknown(ValueError):
+    """W13 (H): the room a place names is not exactly one room of her view (none, or more than one)."""
+
+
 _OPTION_ID = re.compile(r"[0-9]{1,20}")
 
 
@@ -687,6 +719,59 @@ def _answer_args(answer):
             raise AnswerInvalid("text")
         extra["text"] = dict(text)
     return extra
+
+
+def _detail_bytes(detail):
+    return len(json.dumps(detail, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _verb_of(act):
+    """W13 (H): a verb act's verb, which must be one of VERBS; a verb act carries no guid64."""
+    verb = act.get("verb")
+    if verb not in VERBS or act.get("guid64") not in (None, ""):
+        raise ArgsInvalid("verb")
+    return verb
+
+
+def _verb_args(args):
+    """W13 (H): a verb act's probe args, as Natalis wrote them (a dict of text keys, or none). Only the shape and the size
+    are checked here; the probe checks the values. Nothing it carries is ever logged."""
+    if args is None:
+        return {}
+    if type(args) is not dict or not all(type(key) is str for key in args) or _bytes(args) > VERB_ARGS_BYTES:
+        raise ArgsInvalid("args")
+    return dict(args)
+
+
+def _place_args(args, rooms):
+    """W13 (H, D9.3): a buy, place or move names its room the way her view does; the probe takes the room's id. The name
+    is matched exactly, ignoring case, against the room labels (rooms maps a room id to its label). No room, or more than
+    one, is RoomUnknown: nothing is sent. Relations, targets and facings pass through as Natalis wrote them."""
+    place = args.get("place")
+    if not isinstance(place, dict) or "room" not in place:
+        return args
+    name = place["room"]
+    if type(name) is not str:
+        raise ArgsInvalid("place")
+    matches = [room for room, label in (rooms or {}).items()
+               if isinstance(label, str) and label.casefold() == name.casefold()]
+    if len(matches) != 1 or not str(matches[0]).isdigit():
+        raise RoomUnknown("room")
+    moved = {key: value for key, value in place.items() if key != "room"}
+    moved["room_id"] = int(matches[0])
+    return dict(args, place=moved)
+
+
+def _sim_of(act):
+    """W13 (D4.1): the Sim an act names (digits), or None when it names none."""
+    sim = act.get("sim_id")
+    if sim is None:
+        return None
+    if type(sim) is int:
+        sim = str(sim)
+    if type(sim) is not str or _OPTION_ID.fullmatch(sim) is None:
+        raise ArgsInvalid("sim_id")
+    return sim
 
 
 def _window_of(detail):
@@ -732,7 +817,8 @@ class ActCourier(object):
     never trimmed. W12 (S2): her words go out as one talk line when the act is pushed. W12 (G1): a pie choice's
     variant is gated on the probe."""
 
-    def __init__(self, spool, publish, resolve=None, memory=None, *, reply=None, log=None, say=None, her_name=None):
+    def __init__(self, spool, publish, resolve=None, memory=None, *, reply=None, log=None, say=None, her_name=None,
+                 answered=None, result_words=None, rooms=None):
         self._spool = spool
         self._publish = publish
         self._resolve = resolve
@@ -744,6 +830,12 @@ class ActCourier(object):
         self._log = log
         self._say = say
         self._her_name = her_name
+        # W13 (H): called with each sync answer, the client and the helper session (the lists and the catalogue asks);
+        # result_words turns a probe act's result facts into words for its event (None when it cannot).
+        self._answered = answered
+        self._result_words = result_words
+        # W13 (H, D9.3): the room labels of her view (a room id to its label), so a place's room name is an id.
+        self._rooms = rooms
         raw = spool.get_kv("acts_known")
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
@@ -847,6 +939,17 @@ class ActCourier(object):
         window = _window_of(e2.get("detail"))
         if window is not None:
             detail["window"] = window  # W12: the question (dialog) the act is waiting on, when there is one
+        if isinstance(e2.get("result"), dict) and self._result_words is not None:
+            # W13 (D9.3): the probe's facts about a verb act, in words for her (never the probe's ids).
+            words = self._words_of_result(e2["result"])
+            if words:
+                detail["result"] = words[:RESULT_WORDS_MAX]
+                # Natalis takes a whole detail under 1024 bytes: the words give way first.
+                while detail["result"] and _detail_bytes(detail) > DETAIL_BYTES:
+                    excess = _detail_bytes(detail) - DETAIL_BYTES
+                    detail["result"] = detail["result"][:max(0, len(detail["result"]) - excess)]
+                if not detail["result"]:
+                    del detail["result"]
         at = row.get("wall_timestamp_ms")
         at = at if type(at) is int and at >= 0 else 0
         session = row.get("telemetry_session_id")
@@ -880,6 +983,15 @@ class ActCourier(object):
             if phase in _TERMINAL:
                 known["terminal"] = True
         self._save()
+
+    def _words_of_result(self, result):
+        """W13 (D9.3): the result words for an act's event, or None. A words function that fails says nothing; it never
+        stops the act's record from being written."""
+        try:
+            words = self._result_words(result)
+        except Exception:
+            return None
+        return words if isinstance(words, str) and words else None
 
     def take_look(self):
         """D2 (H3): whether a look was asked since the last call; the flag is cleared when it is read."""
@@ -954,6 +1066,9 @@ class ActCourier(object):
             # D7b: her questions to the game's memory; the search runs on its own thread, never on this one.
             if self._memory is not None:
                 self._memory(answer.get("memory") or [], client, helper_session)
+            # W13 (H): the lists Natalis lacks are sent from here; a catalogue ask is answered on its own thread.
+            if self._answered is not None:
+                self._answered(answer, client, helper_session)
         return written
 
     def _send_alone(self, client, helper_session, now_ms, attached, probe):
@@ -993,16 +1108,34 @@ class ActCourier(object):
                 continue
             try:
                 object_id = str(act.get("object_id"))
-                needs = [_needs(act, object_id)]
-                if _variant_of(act.get("guid64")) is not None:
-                    needs.append("variant")  # W12 (G1): a pie-menu choice needs the probe that can push one
-                if object_id.startswith(DIALOG_PREFIX) and str(act.get("guid64")).startswith("response_"):
-                    needs.append("response")  # W12: a numbered response needs the probe that answers by its number
+                verb = _verb_of(act) if act.get("verb") is not None else None
+                sim = _sim_of(act)
+                if verb is not None:
+                    # W13 (D5, D9): a verb act is the probe command of its own verb, with Natalis's args.
+                    if sim is not None:
+                        raise ArgsInvalid("sim_id")
+                    needs = [verb]
+                    verb_args = _verb_args(act.get("args"))
+                    if verb in ("buy", "place", "move") and "place" in verb_args:
+                        verb_args = _place_args(verb_args, self._rooms() if self._rooms is not None else {})
+                else:
+                    needs = [_needs(act, object_id)]
+                    if _variant_of(act.get("guid64")) is not None:
+                        needs.append("variant")  # W12 (G1): a pie-menu choice needs the probe that can push one
+                    if object_id.startswith(DIALOG_PREFIX) and str(act.get("guid64")).startswith("response_"):
+                        needs.append("response")  # W12: a numbered response needs the probe that answers by its number
+                    if sim is not None:
+                        # W13 (D4.1): a Sim picked for a phone act; a window or the queue names none.
+                        if object_id == QUEUE_OBJECT_ID or object_id.startswith(DIALOG_PREFIX):
+                            raise ArgsInvalid("sim_id")
+                        needs.append("sim")
                 for need in needs:
                     # A9-9: a probe older than the command needs would ignore it (or refuse it as unknown): say so, never send it.
                     if _too_old(probe, PROBE_NEEDS[need]):
                         raise ProbeTooOld(need)
-                if object_id == QUEUE_OBJECT_ID:
+                if verb is not None:
+                    command = self._publish(verb, dict(verb_args, act_id=act_id))
+                elif object_id == QUEUE_OBJECT_ID:
                     # 2.20.0: she stops one of her own actions.
                     command = self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
                 elif object_id.startswith(DIALOG_PREFIX):
@@ -1020,11 +1153,14 @@ class ActCourier(object):
                     if act.get("owner") is True:
                         # 2.24.0: her Thought said the User asked for it; the probe pushes it first.
                         args["owner"] = True
+                    if sim is not None:
+                        args["sim_id"] = sim  # W13 (D4.1): the Sim she picked for this phone act
                     command = self._publish("act", args)
             except Exception as error:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
-                code = ("ANSWER_INVALID" if isinstance(error, AnswerInvalid) else "PROBE_TOO_OLD" if isinstance(error, ProbeTooOld)
-                        else "INBOX_" + type(error).__name__[:40])
+                code = ("ANSWER_INVALID" if isinstance(error, AnswerInvalid) else "ARGS_INVALID" if isinstance(error, ArgsInvalid)
+                        else "UNKNOWN_ROOM" if isinstance(error, RoomUnknown)
+                        else "PROBE_TOO_OLD" if isinstance(error, ProbeTooOld) else "INBOX_" + type(error).__name__[:40])
                 self._event(act_id, "rejected", now_ms, {"code": code, "by": "helper"})
                 continue
             known = {"written_ms": now_ms, "object": object_id if object_id.isdigit() else None}
