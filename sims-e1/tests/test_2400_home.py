@@ -139,6 +139,8 @@ class FakeActuator(object):
         self.wall_for = {}
         self.take_refused = False
         self.put_back_refused = False
+        self.buy_flags = 128
+        self.placement_flags = 0
 
     # reads
     def at_home(self, household_id):
@@ -202,6 +204,12 @@ class FakeActuator(object):
 
     def definition_tags(self, defn):
         return list(self.tags)
+
+    def definition_buy_flags(self, defn):
+        return self.buy_flags
+
+    def definition_placement_flags(self, defn):
+        return self.placement_flags
 
     def household_funds(self, household_id):
         return self.funds
@@ -367,7 +375,7 @@ class ThingsListTests(HomeCase):
     def raw(self, **overrides):
         row = {"object_id": 41, "definition_id": 55, "name_key": 123, "class_name": "Chair", "where": "room",
                "room_id": 5, "value": 40, "made_by_her": None, "states": [{"state": "dirty", "value": 3}],
-               "in_use": False, "count": None, "placement": "floor"}
+               "in_use": False, "count": None, "placement_flags": 0}
         row.update(overrides)
         return row
 
@@ -389,11 +397,16 @@ class ThingsListTests(HomeCase):
         self.assertIsNone(self.home.shape_thing(self.raw(object_id=None)))
         self.assertIsNone(self.home.shape_thing(self.raw(where="garden")))
 
-    def test_at_most_four_states_and_a_known_placement(self):
+    def test_at_most_four_states(self):
         many = [{"state": "s%d" % i, "value": i} for i in range(9)]
-        item = self.home.shape_thing(self.raw(states=many, placement="ceiling"))
+        item = self.home.shape_thing(self.raw(states=many))
         self.assertEqual(len(item["states"]), 4)
-        self.assertIsNone(item["placement"])
+
+    def test_a_thing_placement_is_the_one_word_of_its_definition_flags(self):
+        """HOME-23 / S3: wall from the wall flags, surface from REQUIRES_SLOT, else floor; unreadable is None."""
+        words = [self.home.shape_thing(self.raw(placement_flags=flags))["placement"]
+                 for flags in (1, 8388608, 268435456, 1024, 1024 | 1, 0, None)]
+        self.assertEqual(words, ["wall", "wall", "wall", "surface", "wall", "floor", None])
 
     def test_build_items_are_not_things(self):
         rows = [self.raw(class_name="Wall"), self.raw(class_name="FrontDoor", object_id=42),
@@ -463,25 +476,47 @@ class ThingsWiringTests(HomeCase):
 class CatalogTests(HomeCase):
     def raw(self, **overrides):
         row = {"definition_id": 77, "price": 120, "tags": ["Comfort"], "class_name": "Sofa", "sim": False,
-               "buy_category": None, "placement": None}
+               "buy_flags": 128, "placement_flags": 0}
         row.update(overrides)
         return row
 
-    def test_furniture_with_a_price_is_a_catalogue_item(self):
+    def test_a_store_item_with_a_price_is_a_catalogue_item(self):
         items = self.home.catalog_items([self.raw()])
-        self.assertEqual(items, [{"definition_id": "77", "price": 120, "buy_category": [], "placement": None,
-                                  "tags": ["Comfort"], "purchasable": True}])
+        self.assertEqual(items, [{"definition_id": "77", "price": 120, "buy_category": ["DECOR"],
+                                  "placement": ["floor"], "tags": ["Comfort"], "purchasable": True}])
 
-    def test_sims_build_items_and_free_things_are_left_out(self):
+    def test_sims_build_items_and_things_outside_the_store_are_left_out(self):
+        """HOME-4 / S3: only what the store lists (a buy category) is offered; a Sim and a build item never are."""
         rows = [self.raw(sim=True), self.raw(class_name="Wall", definition_id=78),
-                self.raw(class_name="FrontDoor", definition_id=79), self.raw(price=0, definition_id=80)]
+                self.raw(class_name="FrontDoor", definition_id=79), self.raw(buy_flags=0, definition_id=80),
+                self.raw(buy_flags=1, definition_id=81), self.raw(buy_flags=None, definition_id=82),
+                self.raw(price=-1, definition_id=83), self.raw(price=0, definition_id=84)]
         kept = self.home.catalog_items(rows)
-        self.assertEqual([item["definition_id"] for item in kept], ["80"])
-        self.assertFalse(kept[0]["purchasable"])
+        self.assertEqual([item["definition_id"] for item in kept], ["84"])
+
+    def test_a_free_store_item_is_listed_and_purchasable(self):
+        """HOME-31 / S3: a price of zero is a store price, so it is purchasable."""
+        item = self.home.shape_catalog(self.raw(price=0))
+        self.assertTrue(item["purchasable"])
+
+    def test_the_buy_categories_are_the_names_of_the_set_bits(self):
+        """S3 (dis build_buy BuyCategory): UNUSED 1, UNUSED_2 16 and DEFAULT 2^31 are ignored."""
+        mask = 2 | 4 | 8 | 32 | 64 | 128 | 256 | 512 | 2048 | 4096 | 8192 | 1 | 16 | 2 ** 31
+        self.assertEqual(self.home.buy_category_names(mask),
+                         ["APPLIANCES", "ELECTRONICS", "ENTERTAINMENT", "LIGHTING", "PLUMBING", "DECOR", "KIDS",
+                          "STORAGE", "COMFORT", "SURFACE", "VEHICLE"])
+        self.assertEqual(self.home.buy_category_names(1), [])
+        self.assertIsNone(self.home.buy_category_names(None))
+
+    def test_the_placement_is_one_word_from_the_placement_flags(self):
+        """S3 (dis build_buy PlacementFlags): wall flags, then REQUIRES_SLOT as surface, else floor."""
+        words = [self.home.shape_catalog(self.raw(placement_flags=flags))["placement"]
+                 for flags in (1, 2, 4, 8388608, 268435456, 1024, 1024 | 2, 0)]
+        self.assertEqual(words, [["wall"]] * 5 + [["surface"], ["wall"], ["floor"]])
+        self.assertIsNone(self.home.shape_catalog(self.raw(placement_flags=None))["placement"])
 
     def test_a_hidden_tag_is_not_purchasable(self):
-        item = self.home.shape_catalog(self.raw(tags=["Debug Only"]))
-        self.assertFalse(item["purchasable"])
+        self.assertIsNone(self.home.shape_catalog(self.raw(tags=["Debug Only"])))
 
     def test_a_catalogue_part_holds_at_most_256_items_and_validates(self):
         rows = [self.raw(definition_id=1000 + index) for index in range(600)]
@@ -698,10 +733,20 @@ class BuyTests(HomeCase):
         self.assertFalse(self.run_cmd("buy", self.args))
         self.assertEqual(self.control.phases(), [("REJECTED", "BUILD_MODE")])
 
-    def test_a_price_of_zero_is_not_purchasable(self):
+    def test_a_free_store_item_is_bought_for_nothing(self):
+        """HOME-31 / S3: a store price of zero is purchasable; nothing is charged."""
         self.actuator.price = 0
-        self.assertFalse(self.run_cmd("buy", self.args))
-        self.assertEqual(self.control.phases(), [("REJECTED", "NOT_PURCHASABLE")])
+        self.assertTrue(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "PLACED"))
+        self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_an_item_the_store_does_not_list_is_not_purchasable(self):
+        """HOME-4 / S3: a loaded definition with a price but no buy category is not for sale."""
+        for index, flags in enumerate((0, 1, None)):
+            self.actuator.buy_flags = flags
+            self.assertFalse(self.run_cmd("buy", self.args, act_id=("%d" % index) * 32))
+            self.assertEqual(self.control.events[-1]["code"], "NOT_PURCHASABLE")
+            self.assertEqual(self.control.events[-1]["phase"], "REJECTED")
 
     def test_a_hidden_definition_is_not_purchasable(self):
         self.actuator.tags = ["Cheat"]

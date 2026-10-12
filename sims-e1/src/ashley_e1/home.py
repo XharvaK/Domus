@@ -42,7 +42,16 @@ ROUTE_KINDS = ("door", "bed", "toilet", "fridge")
 THING_WHERE = ("room", "inventory", "outside")
 STATES_MAX = 4
 TAGS_MAX = 8
-CATEGORY_MAX = 4
+# S3 (the game's build_buy flags, read from its bytecode): the buy categories a store item may be in, by bit. UNUSED (1),
+# UNUSED_2 (16) and DEFAULT (2^31) are not categories, and are ignored.
+BUY_CATEGORY_BITS = (("APPLIANCES", 2), ("ELECTRONICS", 4), ("ENTERTAINMENT", 8), ("LIGHTING", 32),
+                     ("PLUMBING", 64), ("DECOR", 128), ("KIDS", 256), ("STORAGE", 512), ("COMFORT", 2048),
+                     ("SURFACE", 4096), ("VEHICLE", 8192))
+CATEGORY_MAX = len(BUY_CATEGORY_BITS)
+# S3: a placement is one word. A wall flag (CENTER_ON_WALL, EDGE_AGAINST_WALL, ADJUST_HEIGHT_ON_WALL,
+# GROUNDED_AGAINST_WALL, ON_WALL_TOP) makes it a wall item; REQUIRES_SLOT makes it a surface item; else a floor item.
+WALL_FLAG_BITS = (1, 2, 4, 8388608, 268435456)
+SLOT_FLAG_BIT = 1024
 PLACEMENT_FLAGS = ("floor", "wall", "surface")
 # Build items (structure), never furniture or decor, by the last word of the class name (CamelCase words).
 BUILD_LAST_WORDS = ("wall", "floor", "roof", "stair", "stairs", "door", "window", "gate", "archway", "fence",
@@ -127,9 +136,31 @@ def route_kind(name, portal):
     return None
 
 
-def purchasable(price, tag_names):
-    """2.40.0: a catalogue item she may buy: a price above zero, and no tag that says cheat, debug or hidden."""
-    if type(price) is not int or isinstance(price, bool) or price <= 0:
+def buy_category_names(mask):
+    """S3: the names of the buy categories whose bit is set in a definition's buy-category flags, in BUY_CATEGORY_BITS
+    order (an empty list when none is set); None when the flags are unreadable."""
+    if type(mask) is not int or mask < 0:
+        return None
+    return [name for name, bit in BUY_CATEGORY_BITS if mask & bit]
+
+
+def placement_word(mask):
+    """S3: the one placement word of a definition's placement flags: wall, surface or floor; None when unreadable."""
+    if type(mask) is not int or mask < 0:
+        return None
+    if any(mask & bit for bit in WALL_FLAG_BITS):
+        return "wall"
+    if mask & SLOT_FLAG_BIT:
+        return "surface"
+    return "floor"
+
+
+def purchasable(price, tag_names, categories):
+    """2.40.0, S3: a catalogue item she may buy: a price (a store price may be zero), a buy category (the store lists it),
+    and no tag that says cheat, debug or hidden. Only such items are offered and bought."""
+    if type(price) is not int or isinstance(price, bool) or price < 0:
+        return False
+    if not categories:
         return False
     for tag in tag_names or ():
         low = str(tag).lower()
@@ -180,7 +211,6 @@ def shape_thing(raw):
     if object_id is None or where not in THING_WHERE or (where == "room" and room_id is None):
         return None
     states = [shape_state(item) for item in (raw.get("states") or ())[:STATES_MAX]]
-    placement = raw.get("placement")
     return {
         "object_id": object_id,
         "definition_id": _digits(raw.get("definition_id")),
@@ -192,7 +222,7 @@ def shape_thing(raw):
         "states": [state for state in states if state is not None],
         "in_use": _bool_or_none(raw.get("in_use")),
         "count": _int_or_none(raw.get("count")),
-        "placement": placement if placement in PLACEMENT_FLAGS else None,
+        "placement": placement_word(raw.get("placement_flags")),
     }
 
 
@@ -212,26 +242,28 @@ def things_items(raw_rows):
 
 
 def shape_catalog(raw):
-    """2.40.0: one catalogue item from a raw read, or None (no id, not a price, a Sim, or a build item)."""
+    """2.40.0, S3: one catalogue item from a raw read: its id, price, buy categories, one placement word and tags. None
+    unless it is purchasable (a store item with a price, no hidden tag): no id, no price, a Sim, a build item, and a
+    thing the store does not list are all left out."""
     if type(raw) is not dict:
         return None
     definition_id = _digits(raw.get("definition_id"))
     price = _int_or_none(raw.get("price"))
-    if definition_id is None or price is None or price < 0 or raw.get("sim") is True:
+    if definition_id is None or price is None or raw.get("sim") is True:
         return None
     if is_build_class(raw.get("class_name") or ""):
         return None
     tags = [str(tag)[:64] for tag in (raw.get("tags") or ())[:TAGS_MAX]]
-    categories = [str(item)[:40] for item in (raw.get("buy_category") or ())[:CATEGORY_MAX]]
-    placement = raw.get("placement")
-    if placement is not None:
-        placement = [flag for flag in placement if flag in PLACEMENT_FLAGS]
+    categories = buy_category_names(raw.get("buy_flags"))
+    if not purchasable(price, tags, categories):
+        return None
+    word = placement_word(raw.get("placement_flags"))
     return {"definition_id": definition_id, "price": price, "buy_category": categories,
-            "placement": placement, "tags": tags, "purchasable": purchasable(price, tags)}
+            "placement": None if word is None else [word], "tags": tags, "purchasable": True}
 
 
 def catalog_items(raw_rows):
-    """The catalogue rows: furniture and decor with a price (build items and Sims are left out)."""
+    """The catalogue rows: the purchasable store items (build items, Sims and anything not for sale are left out)."""
     items = []
     for raw in raw_rows or ():
         item = shape_catalog(raw)
@@ -530,7 +562,8 @@ def cmd_buy(control, args, connection):
         return _reject(control, act_id, connection, code, **base)
     definition = e2_actuator.definition(args["definition_id"])
     price = e2_actuator.definition_price(definition)
-    if not purchasable(price, e2_actuator.definition_tags(definition)):
+    categories = buy_category_names(e2_actuator.definition_buy_flags(definition))
+    if not purchasable(price, e2_actuator.definition_tags(definition), categories):
         return _reject(control, act_id, connection, "NOT_PURCHASABLE", **base)
     if args.get("max_price") is not None and price > args["max_price"]:
         return _reject(control, act_id, connection, "PRICE_ABOVE", detail="price %d" % price, **base)

@@ -38,6 +38,12 @@ try:
     from build_buy import get_room_id, is_location_pool
 except ImportError:
     get_room_id = is_location_pool = None
+# 2.40.0 (W13 P2 fix, HOME-3/S3): the game's read-only flag getters, by definition id (build_buy's own wrappers; their
+# results are IntFlags, read as ints). Each name is optional: a missing one leaves its flags unread (None).
+try:
+    from build_buy import get_object_buy_category_flags, get_object_placement_flags
+except ImportError:
+    get_object_buy_category_flags = get_object_placement_flags = None
 try:
     from interactions.context import PickInfo, PickType
 except ImportError:
@@ -1215,6 +1221,22 @@ def definition_price(defn):
     return _count(_read(lambda: defn.price))
 
 
+def definition_buy_flags(defn):
+    """Read: the definition's buy-category flags (build_buy.get_object_buy_category_flags of its id), as an int; None
+    when unreadable. home.py names the categories (S3)."""
+    if get_object_buy_category_flags is None or defn is None:
+        return None
+    return _count(_read(lambda: int(get_object_buy_category_flags(_read(lambda: defn.id)))))
+
+
+def definition_placement_flags(defn):
+    """Read: the definition's placement flags (build_buy.get_object_placement_flags of its id), as an int; None when
+    unreadable. home.py names the one placement word (S3)."""
+    if get_object_placement_flags is None or defn is None:
+        return None
+    return _count(_read(lambda: int(get_object_placement_flags(_read(lambda: defn.id)))))
+
+
 def definition_tags(defn):
     """Read: a definition's tag names (Definition.get_tags), at most 32; [] when unreadable."""
     names = []
@@ -1337,22 +1359,28 @@ def _things_rows():
 
 
 def _thing_raw(obj, where, room_id):
-    """Read: one thing's raw row (ids, name key, class, value, in use, and wall placement; floor and surface are not
-    read, so they stay None)."""
+    """Read: one thing's raw row (ids, name key, class, value, in use, its definition's placement flags, and its
+    states: at most four, from observers' state reader)."""
     defn = _read(lambda: obj.definition)
-    wall = is_wall_placed(obj)
     name = _maybe_call(_read(lambda: defn.name))
     return {"object_id": _read(lambda: obj.id), "definition_id": _count(_read(lambda: defn.id)),
             "name_key": observers._string_key(name), "class_name": class_name(obj),
             "where": where, "room_id": room_id, "value": value_of(obj),
-            "made_by_her": None, "states": [], "in_use": in_use(obj), "count": None,
-            "placement": "wall" if wall is True else None}
+            "made_by_her": None, "states": _thing_states(obj), "in_use": in_use(obj), "count": None,
+            "placement_flags": definition_placement_flags(defn)}
+
+
+def _thing_states(obj):
+    """Read: up to four of the object's states as {state, value} (names of the state and of its value); [] when
+    unreadable (observers._object_states)."""
+    found = observers._object_states(obj) or {}
+    return [{"state": key, "value": value} for key, value in list(found.items())[:4]]
 
 
 def catalog_rows():
-    """Read: the raw rows of the catalogue, every loaded definition with a price: its id, price, tags, class name and
-    whether it is a Sim. None when the definitions cannot be read. buy_category and placement are not read here (the
-    build_buy flag reads are not allowed by the guards), so they stay None."""
+    """Read: the raw rows of the catalogue, every loaded definition: its id, price, tags, class name, whether it is a Sim,
+    and its buy-category and placement flags (home.py keeps the purchasable ones, S3). None when the definitions cannot
+    be read."""
     manager = _read(lambda: services.definition_manager())
     definitions = _read(lambda: list(manager.loaded_definitions))
     if definitions is None:
@@ -1361,5 +1389,6 @@ def catalog_rows():
     for defn in definitions:
         rows.append({"definition_id": _read(lambda: defn.id), "price": definition_price(defn),
                      "tags": definition_tags(defn), "class_name": _read(lambda: defn.cls.__name__) or "",
-                     "sim": _read(lambda: defn.is_sim) is True, "buy_category": None, "placement": None})
+                     "sim": _read(lambda: defn.is_sim) is True, "buy_flags": definition_buy_flags(defn),
+                     "placement_flags": definition_placement_flags(defn)})
     return rows
