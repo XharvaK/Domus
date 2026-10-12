@@ -147,6 +147,7 @@ _MENU_LAST_BUILD = None
 _MENU_NEAR_REQUESTED = False
 _MENU_BODY = (None, None)
 _MENU_SEEN_ROOM = _NO_ZONE
+_MENU_MOVE_RESTARTED = False  # R3 (PROBE3-2): the build in progress was itself restarted by a room move
 _SITUATION_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
@@ -1916,7 +1917,7 @@ def _session_open_from(row):
 
 def _menu_reset(keep_last=False):
     global _MENU, _MENU_ZONE, _MENU_STARTED_S, _MENU_LAST, _MENU_ROOM, _MENU_DONE_ZONE, _MENU_LAST_BUILD
-    global _MENU_SEEN_ROOM
+    global _MENU_SEEN_ROOM, _MENU_MOVE_RESTARTED
     _MENU = None
     _MENU_ZONE = None
     _MENU_STARTED_S = None
@@ -1927,6 +1928,7 @@ def _menu_reset(keep_last=False):
         _MENU_FAR.clear()
         _MENU_LAST_BUILD = None  # 2.39.0 (W12 C1): a zone's near part reads that zone's build only
         _MENU_SEEN_ROOM = _NO_ZONE
+        _MENU_MOVE_RESTARTED = False
 
 
 def _menu_hidden(affordance):
@@ -2380,7 +2382,7 @@ def _menu_tick(row):
     build writes its near part as its far part starts. The pie choices of the menu are published with it (G1)."""
     global _MENU, _MENU_ZONE, _MENU_REV, _MENU_LAST, _MENU_STARTED_S, _MENU_ROOM
     global _MENU_FAR_ZONE, _MENU_DONE_ZONE, _MENU_FIRST, _MENU_PARTIAL_S
-    global _MENU_LAST_BUILD, _MENU_NEAR_REQUESTED, _MENU_BODY, _MENU_SEEN_ROOM
+    global _MENU_LAST_BUILD, _MENU_NEAR_REQUESTED, _MENU_BODY, _MENU_SEEN_ROOM, _MENU_MOVE_RESTARTED
     now = _now_s()
     zone = row.get("zone") or {}
     room = zone.get("room")
@@ -2393,8 +2395,14 @@ def _menu_tick(row):
     _MENU_SEEN_ROOM = room
     # R3 (PROBE3-1, PROBE3-2): a build in progress is dropped when the zone changes, or when she changes room (its
     # order and its near part are the old zone's or old room's). The last menu is kept; the new build starts this tick.
-    if _MENU is not None and (_MENU_ZONE != _current_zone() or moved):
+    # A room move restarts a build at most once in a row (a build begun by a move restart finishes), so a walk through
+    # the house cannot keep the whole menu from ever being written.
+    if _MENU is not None and _MENU_ZONE != _current_zone():
         _menu_reset(keep_last=True)
+        _MENU_MOVE_RESTARTED = False
+    elif _MENU is not None and moved and not _MENU_MOVE_RESTARTED:
+        _menu_reset(keep_last=True)
+        _MENU_MOVE_RESTARTED = True
     if _MENU_NEAR_REQUESTED or moved:
         _MENU_NEAR_REQUESTED = False
         _menu_near_now()
@@ -2409,6 +2417,7 @@ def _menu_tick(row):
     if _MENU is not None and _MENU.done:
         build, build_zone = _MENU, _MENU_ZONE
         _MENU = None
+        _MENU_MOVE_RESTARTED = False
         if build_zone is _current_zone() and not build.failed:
             # 2.35.0 (D3): the spots of the build that finished are the ones an act may name (the newest build).
             _E2.publish_spots(build_zone, build.spots)

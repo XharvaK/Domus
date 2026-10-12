@@ -318,6 +318,17 @@ class ZoneAndRoomMenuTests(unittest.TestCase):
         self.assertIsNot(self.probe._MENU, old)
         self.assertEqual(self.probe._MENU_ROOM, "5")
 
+    def test_a_room_move_restarts_a_build_at_most_once_in_a_row(self):
+        """PROBE3-2 (lead): a walk through the house cannot keep the whole menu from being written. The build a move
+        restarted is not restarted by the next move; a zone change still restarts it."""
+        self.start_build()
+        self.probe._menu_tick(self.row)
+        self.probe._menu_tick(dict(self.row, zone=dict(self.row["zone"], room="5")))
+        self.assertTrue(self.probe._MENU_MOVE_RESTARTED)
+        kept = self.start_build()  # the restarted build, still in progress
+        self.probe._menu_tick(dict(self.row, zone=dict(self.row["zone"], room="6")))
+        self.assertIs(self.probe._MENU, kept)
+
     def test_a_near_part_of_a_build_of_another_zone_is_never_written(self):
         """PROBE3-13: a build made in zone 123 writes no near part once she is in zone 456."""
         self.zone["current"] = 123
