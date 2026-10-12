@@ -303,6 +303,15 @@ def write_catalog(control, raw_rows, rev=None):
 
 # ------------------------------------------------------------------------------------------------- the commands
 
+def _row(control, act_id, phase, **payload):
+    """One act row (CORE-9). A row the schema refuses is replaced by an UNKNOWN row without the result (ROW_INVALID),
+    so the act is never left open for want of a row the probe could not write."""
+    if control._act_event(act_id, phase, **payload) is False:
+        control._act_event(act_id, "UNKNOWN", code="ROW_INVALID", object_id=None, guid64=None)
+        return False
+    return True
+
+
 def _say(control, connection, text):
     try:
         control._say(connection, text)
@@ -317,14 +326,14 @@ def _start(control, act_id, connection):
         return False
     control.act_ids.add(act_id)
     if not control.available():
-        control._act_event(act_id, "REJECTED", code="E2_UNAVAILABLE")
+        _row(control, act_id, "REJECTED", code="E2_UNAVAILABLE")
         _say(control, connection, "ACT_REJECT E2_UNAVAILABLE")
         return False
     return True
 
 
 def _reject(control, act_id, connection, code, detail=None, reason_key=None, phase="REJECTED", **base):
-    control._act_event(act_id, phase, code=code, detail=None if detail is None else str(detail)[:128],
+    _row(control, act_id, phase, code=code, detail=None if detail is None else str(detail)[:128],
                        reason_key=reason_key, **base)
     _say(control, connection, "ACT_%s %s" % (phase, code))
     return False
@@ -430,7 +439,7 @@ def _spot(control, obj, sim, place):
 
 
 def _finish(control, act_id, connection, phase, code, result=None, **base):
-    control._act_event(act_id, phase, code=code, result=result, **base)
+    _row(control, act_id, phase, code=code, result=result, **base)
     _say(control, connection, "ACT_%s %s" % (phase, code))
     return phase == "FINISHED"
 
@@ -458,7 +467,7 @@ def cmd_save(control, args, connection):
     left = save_gate(state.saved_at, time.time())
     if left is not None:
         return _reject(control, act_id, connection, "SAVE_TOO_SOON", detail="%d s" % left, **base)
-    control._act_event(act_id, "ACCEPTED", **base)
+    _row(control, act_id, "ACCEPTED", **base)
     _subscribe_save(control, state)
     state.saved_at = time.time()
     try:
@@ -528,7 +537,7 @@ def cmd_buy(control, args, connection):
     funds = e2_actuator.household_funds(sim_info.household_id)
     if funds is None or not e2_actuator.can_afford(funds, price):
         return _reject(control, act_id, connection, "NO_FUNDS", **base)
-    control._act_event(act_id, "ACCEPTED", **base)
+    _row(control, act_id, "ACCEPTED", **base)
     before = _route_reach(sim)
     obj = e2_actuator.create_unplaced(definition)
     if obj is None:
@@ -564,15 +573,24 @@ def cmd_place(control, args, connection):
     obj = e2_actuator.find_object(args["object_id"])
     if obj is None or e2_actuator.in_inventory(obj) is not True:
         return _reject(control, act_id, connection, "NOT_IN_INVENTORY", **base)
-    control._act_event(act_id, "ACCEPTED", **base)
+    _row(control, act_id, "ACCEPTED", **base)
     before = _route_reach(sim)
     spot, refused = _spot(control, obj, sim, args["place"])
     if refused is not None or spot is None:
         return _finish(control, act_id, connection, "REJECTED", refused or "NO_SPOT", **base)
     try:
+        taken = e2_actuator.take_from_inventory(sim, obj)
+    except Exception as error:
+        return _finish(control, act_id, connection, "UNKNOWN", "PLACE_FAILED", detail=type(error).__name__, **base)
+    if taken is not True:
+        return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", detail="not released", **base)
+    try:
         e2_actuator.place(obj, spot)
     except Exception as error:
-        return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", detail=type(error).__name__, **base)
+        if e2_actuator.return_to_inventory(sim, obj) is True:
+            return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", detail=type(error).__name__,
+                           **base)
+        return _finish(control, act_id, connection, "UNKNOWN", "PLACE_FAILED", detail="put back failed", **base)
     facts = _facts(obj, sim, before)
     return _finish(control, act_id, connection, "FINISHED", "PLACED", result=_result(facts), **base)
 
@@ -591,9 +609,11 @@ def cmd_move(control, args, connection):
         return _reject(control, act_id, connection, "NOT_HERS", **base)
     if e2_actuator.in_use(obj) is True:
         return _reject(control, act_id, connection, "IN_USE", **base)
+    if e2_actuator.in_inventory(obj) is True:
+        return _reject(control, act_id, connection, "IN_INVENTORY", **base)
     if not movable(obj):
         return _reject(control, act_id, connection, "NOT_MOVABLE", **base)
-    control._act_event(act_id, "ACCEPTED", **base)
+    _row(control, act_id, "ACCEPTED", **base)
     before = _route_reach(sim)
     _vacate(control, obj)
     spot, refused = _spot(control, obj, sim, args["place"])
@@ -627,7 +647,7 @@ def cmd_sell(control, args, connection):
     funds = e2_actuator.household_funds(sim_info.household_id)
     if value is None or funds is None:
         return _reject(control, act_id, connection, "NOT_SELLABLE", detail="value unreadable", **base)
-    control._act_event(act_id, "ACCEPTED", **base)
+    _row(control, act_id, "ACCEPTED", **base)
     _vacate(control, obj)
     e2_actuator.funds_add(funds, value, sim)
     try:
@@ -673,6 +693,6 @@ def dispatch(control, name, args, connection):
         code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
         act_id = args.get("act_id") if type(args) is dict else None
         if act_id is not None:
-            control._act_event(act_id, "UNKNOWN", code=code, object_id=None, guid64=None)
+            _row(control, act_id, "UNKNOWN", code=code, object_id=None, guid64=None)
         _say(control, connection, "ACT_UNKNOWN %s" % code)
         return False

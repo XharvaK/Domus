@@ -1183,6 +1183,25 @@ def place(obj, spot):
                 orientation=spot["orientation"])
 
 
+def take_from_inventory(sim, obj):
+    """Effect (HOME-2): the game's own way of taking an object out of a Sim's inventory before it is put in the world
+    (carry.put_down_interactions: try_remove_object_by_id, then clear_previous_inventory). True when it was taken; False
+    when the game does not hold the object in that inventory."""
+    if sim.inventory_component.try_remove_object_by_id(obj.id) is not True:
+        return False
+    obj.inventoryitem_component.clear_previous_inventory()
+    return True
+
+
+def return_to_inventory(sim, obj):
+    """Effect (HOME-2): put an object back in the Sim's inventory after a placement the game refused (its own
+    player_try_add_object, as the game's carry code calls it). True when the inventory took it, else False."""
+    try:
+        return sim.inventory_component.player_try_add_object(obj) is True
+    except Exception:
+        return False
+
+
 def definition(def_id):
     """Read: the game's definition for a definition id, or None."""
     try:

@@ -137,6 +137,8 @@ class FakeActuator(object):
         self.catalog = None
         self.things = None
         self.wall_for = {}
+        self.take_refused = False
+        self.put_back_refused = False
 
     # reads
     def at_home(self, household_id):
@@ -251,6 +253,20 @@ class FakeActuator(object):
         if self.place_error is not None:
             raise self.place_error
         self.placed = True
+
+    def take_from_inventory(self, sim, obj):
+        self.calls.append(("take", obj.id))
+        if self.take_refused:
+            return False
+        obj.inventory = False
+        return True
+
+    def return_to_inventory(self, sim, obj):
+        self.calls.append(("put_back", obj.id))
+        if self.put_back_refused:
+            return False
+        obj.inventory = True
+        return True
 
     def sell_object(self, obj):
         self.calls.append(("sell", obj.id))
@@ -746,6 +762,31 @@ class PlaceTests(HomeCase):
         self.assertFalse(self.run_cmd("place", self.args()))
         self.assertEqual(self.control.phases(), [("REJECTED", "NOT_IN_INVENTORY")])
 
+    def test_an_inventory_item_leaves_her_inventory_when_it_is_placed(self):
+        """HOME-2: the game's own removal from the inventory comes before the move, so the item is not in two places."""
+        self.assertTrue(self.run_cmd("place", self.args()))
+        self.assertFalse(self.item.inventory)
+        self.assertEqual([c[0] for c in self.actuator.calls if c[0] in ("take", "place")], ["take", "place"])
+
+    def test_a_placement_the_game_refuses_puts_the_item_back_in_her_inventory(self):
+        self.actuator.place_error = RuntimeError("refused")
+        self.assertFalse(self.run_cmd("place", self.args()))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
+        self.assertTrue(self.item.inventory)
+
+    def test_a_put_back_that_fails_is_unknown_with_the_object_id(self):
+        self.actuator.place_error = RuntimeError("refused")
+        self.actuator.put_back_refused = True
+        self.assertFalse(self.run_cmd("place", self.args()))
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "PLACE_FAILED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "41")
+
+    def test_an_item_the_game_does_not_release_is_refused_before_the_move(self):
+        self.actuator.take_refused = True
+        self.assertFalse(self.run_cmd("place", self.args()))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
+        self.assertNotIn("place", [c[0] for c in self.actuator.calls])
+
     def test_no_spot_is_refused_and_nothing_is_removed(self):
         self.actuator.spot = None
         self.assertFalse(self.run_cmd("place", self.args()))
@@ -783,6 +824,13 @@ class MoveTests(HomeCase):
         args = {"object_id": "41", "place": _place("wall", "5")}
         args.update(extra)
         return args
+
+    def test_an_inventory_item_is_not_moved_it_is_placed(self):
+        """S6 IN_INVENTORY: a move of an item in her inventory is refused; the item is placed instead."""
+        self.bed.inventory = True
+        self.assertFalse(self.run_cmd("move", self.args()))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "IN_INVENTORY"))
+        self.assertNotIn("place", [c[0] for c in self.actuator.calls])
 
     def test_a_move_is_finished_and_names_the_bed_she_can_no_longer_reach(self):
         self.assertTrue(self.run_cmd("move", self.args()))
