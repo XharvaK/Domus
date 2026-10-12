@@ -23,6 +23,12 @@ class TransportResult:
 
 
 @dataclass(frozen=True)
+class SyncRefused:
+    """W12 (B4): Mint refused an acts sync as a whole (a 400 with its own short reason). Not a failed round trip."""
+    reason: str | None
+
+
+@dataclass(frozen=True)
 class Credentials:
     url: str | None
     token: str | None
@@ -61,8 +67,9 @@ class AshleyClient:
         return self._post("/domus/observation", body, heartbeat=False)
 
     def sync_acts(self, body):
-        """8f: one act round trip. The parsed 200 response, or None (nothing applied)."""
-        return self._round_trip("/domus/acts/sync", body)
+        """8f: one act round trip. The parsed 200 response, None (no answer: nothing applied), or a SyncRefused when
+        Mint refused the batch (W12, B4)."""
+        return self._round_trip("/domus/acts/sync", body, refusals=True)
 
     def post_feed(self, body):
         """E3: her settled game passes for the overlay. The parsed 200 response, or None."""
@@ -91,7 +98,7 @@ class AshleyClient:
             return TransportResult("sent", status)
         return TransportResult("rejected", status)
 
-    def _round_trip(self, path, body, timeout_s=None):
+    def _round_trip(self, path, body, timeout_s=None, *, refusals=False):
         raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(
             self._url + path, data=raw, method="POST",
@@ -102,6 +109,10 @@ class AshleyClient:
                 if response.status != 200:
                     return None
                 payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            if refusals and error.code == 400:
+                return SyncRefused(_reason(error))
+            return None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             return None
         return payload if isinstance(payload, dict) and payload.get("status") == "ok" else None

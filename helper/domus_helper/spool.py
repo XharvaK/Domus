@@ -11,6 +11,8 @@ DROP_KINDS = frozenset({"dropped_summary"})
 FLUSH_BUDGET_S = 3.0
 # A9-4: a refusal for these reasons is retried with backoff (a clock that drifts, a key a newer helper sends), not final.
 RETRY_REFUSALS = frozenset({"clock_skew", "invalid_body"})
+# W12 (F2): the rows one tick reads and ingests at most; the rest wait for the next tick.
+ROWS_PER_TICK = 500
 
 
 class OutboxConflict(ValueError):
@@ -24,6 +26,9 @@ def _canonical(payload):
 class Spool:
     def __init__(self, path, *, row_cap=ROW_CAP):
         self.row_cap = row_cap
+        # W12 (F3, F6): what the last flush did that a log should say: failed posts (by kind) and expired views.
+        self.last_failures = []
+        self.last_expired = 0
         self._con = sqlite3.connect(str(path))
         self._con.row_factory = sqlite3.Row
         version = self._con.execute("PRAGMA user_version").fetchone()[0]
@@ -95,6 +100,21 @@ class Spool:
 
     def ingest(self, session, segment, offset, record, *, raw_len, at_ms=None):
         at_ms = int(time.time() * 1000) if at_ms is None else at_ms
+        with self._con:
+            self._ingest_row(session, segment, offset, record, raw_len, at_ms)
+
+    def ingest_batch(self, session, entries, at_ms=None):
+        """W12 (F2): one tick's rows in one commit. Each entry is (segment, offset, record, raw_len); a record of None
+        is a line that is not a row, which only moves the cursor past it."""
+        at_ms = int(time.time() * 1000) if at_ms is None else at_ms
+        with self._con:
+            for segment, offset, record, raw_len in entries:
+                if record is None:
+                    self._put_cursor(session, segment, offset + raw_len)
+                else:
+                    self._ingest_row(session, segment, offset, record, raw_len, at_ms)
+
+    def _ingest_row(self, session, segment, offset, record, raw_len, at_ms):
         seq = record.get("written_sequence") if isinstance(record, dict) else None
         if type(seq) is not int:
             seq = None
@@ -106,21 +126,20 @@ class Spool:
             "SELECT written_sequence FROM rows WHERE session=? AND written_sequence IS NOT NULL "
             "ORDER BY rowid DESC LIMIT 1",
             (session,)).fetchone()
-        with self._con:
-            if previous is not None and seq is not None and seq != previous["written_sequence"] + 1:
-                self._gap(session, "gap", {"from": previous["written_sequence"], "to": seq}, at_ms)
-            if kind in DROP_KINDS:
-                detail = {"event_kind": kind}
-                if isinstance(record, dict) and record.get("reason") is not None:
-                    detail["reason"] = record.get("reason")
-                self._gap(session, "drop", detail, at_ms)
-            self._enforce_cap(session, at_ms)
-            self._con.execute(
-                """INSERT OR IGNORE INTO rows
-                   (session, segment, offset, written_sequence, event_kind, wall_ms, json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (session, segment, offset, seq, kind, wall, json.dumps(record, ensure_ascii=False)))
-            self._put_cursor(session, segment, offset + raw_len)
+        if previous is not None and seq is not None and seq != previous["written_sequence"] + 1:
+            self._gap(session, "gap", {"from": previous["written_sequence"], "to": seq}, at_ms)
+        if kind in DROP_KINDS:
+            detail = {"event_kind": kind}
+            if isinstance(record, dict) and record.get("reason") is not None:
+                detail["reason"] = record.get("reason")
+            self._gap(session, "drop", detail, at_ms)
+        self._enforce_cap(session, at_ms)
+        self._con.execute(
+            """INSERT OR IGNORE INTO rows
+               (session, segment, offset, written_sequence, event_kind, wall_ms, json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (session, segment, offset, seq, kind, wall, json.dumps(record, ensure_ascii=False)))
+        self._put_cursor(session, segment, offset + raw_len)
 
     def _gap(self, session, kind, detail, at_ms):
         self._con.execute(
@@ -213,15 +232,22 @@ class Spool:
                ORDER BY created_ms, observation_id LIMIT ?""",
             (now_ms, batch)).fetchall()
         started = clock()
+        self.last_failures = []
+        self.last_expired = 0
         for row in due:
             if clock() - started >= budget_s:
                 break
             if now_ms > row["expires_at_ms"]:
+                self.last_expired += 1
                 self._finish(row["observation_id"], "expired", row["attempts"], row["next_attempt_ms"], "expired")
                 continue
             result = client.post_observation(json.loads(row["payload_json"]), now_ms=now_ms)
             kind = result.kind
             reason = getattr(result, "reason", None)
+            if kind == "expired":
+                self.last_expired += 1
+            elif kind not in ("admitted", "duplicate"):
+                self.last_failures.append(kind)
             # A9-4: the server's reason is kept in last_status as refused:<reason>, so status can show it.
             refused = f"refused:{reason}" if kind == "rejected" and reason else None
             if kind in ("admitted", "duplicate"):

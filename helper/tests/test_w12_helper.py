@@ -197,3 +197,119 @@ def test_a_custom_response_is_a_choice_with_its_number_named():
          "responses": [{"response": "response_3", "text_key": None}], "rows": []}]}}
     assert dialog_options(row, TEXTS.get)[0]["acts"] == [
         {"ref": "a1", "guid64": "response_3", "text": "choice 3"}]
+
+
+
+# ---- the acts round trip (B1, B3, B4, S2, G1, WAITING and NOTED) ----
+import json  # noqa: E402
+
+from domus_helper.acts import ActCourier  # noqa: E402
+from domus_helper.spool import Spool as _Spool  # noqa: E402
+from domus_helper.transport import SyncRefused  # noqa: E402
+
+ACT_ID = "b" * 32
+
+
+class _Mint:
+    """Mint's sync, as a fake: answers ok, is down (None) or refuses a batch with a phase it does not know (400)."""
+
+    def __init__(self, refuse_phases=(), acts=()):
+        self.bodies = []
+        self.down = False
+        self.refuse_phases = set(refuse_phases)
+        self.acts = list(acts)
+
+    def sync_acts(self, body):
+        self.bodies.append(json.loads(json.dumps(body)))
+        if self.down:
+            return None
+        if any(event["phase"] in self.refuse_phases for event in body["events"]):
+            return SyncRefused("invalid_body")
+        return {"status": "ok", "applied": len(body["events"]), "acts": list(self.acts)}
+
+    def last_events(self):
+        return self.bodies[-1]["events"]
+
+
+def _act_row(phase, at=5000, session="s", **extra):
+    e2 = {"act_id": ACT_ID, "phase": phase, "code": None, "tuning_name": "bookshelf_ReadBook", "detail": None}
+    e2.update(extra)
+    return {"event_kind": "act_event", "telemetry_session_id": session, "wall_timestamp_ms": at, "e2": e2}
+
+
+def _courier(tmp_path, **kw):
+    sent = []
+
+    def publish(command, args):
+        sent.append((command, args))
+        return "cmd%d" % len(sent)
+    courier = ActCourier(_Spool(tmp_path / "spool.db"), publish, **kw)
+    return courier, sent
+
+
+def _requested(**extra):
+    act = {"act_id": ACT_ID, "object_id": "11", "guid64": "4242"}
+    act.update(extra)
+    return act
+
+
+# B3: a refusal the probe wrote in its reply is a REJECTED event by the probe, with its code.
+def test_a_probe_refusal_of_her_act_is_read_from_its_reply_as_a_rejection_by_the_probe(tmp_path):
+    replies = {}
+    courier, _sent = _courier(tmp_path, reply=lambda command_id: replies.get(command_id))
+    client = _Mint(acts=[_requested()])
+    courier.tick(client, "h", 1000, True)
+    replies["cmd1"] = {"id": "cmd1", "status": "REJECTED", "code": None,
+                       "result": {"ok": False, "lines": ["ACT_REJECT DUPLICATE"]}}
+    courier.tick(client, "h", 2000, True)
+    assert [event["phase"] for event in client.last_events()] == ["received", "rejected"]
+    assert client.last_events()[-1]["detail"] == {"code": "DUPLICATE", "by": "probe"}
+
+
+def test_an_act_the_probe_already_answered_about_is_not_rejected_again_from_its_reply(tmp_path):
+    replies = {}
+    courier, _sent = _courier(tmp_path, reply=lambda command_id: replies.get(command_id))
+    client = _Mint(acts=[_requested()])
+    courier.tick(client, "h", 1000, True)
+    courier.on_row(_act_row("PUSHED"))
+    replies["cmd1"] = {"id": "cmd1", "status": "REJECTED", "code": "E2_UNAVAILABLE", "result": {"lines": []}}
+    courier.tick(client, "h", 2000, True)
+    assert [event["phase"] for event in client.last_events()] == ["received", "pushed"]
+
+
+# B3: the game's own sentence is "text" and says by the game; a refusal with no sentence says by the probe.
+def test_a_game_refusal_carries_the_games_sentence_and_a_bare_one_says_by_the_probe(tmp_path):
+    courier, _sent = _courier(tmp_path, resolve=lambda key: {"91": "The toilet is dirty."}.get(key))
+    courier.tick(_Mint(), "h", 1000, True)
+    courier.on_row(_act_row("REJECTED", reason_key="91"))
+    courier.on_row(_act_row("REJECTED", at=6000))
+    client = _Mint()
+    courier.tick(client, "h", 3000, True)
+    rejected = [event["detail"] for event in client.last_events() if event["phase"] == "rejected"]
+    assert rejected[0] == {"tuning_name": "bookshelf_ReadBook", "by": "game", "text": "The toilet is dirty.",
+                           "reason": "The toilet is dirty."}
+    assert rejected[1] == {"tuning_name": "bookshelf_ReadBook", "by": "probe"}
+
+
+# B3: the helper's own refusal says by the helper (here: a probe too old for the act's variant).
+def test_a_helper_refusal_says_by_the_helper(tmp_path):
+    courier, sent = _courier(tmp_path)
+    courier.tick(_Mint(acts=[_requested(guid64="7040v2")]), "h", 1000, True, probe="2.38.0")
+    assert sent == []
+    later = _Mint()
+    courier.tick(later, "h", 2000, True, probe="2.38.0")
+    assert [(event["phase"], event["detail"]) for event in later.last_events()] == [
+        ("rejected", {"code": "PROBE_TOO_OLD", "by": "helper"})]
+
+
+# G1 gate: a pie choice (a variant) is sent as its own act with its variant, and only a 2.39.0 probe takes it.
+def test_a_pie_choice_is_published_with_its_variant_when_the_probe_is_new_enough(tmp_path):
+    courier, sent = _courier(tmp_path)
+    courier.tick(_Mint(acts=[_requested(guid64="7040v2")]), "h", 1000, True, probe="2.39.0")
+    assert sent == [("act", {"act_id": ACT_ID, "object_id": "11", "guid64": "7040", "variant": 2})]
+
+
+def test_a_pie_choice_is_refused_by_the_helper_on_an_older_probe(tmp_path):
+    courier, sent = _courier(tmp_path)
+    courier.tick(_Mint(acts=[_requested(guid64="7040v2")]), "h", 1000, True, probe="2.38.0")
+    assert sent == []

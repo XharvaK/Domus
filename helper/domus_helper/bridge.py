@@ -38,6 +38,13 @@ _AUTO = object()
 HEARTBEAT_EVERY_MS = 60_000
 _CAMERA_PROBE = (2, 21, 0)
 _TALK_PROBE = (2, 26, 0)
+# W12 (F5): the commands this helper sends are gated on the probe that understands them.
+_PACE_PROBE = (2, 31, 0)
+_NEAR_PROBE = (2, 39, 0)
+# W12 (F3): a body row older than this, from before this helper started, is not a view of now.
+STALE_BODY_MS = 120_000
+# W12 (F4): a refused view's changes go back in the queue this many times in a row, then they are let go (logged).
+REQUEUE_LIMIT = 3
 # W3h: a pace command that could not be written is tried again after this long.
 PACE_RETRY_MS = 30_000
 # HE17: the newest row is kept in the spool when it changed, and at most this often.
@@ -122,7 +129,15 @@ class Bridge:
         self._catalog = None
         self._acts = None if self.client is None else ActCourier(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
-            resolve=self._resolve_text, memory=self._answer_memory)
+            resolve=self._resolve_text, memory=self._answer_memory,
+            reply=lambda command_id: commands.read_reply(command_id, paths=self.paths), log=self._log.write,
+            say=self._say_words, her_name=self._her_first)
+        # W12 (B2): the refs are kept for one game session; the view's attachment says which epoch of refs it uses.
+        self._refs_epoch = 0
+        self._refs_session = None
+        self._body_fresh = False  # W12 (F3): a body row of this run has come (a restored one is not news)
+        self._spot_stages_last = None
+        self._requeued = 0  # W12 (F4): views refused in a row whose changes went back in the queue
         # E3: the overlay pages' state (served by main() on this PC only).
         self.overlay = overlay_pages.Overlay(self.spool, self.paths.data_dir, int(time.time() * 1000), self._resolve_text,
                                              trace=Trace(self.spool, self.paths.data_dir), helper_build=_helper_build())
@@ -160,10 +175,8 @@ class Bridge:
             print("probe %s is installed; this helper expects %s" % (probe, schema.PROBE_VERSION))
             self._probe_warned = probe
         observed = self.monitor.observe(now, self._mono(), self._process(), latest)
-        previous = self._state
         self._state = observed["state"]
-        if self._state == "attached" and previous != "attached":
-            self._refs = RefBook()  # N8 (F3): a new attachment starts its own refs; a ref never outlives its session
+        self._follow_refs(latest)
         self._telemetry_only = observed["telemetry_only"]
         self._advance_thalamus(now)
         # E1b: a flipped game-only switch goes out at once, not with the next minute's heartbeat.
@@ -187,6 +200,8 @@ class Bridge:
                 body["probe_version"] = probe
             result = self.client.post_heartbeat(body)
             self._last_heartbeat = {"kind": result.kind, "status": result.status}
+            if result.kind not in ("admitted", "duplicate"):
+                self._log.write({"wall_ms": now, "trigger": "heartbeat", "error": str(result.kind)})  # W12 (F6)
             self._last_heartbeat_ms = now
             self._tried_inputs = inputs
             self._tried_attached = attached
@@ -197,9 +212,15 @@ class Bridge:
             self.overlay.answered = self._acts.answered_dialogs
             if self._acts.take_look():
                 self._send_look(now)
+        self._send_due(now)
         if self.client is not None:
             self.spool.flush(self.client, now)
-        self._pace_tick(now)
+            for kind in self.spool.last_failures:
+                self._log.write({"wall_ms": now, "trigger": "observation_post", "error": str(kind)})  # W12 (F6)
+            if self.spool.last_expired:
+                self._log.write({"wall_ms": now, "trigger": "observation_post", "error": "expired",
+                                 "count": self.spool.last_expired})  # W12 (F3): the newest state goes in the next view
+        self._pace_tick(now, probe)
         self.overlay.poll(self.client, self.helper_session, now)
         self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
@@ -328,6 +349,7 @@ class Bridge:
                 if whole is not None:
                     self._menu = {"session": record.get("telemetry_session_id"), "payload": whole,
                                   "at_ms": clock_ms}
+                    self._log_spot_stages(whole, clock_ms)  # W12 (C11): the spot stages, read from the log
                     self._notebook_quietly(
                         lambda: self.notebook.observe_menu(self._world(), whole, clock_ms))
             elif kind == "presence_snapshot":
@@ -356,17 +378,64 @@ class Bridge:
             self._last_row = record
             if _body_sample(record):
                 self._last_body_row = record
+                self._body_fresh = True
                 self._set_her(record)
                 self._seen.observe(record)
             self._last_rowid = rowid
-        self._send_diary(wall_ms)
-        self._flush_views(wall_ms)
+
+    def _follow_refs(self, latest):
+        """W12 (B2): the refs of her menu are kept for one game session. An attach flip keeps them; a new telemetry
+        session (a new game) starts its own, and the view's attachment changes with the epoch."""
+        session = latest.get("telemetry_session_id") if isinstance(latest, dict) else None
+        if session is None or session == self._refs_session:
+            return
+        if self._refs_session is not None:
+            self._refs = RefBook()
+            self._refs_epoch += 1
+        self._refs_session = session
+
+    def _attachment(self):
+        """W12 (B2): the view's attachment: the helper session, with the refs epoch once the refs have been reset."""
+        return self.helper_session if self._refs_epoch == 0 else "%s:%d" % (self.helper_session, self._refs_epoch)
+
+    def _send_due(self, wall_ms):
+        """W12 (F1): the diary and the views go after the acts round trip, and a view waits while that round trip failed,
+        so no view shows an act's effect before the act's record is with Mint. The changes wait with it."""
+        if self._acts is None or self._acts.sync_ok:
+            self._send_diary(wall_ms)
+            self._flush_views(wall_ms)
         self._persist_thalamus(wall_ms)
 
+    def _body_is_restored(self, wall_ms):
+        """W12 (F3): the newest body row is from before this helper started and is too old to be a view of now: no
+        view goes from it (the first view after a start must not be an expired wake)."""
+        if self._body_fresh or self._last_body_row is None:
+            return False
+        written = self._last_body_row.get("wall_timestamp_ms")
+        return type(written) is not int or wall_ms - written > STALE_BODY_MS
+
+    def _her_first(self):
+        """W12 (S2): her first name, as her words are said in it."""
+        return (self._resolve_text.her or {}).get("first")
+
+    def _say_words(self, text, object_id):
+        """W12 (S2): one talk line in her name (her words to the Sim the act targets)."""
+        self.talk.say(text, sim_id=object_id)
+
+    def _log_spot_stages(self, menu, clock_ms):
+        """W12 (C11): the menu's spot counters, written to the decision log when they change."""
+        stages = menu.get("spot_stages")
+        if not isinstance(stages, dict) or stages == self._spot_stages_last:
+            return
+        self._spot_stages_last = stages
+        clean = {str(key)[:32]: value for key, value in list(stages.items())[:16]
+                 if isinstance(value, (int, bool)) and not isinstance(value, float)}
+        self._log.write({"wall_ms": clock_ms, "trigger": "spot_stages", "stages": clean})
+
     def _flush_views(self, wall_ms):
-        """D2: a view goes when the coalescer says so; nothing pending sends nothing."""
+        """D2: a view goes when the coalescer says so; nothing pending sends nothing. W12 (F3): not from a restored row."""
         reason = coalesce.due(self._coalesced, wall_ms)
-        if reason is None:
+        if reason is None or self._body_is_restored(wall_ms):
             return
         percepts, self._coalesced = coalesce.take(self._coalesced)
         self._send_view(percepts, reason, wall_ms)
@@ -390,6 +459,13 @@ class Bridge:
     def _send_look(self, wall_ms):
         """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;
         the changes waiting go with it. With no body row yet nothing is sent, and the log says so."""
+        latest = self.spool.latest_record()
+        if _probe_ok(latest.get("probe_version") if isinstance(latest, dict) else None, _NEAR_PROBE):
+            # W12 (C1): a look asks for the near part of the menu now (her room and what is near her, read at the write).
+            try:
+                commands.publish("menu_near", {}, "helper", paths=self.paths)
+            except (OSError, ValueError):
+                pass
         body = self._last_body_row
         if body is None:
             self._log.write({"wall_ms": wall_ms, "trigger": "look", "percepts": 0, "kinds": [],
@@ -407,6 +483,8 @@ class Bridge:
         enqueued = False
         observation_id = None
         error = None
+        requeued = False
+        dropped_percepts = 0
         ctx = self._obs_ctx(wall_ms, event)
         decision = SimpleNamespace(percepts=[(percept, 0.0) for percept in percepts], reason=trigger)
         obs = build(decision, ctx)
@@ -424,6 +502,7 @@ class Bridge:
                 refusal = self._enqueue_view(obs, wall_ms)
             if refusal is None:
                 enqueued = True
+                self._requeued = 0
                 self._pace_log.observed(_ticks(self._last_body_row or self._last_row))
                 observation_id = obs["observation_id"]
                 self._obs_seq += 1
@@ -431,6 +510,14 @@ class Bridge:
             else:
                 # 2.37.0 (W10 H1): the log says what was refused and on which key, not only the class's name.
                 error = refusal_text(refusal) if isinstance(refusal, ContractError) else type(refusal).__name__
+                # W12 (F4): a refused view drops nothing: its changes wait for the next view, a few times over.
+                if self._requeued < REQUEUE_LIMIT and percepts:
+                    self._requeued += 1
+                    self._coalesced = coalesce.add(self._coalesced, percepts, wall_ms)
+                    requeued = True
+                else:
+                    self._requeued = 0
+                    dropped_percepts = len(percepts)
         line = {
             "wall_ms": wall_ms,
             "trigger": trigger,
@@ -443,6 +530,10 @@ class Bridge:
             line["options_dropped"] = dropped
         if error is not None:
             line["error"] = error
+        if requeued:
+            line["requeued"] = True
+        if dropped_percepts:
+            line["dropped_percepts"] = dropped_percepts
         self._log.write(line)
 
     def _enqueue_view(self, obs, wall_ms):
@@ -482,7 +573,7 @@ class Bridge:
         session = body.get("telemetry_session_id") if isinstance(body, dict) else None
         options_cut = {}  # N8 (F4): what the options left out, named in the view (filled by _options)
         return {
-            "helper_session": self.helper_session,
+            "helper_session": self._attachment(),
             "obs_seq": self._obs_seq,
             "slot_id": self._extractor.slot_id,
             "guid": self._extractor.guid,
@@ -514,11 +605,12 @@ class Bridge:
             if self._pace_sent_ms is None or now_ms - self._pace_sent_ms >= pace.MISMATCH_EVERY_MS:
                 self._pace_mismatch = True
 
-    def _pace_tick(self, now):
+    def _pace_tick(self, now, probe=None):
         """W3h: the probe's pace follows the settings. Sent when the game attaches, when a setting
-        changes, and when the probe's rows show other values. Nothing is sent while detached."""
+        changes, and when the probe's rows show other values. Nothing is sent while detached.
+        W12 (F5): not sent to a probe that predates the pace command."""
         settings = self._pace_settings.refresh()
-        if self._state != "attached":
+        if self._state != "attached" or not _probe_ok(probe, _PACE_PROBE):
             self._pace_attached = False
             return
         wanted = (settings["need_drain"], settings["slow_time"])
@@ -665,6 +757,7 @@ def main(argv=None):
                 archived_at = now
                 _archive_quietly(now)
                 _strings_quietly()
+                _prune_done_quietly(now)  # W12 (F6): finished commands older than seven days leave cmd/done
             bridge.tick(int(now * 1000))
             time.sleep(args.interval)
         except KeyboardInterrupt:
@@ -699,6 +792,16 @@ def _strings_quietly():
         catalog.build(paths)
     except Exception as error:
         print("catalogue index skipped: %s" % type(error).__name__)
+
+
+def _prune_done_quietly(now):
+    try:
+        removed = commands.prune_done(Paths.from_env(), int(now * 1000))
+    except OSError as error:
+        print("command folder not pruned: %s" % type(error).__name__)
+        return
+    if removed:
+        print("command replies pruned: %d" % len(removed))
 
 
 def _archive_quietly(now):

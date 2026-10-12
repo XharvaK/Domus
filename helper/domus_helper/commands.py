@@ -65,6 +65,52 @@ def _write(row, raw, paths):
             temporary.unlink()
 
 
+# W12 (F6): a finished command's file (cmd/done) is kept for this long, then it may go.
+DONE_KEEP_MS = 7 * 24 * 3600 * 1000
+
+
+def prune_done(paths, now_ms):
+    """W12 (F6): the probe's finished-command files (cmd/done) older than seven days are removed, one named file at a
+    time, through a path this function builds for each one. The probe checks a command's id against done/ only for a
+    command that can still arrive (its time to live is a minute at most), so a file this old answers no live question.
+    Returns the names removed. Never raises on a file it cannot remove."""
+    folder = paths.done
+    if not folder.is_dir():
+        return []
+    cutoff_ms = now_ms - DONE_KEEP_MS
+    removed = []
+    for entry in sorted(folder.iterdir()):
+        if entry.suffix != ".json" or not entry.is_file():
+            continue
+        try:
+            modified_ms = entry.stat().st_mtime * 1000
+        except OSError:
+            continue
+        if modified_ms >= cutoff_ms:
+            continue
+        try:
+            entry.unlink()
+        except OSError:
+            continue
+        removed.append(entry.name)
+    return removed
+
+
+def read_reply(command_id, *, paths=None):
+    """W12 (B3): the probe's reply to one command of ours, or None while it has not answered. Id-matched and checked
+    for shape; a reply the probe is still writing reads as not yet."""
+    paths = paths or Paths.from_env()
+    try:
+        payload = cmdbox.decode((paths.outbox / (command_id + ".json")).read_bytes())
+    except (FileNotFoundError, ValueError, UnicodeError, RecursionError):
+        return None
+    if not isinstance(payload, dict) or payload.get("id") != command_id:
+        return None
+    if payload.get("status") not in ("OK", "REJECTED", "ERROR") or not isinstance(payload.get("result"), dict):
+        return None
+    return payload
+
+
 def send(command, args, issuer, timeout_s=15, *, paths=None):
     if not math.isfinite(timeout_s) or timeout_s <= 0:
         raise ValueError("timeout_s must be positive and finite")

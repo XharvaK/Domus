@@ -208,7 +208,9 @@ def test_events_wait_while_mint_is_unreachable(tmp_path):
     client.down = False
     courier.tick(client, "h", 2000, True)
     assert [event["phase"] for event in client.bodies[-1]["events"]] == ["rejected"]
-    assert client.bodies[-1]["events"][0]["detail"] == {"code": "NO_OBJECT", "tuning_name": "bookshelf_ReadBook"}
+    # W12 (B3): a rejection says by whom: no game sentence here, so the probe refused it.
+    assert client.bodies[-1]["events"][0]["detail"] == {"code": "NO_OBJECT", "tuning_name": "bookshelf_ReadBook",
+                                                        "by": "probe"}
 
 
 def test_not_attached_or_an_inbox_failure_is_a_rejection_not_a_push(tmp_path):
@@ -227,8 +229,8 @@ def test_not_attached_or_an_inbox_failure_is_a_rejection_not_a_push(tmp_path):
     other.tick(client, "h", 2000, True)
     other.tick(client, "h", 3000, True)
     phases = [(e["act_id"][0], e["phase"], e.get("detail")) for body in client.bodies for e in body["events"]]
-    assert ("a", "rejected", {"code": "NOT_ATTACHED"}) in phases
-    assert ("b", "rejected", {"code": "INBOX_FileNotFoundError"}) in phases
+    assert ("a", "rejected", {"code": "NOT_ATTACHED", "by": "helper"}) in phases
+    assert ("b", "rejected", {"code": "INBOX_FileNotFoundError", "by": "helper"}) in phases
 
 
 def test_an_act_the_probe_never_answers_about_becomes_unknown_once(tmp_path):
@@ -296,7 +298,7 @@ def test_an_unknown_reason_key_adds_no_sentence(tmp_path):
     courier.on_row(_row("REJECTED", code="PUSH_REFUSED", detail="debug text", reason_key="88001"))
     courier.tick(client, "h", 2000, True)
     detail = client.bodies[-1]["events"][0]["detail"]
-    assert detail == {"code": "PUSH_REFUSED", "detail": "debug text", "tuning_name": "bookshelf_ReadBook"}
+    assert detail == {"code": "PUSH_REFUSED", "detail": "debug text", "tuning_name": "bookshelf_ReadBook", "by": "probe"}
     assert "reason" not in detail
 
 
