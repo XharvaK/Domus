@@ -313,3 +313,26 @@ def test_a_pie_choice_is_refused_by_the_helper_on_an_older_probe(tmp_path):
     courier, sent = _courier(tmp_path)
     courier.tick(_Mint(acts=[_requested(guid64="7040v2")]), "h", 1000, True, probe="2.38.0")
     assert sent == []
+
+
+# S2: her words travel with the pushed act (Mint keeps them with the act, for her outcome and day records).
+def test_the_pushed_event_carries_her_words_back_to_mint(tmp_path):
+    courier, _sent = _courier(tmp_path, her_name=lambda: "Ida", say=lambda text, object_id: None)
+    client = _Mint(acts=[_requested(words="Hello there, Bo.")])
+    courier.tick(client, "h", 1000, True, probe="2.39.0")
+    courier.on_row(_act_row("PUSHED"))
+    later = _Mint()
+    courier.tick(later, "h", 2000, True, probe="2.39.0")
+    pushed = [event for event in later.last_events() if event["phase"] == "pushed"]
+    assert pushed == [{"act_id": ACT_ID, "phase": "pushed", "at_ms": 5000,
+                       "detail": {"tuning_name": "bookshelf_ReadBook", "words": "Hello there, Bo."}}]
+
+
+# E3 (the mechanism): a token that names a second Sim is named when the text's participants are known, and only then.
+def test_a_name_token_for_a_second_sim_is_named_from_the_participants_when_they_are_known():
+    from domus_helper import tokens
+    subject = tokens.names_of("Ida Vale")
+    text = "{0.SimFirstName} waved at {1.SimFirstName}."
+    assert tokens.fill(text, subject=subject) == "Ida waved at someone."
+    assert tokens.fill(text, subject=subject, others=[tokens.names_of("Bo Reed")]) == "Ida waved at Bo."
+    assert tokens.fill(text, subject=subject, others=[None]) == "Ida waved at someone."

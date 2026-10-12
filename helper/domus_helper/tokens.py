@@ -48,31 +48,36 @@ def names_from(first, last, display=None):
     return {"first": first, "last": last or "", "full": " ".join(part for part in (first, last) if part)}
 
 
-def fill(text, subject=None, gender=None, number=None):
+def fill(text, subject=None, gender=None, number=None, others=None):
     """The words of one game text. subject: the names of the Sim the text is about (names_of), or None for no one
     named (then a name token is "someone"). gender: "F" for the female form of a pair, anything else the first form.
-    number: the count the row carries (a Number token is "some" without one). Other tokens are dropped."""
+    number: the count the row carries (a Number token is "some" without one). Other tokens are dropped.
+    others (W12, E3): the names_of of the other Sims the text names, in token order (others[0] is token 1); a token
+    past the list, or a None, is someone."""
     if not isinstance(text, str):
         return None
     try:
-        return _tidy(_fill(text, subject, gender, number))
+        return _tidy(_fill(text, subject, gender, number, others))
     except Exception:
         return _tidy(_TOKEN.sub("", text))
 
 
-def _fill(text, subject, gender, number):
+def _fill(text, subject, gender, number, others=None):
     text = _PAIR.sub(lambda match: match.group(3) if gender == "F" else match.group(2), text)
 
     def name(match):
-        # Token 0 is the Sim the text is about (her, in her own lines); a higher index is another Sim: someone.
-        if subject is None or match.group(1) != "0":
+        # Token 0 is the Sim the text is about (her, in her own lines); a higher index is another Sim: someone,
+        # unless the caller knows who it is (others).
+        index = int(match.group(1))
+        names = subject if index == 0 else (others[index - 1] if others and 0 < index <= len(others) else None)
+        if names is None:
             return SOMEONE
         field = match.group(2)
         if field == "SimFirstName":
-            return subject["first"]
+            return names["first"]
         if field == "SimLastName":
-            return subject["last"]
-        return subject["full"]
+            return names["last"]
+        return names["full"]
     text = _NAME.sub(name, text)
     text = _NUMBER.sub(lambda match: SOME if number is None else str(number), text)
     text = _MONEY.sub(lambda match: "some money" if type(number) is not int else "§{:,}".format(number), text)
@@ -94,8 +99,8 @@ class Words(object):
         self.her = None
         self.gender = None
 
-    def __call__(self, key):
-        return self._words(key, self.her)
+    def __call__(self, key, others=None):
+        return self._words(key, self.her, others)
 
     def other(self, key):
         return self._words(key, None)
@@ -109,11 +114,11 @@ class Words(object):
         except Exception:
             return None
 
-    def _words(self, key, subject):
+    def _words(self, key, subject, others=None):
         if self._raw is None:
             return None
         try:
             text = self._raw(key)
         except Exception:
             return None
-        return fill(text, subject=subject, gender=self.gender)
+        return fill(text, subject=subject, gender=self.gender, others=others)

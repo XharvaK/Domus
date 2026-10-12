@@ -722,10 +722,6 @@ def _variant_of(value):
     return _split_guid(value)[1] if value is not None else None
 
 
-def _is_response(act, object_id):
-    return object_id.startswith(DIALOG_PREFIX) and str(act.get("guid64")).startswith("response_")
-
-
 class ActCourier(object):
     """Carries her requested acts to the probe and the probe's record of them back.
 
@@ -859,6 +855,8 @@ class ActCourier(object):
             known["pushed_ms"] = at
             known["session"] = session
             self._say_words(known)
+            if known.get("words"):
+                detail["words"] = known["words"]  # W12 (S2): her words, kept with the act for her outcome and day records
         if phase == "unknown" and detail.get("code") == "LEFT_QUEUE" and known is not None and "pushed_ms" in known:
             asked = self._asked_after(known.get("session"), known["pushed_ms"], at)
             if asked is not None:
@@ -933,11 +931,12 @@ class ActCourier(object):
         batch = self._events[:EVENTS_PER_SYNC]
         response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": list(batch)})
         written = []
+        answers = []
         if isinstance(response, SyncRefused):
             # W12 (B4): Mint refused the batch as a whole; each event is sent alone, and the ones Mint refuses are
             # quarantined, so one bad event cannot hold the others for ever.
             self._log_line(now_ms, "acts_sync", "refused:%s" % (response.reason or "unknown"), len(batch))
-            written = self._send_alone(client, helper_session, now_ms, attached, probe)
+            written, answers = self._send_alone(client, helper_session, now_ms, attached, probe)
         elif response is None:
             self.sync_ok = False
             self._log_line(now_ms, "acts_sync", "no_reply", len(batch))
@@ -947,16 +946,19 @@ class ActCourier(object):
             self.sync_ok = True
             del self._events[:len(batch)]
             written = self._receive(response, now_ms, attached, probe)
+            answers = [response]
         self._save()
-        # SNAPSHOT: after the acts, on its own thread, so a picture never delays one. Never raises.
-        snapshot.handle_requests_in_background(response.get("snapshots") or [], client, helper_session=helper_session)
-        # D7b: her questions to the game's memory; the search runs on its own thread, never on this one.
-        if self._memory is not None:
-            self._memory(response.get("memory") or [], client, helper_session)
+        for answer in answers:
+            # SNAPSHOT: after the acts, on its own thread, so a picture never delays one. Never raises.
+            snapshot.handle_requests_in_background(answer.get("snapshots") or [], client, helper_session=helper_session)
+            # D7b: her questions to the game's memory; the search runs on its own thread, never on this one.
+            if self._memory is not None:
+                self._memory(answer.get("memory") or [], client, helper_session)
         return written
 
     def _send_alone(self, client, helper_session, now_ms, attached, probe):
-        written = []
+        """Returns the acts written, and every answer that came (its pictures and memory asks are handled by the caller)."""
+        written, answers = [], []
         for _ in range(min(len(self._events), EVENTS_PER_SYNC)):
             event = self._events[0]
             response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": [event]})
@@ -970,8 +972,9 @@ class ActCourier(object):
                 self._log_line(now_ms, "acts_quarantined", "refused:%s" % (response.reason or "unknown"), 1)
                 continue
             self.sync_ok = True
+            answers.append(response)
             written += self._receive(response, now_ms, attached, probe)
-        return written
+        return written, answers
 
     def _receive(self, response, now_ms, attached, probe):
         """What Mint answered: the plan, a look, and the acts to push to the probe."""
