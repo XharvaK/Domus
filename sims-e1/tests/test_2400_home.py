@@ -267,7 +267,7 @@ class FakeActuator(object):
     def save_slot(self):
         return self.slot
 
-    def catalog_rows(self):
+    def catalog_rows(self, wanted=None):
         return self.catalog
 
     def things_rows(self):
@@ -678,6 +678,75 @@ class BuildNameTests(unittest.TestCase):
     def test_furniture_and_decor_are_not_build_items(self):
         for name in ("GameObject", "Sofa", "WallLight", "Mirror", "Bed", "IndoorPlant"):
             self.assertFalse(self.home.is_build_class(name), name)
+
+
+class RouteKindTests(unittest.TestCase):
+    """HOME2-7 / W13 R2: a route kind is the class name's last word (a door is a portal): decor whose name only contains
+    a route word (a toilet-paper roll, bed sheets) is no route, and a bed, toilet or fridge is one."""
+
+    def setUp(self):
+        self.home = modules()[1]
+
+    def test_a_bed_toilet_or_fridge_by_its_last_word_is_its_route(self):
+        cases = {"SingleBed": "bed", "BunkBed": "bed", "Toilet": "toilet", "Fridge": "fridge",
+                 "MiniRefrigerator": "fridge"}
+        for name, kind in cases.items():
+            self.assertEqual(self.home.route_kind(name, False), kind, name)
+
+    def test_decor_with_a_route_word_inside_its_name_is_no_route(self):
+        for name in ("ToiletPaper", "BedSheets", "BedsideLamp", "FridgeMagnet", "Chair"):
+            self.assertIsNone(self.home.route_kind(name, False), name)
+
+    def test_a_portal_is_a_door_whatever_its_name(self):
+        self.assertEqual(self.home.route_kind("Chair", True), "door")
+
+
+class CatalogReadTests(unittest.TestCase):
+    """HOME2-6 (probe half) / W13 R2: a Sim or a build item is left out before its price, tags and flags are read; the
+    other definitions are read as before."""
+
+    class Defn(object):
+        def __init__(self, def_id, cls_name, is_sim=False):
+            self.id = def_id
+            self.cls = type(cls_name, (object,), {})
+            self.is_sim = is_sim
+
+    def setUp(self):
+        modules_ = modules()
+        self.actuator, self.home = modules_[0].e2_actuator, modules_[1]
+        self.defs = [self.Defn(1, "Chair"), self.Defn(2, "Wall"), self.Defn(3, "Teen", is_sim=True),
+                     self.Defn(4, "Lamp")]
+        self.reads = []
+        self.manager = types.SimpleNamespace(loaded_definitions=self.defs)
+        services = types.SimpleNamespace(definition_manager=lambda: self.manager)
+
+        def recorder(name, value):
+            def read(defn):
+                self.reads.append((name, defn.id))
+                return value
+            return read
+
+        patches = [mock.patch.object(self.actuator, "services", services),
+                   mock.patch.object(self.actuator, "definition_price", recorder("price", 10)),
+                   mock.patch.object(self.actuator, "definition_tags", recorder("tags", [])),
+                   mock.patch.object(self.actuator, "definition_buy_flags", recorder("buy", 128)),
+                   mock.patch.object(self.actuator, "definition_placement_flags", recorder("placement", 0))]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_a_sim_and_a_build_item_are_skipped_before_any_flag_is_read(self):
+        rows = self.actuator.catalog_rows(self.home.catalog_wanted)
+        self.assertEqual([row["definition_id"] for row in rows], [1, 4])
+        self.assertEqual(sorted({defn_id for _name, defn_id in self.reads}), [1, 4])
+
+    def test_without_a_filter_every_definition_is_read(self):
+        rows = self.actuator.catalog_rows()
+        self.assertEqual([row["definition_id"] for row in rows], [1, 2, 3, 4])
+
+    def test_a_catalogue_the_game_cannot_list_is_none(self):
+        self.manager.loaded_definitions = None
+        self.assertIsNone(self.actuator.catalog_rows(self.home.catalog_wanted))
 
 
 class WallKindsTests(unittest.TestCase):

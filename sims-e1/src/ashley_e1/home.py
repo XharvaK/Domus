@@ -128,17 +128,20 @@ def is_build_class(name):
     return bool(words) and words[-1] in BUILD_LAST_WORDS
 
 
+# 2.40.0 (W13 R2, HOME2-7): a route is the class name's last word (a bed, a toilet, a fridge), not a word inside it.
+ROUTE_LAST_WORDS = (("bed", "bed"), ("toilet", "toilet"), ("fridge", "fridge"), ("refrigerator", "fridge"))
+
+
 def route_kind(name, portal):
-    """The route a lot object gives her, by its class name: door (a portal), bed, toilet or fridge; None for others."""
+    """The route a lot object gives her: door (a portal), else bed, toilet or fridge by the last word of its class name;
+    None for others."""
     if portal:
         return "door"
-    low = str(name).lower()
-    if "toilet" in low:
-        return "toilet"
-    if "fridge" in low or "refrigerator" in low:
-        return "fridge"
-    if "bed" in _words(name):
-        return "bed"
+    words = _words(name)
+    last = words[-1] if words else ""
+    for word, kind in ROUTE_LAST_WORDS:
+        if last == word:
+            return kind
     return None
 
 
@@ -269,6 +272,12 @@ def shape_catalog(raw):
     word = placement_word(raw.get("placement_flags"))
     return {"definition_id": definition_id, "price": price, "buy_category": categories,
             "placement": None if word is None else [word], "tags": tags, "purchasable": True}
+
+
+def catalog_wanted(class_name, sim):
+    """2.40.0 (W13 R2, HOME2-6): a definition is read for the catalogue only when it is not a Sim and not a build item.
+    The probe leaves the others out before it reads their flags (e2_actuator.catalog_rows)."""
+    return sim is not True and not is_build_class(class_name)
 
 
 def catalog_items(raw_rows):
@@ -843,7 +852,7 @@ def _result(facts):
 
 def cmd_catalog_dump(control, args, connection):
     """2.40.0: writes the catalogue record in parts (idempotent: the same content each time)."""
-    raw = e2_actuator.catalog_rows() if e2_actuator is not None else None
+    raw = e2_actuator.catalog_rows(catalog_wanted) if e2_actuator is not None else None
     if raw is None:
         _say(control, connection, "CATALOG_UNREADABLE")
         return False

@@ -1689,18 +1689,22 @@ def _thing_states(obj):
     return [{"state": key, "value": value} for key, value in list(found.items())[:4]]
 
 
-def catalog_rows():
+def catalog_rows(wanted=None):
     """Read: the raw rows of the catalogue, every loaded definition: its id, price, tags, class name, whether it is a Sim,
     and its buy-category and placement flags (home.py keeps the purchasable ones, S3). None when the definitions cannot
-    be read."""
+    be read. 2.40.0 (W13 R2, HOME2-6): a definition that wanted(class_name, sim) refuses is left out before any of its
+    flags is read."""
     manager = _read(lambda: services.definition_manager())
     definitions = _read(lambda: list(manager.loaded_definitions))
     if definitions is None:
         return None
     rows = []
     for defn in definitions:
+        class_name = _read(lambda: defn.cls.__name__) or ""
+        sim = _read(lambda: defn.is_sim) is True
+        if wanted is not None and not wanted(class_name, sim):
+            continue
         rows.append({"definition_id": _read(lambda: defn.id), "price": definition_price(defn),
-                     "tags": definition_tags(defn), "class_name": _read(lambda: defn.cls.__name__) or "",
-                     "sim": _read(lambda: defn.is_sim) is True, "buy_flags": definition_buy_flags(defn),
-                     "placement_flags": definition_placement_flags(defn)})
+                     "tags": definition_tags(defn), "class_name": class_name, "sim": sim,
+                     "buy_flags": definition_buy_flags(defn), "placement_flags": definition_placement_flags(defn)})
     return rows
