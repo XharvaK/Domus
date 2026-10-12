@@ -725,7 +725,8 @@ def _inbox_dispatch(cmd, connection):
     if name == 'go':
         return _E2.cmd_go(args['act_id'], args['zone_id'], connection, _KNOWN_ZONES)
     if name == 'event':
-        return _E2.cmd_event(args['act_id'], args['situation_id'], args['guests'], args['start'], connection)
+        return _E2.cmd_event(args['act_id'], args['situation_id'], args['guests'], args['start'], connection,
+                             _KNOWN_EVENTS)
     if name == 'lists_now':
         return request_lists_now()
     if name == 'answer':
@@ -2488,20 +2489,49 @@ def request_menu_near():
 # on a zone load or a lists_now command (reach.ListWriter). The discovery record is written once per zone load, after
 # the zone runs. Both are reads: nothing here changes the game. The places she knows are kept for the go command.
 def _lists_emit(kind, row):
-    """Writes one lists row; the places' ids are kept (the go command accepts only a place of the newest places list)."""
-    if kind == "places":
-        if row.get("part") == 0:
-            _KNOWN_ZONES.clear()
-        _KNOWN_ZONES.update(item["zone_id"] for item in row.get("items") or ())
-    return bool(_E2._event("lists", row))
+    """Writes one lists row. The places' and the events' ids are kept (go and event accept only an id of the newest list)
+    once that whole list is written; see _known_part."""
+    ok = bool(_E2._event("lists", row))
+    if kind in _KNOWN_ID_KEYS:
+        _known_part(kind, row, ok)
+    return ok
+
+
+# 2.40.0 (W13 P1 fix): the item key of each list whose ids are kept, and the ids of a list being written (None once the
+# list is not being written, or a part was refused).
+_KNOWN_ID_KEYS = {"places": "zone_id", "events": "situation_id"}
+_KNOWN_PARTS = {}
+
+
+def _known_part(kind, row, ok):
+    """Keeps a list's ids only when the whole list was written: each part as it is written, the ids are kept at the last
+    part, and a refused part drops them (the list is written again under a new revision)."""
+    if row.get("part") == 0:
+        _KNOWN_PARTS[kind] = []
+    seen = _KNOWN_PARTS.get(kind)
+    if seen is None:
+        return
+    if not ok:
+        _KNOWN_PARTS[kind] = None
+        return
+    key = _KNOWN_ID_KEYS[kind]
+    seen.extend(str(item.get(key)) for item in row.get("items") or () if item.get(key) is not None)
+    if row.get("part") + 1 >= row.get("parts", 1):
+        known = _KNOWN_ZONES if kind == "places" else _KNOWN_EVENTS
+        known.clear()
+        known.update(seen)
+        _KNOWN_PARTS[kind] = None
 
 
 _LISTS = reach.ListWriter(_lists_emit)
 _KNOWN_ZONES = set()
+_KNOWN_EVENTS = set()
 _LISTS_ZONE = _NO_ZONE
 _LISTS_FORCE = False
 _DISCOVERY_ZONE = _NO_ZONE
+_DISCOVERY_TRIED = None
 _DISCOVERY_REV = 0
+_REACH_FAILURES = 0
 
 
 def request_lists_now():
@@ -2525,25 +2555,46 @@ def _lists_readers():
 
 
 def _write_discovery():
-    """2.40.0 (W13 P1): the discovery record of this zone load, once. Read-only; each section is guarded. Her Sim must
-    be instanced; when it is not, this zone has no record (the next zone load tries again)."""
+    """2.40.0 (W13 P1): the discovery record of this zone load. Read-only; each section is guarded. Her Sim must be
+    instanced. 2.40.0 (W13 P1 fix): True when the record was written, False when it was not (her Sim is not instanced,
+    or the write was refused); the zone is then tried again (_discovery_due)."""
     global _DISCOVERY_REV
     sim_info = observers.her_sim_info()
     sim = observers._safe(lambda: sim_info.get_sim_instance())
     if sim_info is None or sim is None:
-        return
+        return False
     known = observers._safe(lambda: list(sim_info.relationship_tracker.get_target_sim_infos())) or []
     pickers, tests = e2_actuator.phone_discovery(sim, e2_actuator.phone_affordances(sim), known)
     _DISCOVERY_REV += 1
-    _E2._event("discovery", {"discovery_rev": _DISCOVERY_REV,
-                             "sections": observers.read_discovery(sim_info, pickers, tests)})
+    return bool(_E2._event("discovery", {"discovery_rev": _DISCOVERY_REV,
+                                         "sections": observers.read_discovery(sim_info, pickers, tests)}))
+
+
+def _discovery_due(zone):
+    """2.40.0 (W13 P1 fix): whether a zone's discovery record is tried now: at once for a zone not tried yet, else again
+    reach.LIST_CHECK_S real seconds after the last try that did not write it (not every sampling tick)."""
+    tried = _DISCOVERY_TRIED
+    return tried is None or tried[0] is not zone or time.monotonic() - tried[1] >= reach.LIST_CHECK_S
+
+
+def _reach_failed(error):
+    """2.40.0 (W13 P1 fix): a reach tick that raised is counted (sampling goes on); the first failure is named once in a
+    guard record, so a persistent failure shows in the telemetry."""
+    global _REACH_FAILURES
+    _REACH_FAILURES += 1
+    if _REACH_FAILURES == 1:
+        _emit(schema.make_record(
+            "guard_exhausted", telemetry_session_id=_TELEMETRY_SESSION_ID,
+            wall_timestamp_ms=int(time.time() * 1000),
+            monotonic_ns=time.perf_counter_ns(),
+            reason=("E2_REACH_FAILURE:%s" % type(error).__name__)[:64]))
 
 
 def _reach_tick(row):
     """2.40.0 (W13 P1): her reach, one step each sampling tick. The verbs' pending trip is checked on every tick. Once the
     zone runs: the discovery record (once per zone load), and the lists that are due (or all of them after a zone load or
-    a lists_now). A sense: the caller catches what it raises."""
-    global _LISTS_ZONE, _LISTS_FORCE, _DISCOVERY_ZONE
+    a lists_now). A sense: the caller catches what it raises (_reach_failed)."""
+    global _LISTS_ZONE, _LISTS_FORCE, _DISCOVERY_ZONE, _DISCOVERY_TRIED
     _E2.tick_verbs()
     if row.get("event_kind") != "presence_snapshot" or not _E2._zone_running():
         return
@@ -2552,9 +2603,11 @@ def _reach_tick(row):
         _LISTS_ZONE = zone
         _LISTS.new_zone()
         _LISTS_FORCE = True
-    if _DISCOVERY_ZONE is not zone:
-        _DISCOVERY_ZONE = zone
-        _write_discovery()
+    if _DISCOVERY_ZONE is not zone and _discovery_due(zone):
+        _DISCOVERY_TRIED = (zone, time.monotonic())
+        # 2.40.0 (W13 P1 fix): the zone is done only once its record was written.
+        if _write_discovery():
+            _DISCOVERY_ZONE = zone
     force, _LISTS_FORCE = _LISTS_FORCE, False
     _LISTS.tick(_lists_readers(), force=force)
 
@@ -2727,5 +2780,5 @@ def _poll_tick_body():
     # 2.40.0 (W13 P1): her reach (the lists, the discovery record, a pending trip). A sense too: a failed read never stops sampling.
     try:
         _reach_tick(row)
-    except Exception:
-        pass
+    except Exception as error:
+        _reach_failed(error)

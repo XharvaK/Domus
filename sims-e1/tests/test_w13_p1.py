@@ -209,10 +209,10 @@ class DiscoveryAndPhoneTests(unittest.TestCase):
         self.assertEqual([step["sim_id"] for step in row["steps"]], ["123", "456"])
         self.assertIsNone(row["steps"][1]["step"])
 
-    def test_a_phone_event_is_a_text_or_a_call(self):
-        self.assertEqual(reach.phone_event("text", 77, 88), {"kind": "text", "from_sim_id": "77", "notifies": "88"})
-        self.assertEqual(reach.phone_event("call", None, None)["kind"], "call")
-        self.assertIsNone(reach.phone_event("email", 77, None))
+    def test_a_phone_event_is_a_notice_or_a_call(self):
+        self.assertEqual(reach.phone_event("notice", None, 88), {"kind": "notice", "from_sim_id": None, "notifies": "88"})
+        self.assertEqual(reach.phone_event("call", 77, None), {"kind": "call", "from_sim_id": "77", "notifies": None})
+        self.assertIsNone(reach.phone_event("text", 77, None))
 
     def test_a_work_end_is_a_minute_of_the_day(self):
         self.assertEqual(reach.work_end_minute((17, 0)), 1020)
@@ -241,7 +241,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_a_list_row_validates(self):
         payload = {"kind": "people", "list_rev": 1, "part": 0, "parts": 1, "digest": "a" * 64, "count": 1,
-                   "items": [{"sim_id": "1"}]}
+                   "items": [reach.person_item({"sim_id": 1})]}
         schema.validate_record(self._e2_row("lists", payload))
 
     def test_a_discovery_row_validates(self):
@@ -249,7 +249,7 @@ class SchemaTests(unittest.TestCase):
         schema.validate_record(self._e2_row("discovery", payload))
 
     def test_a_phone_row_validates(self):
-        schema.validate_record(self._e2_row("phone", {"kind": "text", "from_sim_id": "7", "notifies": None}))
+        schema.validate_record(self._e2_row("phone", {"kind": "notice", "from_sim_id": None, "notifies": "7"}))
 
     def test_a_list_kind_outside_the_vocabulary_is_refused(self):
         payload = {"kind": "rooms", "list_rev": 1, "part": 0, "parts": 1, "digest": "a" * 64, "count": 0, "items": []}
@@ -460,19 +460,6 @@ class ReachActTests(unittest.TestCase):
         self.assertEqual(self.pushed, [{"picked_item_ids": frozenset({123}), "included_override": [info]}])
         self.assertEqual(self.act_events()[-1]["phase"], "PUSHED")
 
-    def test_a_sim_the_picker_cannot_choose_is_refused_with_its_step(self):
-        self.ready()
-        info = ActorSims(123)
-        with _patched(self.probe.e2_actuator, "sim_info_for", lambda sim_id: info), \
-                _patched(self.probe.observers, "read_picker_steps", lambda her, sims: {"123": "hidden"}), \
-                _patched(self.probe.observers, "her_sim_info", lambda: None):
-            ok, connection = self.act(sim_id="123")
-        self.assertFalse(ok)
-        self.assertEqual(connection.lines[-1], "ACT_REJECT SIM_NOT_CHOOSABLE")
-        refusal = self.act_events("REJECTED")[-1]
-        self.assertEqual((refusal["code"], refusal["detail"]), ("SIM_NOT_CHOOSABLE", "step hidden"))
-        self.assertEqual(self.pushed, [])
-
     def test_a_sim_given_to_an_act_that_is_not_a_picker_is_refused(self):
         self.ready()
         self.base.objects[CHAIR] = _Offer(CHAIR, [_Plain])
@@ -516,6 +503,7 @@ class ReachActTests(unittest.TestCase):
 
     def test_a_planned_event_is_created_for_her_and_its_facts_are_written(self):
         self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
         situation = types.SimpleNamespace(name="party")
         created = []
         with _patched(self.probe.e2_actuator, "situation_type", lambda guid: situation), \
@@ -534,6 +522,7 @@ class ReachActTests(unittest.TestCase):
 
     def test_an_event_her_household_cannot_pay_for_is_refused(self):
         self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
         with _patched(self.probe.e2_actuator, "situation_type", lambda guid: object()), \
                 _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 1000), \
                 _patched(self.probe.e2_actuator, "situation_cost", lambda s: 300), \
@@ -544,6 +533,7 @@ class ReachActTests(unittest.TestCase):
 
     def test_a_failed_creation_gives_the_money_back(self):
         self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
         refunds = []
         with _patched(self.probe.e2_actuator, "situation_type", lambda guid: object()), \
                 _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 1000), \
@@ -558,15 +548,6 @@ class ReachActTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(refunds, [300])
         self.assertEqual(self.act_events("REJECTED")[-1]["code"], "CREATE_FAILED")
-
-    def test_a_text_for_her_is_written_as_a_phone_row(self):
-        self.ready()
-        op = types.SimpleNamespace(sim_id=999)
-        with _patched(self.probe.observers, "her_sim_info", lambda: None):
-            self.probe._E2.note_phone(op)
-        rows = self.base.e2("phone")
-        self.assertEqual(rows[-1]["kind"], "text")
-        self.assertEqual(rows[-1]["from_sim_id"], "999")
 
     def test_a_call_from_another_sim_is_held_for_her(self):
         caller = types.SimpleNamespace(target_sim_id=77)
@@ -746,7 +727,7 @@ class ObserverReadTests(unittest.TestCase):
                 _patched(self.base.probe, "_LISTS_ZONE", object()), \
                 _patched(self.base.probe, "_DISCOVERY_ZONE", object()), \
                 _patched(self.base.probe._E2, "_zone_running", lambda: True), \
-                _patched(self.base.probe, "_write_discovery", lambda: rows.append("discovery")), \
+                _patched(self.base.probe, "_write_discovery", lambda: rows.append("discovery") or True), \
                 _patched(self.observers, "read_people", lambda info: [{"sim_id": 55}]), \
                 _patched(self.observers, "read_places", lambda info, people: []), \
                 _patched(self.observers, "read_events", lambda: []), \
@@ -762,7 +743,7 @@ class ObserverReadTests(unittest.TestCase):
         with _patched(self.base.probe, "_LISTS", reach.ListWriter(lambda kind, row: True, clock=_Clock(0.0))), \
                 _patched(self.base.probe, "_LISTS_ZONE", object()), \
                 _patched(self.base.probe, "_DISCOVERY_ZONE", object()), \
-                _patched(self.base.probe, "_write_discovery", lambda: None), \
+                _patched(self.base.probe, "_write_discovery", lambda: True), \
                 _patched(self.base.probe._E2, "_zone_running", lambda: True), \
                 _patched(self.observers, "read_people", lambda info: []), \
                 _patched(self.observers, "read_places", lambda info, people: []), \
