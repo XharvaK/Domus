@@ -178,13 +178,15 @@ def test_one_sample_of_flicker_does_not_flip_a_seen_state_and_two_samples_do():
     assert memory.observe(room_yard) == set()
 
 
-def test_the_act_menu_and_outcomes_name_only_seen_sims():
+def test_the_act_menu_names_seen_sims_and_those_heard_on_her_lot_but_not_one_off_it():
+    # 2.38.0 (W11 H2): a Sim she hears on her lot is named in her menu (Quin); one off her lot is not (Far Off).
     from domus_helper import acts
     from domus_helper import outcomes
     row = {"presence": [_body(), _sim("2", "Testa Zubrin", "hall", 1.0),
-                        _sim("3", "Quin Lorne", "yard", 1.0)]}
-    assert acts.people_names(row, {"2"}) == {"1": "Ada", "2": "Testa Zubrin"}
-    assert acts.people_names(row) == {"1": "Ada", "2": "Testa Zubrin", "3": "Quin Lorne"}
+                        _sim("3", "Quin Lorne", "yard", 1.0),
+                        _sim("4", "Far Off", "yard", 30.0, on_lot=False)]}
+    assert acts.people_names(row, {"2"}) == {"1": "Ada", "2": "Testa Zubrin", "3": "Quin Lorne"}
+    assert acts.people_names(row) == {"1": "Ada", "2": "Testa Zubrin", "3": "Quin Lorne", "4": "Far Off"}
     assert outcomes.company_names(row) == ["Testa Zubrin"]
 
 
