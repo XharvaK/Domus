@@ -392,10 +392,14 @@ def _body(control):
         return "BODY_MISMATCH", None, None
     if observers is None or services is None:
         return "BODY_UNAVAILABLE", None, None
-    sim_info, sim = observers.select_lab_body(services.sim_info_manager().get_all(),
-                                              observers.ALL_HIDDEN_REASONS)
-    if sim is None:
+    try:
+        found = observers.select_lab_body(services.sim_info_manager().get_all(), observers.ALL_HIDDEN_REASONS)
+    except Exception:
+        # 2.40.0 (W13 R2, HOME2-3): an ambiguous or unreadable body (the observers raise) is her body unavailable.
+        found = None
+    if found is None:
         return "BODY_UNAVAILABLE", None, None
+    sim_info, sim = found
     if control.designated_sim_id is not None and str(sim_info.id) != control.designated_sim_id:
         return "BODY_MISMATCH", None, None
     armed = (control._armed_snapshot() or {}).get("sim_id")
@@ -766,8 +770,10 @@ def cmd_move(control, args, connection):
     obj = e2_actuator.find_thing(args["object_id"])
     if obj is None or e2_actuator.owner_of(obj) != str(sim_info.household_id):
         return _reject(control, act_id, connection, "NOT_HERS", **base)
-    if e2_actuator.in_use(obj) is True:
-        return _reject(control, act_id, connection, "IN_USE", **base)
+    in_use = e2_actuator.in_use(obj)
+    if in_use is not False:
+        # 2.40.0 (W13 R2, HOME2-10): only a known False lets it move; an unreadable use is refused.
+        return _reject(control, act_id, connection, "IN_USE", detail=None if in_use is True else "unreadable", **base)
     if e2_actuator.in_inventory(obj) is True:
         return _reject(control, act_id, connection, "IN_INVENTORY", **base)
     if not movable(obj):
@@ -800,8 +806,13 @@ def cmd_sell(control, args, connection):
     obj = e2_actuator.find_thing(args["object_id"])
     if obj is None or e2_actuator.owner_of(obj) != str(sim_info.household_id):
         return _reject(control, act_id, connection, "NOT_HERS", **base)
-    if e2_actuator.in_use(obj) is True:
-        return _reject(control, act_id, connection, "IN_USE", **base)
+    if str(obj.id) in state_of(control).pending_gone:
+        # 2.40.0 (W13 R2, HOME2-1 / T4): a sale of this object is waiting for the game; a second one would overwrite it.
+        return _reject(control, act_id, connection, "SELL_PENDING", **base)
+    in_use = e2_actuator.in_use(obj)
+    if in_use is not False:
+        # 2.40.0 (W13 R2, HOME2-10): only a known False lets it go; an unreadable use is refused.
+        return _reject(control, act_id, connection, "IN_USE", detail=None if in_use is True else "unreadable", **base)
     if not sellable(obj):
         return _reject(control, act_id, connection, "NOT_SELLABLE", **base)
     value = e2_actuator.value_of(obj)

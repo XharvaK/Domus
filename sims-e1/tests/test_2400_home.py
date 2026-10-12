@@ -899,6 +899,25 @@ class SaveTests(HomeCase):
         self.assertEqual(self.actuator.calls, [])
 
 
+class BodyTests(HomeCase):
+    """HOME2-3 / W13 R2: the observers raise when her body is ambiguous or unreadable; that is refused BODY_UNAVAILABLE."""
+
+    def raising_body(self, infos, flags):
+        raise RuntimeError("LabIdentityAmbiguous")
+
+    def test_an_ambiguous_body_is_body_unavailable_for_a_buy(self):
+        self.home.observers.select_lab_body = self.raising_body
+        self.assertFalse(self.run_cmd("buy", {"definition_id": "55", "place": _place("wall", "5")}))
+        self.assertEqual(self.control.phases(), [("REJECTED", "BODY_UNAVAILABLE")])
+        self.assertEqual(self.actuator.calls, [])
+
+    def test_an_unreadable_body_is_body_unavailable_for_a_save(self):
+        self.home.observers.select_lab_body = self.raising_body
+        self.assertFalse(self.run_cmd("save", {}))
+        self.assertEqual(self.control.phases(), [("REJECTED", "BODY_UNAVAILABLE")])
+        self.assertEqual(self.actuator.calls, [])
+
+
 class BuyTests(HomeCase):
     def setUp(self):
         super(BuyTests, self).setUp()
@@ -1226,6 +1245,14 @@ class MoveTests(HomeCase):
         self.assertFalse(self.run_cmd("move", self.args()))
         self.assertEqual(self.control.phases(), [("REJECTED", "IN_USE")])
 
+    def test_an_object_whose_use_cannot_be_read_is_not_moved(self):
+        """HOME2-10: only a known False lets an object move; an unreadable use is refused as unreadable."""
+        self.bed.in_use = None
+        self.assertFalse(self.run_cmd("move", self.args()))
+        self.assertEqual(self.control.phases(), [("REJECTED", "IN_USE")])
+        self.assertEqual(self.control.events[-1]["detail"], "unreadable")
+        self.assertNotIn("place", [c[0] for c in self.actuator.calls])
+
     def test_a_sim_or_a_door_is_not_movable(self):
         self.bed.is_sim = True
         self.assertFalse(self.run_cmd("move", self.args()))
@@ -1302,6 +1329,28 @@ class SellTests(HomeCase):
         self.tick(1000.0)
         self.assertEqual(self.control.phases()[-1], ("FINISHED", "SOLD"))
         self.assertEqual(self.actuator.funds.money, 540)
+
+    def test_a_second_sale_of_an_object_whose_sale_is_pending_is_refused(self):
+        """HOME2-1 / T4: the first sale's act would never get its row, and its money would be overwritten; the second
+        sale is refused SELL_PENDING, and the first is paid once, when the game has removed the object."""
+        self.actuator.removal_queued = True
+        self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
+        self.assertFalse(self.run_cmd("sell", {"object_id": "41"}, act_id=ACT_TWO))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "SELL_PENDING"))
+        self.assertEqual(self.control.events[-1]["act_id"], ACT_TWO)
+        self.actuator.process_queue()
+        self.tick(1001.0)
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("REJECTED", "SELL_PENDING"),
+                                                 ("FINISHED", "SOLD")])
+        self.assertEqual(self.actuator.funds.money, 540)
+
+    def test_an_object_whose_use_cannot_be_read_is_not_sold(self):
+        """HOME2-10: only a known False lets an object go; an unreadable use is refused as unreadable."""
+        self.chair.in_use = None
+        self.assertFalse(self.run_cmd("sell", {"object_id": "41"}))
+        self.assertEqual(self.control.events[-1]["code"], "IN_USE")
+        self.assertEqual(self.control.events[-1]["detail"], "unreadable")
+        self.assertFalse(self.chair.removed)
 
     def test_a_sim_is_not_sold(self):
         self.chair.is_sim = True
