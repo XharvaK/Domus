@@ -65,6 +65,8 @@ REQUEUE_LIMIT = 3
 PACE_RETRY_MS = 30_000
 # HE17: the newest row is kept in the spool when it changed, and at most this often.
 ROW_WRITE_EVERY_MS = 30_000
+# SEAM3-8: a look's view waits this long at most for the near part it asked for.
+LOOK_HOLD_MS = 3_000
 
 
 def _view(payload):
@@ -159,6 +161,8 @@ class Bridge:
         # W14 (S2): no whole menu has arrived in this helper session yet (the view says the choices are still coming).
         self._choices_sent = None  # SEAM3-7: the choices key of the last view sent (a view goes when a new key comes)
         self._choices_due = False
+        self._look_hold = None  # SEAM3-8: a look's view waiting for its near part: {at_ms, after (the row it followed)}
+        self._near_rowid = None  # the row of the newest near part read (a look's view waits for one after it)
         self._refs = RefBook()  # N8 (F3): the refs of this helper session (reset at each attachment)
         self._menu_parts = MenuParts()  # N8 (F4): a menu arrives in parts; the whole one is the menu
         self._catalog = None
@@ -445,6 +449,8 @@ class Bridge:
                 taken = self._menu_parts.take(session, record["e2"])
                 if taken is not None:
                     shown = self._menu_shown(session, taken, clock_ms)  # W14 (D3): a near part never replaces the whole
+                    if taken.get("near") is True:
+                        self._near_rowid = rowid  # SEAM3-8: the look's view waits for a near part after its request
                     self._menu = {"session": session, "payload": shown, "at_ms": clock_ms}
                     self._log_spot_stages(shown, clock_ms)  # W12 (C11): the spot stages, read from the log
                     self._extractor.act_words = act_words_by_guid(shown, self._resolve_text.raw)  # W13 (S1)
@@ -523,6 +529,7 @@ class Bridge:
         so no view shows an act's effect before the act's record is with Mint. The changes wait with it."""
         if self._acts is None or self._acts.sync_ok:
             self._send_diary(wall_ms)
+            self._look_due(wall_ms)
             self._flush_views(wall_ms)
         self._persist_thalamus(wall_ms)
 
@@ -561,6 +568,8 @@ class Bridge:
 
     def _flush_views(self, wall_ms):
         """D2: a view goes when the coalescer says so; nothing pending sends nothing. W12 (F3): not from a restored row."""
+        if self._look_hold is not None:
+            return  # SEAM3-8: the look's view goes first, with the changes waiting now
         reason = coalesce.due(self._coalesced, wall_ms, choices=self._choices_due)
         if reason is None or self._body_is_restored(wall_ms):
             return
@@ -593,6 +602,22 @@ class Bridge:
                 commands.publish("menu_near", {}, "helper", paths=self.paths)
             except (OSError, ValueError):
                 pass
+            # SEAM3-8: the look's view waits for the near part it asked for (see _look_due), so it shows the new room.
+            self._look_hold = {"at_ms": wall_ms, "after": self._last_rowid}
+            return
+        self._send_look_view(wall_ms)
+
+    def _look_due(self, wall_ms):
+        """SEAM3-8: a look's view goes when a near part written after the look has arrived, or LOOK_HOLD_MS after the look."""
+        hold = self._look_hold
+        if hold is None:
+            return
+        fresh = self._near_rowid is not None and self._near_rowid > hold["after"]
+        if fresh or wall_ms - hold["at_ms"] >= LOOK_HOLD_MS:
+            self._look_hold = None
+            self._send_look_view(wall_ms)
+
+    def _send_look_view(self, wall_ms):
         body = self._last_body_row
         if body is None:
             self._log.write({"wall_ms": wall_ms, "trigger": "look", "percepts": 0, "kinds": [],

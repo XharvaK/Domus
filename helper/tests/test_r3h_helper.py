@@ -151,3 +151,28 @@ def test_a_whole_menu_sends_the_choices_once_and_again_only_when_its_act_list_ch
     assert bridge._choices_due is True
     bridge._menu_shown("sess-2", dict(first), WALL + 3)
     assert bridge._choices_due is True  # a new session's first whole
+
+
+# SEAM3-8: a look's view waits for the near part it asked for, or three seconds.
+def test_a_look_waits_for_the_near_part_it_asked_for_and_sends_after_three_seconds(paths, tmp_path, monkeypatch):
+    from domus_helper import commands as commands_module
+    _data(paths, tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(commands_module, "publish", lambda command, args, issuer, paths=None: sent.append(command))
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10), _menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)]))])
+    _tick(bridge, mono, WALL)
+    fires = bridge._fires
+    bridge._send_look(WALL + 1000)
+    assert "menu_near" in sent and bridge._fires == fires
+    _tick(bridge, mono, WALL + 1500)
+    assert bridge._fires == fires  # no near part yet: the look still holds
+    _append(paths, [_menu_row(4, _menu(6, [_room_obj(44, 4, 1.0, True)], near=True))])
+    _tick(bridge, mono, WALL + 2000)
+    assert bridge._fires == fires + 1 and bridge._look_hold is None
+    bridge._send_look(WALL + 5000)
+    _tick(bridge, mono, WALL + 7000)
+    assert bridge._fires == fires + 1 and bridge._look_hold is not None
+    _tick(bridge, mono, WALL + 8100)
+    assert bridge._fires == fires + 2 and bridge._look_hold is None
