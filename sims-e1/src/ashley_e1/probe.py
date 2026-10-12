@@ -194,8 +194,9 @@ _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
                      "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk", "pace",
                      "go", "event")
-# 2.40.0 (W13 P2, home): her save, home edits and the catalogue dump are refused in calibrate mode too.
-_OBSERVE_REFUSED = _OBSERVE_REFUSED + home.COMMANDS
+# 2.40.0 (W13 P2, home): her save and her home edits are refused in calibrate mode too. The catalogue dump only
+# writes the catalogue record (read only), so it is allowed (CORE-15).
+_OBSERVE_REFUSED = _OBSERVE_REFUSED + tuple(name for name in home.COMMANDS if name != "catalog_dump")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -2541,9 +2542,16 @@ def request_lists_now():
     return True
 
 
+def _things_reader():
+    """2.40.0 (W13 P2, home): the things list: her home's objects and her inventory (home.things_items shapes them).
+    None when the read is unreadable, so the writer keeps the list it sent last."""
+    rows = e2_actuator.things_rows()
+    return None if rows is None else home.things_items(rows)
+
+
 def _lists_readers():
-    """The readers of the lists her view counts (people, places, events). places reads its own people, so a tick that
-    reads places alone still has the households she knows."""
+    """The readers of the lists her view counts (people, places, events, things). places reads its own people, so a
+    tick that reads places alone still has the households she knows."""
     def people():
         return observers.read_people(observers.her_sim_info())
 
@@ -2551,7 +2559,7 @@ def _lists_readers():
         sim_info = observers.her_sim_info()
         return observers.read_places(sim_info, observers.read_people(sim_info))
 
-    return {"people": people, "places": places, "events": observers.read_events}
+    return {"people": people, "places": places, "events": observers.read_events, "things": _things_reader}
 
 
 def _write_discovery():
@@ -2596,6 +2604,11 @@ def _reach_tick(row):
     a lists_now). A sense: the caller catches what it raises (_reach_failed)."""
     global _LISTS_ZONE, _LISTS_FORCE, _DISCOVERY_ZONE, _DISCOVERY_TRIED
     _E2.tick_verbs()
+    # 2.40.0 (W13 P2, home): her save's confirmation and the removals the game finishes, on every sampling tick.
+    try:
+        home.tick(_E2, time.time())
+    except Exception:
+        pass
     if row.get("event_kind") != "presence_snapshot" or not _E2._zone_running():
         return
     zone = _current_zone()
