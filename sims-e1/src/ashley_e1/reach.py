@@ -23,9 +23,10 @@ EVENTS_MAX = 200
 PLACE_KINDS = ("home", "household", "venue")
 PART_BYTES_MAX = schema.MAX_SERIALIZED_RECORD_BYTES - 4096
 # The discovery record: optional sections, kept under this many bytes (the largest sections go first).
-DISCOVERY_SECTIONS = ("pickers", "phone_tests", "off_lot", "save", "situations", "career", "population")
+DISCOVERY_SECTIONS = ("pickers", "phone_tests", "off_lot", "save", "situations", "career", "population", "unread")
 DISCOVERY_MAX_BYTES = 40 * 1024
-PHONE_KINDS = ("text", "call")
+# 2.40.0 (W13 P1 fix): a notice on her phone (the game's phone notification, for her phone) or a call held for her.
+PHONE_KINDS = ("notice", "call")
 NAME_MAX = 64
 LABEL_MAX = 40
 LABELS_PER_PERSON = 4
@@ -75,7 +76,8 @@ def digest(items):
 
 
 def _bytes(value):
-    return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    """The size a value takes in a record: measured as the writer encodes it (ASCII escapes, ensure_ascii=True)."""
+    return len(json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode("utf-8"))
 
 
 # ------------------------------------------------------------------ item shapes
@@ -205,7 +207,11 @@ class ListWriter(object):
             if reader is None or not (force or self.due(kind, now)):
                 continue
             self._checked[kind] = now
-            entries = reader()
+            try:
+                entries = reader()
+            except Exception:
+                # 2.40.0 (W13 P1 fix): a reader that raises is an unreadable list; the other lists of this tick still go.
+                continue
             if entries is None:
                 continue
             if self.send(kind, entries):
@@ -225,6 +231,8 @@ class ListWriter(object):
         rows = [{"kind": kind, "list_rev": rev, "part": index, "parts": len(parts), "digest": content,
                  "count": len(items), "items": chunk} for index, chunk in enumerate(parts)]
         if not all(self._emit(kind, row) for row in rows):
+            # 2.40.0 (W13 P1 fix): a revision that was partly sent is never sent again: the next attempt is a new one.
+            self._revs[kind] = rev
             return False
         self._digests[kind] = content
         self._revs[kind] = rev

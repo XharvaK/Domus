@@ -787,6 +787,12 @@ class E2Control:
             if not experiment.closed:
                 self._close_experiment(experiment)
         self.tokens.clear()
+        # 2.40.0 (W13 P1 fix): a trip still pending when the sampler stops is UNKNOWN. A zone change is not a stop for
+        # it: the next sampling tick checks the zone (tick_verbs), so the trip stays pending across the loading screen.
+        if reason != "ZONE_CHANGE" and self._go is not None:
+            pending = self._go
+            self._go = None
+            self._act_event_safe(pending["act_id"], "UNKNOWN", code="SAMPLER_STOPPED", object_id=None, guid64=None)
 
     def on_disarm(self):
         self.on_stop("DISARM")
@@ -1124,6 +1130,15 @@ class E2Control:
         payload["phase"] = phase
         return self._event("act_event", payload)
 
+    def _act_event_safe(self, act_id, phase, **payload):
+        """2.40.0 (W13 P1 fix): an act row for a verb. When the schema refuses the row, the act is closed as UNKNOWN
+        ROW_INVALID with no result, so no verb ends without a terminal row. Same arguments as _act_event; True when a
+        row was written."""
+        if self._act_event(act_id, phase, **payload):
+            return True
+        return self._act_event(act_id, "UNKNOWN", code="ROW_INVALID", object_id=payload.get("object_id"),
+                               guid64=payload.get("guid64"))
+
     def _act_check(self, object_id, guid64, owner=False, variant=None, sim_id=None):
         """None when her chosen action may be pushed now, else (code, detail).
 
@@ -1195,9 +1210,9 @@ class E2Control:
         if e2_actuator.needs_sim(affordance):
             if sim_id is None:
                 return ("SIM_NEEDED", None), None
-            parameters, step = self._picked_sim(sim, sim_id)
+            parameters = self._picked_sim(sim_id)
             if parameters is None:
-                return ("SIM_NOT_CHOOSABLE", "step %s" % step), None
+                return ("SIM_NOT_CHOOSABLE", None), None
         elif sim_id is not None:
             return ("NOT_A_SIM_ACT", None), None
         if parameters is None:
@@ -1206,7 +1221,8 @@ class E2Control:
             ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context, parameters)
         if not ok:
             if parameters is not None:
-                return ("SIM_NOT_CHOOSABLE", "step picker", reason_key), None
+                # 2.40.0 (W13 P1 fix): the game's own picker test refused her Sim; its reason (else its key) is the fact.
+                return ("SIM_NOT_CHOOSABLE", reason if reason else reason_key, reason_key), None
             # 2.32.0 (PR10, PR11): a refusal during a fire, or in build mode, is named as such.
             if observers.fire_active() is True:
                 return ("FIRE_REFUSED", reason, reason_key), None
@@ -1215,16 +1231,11 @@ class E2Control:
             return ("GAME_REFUSED", reason, reason_key), None
         return None, (sim, obj, affordance, context, False, parameters)
 
-    def _picked_sim(self, sim, sim_id):
-        """2.40.0 (W13 P1): the picker's parameters for the Sim she named, and the step of the picker's own generator
-        that Sim passes ("ok") or fails (observers.read_picker_steps). No parameters unless the step is ok."""
-        sim_info = e2_actuator.sim_info_for(sim_id)
-        if sim_info is None:
-            return None, "unknown"
-        step = observers.read_picker_steps(observers.her_sim_info(), [sim_info]).get(str(sim_id), "unknown")
-        if step != "ok":
-            return None, step
-        return e2_actuator.picker_parameters(sim_info, sim_id), step
+    def _picked_sim(self, sim_id):
+        """2.40.0 (W13 P1 fix): the picker's parameters for the Sim she named, or None when that Sim is not known. The
+        game's own test of the picker, run with these parameters, decides whether the Sim can be chosen: the host reads
+        no step of its own (observers.read_picker_steps is for the discovery record only)."""
+        return e2_actuator.picker_parameters(e2_actuator.sim_info_for(sim_id), sim_id)
 
     def _variant_check(self, sim, obj, pie, context, object_id, guid64, variant, spot=False):
         """2.39.0 (W12 G1): the check of a pie choice. The pie is enumerated again now and the choice whose match key the
@@ -1346,8 +1357,8 @@ class E2Control:
 
     def _reject(self, act_id, base, connection, code, detail=None):
         """2.40.0: a verb refused: its REJECTED row and the reply. Always False."""
-        self._act_event(act_id, "REJECTED", code=code,
-                        detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH], **base)
+        self._act_event_safe(act_id, "REJECTED", code=code,
+                             detail=None if detail is None else str(detail)[:schema.MAX_DETAIL_LENGTH], **base)
         self._say(connection, "ACT_REJECT %s" % code)
         return False
 
@@ -1397,31 +1408,35 @@ class E2Control:
             code = self._go_refusal(sim_info, zone_id, known_zones)
             if code is not None:
                 return self._reject(act_id, base, connection, code)
-            self._act_event(act_id, "ACCEPTED", tuning_name="travel", **base)
+            self._act_event_safe(act_id, "ACCEPTED", tuning_name="travel", **base)
             accepted = True
             if e2_actuator.travel(sim_info.id, zone_id) is not True:
-                self._act_event(act_id, "REJECTED", code="PUSH_FAILED", **base)
+                self._act_event_safe(act_id, "REJECTED", code="PUSH_FAILED", **base)
                 self._say(connection, "ACT_REJECT PUSH_FAILED")
                 return False
-            self._act_event(act_id, "PUSHED", tuning_name="travel", **base)
+            self._act_event_safe(act_id, "PUSHED", tuning_name="travel", **base)
             self._go = {"act_id": act_id, "zone_id": str(zone_id), "at": time.monotonic()}
             self._say(connection, "ACT_PUSHED %s travel" % act_id)
             return True
         except Exception as error:
             code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
-            self._act_event(act_id, "UNKNOWN" if accepted else "REJECTED", code=code, **base)
+            self._act_event_safe(act_id, "UNKNOWN" if accepted else "REJECTED", code=code, **base)
             self._say(connection, "ACT_%s %s" % ("UNKNOWN" if accepted else "REJECTED", code))
             return False
 
     def _go_refusal(self, sim_info, zone_id, known_zones):
-        """2.40.0: the code that refuses a trip now, or None: CARRYING_BABY, SAME_ZONE, NO_ZONE (not a place of the newest
-        places list), SAVE_LOCKED (the game's own save lock). A trip the game refuses otherwise shows as TRAVEL_UNSEEN."""
-        if observers.is_carrying_baby(sim_info) is True:
-            return "CARRYING_BABY"
+        """2.40.0: the code that refuses a trip now, or None: TRAVEL_PENDING (a trip is already asked and not yet
+        arrived), SAME_ZONE, NO_ZONE (not a place of the newest places list), IN_RABBIT_HOLE (her Sim is in one),
+        SAVE_LOCKED (the game's own save lock). Every other refusal is the game's own travel call; a trip it does not
+        make shows as TRAVEL_UNSEEN."""
+        if self._go is not None:
+            return "TRAVEL_PENDING"
         if str(_read(lambda: services.current_zone_id())) == str(zone_id):
             return "SAME_ZONE"
         if str(zone_id) not in known_zones:
             return "NO_ZONE"
+        if observers.in_rabbit_hole(sim_info) is True:
+            return "IN_RABBIT_HOLE"
         if observers.save_locked():
             return "SAVE_LOCKED"
         return None
@@ -1435,18 +1450,24 @@ class E2Control:
         try:
             if str(_read(lambda: services.current_zone_id())) == pending["zone_id"]:
                 self._go = None
-                self._act_event(pending["act_id"], "FINISHED", code="ARRIVED", object_id=None, guid64=None,
-                                result={"zone_id": pending["zone_id"]})
+                self._act_event_safe(pending["act_id"], "FINISHED", code="ARRIVED", object_id=None, guid64=None,
+                                     result={"zone_id": pending["zone_id"]})
             elif time.monotonic() - pending["at"] >= reach.GO_SEEN_S:
                 self._go = None
-                self._act_event(pending["act_id"], "UNKNOWN", code="TRAVEL_UNSEEN", object_id=None, guid64=None)
-        except Exception:
-            self._go = None
+                self._act_event_safe(pending["act_id"], "UNKNOWN", code="TRAVEL_UNSEEN", object_id=None, guid64=None)
+        except Exception as error:
+            # 2.40.0 (W13 P1 fix): the pending trip is closed as UNKNOWN (with the exception's name) before it is cleared.
+            try:
+                self._act_event_safe(pending["act_id"], "UNKNOWN", code=("E2_EXCEPTION:%s" % type(error).__name__)[:64],
+                                     object_id=None, guid64=None)
+            finally:
+                self._go = None
 
-    def cmd_event(self, act_id, situation_id, guests, start, connection):
-        """2.40.0 (W13 P1): a planned event (a situation the game makes user-facing): her as host, the guests invited, now
-        or at a time today or tomorrow. The cost comes from her household's funds first (the game's own try_remove); a
-        failed creation gives the money back. ACCEPTED, then FINISHED CREATED with its cost, her funds and the start."""
+    def cmd_event(self, act_id, situation_id, guests, start, connection, known_events=()):
+        """2.40.0 (W13 P1): a planned event (a situation the game makes user-facing, and one the newest events list
+        offers): her as host, the guests invited, now or at a time today or tomorrow. The cost comes from her household's
+        funds first (the game's own try_remove); a failed creation gives the money back. ACCEPTED, then FINISHED CREATED
+        with its cost, her funds and the start."""
         base = {"object_id": None, "guid64": None}
         accepted = False
         charged = None
@@ -1455,6 +1476,8 @@ class E2Control:
             if body is None:
                 return False
             sim_info, sim = body
+            if str(situation_id) not in known_events:
+                return self._reject(act_id, base, connection, "NOT_AN_EVENT")
             situation = e2_actuator.situation_type(situation_id)
             if situation is None:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "no situation type")
@@ -1464,7 +1487,10 @@ class E2Control:
             start_min, scheduled, code = self._event_start(start, now)
             if code is not None:
                 return self._reject(act_id, base, connection, code)
-            cost = e2_actuator.situation_cost(situation) or 0
+            cost = e2_actuator.situation_cost(situation)
+            if cost is None:
+                # 2.40.0 (W13 P1 fix): an unread cost is refused, never taken for a free event.
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "cost unread")
             household = _read(lambda: sim_info.household)
             money = observers.household_money(sim_info)
             if cost > 0 and (money is None or money < cost):
@@ -1475,7 +1501,7 @@ class E2Control:
             guest_list = e2_actuator.event_guest_list(sim_info.id, guest_ids, e2_actuator.default_job(situation))
             if guest_list is None:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "guest list")
-            self._act_event(act_id, "ACCEPTED", tuning_name="event", **base)
+            self._act_event_safe(act_id, "ACCEPTED", tuning_name="event", **base)
             accepted = True
             if cost > 0:
                 charged = e2_actuator.charge(household, cost, sim, reach.FUNDS_REASON)
@@ -1486,17 +1512,20 @@ class E2Control:
             created = e2_actuator.create_event(_read(lambda: services.current_zone_id()), situation, guest_list,
                                                scheduled)
             if created is None:
+                # 2.40.0 (W13 P1 fix): a refund that fails is said on the refusal (she was charged and got nothing).
+                refunded = True
                 if charged:
-                    e2_actuator.refund(household, cost, sim, reach.FUNDS_REASON)
-                return self._reject(act_id, base, connection, "CREATE_FAILED", "create")
+                    refunded = e2_actuator.refund(household, cost, sim, reach.FUNDS_REASON)
+                return self._reject(act_id, base, connection, "CREATE_FAILED",
+                                    "create" if refunded else "refund failed")
             funds = observers.household_money(sim_info)
-            self._act_event(act_id, "FINISHED", code="CREATED", result={"cost": cost, "funds": funds,
-                                                                        "start_min": start_min}, **base)
+            self._act_event_safe(act_id, "FINISHED", code="CREATED",
+                                 result={"cost": cost, "funds": funds, "start_min": start_min}, **base)
             self._say(connection, "ACT_FINISHED %s CREATED" % act_id)
             return True
         except Exception as error:
             code = ("E2_EXCEPTION:%s" % type(error).__name__)[:64]
-            self._act_event(act_id, "UNKNOWN" if accepted else "REJECTED", code=code, **base)
+            self._act_event_safe(act_id, "UNKNOWN" if accepted else "REJECTED", code=code, **base)
             self._say(connection, "ACT_%s %s" % ("UNKNOWN" if accepted else "REJECTED", code))
             return False
 
@@ -1514,15 +1543,30 @@ class E2Control:
         return (start_min, scheduled, None) if scheduled is not None else (None, None, "CREATE_FAILED")
 
     def note_phone(self, op):
-        """2.40.0 (W13 P1): a text for her (PhoneNotificationOp): one phone row, with the sender's sim id when the
-        notification names a Sim other than her own. Written while sampling only. Never raises."""
+        """2.40.0 (W13 P1 fix): a notification on a phone (PhoneNotificationOp). Its .op holds the sim id of the phone's
+        owner and the guid64s of the phone acts it notifies (the game gives no sender). Written as a notice for her phone
+        only, while sampling; the first act's guid64 is the act it notifies. Never raises."""
         try:
             if self._state() != "SAMPLING":
                 return
-            her = observers.her_sim_info()
-            sender = _read(lambda: op.sim_id)
-            sender_id = None if sender is None or _read(lambda: sender == her.id) else str(sender)
-            row = reach.phone_event("text", sender_id, None)
+            her_id = _read(lambda: observers.her_sim_info().id)
+            owner = _read(lambda: op.op.sim_id)
+            if her_id is None or owner is None or str(owner) != str(her_id):
+                return
+            acts = _read(lambda: list(op.op.interaction_ids))
+            row = reach.phone_event("notice", None, acts[0] if acts else None)
+            if row is not None:
+                self._event("phone", row)
+        except Exception:
+            pass
+
+    def _note_call(self, dialog):
+        """2.40.0 (W13 P1 fix): a call held for her: a phone row of kind call, from the caller (the ring's dialog target
+        sim id) when it is read. Written while sampling only. Never raises."""
+        try:
+            if self._state() != "SAMPLING":
+                return
+            row = reach.phone_event("call", _read(lambda: dialog.target_sim_id), None)
             if row is not None:
                 self._event("phone", row)
         except Exception:
@@ -2136,6 +2180,7 @@ class E2Control:
         # 2.40.0 (W13 P1): an incoming call is held for her by its caller's sim id, not by the resolver's Sim.
         if kind == "ring" and who == "user" and self._ring_for_her(dialog):
             who, act = "hers", None
+            self._note_call(dialog)
         name = type(dialog).__name__
         key = str(int(dialog.dialog_id))
         if who == "identity_user":
