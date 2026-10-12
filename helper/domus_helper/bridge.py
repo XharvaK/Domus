@@ -442,56 +442,77 @@ class Bridge:
         # D2: nothing here judges a change. Each one waits in the coalescer until its view goes.
         self._load_state()
         for rowid, record in self.spool.rows_after(self._last_rowid):
-            kind = record.get("event_kind") if isinstance(record, dict) else None
-            written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
-            clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
-            if kind == "act_menu" and isinstance(record.get("e2"), dict):
-                # HE12: the menu keeps its wall time and its room; its labels are read against her room now.
-                # N8 (F4): a menu is shown once all its parts have come (see MenuParts).
-                session = record.get("telemetry_session_id")
-                taken = self._menu_parts.take(session, record["e2"])
-                if taken is not None:
-                    shown = self._menu_shown(session, taken, clock_ms)  # W14 (D3): a near part never replaces the whole
-                    if taken.get("near") is True:
-                        self._near_rowid = rowid  # SEAM3-8: the look's view waits for a near part after its request
-                    self._menu = {"session": session, "payload": shown, "at_ms": clock_ms}
-                    self._log_spot_stages(shown, clock_ms)  # W12 (C11): the spot stages, read from the log
-                    self._extractor.act_words = act_words_by_guid(shown, self._resolve_text.raw)  # W13 (S1)
-                    self._notebook_quietly(
-                        lambda: self.notebook.observe_menu(self._world(), shown, clock_ms))
-            elif kind == "presence_snapshot":
-                self._notebook_quietly(
-                    lambda: self.notebook.observe_presence(self._world(), record, clock_ms))
-                if self.diary is not None:
-                    self._notebook_quietly(
-                        lambda: self.diary.tick(clock_ms, record, self._world()))
-            if kind == "act_event" and self._acts is not None:
-                self._acts.on_row(record)
-            if kind in ("discovery", "lists", "catalog"):
-                # W13 (H): the probe's facts for the lead and for her lists and catalogue; nothing here reaches her view directly.
-                self._reach_quietly(lambda: self._reach_row(kind, record, clock_ms))
-            self._windows.on_row(record, clock_ms)
-            self._pace_log.on_row(record)
-            block = record.get("pace") if isinstance(record, dict) else None
-            if isinstance(block, dict):
-                self._pace_observe(block, clock_ms)
-            held = withheld_of(record)
-            if held is not None:
-                self._notebook_quietly(lambda: self.notebook.observe_withheld(held[0], held[1], clock_ms))
-            if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
-                self._acts.on_sample(record)
-            self.overlay.on_row(record, wall_ms)
-            if self.director is not None:
-                self.director.on_row(record, wall_ms)
-            self.talk.on_row(record, wall_ms, _body_sample(record))
-            self._coalesced = coalesce.add(self._coalesced, self._extractor.step(record), clock_ms)
-            self._last_row = record
-            if _body_sample(record):
-                self._last_body_row = record
-                self._body_fresh = True
-                self._set_her(record)
-                self._seen.observe(record)
-            self._last_rowid = rowid
+            self._consume_row(rowid, record, wall_ms)
+            self._last_rowid = rowid  # HELPER3-10: a row is passed over once read, whatever its consumers did with it
+
+    def _guard(self, rowid, consumer, wall_ms, step):
+        """HELPER3-10: one consumer's step on one row. A row a consumer cannot read is logged and passed over; it never ends
+        the bridge. Returns the step's value, or None when it failed."""
+        try:
+            return step()
+        except Exception as error:
+            self._log.write({"wall_ms": wall_ms, "trigger": "row_error", "row": rowid, "consumer": consumer,
+                             "error": type(error).__name__})
+            return None
+
+    def _consume_row(self, rowid, record, wall_ms):
+        """One telemetry row through each consumer (see _guard)."""
+        kind = record.get("event_kind") if isinstance(record, dict) else None
+        written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
+        clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
+        if kind == "act_menu" and isinstance(record.get("e2"), dict):
+            self._guard(rowid, "menu", wall_ms, lambda: self._menu_row(rowid, record, clock_ms))
+        elif kind == "presence_snapshot":
+            self._guard(rowid, "notebook", wall_ms, lambda: self._notebook_quietly(
+                lambda: self.notebook.observe_presence(self._world(), record, clock_ms)))
+            if self.diary is not None:
+                self._guard(rowid, "diary", wall_ms, lambda: self._notebook_quietly(
+                    lambda: self.diary.tick(clock_ms, record, self._world())))
+        if kind == "act_event" and self._acts is not None:
+            self._guard(rowid, "acts", wall_ms, lambda: self._acts.on_row(record))
+        if kind in ("discovery", "lists", "catalog"):
+            # W13 (H): the probe's facts for the lead and for her lists and catalogue; nothing here reaches her view directly.
+            self._guard(rowid, "reach", wall_ms, lambda: self._reach_quietly(lambda: self._reach_row(kind, record, clock_ms)))
+        self._guard(rowid, "windows", wall_ms, lambda: self._windows.on_row(record, clock_ms))
+        self._guard(rowid, "pace_log", wall_ms, lambda: self._pace_log.on_row(record))
+        block = record.get("pace") if isinstance(record, dict) else None
+        if isinstance(block, dict):
+            self._guard(rowid, "pace", wall_ms, lambda: self._pace_observe(block, clock_ms))
+        held = self._guard(rowid, "withheld", wall_ms, lambda: withheld_of(record))
+        if held is not None:
+            self._guard(rowid, "notebook", wall_ms, lambda: self._notebook_quietly(
+                lambda: self.notebook.observe_withheld(held[0], held[1], clock_ms)))
+        if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
+            self._guard(rowid, "dialogs", wall_ms, lambda: self._acts.on_sample(record))
+        self._guard(rowid, "overlay", wall_ms, lambda: self.overlay.on_row(record, wall_ms))
+        if self.director is not None:
+            self._guard(rowid, "director", wall_ms, lambda: self.director.on_row(record, wall_ms))
+        body_sample = self._guard(rowid, "talk", wall_ms, lambda: _body_sample(record))
+        self._guard(rowid, "talk", wall_ms, lambda: self.talk.on_row(record, wall_ms, body_sample))
+        found = self._guard(rowid, "extractor", wall_ms, lambda: self._extractor.step(record))
+        if found is not None:
+            self._coalesced = coalesce.add(self._coalesced, found, clock_ms)
+        self._last_row = record
+        if body_sample:
+            self._last_body_row = record
+            self._body_fresh = True
+            self._guard(rowid, "body", wall_ms, lambda: self._set_her(record))
+            self._guard(rowid, "seen", wall_ms, lambda: self._seen.observe(record))
+
+    def _menu_row(self, rowid, record, clock_ms):
+        """The probe's act menu (HE12, N8 F4, W14 D3): the menu keeps its wall time and its room; a menu is shown once all its
+        parts have come (see MenuParts), and a near part is merged with the whole (see _menu_shown)."""
+        session = record.get("telemetry_session_id")
+        taken = self._menu_parts.take(session, record["e2"])
+        if taken is None:
+            return
+        shown = self._menu_shown(session, taken, clock_ms)  # W14 (D3): a near part never replaces the whole
+        if taken.get("near") is True:
+            self._near_rowid = rowid  # SEAM3-8: the look's view waits for a near part after its request
+        self._menu = {"session": session, "payload": shown, "at_ms": clock_ms}
+        self._log_spot_stages(shown, clock_ms)  # W12 (C11): the spot stages, read from the log
+        self._extractor.act_words = act_words_by_guid(shown, self._resolve_text.raw)  # W13 (S1)
+        self._notebook_quietly(lambda: self.notebook.observe_menu(self._world(), shown, clock_ms))
 
     def _follow_refs(self, latest):
         """W12 (B2): the refs of her menu are kept for one game session. An attach flip keeps them; a new telemetry
@@ -577,7 +598,10 @@ class Bridge:
         if reason is None or self._body_is_restored(wall_ms):
             return
         percepts, self._coalesced = coalesce.take(self._coalesced)
-        self._send_view(percepts, reason, wall_ms)
+        try:
+            self._send_view(percepts, reason, wall_ms)
+        except Exception as error:  # HELPER3-10: a view the newest rows cannot build is logged, and the next view tries again
+            self._log.write({"wall_ms": wall_ms, "trigger": reason, "error": "view_error:%s" % type(error).__name__})
 
     def _set_her(self, row):
         """2.37.0 (W10 H3): her names, from the presence row of her body (the probe's is_body entry), for the words of

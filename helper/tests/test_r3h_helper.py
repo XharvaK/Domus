@@ -2,6 +2,8 @@
 kept, with its room flag judged against the near part's room), a first-build partial menu as the merge base (R1), the zone of
 a menu (R2), the choices that are pending until a final whole of the session (S2), and the choices reason of the coalescer
 (SEAM3-7). Every row is invented; the game and Mint are fakes."""
+import pytest
+
 from domus_helper import coalesce
 from domus_helper.acts import MenuParts, merge_near
 from test_bridge_thalamus import WALL, _bridge, _data, _lineage, _snap
@@ -335,3 +337,37 @@ def test_a_talk_line_the_probe_accepts_is_not_sent_again_and_one_with_no_answer_
         assert sent == ["Accepted.", "Never answered."]
     finally:
         spool.close()
+
+
+# ----------------------------------------------------------------- HELPER3-10: a bad row never ends the bridge
+
+_JUNK = (None, 0, 1, -1, "", "x", [], [1, "a"], {}, {"a": 1}, True, 2.5)
+_KEYS = ("event_kind", "body", "presence", "dialogs", "interactions", "e2", "pace", "telemetry_session_id",
+         "wall_timestamp_ms", "zone", "probe_version", "written_sequence")
+
+
+@pytest.mark.parametrize("seed", [20261012, 7, 99])
+def test_a_fuzz_of_bad_rows_never_ends_the_bridge_and_each_row_is_passed_over(paths, tmp_path, monkeypatch, seed):
+    import random
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    rng = random.Random(seed)
+    bases = [_lineage(1, WALL), _snap(2, "ok", WALL, 10), _menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)])),
+             _menu_row(4, _menu(6, [_room_obj(12, 4, 1.0, True)], near=True))]
+    rows = []
+    for index in range(240):
+        row = dict(rng.choice(bases))
+        for _ in range(rng.randint(1, 3)):
+            row[rng.choice(_KEYS)] = rng.choice(_JUNK)
+        if rng.random() < 0.3:
+            row["e2"] = {"objects": rng.choice(_JUNK), "parts": rng.choice(_JUNK), "part": rng.choice(_JUNK),
+                         "near": rng.choice(_JUNK), "menu_rev": rng.choice(_JUNK)}
+        rows.append(row)
+    _append(paths, rows)
+    _tick(bridge, mono, WALL)
+    _tick(bridge, mono, WALL + 1000)
+    assert bridge._last_rowid == bridge.spool.row_count()
+    _append(paths, [_snap(900, "low", WALL + 2000, 20)])
+    _tick(bridge, mono, WALL + 2000)
+    assert bridge._last_rowid == bridge.spool.row_count()
