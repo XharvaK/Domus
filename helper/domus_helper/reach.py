@@ -434,7 +434,8 @@ def result_words(result, *, name_of=None, room_of=None, place_of=None, start=Non
     value = result.get("value")
     funds = result.get("funds") if type(result.get("funds")) is int else None
     if type(value) is int:
-        sentences.append("Worth §%d%s." % (value, "; you have §%d" % funds if funds is not None else ""))
+        # HELPER2-12: the result's value is a sale's payment (the probe's sell_facts), so it reads as what she was paid.
+        sentences.append("Sold for §%d%s." % (value, "; you have §%d" % funds if funds is not None else ""))
     elif type(cost) is int:
         sentences.append("Costs §%d%s." % (cost, "; you have §%d" % funds if funds is not None else ""))
     elif funds is not None:

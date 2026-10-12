@@ -682,3 +682,10 @@ def test_a_thing_whose_place_is_a_dict_is_not_placed_in_a_room_and_the_notebook_
     raw = [{"object_id": "1", "name_key": "111", "where": {"where": "room", "room_id": 3}}]
     assert reach.room_labels(raw, resolve=names.get) == {}
     assert not hasattr(Notebook, "room_labels")
+
+
+# HELPER2-12: a sale's `value` is what she was paid, and her words say so ("Sold for"); "Worth" is for a stored worth,
+# and the probe stores none in a result.
+def test_a_sale_is_worded_as_sold_for_what_she_was_paid():
+    assert reach.result_words({"value": 40, "funds": 500}) == "Sold for §40; you have §500."
+    assert reach.result_words({"value": 0}) == "Sold for §0."

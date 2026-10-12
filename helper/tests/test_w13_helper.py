@@ -386,7 +386,7 @@ def test_a_purchase_says_where_it_is_what_it_is_beside_what_it_faces_and_what_it
 
 
 def test_a_sale_an_event_and_a_trip_say_their_money_and_their_time():
-    assert reach.result_words({"value": 40, "funds": 500}) == "Worth §40; you have §500."
+    assert reach.result_words({"value": 40, "funds": 500}) == "Sold for §40; you have §500."
     assert reach.result_words({"cost": 150, "funds": 350}, start={"day_offset": 1, "hour": 19, "minute": 5}) == (
         "Costs §150; you have §350. Starts at 19:05 tomorrow.")
     assert reach.result_words({"zone_id": 4}, place_of={"4": "Test Lot"}.get) == "Now in Test Lot."
