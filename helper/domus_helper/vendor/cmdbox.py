@@ -5,6 +5,8 @@ COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
             'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
             'cancel', 'camera', 'talk', 'pace', 'menu_near')
+# 2.40.0 (W13 P1): travel, a planned event, and a fresh read of the lists. Own line, so the commands of other blocks merge.
+COMMANDS = COMMANDS + ('go', 'event', 'lists_now')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -41,6 +43,60 @@ def _answer_text(text):
 def valid_hex(value, length):
     return (type(value) is str and len(value) == length and
             all(ch in '0123456789abcdef' for ch in value))
+
+
+# 2.40.0 (W13 P2, home): her save, her home edits and the catalogue dump. Each takes an act id (catalog_dump takes
+# none); a place names one relation (on, beside or instead with a target; wall or in with a room), and an optional facing.
+HOME_COMMANDS = ('save', 'buy', 'place', 'move', 'sell', 'catalog_dump')
+COMMANDS = COMMANDS + HOME_COMMANDS
+HOME_MAX_PRICE = 10 ** 12
+PLACE_KEYS = {'rel', 'target_id', 'room_id', 'facing'}
+
+
+def _place_ok(place):
+    """2.40.0: a place: {rel, target_id} for on, beside or instead; {rel, room_id} for wall or in; facing (an object id
+    or 'room') optional. Digits only for ids."""
+    if type(place) is not dict or not set(place) <= PLACE_KEYS or 'rel' not in place:
+        return False
+    rel = place['rel']
+    if rel in ('on', 'beside', 'instead'):
+        need = {'rel', 'target_id'}
+    elif rel in ('wall', 'in'):
+        need = {'rel', 'room_id'}
+    else:
+        return False
+    if not need <= set(place) or not set(place) <= need | {'facing'}:
+        return False
+    if not all(_digits(place[key]) for key in need - {'rel'}):
+        return False
+    if 'facing' not in place:
+        return True
+    return place['facing'] == 'room' or _digits(place['facing'])
+
+
+def _home_args(name, args):
+    """2.40.0: the arguments of a home command, by name (True when they are the closed shape)."""
+    if name == 'catalog_dump':
+        return not args
+    if type(args) is not dict or not valid_hex(args.get('act_id'), 32):
+        return False
+    if name == 'save':
+        return set(args) == {'act_id'}
+    if name == 'sell':
+        return set(args) == {'act_id', 'object_id'} and _digits(args['object_id'])
+    if name in ('place', 'move'):
+        return (set(args) == {'act_id', 'object_id', 'place'} and _digits(args['object_id']) and
+                _place_ok(args['place']))
+    if name == 'buy':
+        keys = set(args)
+        if not {'act_id', 'definition_id', 'place'} <= keys or not keys <= {'act_id', 'definition_id', 'place',
+                                                                          'max_price'}:
+            return False
+        price = args.get('max_price')
+        if 'max_price' in args and not (type(price) is int and 0 <= price <= HOME_MAX_PRICE):
+            return False
+        return _digits(args['definition_id']) and _place_ok(args['place'])
+    return False
 
 
 def valid_issuer(value):
@@ -109,10 +165,12 @@ def parse(raw_bytes, now_ms, used_ids):
     elif good and name == 'act':
         # 2.24.0: owner is present (and true) only when her Thought said the User asked for it.
         # 2.39.0 (W12 G1): variant is present only for a pie-menu choice: an int from 0 to 999.
-        good = (set(args) - {'owner', 'variant'} == {'act_id', 'object_id', 'guid64'} and
+        # 2.40.0 (W13 P1): sim_id is present only for a phone act that opens a Sim picker: the Sim she picks (digits).
+        good = (set(args) - {'owner', 'variant', 'sim_id'} == {'act_id', 'object_id', 'guid64'} and
                 valid_hex(args.get('act_id'), 32) and _digits(args.get('object_id')) and
                 _digits(args.get('guid64')) and ('owner' not in args or args['owner'] is True) and
-                ('variant' not in args or (type(args['variant']) is int and 0 <= args['variant'] <= 999)))
+                ('variant' not in args or (type(args['variant']) is int and 0 <= args['variant'] <= 999)) and
+                ('sim_id' not in args or _digits(args['sim_id'])))
     elif good and name == 'answer':
         # 2.18.0: her answer to a game dialog: a picker row (digits) or a button by name.
         # 2.31.0: optional rows (several picked rows, each with its count) and text (one value per
@@ -141,10 +199,30 @@ def parse(raw_bytes, now_ms, used_ids):
                 1 <= len(text) <= 240 and text.strip() == text and
                 all(ch >= ' ' and ch != '\x7f' for ch in text) and
                 ('sim_id' not in args or _digits(args['sim_id'])))
+    elif good and name == 'go':
+        # 2.40.0 (W13 P1): her trip to a place she knows (a zone id); her act is the one the reply names.
+        good = (set(args) == {'act_id', 'zone_id'} and valid_hex(args.get('act_id'), 32) and
+                _digits(args.get('zone_id')))
+    elif good and name == 'event':
+        # 2.40.0 (W13 P1): a planned event: a situation id, 0 to 16 guest sim ids, and a start: "now" or a game time
+        # (day_offset 0 for today or 1 for tomorrow, hour, minute).
+        start = args.get('start')
+        start_ok = start == 'now' or (type(start) is dict and set(start) == {'day_offset', 'hour', 'minute'} and
+                                      type(start['day_offset']) is int and start['day_offset'] in (0, 1) and
+                                      type(start['hour']) is int and 0 <= start['hour'] <= 23 and
+                                      type(start['minute']) is int and 0 <= start['minute'] <= 59)
+        guests = args.get('guests')
+        good = (set(args) == {'act_id', 'situation_id', 'guests', 'start'} and
+                valid_hex(args.get('act_id'), 32) and _digits(args.get('situation_id')) and
+                type(guests) is list and len(guests) <= 16 and all(_digits(item) for item in guests) and
+                start_ok)
     elif good and name == 'pace':
         # 2.31.0 (W3p): her needs drain and the game's clock, as fractions of normal pace (1.0 is off).
         good = (set(args) == {'need_drain', 'slow_time'} and _pace_factor(args['need_drain']) and
                 _pace_factor(args['slow_time']))
+    elif good and name in HOME_COMMANDS:
+        # 2.40.0 (W13 P2, home): her save, her home edits and the catalogue dump (home.py).
+        good = _home_args(name, args)
     elif good:
         good = not args
     if not good:
