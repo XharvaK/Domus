@@ -157,7 +157,7 @@ def offers_for(obj, context, guid64):
 # changes zones, so a phone act that travels is not offered in this version.
 # 2.37.0 (W10 P3): 256 (was 64), so the menu's own phone cap (act_menu.PHONE_CANDIDATES) is the one that binds.
 PHONE_SCAN_LIMIT = 256
-PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "inviteto", "askon", "vacation",
+PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "askon", "vacation",
                       "lodging")
 # 2.29.0: her phone is how she calls, texts and invites people over, so the blanket name bans that
 # kept every phone act out (call_, phone_call, invite, social) do not apply to it. What still stays
