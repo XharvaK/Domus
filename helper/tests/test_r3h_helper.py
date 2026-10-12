@@ -544,3 +544,15 @@ def test_a_missing_zone_counts_as_the_same_zone_and_two_different_zones_do_not_m
     assert _ids(merge_near(_zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 3), whole)) == ["44", "22"]
     assert _ids(merge_near(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), _zoned(dict(whole), 3))) == ["44", "22"]
     assert _ids(merge_near(_zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 4), _zoned(dict(whole), 3))) == ["44"]
+
+
+# ----------------------------------------------------------------- R4: whose a window is ("yours" for hers, "the User's" for others)
+
+def test_a_window_of_hers_says_yours_and_one_of_the_users_says_the_users():
+    from domus_helper.thalamus import observation
+    from test_2152_helper import TEXT, _open, _v9
+    hers = dict(_open(), cause="hers")
+    users = dict(_open(), dialog_id="556", cause="user")
+    row = _v9(1, 601, {"open": [hers, users], "closed": [], "truncated": False})
+    asked = observation._portrait(row, TEXT.get)["asked"]
+    assert [item["whose"] for item in asked] == ["yours", "the User's"]
