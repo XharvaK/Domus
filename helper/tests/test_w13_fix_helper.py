@@ -650,3 +650,25 @@ def test_the_decision_log_takes_its_lock_for_every_write(tmp_path):
     log.write({"wall_ms": 1_700_000_000_000, "trigger": "lists"})
     assert lock.entered == 1
     assert len(list((tmp_path / "thalamus").glob("decisions-*.jsonl"))) == 1
+
+
+# HELPER2-10: a list is posted only while it belongs to the game session it was built from; a post whose list came from an
+# older session is dropped (its digest is never taken as Natalis's).
+def test_a_list_built_in_an_earlier_game_session_is_not_posted_after_the_session_changes(paths, tmp_path, monkeypatch):
+    from test_w13_helper import _Mint, _people_row, _settle
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    _append(paths, [_people_row(1)])
+    client = _Mint()
+    bridge = _bridge(paths, {"ms": WALL}, client=client)
+    bridge.tick(WALL)
+    _settle(bridge)
+    client.posted["lists"] = []  # the tick's own post is not the one under test
+    entry = bridge._lists["people"]
+    assert entry.get("session") == "sess-1"
+    bridge._lists_session = "sess-2"
+    bridge._post_list("people", entry, client, "h")
+    assert client.posted["lists"] == []
+    bridge._lists_session = "sess-1"
+    bridge._post_list("people", entry, client, "h")
+    assert len(client.posted["lists"]) == 1

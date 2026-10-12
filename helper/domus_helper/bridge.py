@@ -762,7 +762,9 @@ class Bridge:
             self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "kind": kind,
                              "skipped": reasons, "cut": len(words) - len(items)})
         with self._lists_lock:
-            self._lists[kind] = {"digest": reach.digest(items, total), "items": items, "total": total}
+            # HELPER2-10: the game session the list was built from; a post after the session changed is dropped.
+            self._lists[kind] = {"digest": reach.digest(items, total), "items": items, "total": total,
+                                 "session": self._lists_session}
         self._set_index()
         self._spool_lists()
 
@@ -825,6 +827,11 @@ class Bridge:
         Natalis refuses waits LIST_RETRY_MS for each of its first refusals; after LIST_REFUSALS of the same digest it
         waits LIST_REFUSED_WAIT_MS, and its reason is logged once, at that point."""
         now = self._mono()
+        with self._lists_lock:
+            built = entry.get("session")
+            current = self._lists_session
+        if built is not None and built != current:
+            return  # HELPER2-10: an older game's list is not Natalis's list of this one
         # HELPER2-7: a refusal's wait belongs to its digest; a failed round trip's wait belongs to the kind.
         if now < self._list_retry_ms.get(kind, 0) or now < self._list_retry_ms.get((kind, entry["digest"]), 0):
             return
