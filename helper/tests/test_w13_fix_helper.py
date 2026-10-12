@@ -477,3 +477,46 @@ def test_a_list_post_carries_the_probes_total_or_the_count_before_the_byte_cut_a
     assert held["total"] == 600 and 0 < len(held["items"]) < 600
     bridge._store_list("things", things, total=900)
     assert bridge._lists["things"]["total"] == 900
+
+
+# HELPER2-4: a verb act that ends (her list may have changed) asks the probe for fresh lists, at most once per 10 s; an
+# ask that falls in the wait is made when the wait is over.
+def test_a_verb_act_that_ends_tells_the_bridge_and_an_act_that_is_not_a_verb_does_not(tmp_path):
+    from test_w13_helper import _requested
+    ended = []
+    courier, _sent = _courier(tmp_path, ended=lambda: ended.append(1))
+    courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"}), _requested()]), "h", 1000, True, probe="2.40.0")
+    for act_id in (VERB_ACT, "f" * 32):
+        courier.on_row({"event_kind": "act_event", "telemetry_session_id": "s", "wall_timestamp_ms": 2000,
+                        "e2": {"act_id": act_id, "phase": "FINISHED"}})
+    assert ended == [1]
+
+
+def test_a_verb_that_ends_asks_for_fresh_lists_at_most_once_per_ten_seconds_and_the_ask_in_the_wait_is_made_later(
+        paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    from test_w13_helper import _Mint, _people_row
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    row = _people_row(1)
+    row["probe_version"] = "2.40.0"
+    _append(paths, [row])
+    sent = []
+    monkeypatch.setattr(bridge_module.commands, "publish",
+                        lambda command, args, issuer, **kw: sent.append((command, args)) or "cmd")
+
+    def asks():
+        return [item for item in sent if item[0] == "lists_now"]
+    bridge = _bridge(paths, {"ms": WALL}, client=_Mint())
+    bridge.tick(WALL)
+    assert asks() == []
+    bridge._verb_act_ended()
+    bridge.tick(WALL + 1000)
+    assert asks() == [("lists_now", {})]
+    bridge._verb_act_ended()
+    bridge.tick(WALL + 5000)
+    assert len(asks()) == 1
+    bridge.tick(WALL + 11_000)
+    assert asks() == [("lists_now", {}), ("lists_now", {})]
+    bridge.tick(WALL + 30_000)
+    assert len(asks()) == 2

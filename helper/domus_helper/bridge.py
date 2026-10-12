@@ -47,6 +47,8 @@ _PACE_PROBE = (2, 31, 0)
 _NEAR_PROBE = (2, 39, 0)
 # W13 (H): the verb acts, the Sim picker and the catalogue dump need the probe that writes and reads them.
 _VERB_PROBE = (2, 40, 0)
+# HELPER2-4: after a verb act ends, the probe is asked for fresh lists no more often than this.
+LISTS_NOW_EVERY_MS = 10_000
 # W13 (H): the catalogue dump is asked for again no sooner than this, while the catalogue still lacks the game's flags.
 CATALOG_DUMP_EVERY_MS = 10 * 60_000
 # W13 (H): a list Natalis did not take is sent again no sooner than this.
@@ -153,12 +155,14 @@ class Bridge:
         self._lists_busy = False  # W13 (A4-9): one post pass at a time
         self._index = reach.index({})
         self._catalog_checked_ms = None
+        self._lists_now_owed = False  # HELPER2-4: a verb act ended and the lists are not asked for yet
+        self._lists_now_sent_ms = None
         self._acts = None if self.client is None else ActCourier(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
             resolve=self._resolve_text, memory=self._answer_memory,
             reply=lambda command_id: commands.read_reply(command_id, paths=self.paths), log=self._log.write,
             say=self._say_words, her_name=self._her_first, answered=self._answered,
-            result_words=self._result_words, rooms=self._room_labels)
+            result_words=self._result_words, rooms=self._room_labels, ended=self._verb_act_ended)
         # W12 (B2): the refs are kept for one game session; the view's attachment says which epoch of refs it uses.
         self._refs_epoch = 0
         self._refs_session = None
@@ -249,6 +253,7 @@ class Bridge:
                                  "count": self.spool.last_expired})  # W12 (F3): the newest state goes in the next view
         self._pace_tick(now, probe)
         self._catalog_dump(now, probe)
+        self._lists_now_due(now, probe)
         self.overlay.poll(self.client, self.helper_session, now)
         self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
@@ -868,6 +873,26 @@ class Bridge:
             commands.publish("catalog_dump", {}, "helper", paths=self.paths)
         except (ValueError, OSError) as error:
             print("catalogue dump not asked: %s" % type(error).__name__)
+
+    def _verb_act_ended(self):
+        """HELPER2-4: a verb act ended, so her lists may have changed: they are asked for on the next tick (see
+        _lists_now_due)."""
+        self._lists_now_owed = True
+
+    def _lists_now_due(self, now, probe):
+        """HELPER2-4: the probe is asked for fresh lists (lists_now) once a verb act has ended, at most once per
+        LISTS_NOW_EVERY_MS; an ask that falls inside that wait is made when the wait is over. Needs a probe with the
+        command."""
+        if not self._lists_now_owed or self.client is None or not _probe_ok(probe, _VERB_PROBE):
+            return
+        if self._lists_now_sent_ms is not None and now - self._lists_now_sent_ms < LISTS_NOW_EVERY_MS:
+            return
+        self._lists_now_owed = False
+        self._lists_now_sent_ms = now
+        try:
+            commands.publish("lists_now", {}, "helper", paths=self.paths)
+        except (ValueError, OSError) as error:
+            self._log.write({"wall_ms": now, "trigger": "lists_now", "error": type(error).__name__})
 
     def _notebook_quietly(self, fn):
         try:

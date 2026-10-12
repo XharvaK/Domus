@@ -868,7 +868,7 @@ class ActCourier(object):
     variant is gated on the probe."""
 
     def __init__(self, spool, publish, resolve=None, memory=None, *, reply=None, log=None, say=None, her_name=None,
-                 answered=None, result_words=None, rooms=None):
+                 answered=None, result_words=None, rooms=None, ended=None):
         self._spool = spool
         self._publish = publish
         self._resolve = resolve
@@ -886,6 +886,8 @@ class ActCourier(object):
         self._result_words = result_words
         # W13 (H, D9.3): the room labels of her view (a room id to its label), so a place's room name is an id.
         self._rooms = rooms
+        # HELPER2-4: called (no arguments) when a verb act ends, so her lists can be asked for again.
+        self._ended = ended
         raw = spool.get_kv("acts_known")
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
@@ -923,6 +925,11 @@ class ActCourier(object):
         if detail:
             event["detail"] = detail
         self._events.append(event)
+
+    def _verb_ended(self, known):
+        """HELPER2-4: a verb act (her buy, place, move, sell, save, trip or event) that ended may have changed her lists."""
+        if known is not None and known.get("verb") and self._ended is not None:
+            self._ended()
 
     def _log_line(self, now_ms, trigger, error, count):
         """W12 (B4, F6): one line per failed round trip (the decision log's record; never raises)."""
@@ -1032,6 +1039,7 @@ class ActCourier(object):
             known["answered"] = True
             if phase in _TERMINAL:
                 known["terminal"] = True
+                self._verb_ended(known)
         self._save()
 
     def _words_of_result(self, result, start=None):
@@ -1065,6 +1073,7 @@ class ActCourier(object):
                 self._event(act_id, "rejected", now_ms, {"code": _refusal_code(reply), "by": "probe"})
                 known["answered"] = True
                 known["terminal"] = True
+                self._verb_ended(known)
 
     def tick(self, client, helper_session, now_ms, attached, probe=None):
         """One round trip: send what happened, receive what to do. Returns the acts written.
@@ -1076,6 +1085,7 @@ class ActCourier(object):
                 if now_ms - known["written_ms"] >= PROBE_REPLY_MS:
                     known["timed_out"] = True
                     self._event(act_id, "unknown", now_ms, {"code": "NO_PROBE_REPLY"})
+                    self._verb_ended(known)
             elif not attached:
                 # A9-1: a short detach (a zone load, a sleep, a stale telemetry stall) is not the end of an act
                 # the game may still finish; the verdict is a guess only after DETACH_GRACE_MS.
@@ -1083,10 +1093,12 @@ class ActCourier(object):
                 if now_ms - known["detached_ms"] >= DETACH_GRACE_MS:
                     known["timed_out"] = True
                     self._event(act_id, "unknown", now_ms, {"code": "GAME_DETACHED"})
+                    self._verb_ended(known)
             elif now_ms - known["written_ms"] >= ACT_CEILING_MS:
                 # GL8: the probe began it, and no end came.
                 known["timed_out"] = True
                 self._event(act_id, "unknown", now_ms, {"code": "NO_END_REPORTED"})
+                self._verb_ended(known)
             else:
                 known.pop("detached_ms", None)
         self._read_replies(now_ms)
@@ -1230,6 +1242,8 @@ class ActCourier(object):
                 self._event(act_id, "rejected", now_ms, detail)
                 continue
             known = {"written_ms": now_ms, "object": object_id if object_id.isdigit() else None}
+            if verb is not None:
+                known["verb"] = True  # HELPER2-4: a verb act's end is told to the bridge (it may change her lists)
             if isinstance(command, str):
                 known["cmd"] = command  # W12 (B3): the probe's reply to this command, read on the next ticks
             if verb == "event":
