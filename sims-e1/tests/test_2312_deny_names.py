@@ -48,6 +48,15 @@ class DenyNameTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(self.trial.denied_name(name), entry)
 
+    def test_a_career_leave_is_not_hidden_and_leaving_the_lot_still_is(self):
+        # 2.40.0 (W13 R2, Q-a): the career acts that leave early are hers; leaving the lot stays out by name.
+        for name in ("CareerLeaveWorkEarly", "CareerLeaveSchoolEarly", "Career_Leave_Work_Early_Invented"):
+            with self.subTest(name=name):
+                self.assertIsNone(self.trial.denied_name(name))
+        for name in ("Push_Leave_Lot_Invented", "LeaveLotInvented", "Leave_Lot_Sample"):
+            with self.subTest(name=name):
+                self.assertEqual(self.trial.denied_name(name), "leave")
+
     def test_whole_words_only_for_the_kept_names(self):
         self.assertIsNone(self.trial.denied_name("Debugger_Panel"))
         self.assertIsNone(self.trial.denied_name("Traveler_Chat"))
