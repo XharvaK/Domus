@@ -189,6 +189,8 @@ class Extractor:
         self._presence = None
         # HE3: who each present Sim was (name and last room), so "left" can say who and where.
         self._presence_names = {}
+        # W13 (H): the names of the people she knows (sim id -> name), set by the bridge from her people list; not saved.
+        self.people_names = {}
         self._on_lot = set()
         self._social = set()
         self._asked = set()
@@ -216,6 +218,10 @@ class Extractor:
             percepts.append(self._lineage(row))
         if kind == "act_event":
             percepts.extend(self._act(row))
+        if kind == "phone":
+            phone = self._phone(row)
+            if phone is not None:
+                percepts.append(phone)
         if kind in ("presence_snapshot", "session_open"):
             percepts.extend(self._snapshot(row))
         if type(seq) is int:
@@ -266,6 +272,22 @@ class Extractor:
                         facts=_facts(None, (("code", e2.get("code")), ("detail", e2.get("detail")),
                                             ("tuning_name", e2.get("tuning_name")),
                                             ("finishing_type", e2.get("finishing_type")), ("origin", "her_choice"))))]
+
+    def _phone(self, row):
+        """W13 (D4.3): a text or a call on her phone, as a fact: its kind, and who it is from by name (someone when no
+        name is known). The probe's phone row names the sender by sim id; the name is ours to look up, never the id's."""
+        e2 = row.get("e2") if isinstance(row.get("e2"), dict) else row
+        kind = e2.get("kind")
+        if kind not in ("text", "call"):
+            return None
+        sender = e2.get("from_sim_id")
+        name = None
+        if sender is not None:
+            sender = str(sender)
+            name = (self._presence_names.get(sender) or {}).get("name") or (self.people_names or {}).get(sender)
+        text = str(name)[:64] if isinstance(name, str) and name else "someone"
+        return Percept("phone", "", "", "", urgency="normal", lineage=self.lineage_id,
+                       facts=(("kind", kind), ("from", text)))
 
     def _gap(self, session, lost=None):
         self._seen_row = True
