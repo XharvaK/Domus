@@ -724,3 +724,27 @@ def test_a_catalogue_part_with_no_game_build_is_logged_once_with_its_reason(path
     bridge._reach_row("catalog", dict(record), WALL + 1)
     lines = [line for line in _log_lines(data) if line.get("trigger") == "catalog"]
     assert len(lines) == 1 and lines[0]["error"] == "no_build"
+
+
+# HOME2-6 (helper half): a catalogue dump answered with no usable row is recorded for its game build, and the dump is
+# asked again only when the build changes.
+def test_a_catalogue_dump_answered_with_no_rows_is_not_asked_again_until_the_build_changes(paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    from test_bridge_thalamus import WALL, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(bridge_module.commands, "publish",
+                        lambda command, args, issuer, **kw: sent.append(command) or "cmd")
+    bridge = _bridge(paths, {"ms": WALL}, client=type("Up", (), {})())
+    bridge.detected_build = "1.128"
+    bridge._state = "attached"
+    empty = {"event_kind": "catalog", "telemetry_session_id": "sess-1", "wall_timestamp_ms": WALL,
+             "e2": {"catalog_rev": "r1", "part": 0, "parts": 1, "items": []}}
+    bridge._reach_row("catalog", empty, WALL)
+    bridge._catalog_dump(WALL + 20 * 60_000, "2.40.0")
+    assert sent.count("catalog_dump") == 0
+    bridge._catalog_dump(WALL + 40 * 60_000, "2.40.0")
+    assert sent.count("catalog_dump") == 0
+    bridge.detected_build = "1.129"
+    bridge._catalog_dump(WALL + 60 * 60_000, "2.40.0")
+    assert sent.count("catalog_dump") == 1

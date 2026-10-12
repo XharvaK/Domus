@@ -736,8 +736,11 @@ class Bridge:
         else:
             raw = self._list_parts.take("catalog", e2, rev_key="catalog_rev")
             if raw is not None and self.detected_build is not None:
-                catalog.store_flags(self.paths, self.detected_build, raw)
+                stored = catalog.store_flags(self.paths, self.detected_build, raw)
                 self._log.write({"wall_ms": clock_ms, "trigger": "catalog", "items": len(raw)})
+                if stored == 0:
+                    # HOME2-6: the game answered the dump with no usable row for this build; it is not asked again for it.
+                    self.spool.put_kv("catalog_answered", self.detected_build)
             elif raw is not None and not self._catalog_no_build_logged:
                 # HELPER2-14: the catalogue is not stored without the game's build; said once, not per part.
                 self._catalog_no_build_logged = True
@@ -879,7 +882,7 @@ class Bridge:
         if self._catalog_checked_ms is not None and now - self._catalog_checked_ms < CATALOG_DUMP_EVERY_MS:
             return
         self._catalog_checked_ms = now
-        if catalog.has_flags(self.paths, self.detected_build):
+        if catalog.has_flags(self.paths, self.detected_build) or self.spool.get_kv("catalog_answered") == self.detected_build:
             return
         try:
             commands.publish("catalog_dump", {}, "helper", paths=self.paths)
