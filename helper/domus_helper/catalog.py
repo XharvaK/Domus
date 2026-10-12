@@ -198,6 +198,7 @@ FURNITURE = frozenset({"APPLIANCES", "COMFORT", "DECOR", "ELECTRONICS", "ENTERTA
                        "PLUMBING", "STORAGE"})
 SEARCH_SHOWN = 12
 _WORDS = re.compile(r"[\W_]+")
+_DIGITS = re.compile(r"[0-9]{1,20}")
 
 
 def _strings(value, limit):
@@ -207,19 +208,33 @@ def _strings(value, limit):
     return [item for item in value if isinstance(item, str) and item][:limit]
 
 
+def _definition(value):
+    """W13 (H, A6-2): a definition id from the probe as an int: the probe writes its ids as digit strings, and a
+    plain int is taken too. Anything else is None."""
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str) and _DIGITS.fullmatch(value):
+        return int(value)
+    return None
+
+
 def store_flags(paths, game_version, items):
     """W13 (H): the probe's catalogue flags for one game version, replacing that version's earlier ones. An item
-    without a definition id is skipped. Returns the number of items stored."""
+    without a definition id is skipped. The rows are built first: a dump with no usable row keeps the earlier flags, and
+    the replace is one transaction. Returns the number of items stored."""
     rows = []
     for item in items if isinstance(items, list) else []:
-        if not isinstance(item, dict) or type(item.get("definition_id")) is not int:
+        definition = _definition(item.get("definition_id")) if isinstance(item, dict) else None
+        if definition is None:
             continue
         price = item.get("price") if type(item.get("price")) is int else None
-        rows.append((game_version, item["definition_id"], price,
+        rows.append((game_version, definition, price,
                      json.dumps(_strings(item.get("buy_category"), 4)),
-                     json.dumps(_strings(item.get("placement"), 3)),
+                     json.dumps(_strings(item.get("placement"), 1)),
                      json.dumps(_strings(item.get("tags"), 8)),
                      1 if item.get("purchasable") is True else 0))
+    if not rows:
+        return 0
     target = index_path(paths)
     target.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(target)
@@ -294,9 +309,8 @@ def search(paths, game_version, words, *, max_price=None, placement=None, resolv
 
 
 def _placement_text(placements):
-    """W13 (H): the placements in words for Natalis (1 to 16 characters), or None when they do not fit in that."""
-    text = ", ".join(placements)
-    return text if 1 <= len(text) <= 16 else None
+    """W13 (H, S3): the one placement word of an item (floor, wall or surface), or None when it has none."""
+    return placements[0] if placements else None
 
 
 def clean_name(text):

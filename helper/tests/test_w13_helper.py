@@ -425,7 +425,7 @@ def _catalog_fixture(tmp_path, monkeypatch):
         _flag(301, ["COMFORT"], ["floor"], 80),
         _flag(302, ["DECOR"], ["floor"], 150),
         _flag(303, ["ROOF"], ["floor"], 20),
-        _flag(304, ["LIGHTING"], ["wall", "surface"], 30),
+        _flag(304, ["LIGHTING"], ["wall"], 30),
         _flag(305, ["COMFORT"], ["floor"], 60, purchasable=False),
         _flag(306, ["VEHICLE"], ["floor"], 90),
         _flag(307, ["COMFORT"], ["floor"], 900),
@@ -450,7 +450,7 @@ def test_a_search_offers_purchasable_furniture_and_decor_by_words_in_order_and_n
                         "category": "comfort"}
     assert catalog.search(paths, "1.128", "test chair", max_price=200, resolve=CATALOG_NAMES.get)[0] == 2
     matched, items = catalog.search(paths, "1.128", "lamp", placement="wall", resolve=CATALOG_NAMES.get)
-    assert matched == 1 and items[0]["placement"] == "wall, surface" and items[0]["category"] == "lighting"
+    assert matched == 1 and items[0]["placement"] == "wall" and items[0]["category"] == "lighting"
     assert catalog.search(paths, "1.128", "lamp", placement="floor", resolve=CATALOG_NAMES.get) == (0, [])
     assert catalog.search(paths, "1.128", "   ", resolve=CATALOG_NAMES.get) == (0, [])
     assert catalog.search(paths, "1.129", "test chair", resolve=CATALOG_NAMES.get) == (0, [])
@@ -721,7 +721,7 @@ def test_a_catalogue_answer_built_from_fake_flags_keeps_natalis_bounds(tmp_path,
     names = {"1500": "Long Lamp " + "x" * 80, "1501": "", "1502": "Pine Lamp"}
     paths = _catalog_db(tmp_path, monkeypatch, [(500, 1500), (501, 1501), (502, 1502)] +
                         [(600 + n, 1502) for n in range(14)])
-    catalog.store_flags(paths, "1.128", [_flag(500, ["LIGHTING"], ["floor", "wall", "surface"], 9),
+    catalog.store_flags(paths, "1.128", [_flag(500, ["LIGHTING"], ["floor"], 9),
                                          _flag(501, ["LIGHTING"], ["floor"], 9),
                                          _flag(502, ["LIGHTING"], ["wall"], 12)] +
                         [_flag(600 + n, ["DECOR"], ["floor"], 3) for n in range(14)])
@@ -735,7 +735,7 @@ def test_a_catalogue_answer_built_from_fake_flags_keeps_natalis_bounds(tmp_path,
         assert item["placement"] is None or 1 <= len(item["placement"]) <= 16
         assert len(item["category"]) <= 40
     assert all(item["name"].strip() for item in body["items"])
-    assert any(item["placement"] is None for item in body["items"])
+    assert {item["placement"] for item in body["items"]} <= {"floor", "wall"}
 
 
 def test_a_sync_event_detail_stays_under_1024_bytes_and_its_result_under_400(tmp_path):
