@@ -294,7 +294,7 @@ def test_people_are_listed_in_words_with_their_refs_labels_and_tracks():
             "household_id": 8, "has_home": False, "on_lot": True, "waiting": True}]
     words = reach.list_words("people", raw, refs=RefBook())
     assert words == [
-        {"ref": "p1", "id": "501", "name": "Test Person", "how": "Friend, Best Friend; Romance 40",
+        {"ref": "p1", "id": "501", "name": "Test Person", "how": "Friend, Best Friend",
          "home": True, "here": False, "waiting": False},
         {"ref": "p2", "id": "502", "name": "Ana", "how": "", "home": False, "here": True, "waiting": True}]
 
@@ -721,7 +721,8 @@ def test_every_list_built_from_fake_probe_rows_keeps_natalis_bounds_and_an_unnam
     thing_words = reach.list_words("things", things, refs=RefBook(), rooms={"3": "R" * 64},
                                    resolve={"1": long_name}.get, skipped=skipped)
     _check_list_items("things", thing_words)
-    assert len(thing_words) == 600 and skipped.count("name") == 1 and "value" not in skipped
+    # HELPER3-8: a thing with no usable name is named by its class (or "object"), so it is never skipped for its name
+    assert len(thing_words) == 600 and skipped.count("name") == 0 and "value" not in skipped
     assert thing_words[0]["where"] == "inventory" and thing_words[0]["id"] == "902"
     assert thing_words[1]["where"] == "R" * 64 and thing_words[1]["placement"] is None
     assert thing_words[1]["states"] == ["S" * 40]

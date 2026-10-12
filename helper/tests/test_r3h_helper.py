@@ -413,3 +413,36 @@ def test_the_left_out_cut_adds_one_line_per_reason_for_the_rest_and_no_more_than
 def test_the_act_on_her_phone_and_the_screen_marker_say_your_summoner_not_the_user():
     from domus_helper.acts import OPENS_SCREEN
     assert OPENS_SCREEN == "a screen only your summoner can use"
+
+
+# ----------------------------------------------------------------- names, labels and relationships (HELPER3-8, SEAM3-15, HELPER3-19)
+
+def test_a_thing_with_no_usable_name_is_named_by_its_class_and_kept_never_left_out():
+    from domus_helper import reach
+    from domus_helper.acts import RefBook
+    raw = [{"object_id": "9", "name_key": "901", "class": "object_test_chair", "where": "inventory"},
+           {"object_id": "10", "name_key": "902", "class": "**DEBUG**", "where": "inventory"},
+           {"object_id": "11", "name_key": None, "class": "", "where": "inventory"}]
+    skipped = []
+    things = reach.list_words("things", raw, refs=RefBook(), resolve={"901": "** DEBUG **", "902": "*Star"}.get,
+                              skipped=skipped)
+    assert [thing["name"] for thing in things] == ["object test chair", "object", "object"]
+    assert "name" not in skipped
+
+
+def test_a_room_whose_name_does_not_fit_is_labelled_by_its_id_and_never_as_an_empty_the_room_with_the():
+    from domus_helper import reach
+    long_name = "x" * 70
+    labels = reach.room_labels([{"object_id": "9", "name_key": "k", "where": "room", "room_id": "6"}],
+                               resolve={"k": long_name}.get)
+    assert labels == {"6": "room 6"}
+    fits = reach.room_labels([{"object_id": "9", "name_key": "k", "where": "room", "room_id": "6"}],
+                             resolve={"k": "Test Lamp"}.get)
+    assert fits == {"6": "the room with the Test Lamp"}
+
+
+def test_a_relationship_says_its_labels_and_no_track_number_and_a_track_with_no_label_is_left_out():
+    from domus_helper.reach import _how
+    assert _how(["friend"], {"Romance": 40, "Trust": {"label": "trusted"}, "Anger": -3}) == "friend; trusted"
+    assert _how([], {"Romance": 40}) == ""
+    assert _how(None, None) == ""
