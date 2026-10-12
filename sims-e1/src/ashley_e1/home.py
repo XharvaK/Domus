@@ -543,13 +543,18 @@ def cmd_save(control, args, connection):
     _row(control, act_id, "ACCEPTED", **base)
     _subscribe_save(control, state)
     state.saved_at = time.time()
+    # 2.40.0 (W13 R2, HOME2-8): the save waits for its callback before the game is asked; the game may answer inside
+    # the call.
+    state.pending_save = (act_id, time.time(), connection)
+    _say(control, connection, "ACT_ACCEPTED %s" % act_id)
     try:
         e2_actuator.save_now(slot_id, slot_name)
     except Exception as error:
+        if state.pending_save is None or state.pending_save[0] != act_id:
+            return True   # the game finished it inside the call: its callback has written the act's end
+        state.pending_save = None
         state.saved_at = None
         return _reject(control, act_id, connection, "SAVE_FAILED", detail=type(error).__name__, **base)
-    state.pending_save = (act_id, time.time(), connection)
-    _say(control, connection, "ACT_ACCEPTED %s" % act_id)
     return True
 
 

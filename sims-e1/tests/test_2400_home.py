@@ -162,6 +162,7 @@ class FakeActuator(object):
         self.money_hidden_after_charge = False
         self.refund_refused = False
         self.spot_error = None
+        self.save_fires = False
 
     # reads
     def at_home(self, household_id):
@@ -355,6 +356,9 @@ class FakeActuator(object):
         self.calls.append(("save", slot_id, slot_name))
         if self.save_error is not None:
             raise self.save_error
+        if self.save_fires:
+            for callback in list(self.callbacks):
+                callback()
 
     def subscribe_saves(self, callback):
         self.callbacks.append(callback)
@@ -840,6 +844,14 @@ class SaveTests(HomeCase):
         self.assertEqual(len(self.actuator.callbacks), 1)
         self.actuator.callbacks[0]()
         self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("FINISHED", "SAVED")])
+
+    def test_a_save_the_game_finishes_inside_its_own_call_is_finished(self):
+        """HOME2-8 / W13 R2: the game may call back before the save call returns; the save is waiting before the call."""
+        self.actuator.save_fires = True
+        self.assertTrue(self.run_cmd("save", {}))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None), ("FINISHED", "SAVED")])
+        self.assertIsNone(self.home.state_of(self.control).pending_save)
+        self.assertEqual(self.control.lines, ["ACT_ACCEPTED " + ACT, "ACT_FINISHED SAVED"])
 
     def test_a_save_callback_with_no_save_waiting_does_nothing(self):
         self.assertTrue(self.run_cmd("save", {}))
