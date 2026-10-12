@@ -374,12 +374,18 @@ class Bridge:
     def _set_her(self, row):
         """2.37.0 (W10 H3): her names, from the presence row of her body (the probe's is_body entry), for the words of
         her view. None until a body row names her."""
-        display = None
+        display = first = last = None
         for item in (row.get("presence") or []) if isinstance(row, dict) else []:
             if isinstance(item, dict) and item.get("is_body") is True:
                 display = item.get("name")
+                first, last = item.get("first_name"), item.get("last_name")
                 break
-        self._resolve_text.her = tokens.names_of(display)
+        # W12 (E4, E5): the body's own name fields and gender (the probe's keys; absent on an older probe).
+        body = row.get("body") if isinstance(row, dict) and isinstance(row.get("body"), dict) else {}
+        first = body.get("first_name", first)
+        last = body.get("last_name", last)
+        self._resolve_text.her = tokens.names_from(first, last, display)
+        self._resolve_text.gender = body.get("gender") if body.get("gender") in ("F", "M") else None
 
     def _send_look(self, wall_ms):
         """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;

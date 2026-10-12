@@ -47,3 +47,48 @@ def test_the_window_facts_still_expire_after_half_an_hour(tmp_path):
     log = _log(tmp_path)
     log.on_row(_speed("DIALOG_SHOWN", code="ARM", detail="dialog 704"), NOW - WINDOW_MS - 1)
     assert log.recent(NOW, "s") == []
+
+
+# E8: a money token is words, not a dropped gap ("brought home some money today"; with an amount, §).
+def test_a_money_token_is_words_and_never_dropped(tmp_path):
+    from domus_helper import tokens
+    subject = tokens.names_of("Ida Vale")
+    assert tokens.fill("{0.SimFirstName} brought home {1.Money} today", subject=subject) == (
+        "Ida brought home some money today")
+    assert tokens.fill("{0.SimFirstName} brought home {1.Money} today", subject=subject, number=1500) == (
+        "Ida brought home §1,500 today")
+
+
+# E4/E5: the probe's first and last name fields are the names; the last name is never a suffix.
+def test_names_come_from_the_probe_fields_and_a_suffix_is_not_a_last_name():
+    from domus_helper import tokens
+    assert tokens.names_of("Ida Ann Vale III") == {"first": "Ida", "last": "Vale", "full": "Ida Ann Vale III"}
+    assert tokens.names_from("Ida", "Vale", "Ida Vale") == {"first": "Ida", "last": "Vale", "full": "Ida Vale"}
+    assert tokens.names_from("Ida", None, None) == {"first": "Ida", "last": "", "full": "Ida"}
+    assert tokens.names_from(None, None, "Ida Vale") == tokens.names_of("Ida Vale")
+    assert tokens.names_from("", "", None) is None
+    assert tokens.names_from("I" * 80, "Vale", None)["first"] == "I" * 64
+
+
+# E4: the body's gender ("F" or "M") picks the form of a pair in her own words.
+def test_her_gender_picks_the_form_of_a_pair():
+    from domus_helper import tokens
+    words = tokens.Words(lambda key: "{M0.he}{F0.she} is hungry")
+    words.her = tokens.names_from("Ida", "Vale", None)
+    assert words(1) == "he is hungry"
+    words.gender = "F"
+    assert words(1) == "she is hungry"
+
+
+def test_the_bridge_names_her_and_her_gender_from_the_probes_fields(paths, tmp_path, monkeypatch):
+    # E4/E5 through the bridge: the body's first and last name fields and gender reach the words of her view.
+    from test_bridge_thalamus import WALL, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL})
+    bridge._set_her({"body": {"sim_id": "ASH", "gender": "F", "first_name": "Ida", "last_name": "Vale III"},
+                     "presence": [{"id": "ASH", "is_body": True, "name": "Ida Vale III"}]})
+    assert bridge._resolve_text.her == {"first": "Ida", "last": "Vale III", "full": "Ida Vale III"}
+    assert bridge._resolve_text.gender == "F"
+    bridge._set_her({"presence": [{"id": "ASH", "is_body": True, "name": "Ida Vale"}]})
+    assert bridge._resolve_text.her == {"first": "Ida", "last": "Vale", "full": "Ida Vale"}
+    assert bridge._resolve_text.gender is None

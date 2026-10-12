@@ -11,18 +11,41 @@ _TOKEN = re.compile(r"\{([^{}]*)\}")
 _PAIR = re.compile(r"\{M(\d+)\.([^{}]*)\}\{F\1\.([^{}]*)\}")
 _NAME = re.compile(r"\{(\d+)\.(SimFirstName|SimLastName|SimName|SimFullName)\}")
 _NUMBER = re.compile(r"\{\d+\.Number\}")
+# W12 (E8): a money token is words ("some money", or the amount with §), never a gap.
+_MONEY = re.compile(r"\{\d+\.Money\}")
 _SPACES = re.compile(r"[ \t]{2,}")
+
+
+# W12 (E5): a name's last word can be a suffix, which is not the family name.
+_SUFFIXES = frozenset({"II", "III", "IV", "V", "Jr", "Jr.", "Sr", "Sr."})
 
 
 def names_of(display):
     """The names of one Sim from its display name ("First Last"): {first, last, full}. None when there is no name
-    (the probe says "someone" for a Sim it cannot name)."""
+    (the probe says "someone" for a Sim it cannot name). W12 (E5): a suffix (III, Jr) is not the last name."""
     if not isinstance(display, str) or display == SOMEONE:
         return None
     parts = display.split()
     if not parts:
         return None
-    return {"first": parts[0], "last": parts[-1], "full": " ".join(parts)}
+    last = parts[-1] if len(parts) == 1 or parts[-1] not in _SUFFIXES else parts[-2]
+    return {"first": parts[0], "last": last, "full": " ".join(parts)}
+
+
+def _name_field(value):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()[:64]
+    return value or None
+
+
+def names_from(first, last, display=None):
+    """W12 (E4, E5): the names of one Sim from the probe's own name fields (first_name, last_name), or from its display
+    name when it sends none. None when there is no name at all."""
+    first, last = _name_field(first), _name_field(last)
+    if first is None:
+        return names_of(display)
+    return {"first": first, "last": last or "", "full": " ".join(part for part in (first, last) if part)}
 
 
 def fill(text, subject=None, gender=None, number=None):
@@ -52,6 +75,7 @@ def _fill(text, subject, gender, number):
         return subject["full"]
     text = _NAME.sub(name, text)
     text = _NUMBER.sub(lambda match: SOME if number is None else str(number), text)
+    text = _MONEY.sub(lambda match: "some money" if type(number) is not int else "§{:,}".format(number), text)
     return _TOKEN.sub("", text)
 
 
