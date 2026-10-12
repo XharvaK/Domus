@@ -28,8 +28,10 @@ IDLE_RUNNING_SOURCES = ("InteractionSource.POSTURE_GRAPH",
 # 2.37.1 (User 2026-10-12: she is coherent enough to take responsibility; nothing of her life is blocked): only
 # testers' and cheat acts (developer tools, not life) and leaving the lot (the bridge cannot follow her off it yet)
 # stay out by name. Careers, money, love, family, moving and the rest are hers to choose.
+# R3 (PROBE3-10, User ruling: the only exclusions are cheat, debug and test acts, and travel): go_here (a walk on the
+# lot) is not a trip, so it is no longer named out.
 DENY_NAME_PARTS = (
-    "debug", "cheat", "testing", "tutorial", "travel", "goto", "go_to", "go_here", "leave",
+    "debug", "cheat", "testing", "tutorial", "travel", "goto", "go_to", "leave",
 )
 
 
@@ -54,6 +56,38 @@ def name_words(name):
     if word:
         words.append(word)
     return [item.lower() for item in words]
+
+
+def class_words(name):
+    """R3 (PROBE3-5): the lower-case words of a class name. Underscores, spaces, dashes and digits end a word, as does a
+    capital that follows a lower-case letter or ends an acronym (object_toiletFC_01 gives object, toilet, fc). Pure."""
+    words, word, text = [], "", str(name)
+    for index, ch in enumerate(text):
+        if not ch.isalpha():
+            if word:
+                words.append(word)
+                word = ""
+            continue
+        if word and ch.isupper():
+            before = text[index - 1]
+            after = text[index + 1] if index + 1 < len(text) else ""
+            if before.islower() or (before.isupper() and after.islower()):
+                words.append(word)
+                word = ""
+        word += ch
+    if word:
+        words.append(word)
+    return [item.lower() for item in words]
+
+
+def kind_word(name):
+    """R3 (PROBE3-5): the word that says what a class is. A live class name starts with "object" and then its kind
+    (object_toiletFC_01 gives toilet, object_door gives door): that is the word after "object". Any other name gives
+    its last word (FrontDoor gives door). '' when the name has no words."""
+    words = class_words(name)
+    if len(words) > 1 and words[0] == "object":
+        return words[1]
+    return words[-1] if words else ""
 
 
 def denied_part(name, parts):
@@ -85,7 +119,7 @@ def denied_name(name):
 # stay listed so the same acts stay out.
 SOCIAL_DENY_PARTS = (
     "debug", "cheat", "cheats", "cheating", "testing", "tutorial", "travel", "traveling", "travelling",
-    "vacation", "phone",
+    "vacation",
 )
 
 # D8 (live 2026-10-04): with energy in distress the guard refused bed and food too,

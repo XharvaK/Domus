@@ -263,7 +263,9 @@ class MenuBuildTests(unittest.TestCase):
         offers = lambda item: ["act"] if int(item["object_id"]) % 3 == 0 else []
         picked = [item["object_id"] for item, _acts in self.menu.pick(items, offers)]
         # 2.34.0 (F4): every object that offers something, room by room in the order the rooms first appear.
-        self.assertEqual(picked, [str(i) for i in sorted(range(0, 100, 3), key=lambda i: (i % 20, i))])
+        # R3 (PROBE3-3): the near ones (within 4 m: 0 and 3) first, then the rest room by room.
+        far = [i for i in range(0, 100, 3) if i > 4]
+        self.assertEqual(picked, ["0", "3"] + [str(i) for i in sorted(far, key=lambda i: (i % 20, i))])
         self.assertEqual(len(picked), 34)
 
     def test_the_offers_of_an_object_are_read_only_when_the_build_asks_for_the_next_one(self):
@@ -296,8 +298,10 @@ class MenuBuildTests(unittest.TestCase):
         items = self.menu.ordered(here + chairs + kitchen + unknown + street)
         ids = [item["object_id"] for item, _acts in self.menu.pick(items, lambda item: ["act"])]
         # 2.34.0 (F4): every object: her room, then each room in turn, what is off the lot last.
-        self.assertEqual(ids, ["h%d" % i for i in range(10)] + ["c%d" % i for i in range(4)] +
-                         ["k%d" % i for i in range(5)] + ["u%d" % i for i in range(4)] + ["s%d" % i for i in range(5)])
+        # R3 (PROBE3-3): the near objects (her room, and the street within 4 m) first; then the far ones, room by room.
+        self.assertEqual(ids, ["h%d" % i for i in range(10)] + ["s%d" % i for i in range(4)] +
+                         ["c%d" % i for i in range(4)] + ["k%d" % i for i in range(5)] +
+                         ["u%d" % i for i in range(4)] + ["s4"])
 
     def test_the_far_bedroom_makes_the_menu_and_fixtures_come_last(self):
         # Live 2026-10-06: tired and hungry, her menu was the piano room and the bathroom.
@@ -483,7 +487,8 @@ class MenuSenseTests(unittest.TestCase):
         lily.is_on_active_lot = lambda: False
         self.things = [mailbox, lily, bed]
         jobs, _room = self._jobs(self.row)
-        self.assertEqual([job["object_id"] for job in jobs], ["23", "22"])  # her lot first, then the street
+        # R3 (PROBE3-3): a near object (the street object 2 m away) comes before a far one, whatever its place.
+        self.assertEqual([job["object_id"] for job in jobs], ["22", "23"])
 
     def test_people_near_her_come_with_their_socials_after_her_room(self):
         neighbour = _Thing(31, 6.0, [Greet, Propose, ReadBook])
@@ -563,6 +568,9 @@ class MenuSenseTests(unittest.TestCase):
         self.probe._menu_tick(self.row)   # starts a build
         self.probe._menu_tick(self.row)   # finishes it and writes the menu
         menus = self.base.e2("act_menu")
+        # R3 (PROBE3-3): the build's near part (the object 2 m away) is written first, then the whole menu.
+        self.assertEqual([("near" in menu, len(menu["objects"])) for menu in menus], [(True, 1), (False, 2)])
+        menus = [menu for menu in menus if "near" not in menu]
         self.assertEqual(len(menus), 1)
         self.assertEqual(menus[0]["objects"][0]["acts"],
                          [{"guid64": GUID, "name": "ReadBook", "text_key": None, "variant": None}])
@@ -571,21 +579,23 @@ class MenuSenseTests(unittest.TestCase):
             self.probe.schema.validate_record(row)
         now["s"] += 25.0
         self.probe._menu_tick(self.row)   # a rebuild after REBUILD_S ...
-        self.probe._menu_tick(self.row)   # ... that changes nothing writes nothing
-        self.assertEqual(len(self.base.e2("act_menu")), 1)
+        self.probe._menu_tick(self.row)   # ... that changes nothing writes nothing (the empty near part is written again)
+        self.assertEqual(len(self.base.e2("act_menu")), 3)
         self.allowed = set()
         # 2.37.0 (W10 P2): a far object's outcome is kept for FAR_CACHE_S (120 s); the time runs out before the room change.
         now["s"] += 125.0
         self.probe._menu_tick(dict(self.row, zone=dict(self.row["zone"], room="5")))
         self.probe._menu_tick(self.row)
         menus = self.base.e2("act_menu")
-        # 2.39.0 (W12 C1, C4): her move writes her near part at once (the room is hers now), and the rebuild that
-        # follows lists the near object with the game's refusals, since no act passes any more.
-        self.assertEqual(len(menus), 3)
-        self.assertEqual((menus[1]["room"], menus[1]["menu_rev"]), ("5", 2))
-        self.assertEqual((menus[-1]["room"], menus[-1]["menu_rev"]), ("5", 2))
-        self.assertEqual([(item["acts"], item["refusals"] is not None) for item in menus[-1]["objects"]],
-                         [([], True)])
+        # 2.39.0 (W12 C1, C4): her move writes her near part at once (the room is hers now), and the near part of the
+        # build that follows lists the near object with the game's refusals, since no act passes any more.
+        # R3 (PROBE3-2): her move into room 5 restarts the build in progress; the move back to room 4 restarts it again.
+        self.assertEqual(len(menus), 5)
+        self.assertEqual((menus[3]["room"], menus[3]["menu_rev"], menus[3].get("near")), ("5", 2, True))
+        self.assertEqual((menus[-1]["room"], menus[-1]["menu_rev"], menus[-1].get("near")), ("4", 2, True))
+        # The near part written on her move back shows the object she is near (its last known acts; the next build
+        # tests them again).
+        self.assertEqual([item["object_id"] for item in menus[-1]["objects"]], ["11"])
 
     def test_a_menu_failure_never_stops_sampling(self):
         self.base.LedgerWriter.records = [self.base.continuing()[0]]

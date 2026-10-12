@@ -147,6 +147,7 @@ _MENU_LAST_BUILD = None
 _MENU_NEAR_REQUESTED = False
 _MENU_BODY = (None, None)
 _MENU_SEEN_ROOM = _NO_ZONE
+_MENU_MOVE_RESTARTED = False  # R3 (PROBE3-2): the build in progress was itself restarted by a room move
 _SITUATION_HANDLE = None
 _INBOX_HANDLE = None
 _INBOX_ZONE = None
@@ -1916,7 +1917,7 @@ def _session_open_from(row):
 
 def _menu_reset(keep_last=False):
     global _MENU, _MENU_ZONE, _MENU_STARTED_S, _MENU_LAST, _MENU_ROOM, _MENU_DONE_ZONE, _MENU_LAST_BUILD
-    global _MENU_SEEN_ROOM
+    global _MENU_SEEN_ROOM, _MENU_MOVE_RESTARTED
     _MENU = None
     _MENU_ZONE = None
     _MENU_STARTED_S = None
@@ -1927,13 +1928,14 @@ def _menu_reset(keep_last=False):
         _MENU_FAR.clear()
         _MENU_LAST_BUILD = None  # 2.39.0 (W12 C1): a zone's near part reads that zone's build only
         _MENU_SEEN_ROOM = _NO_ZONE
+        _MENU_MOVE_RESTARTED = False
 
 
 def _menu_hidden(affordance):
     """2.16.2 (live: the mailbox offered "Power Consumption" acts): the game's own cheat,
     debug and automation flags on the interaction tuning (interactions/base/interaction).
-    Those acts are for testers, not her."""
-    for flag in ("cheat", "debug", "automation"):
+    Those acts are for testers, not her. R3 (PROBE3-10): automation is not one of them."""
+    for flag in ("cheat", "debug"):
         if tuned._class_plain(affordance, flag) is True:
             return True
     return False
@@ -2289,17 +2291,30 @@ def _menu_jobs(row):
         phone.append({"object_id": sim_id, "obj": sim, "phone": True, "person": False,
                       "same_room": None, "on_lot": None, "distance_m": None, "room": None})
 
+    def item_offers(item):
+        if item.get("phone") is True:
+            return _menu_phone_offers(item, sim, context, excluded_phone)
+        if item.get("spot") is not None:
+            return _spot_offers(item, sim, body_position, terrain, spots, seen, spot_stages)
+        return _menu_offers(item, sim, context)
+
     def offers(item):
         # 2.34.0: a build reads objects across ticks, and an object can go meanwhile; one that cannot be read
         # offers nothing in this build, and the rest of the lot is still listed.
         try:
-            if item.get("phone") is True:
-                return _menu_phone_offers(item, sim, context, excluded_phone)
-            if item.get("spot") is not None:
-                return _spot_offers(item, sim, body_position, terrain, spots, seen, spot_stages)
-            return _menu_offers(item, sim, context)
+            acts = item_offers(item)
         except Exception:
             return []
+        # R3 (PROBE3-11): each act carries its item's level, so a near part can read whether it is on another level.
+        for job in acts:
+            job["floor"], job["other_level"] = item.get("floor"), item.get("other_level") is True
+        return acts
+
+    # R3 (PROBE3-11): the level of each item, and whether it is on another level than her body (never near her).
+    body_floor = _position_level(body_position)
+    for item in ordered:
+        item["floor"] = _item_floor(item)
+        item["other_level"] = _other_floor(item["floor"], body_floor)
 
     for item in ordered:
         if item.get("spot") is not None:
@@ -2367,7 +2382,7 @@ def _menu_tick(row):
     build writes its near part as its far part starts. The pie choices of the menu are published with it (G1)."""
     global _MENU, _MENU_ZONE, _MENU_REV, _MENU_LAST, _MENU_STARTED_S, _MENU_ROOM
     global _MENU_FAR_ZONE, _MENU_DONE_ZONE, _MENU_FIRST, _MENU_PARTIAL_S
-    global _MENU_LAST_BUILD, _MENU_NEAR_REQUESTED, _MENU_BODY, _MENU_SEEN_ROOM
+    global _MENU_LAST_BUILD, _MENU_NEAR_REQUESTED, _MENU_BODY, _MENU_SEEN_ROOM, _MENU_MOVE_RESTARTED
     now = _now_s()
     zone = row.get("zone") or {}
     room = zone.get("room")
@@ -2378,6 +2393,16 @@ def _menu_tick(row):
         _MENU_FAR_ZONE = _current_zone()
     moved = _MENU_SEEN_ROOM is not _NO_ZONE and room != _MENU_SEEN_ROOM
     _MENU_SEEN_ROOM = room
+    # R3 (PROBE3-1, PROBE3-2): a build in progress is dropped when the zone changes, or when she changes room (its
+    # order and its near part are the old zone's or old room's). The last menu is kept; the new build starts this tick.
+    # A room move restarts a build at most once in a row (a build begun by a move restart finishes), so a walk through
+    # the house cannot keep the whole menu from ever being written.
+    if _MENU is not None and _MENU_ZONE != _current_zone():
+        _menu_reset(keep_last=True)
+        _MENU_MOVE_RESTARTED = False
+    elif _MENU is not None and moved and not _MENU_MOVE_RESTARTED:
+        _menu_reset(keep_last=True)
+        _MENU_MOVE_RESTARTED = True
     if _MENU_NEAR_REQUESTED or moved:
         _MENU_NEAR_REQUESTED = False
         _menu_near_now()
@@ -2392,11 +2417,12 @@ def _menu_tick(row):
     if _MENU is not None and _MENU.done:
         build, build_zone = _MENU, _MENU_ZONE
         _MENU = None
+        _MENU_MOVE_RESTARTED = False
         if build_zone is _current_zone() and not build.failed:
             # 2.35.0 (D3): the spots of the build that finished are the ones an act may name (the newest build).
             _E2.publish_spots(build_zone, build.spots)
             _E2.publish_variants(build_zone, build.variants)
-            payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
+            payload = build.payload(_MENU_REV + 1, _MENU_ROOM, zone_id=build_zone)
             _MENU_LAST_BUILD = (build_zone, build)
             # 2.37.0 (W10 P2): the first build in a zone is written whole even when it matches the last menu.
             if _MENU_FIRST or not act_menu.same_menu(payload, _MENU_LAST):
@@ -2419,23 +2445,23 @@ def _menu_tick(row):
             # 2.39.0 (W12 C1): every build writes its near part as its far part starts (on_near), not only the first.
             _MENU = act_menu.MenuBuild(jobs, _menu_test, spots=jobs.spots, excluded_phone=jobs.excluded_phone,
                                        budget_ms=act_menu.FIRST_BUDGET_MS if _MENU_FIRST else 8.0,
-                                       far=_MENU_FAR, on_near=_menu_near_part, reach=_menu_reach,
-                                       stages=jobs.spot_stages)
+                                       far=_MENU_FAR, reach=_menu_reach, stages=jobs.spot_stages,
+                                       on_near=lambda build, zone=zone: _menu_near_part(build, zone))
             _MENU_ZONE = zone
 
 
 
-def _menu_near_part(build):
+def _menu_near_part(build, zone):
     """2.39.0 (W12 C1): her near part of this build, as far as it has got: her phone, her room, the Sims on her lot and
     what is within NEAR_M, each distance and room read now (_near_refresh). It has the menu_rev the whole menu will
     have; the whole menu follows when the build finishes. Written on every build, on her move and on a look.
-    2.37.0 (W10 P2): a build's near part is written as its far part starts, as it always was for the first build."""
-    if build.failed:
+    2.37.0 (W10 P2): a build's near part is written as its far part starts, as it always was for the first build.
+    R3 (PROBE3-13): only for the zone the build was made in. R3 (PROBE3-16): an empty part is written too, so the
+    helper drops the old near set when nothing is near. R2: it carries the zone id."""
+    if build.failed or zone != _current_zone():
         return
-    payload = build.payload(_MENU_REV + 1, _MENU_BODY[1], near=True, refresh=_near_refresh)
-    if not payload["objects"]:
-        return  # no near object: an empty part would only stand in for the menu; the whole menu follows
-    _E2.publish_variants(_current_zone(), build.variants)
+    payload = build.payload(_MENU_REV + 1, _MENU_BODY[1], near=True, refresh=_near_refresh, zone_id=zone)
+    _E2.publish_variants(zone, build.variants)
     for part in act_menu.parts(payload):
         _E2._event("act_menu", part)
 
@@ -2451,12 +2477,13 @@ def _menu_near_now():
         return
     if build_zone is not _current_zone():
         return
-    _menu_near_part(build)
+    _menu_near_part(build, build_zone)
 
 
 def _near_refresh(head):
     """2.39.0 (W12 C1): the fields a near part reads when it is written: an object's distance from her body and its
-    room (read now), and whether it is in her room. A phone and a spot keep what they were given."""
+    room (read now), and whether it is in her room. A phone and a spot keep what they were given.
+    R3 (PROBE3-11): and whether it stands on another level than her body (read now)."""
     body_position, body_room = _MENU_BODY
     if head.get("phone") is True or head.get("spot") is not None:
         return {}
@@ -2468,15 +2495,38 @@ def _near_refresh(head):
     room = head.get("room")
     if head.get("on_lot") is True or (distance is not None and distance <= 20.0):
         room = observers._room(obj, position)
-    return {"distance_m": distance, "room": room, "same_room": _same_room(room, body_room)}
+    return {"distance_m": distance, "room": room, "same_room": _same_room(room, body_room),
+            "other_level": _other_floor(_position_level(position), _position_level(body_position))}
+
+
+def _position_level(position):
+    """R3 (PROBE3-11): the level a position stands on (an int), or None when it is not read."""
+    level = position.get("level") if isinstance(position, dict) else None
+    return level if type(level) is int else None
+
+
+def _item_floor(item):
+    """R3 (PROBE3-11): the level an item stands on: a spot's level, else its position's."""
+    if item.get("spot") is not None:
+        return item.get("level") if type(item.get("level")) is int else None
+    return _position_level(item.get("position"))
+
+
+def _other_floor(floor, body_floor):
+    """R3 (PROBE3-11): True when an object and her body stand on different levels (both levels known). A
+    different level is never near her, whatever the ground distance."""
+    return floor is not None and body_floor is not None and floor != body_floor
 
 
 def _menu_partial_part(build):
     """2.37.1: the menu so far, every act_menu.FIRST_PARTIAL_S seconds of the first build in a zone (the whole menu so
-    far, not only the near part). It has the menu_rev the whole menu will have."""
-    payload = build.payload(_MENU_REV + 1, _MENU_ROOM)
+    far, not only the near part). It has the menu_rev the whole menu will have.
+    R1 (partial): marked "partial": true, so the helper shows it as the base of the next near part until the final
+    whole arrives. R2: it carries the zone id."""
+    payload = build.payload(_MENU_REV + 1, _MENU_ROOM, zone_id=_MENU_ZONE)
     if not payload["objects"]:
         return  # no near object: an empty part would only stand in for the menu; the whole menu follows
+    payload["partial"] = True
     for part in act_menu.parts(payload):
         _E2._event("act_menu", part)
 
@@ -2673,7 +2723,7 @@ def _body_gone_stop():
     if life is None or life.get("dead") is not True:
         return False
     reason = "GHOST" if life.get("ghost") is True else "DEAD"
-    _E2.body_gone(reason, sim_id)
+    _E2.body_gone(reason, sim_id, death_type=life.get("death_type"))
     _emit(schema.make_record(
         "session_checkpoint", telemetry_session_id=_TELEMETRY_SESSION_ID,
         wall_timestamp_ms=int(time.time() * 1000), monotonic_ns=time.perf_counter_ns(),

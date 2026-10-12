@@ -143,9 +143,12 @@ class PhoneMenuTests(unittest.TestCase):
                      "phone_Picker_InviteTo_NEW"):
             # 2.37.1: money, jobs, emergencies and family are hers to choose.
             self.assertIsNone(actuator.phone_act_excluded(named(kept)), kept)
-        for out in ("phone_mapPicker_AskOnDate", "phone_simPicker_AskOnHangout_CAD",
-                    "phone_simPicker_InviteToJoinVacation", "phone_CallBackToLodging",
-                    "phone_Picker_Chat_Autonomous", "phone_CallOver_EventNPC",
+        # R3 (PROBE3-10, CONTRA3-2, CONTRA3-3): a date, an invite, a lodging call, and autonomous or npc acts are not trips
+        # nor testers' acts, so they are kept too; only a trip, a tester's or a cheat act is left out.
+        for kept in ("phone_simPicker_AskOnHangout_CAD", "phone_CallBackToLodging",
+                     "phone_Picker_Chat_Autonomous", "phone_CallOver_EventNPC"):
+            self.assertIsNone(actuator.phone_act_excluded(named(kept)), kept)
+        for out in ("phone_mapPicker_AskOnDate", "phone_simPicker_InviteToJoinVacation",
                     "phone_Debug_Sample", "phone_Cheat_Sample", "phone_Sample_PieMenu"):
             self.assertIsNotNone(actuator.phone_act_excluded(named(out)), out)
 

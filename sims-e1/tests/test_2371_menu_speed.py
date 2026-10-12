@@ -121,7 +121,9 @@ class FarCacheUnitTests(unittest.TestCase):
 
         def on_near(build):
             handed.append([item["object_id"] for item in build.payload(1, "4")["objects"]])
-        jobs = [job("1", "11", same_room=True), job("2", "12"), job("3", "13")]
+        far = job("2", "12")
+        far["distance_m"] = 9.0  # R3 (PROBE3-3): a candidate 4 m away or less is near, so the far one is 9 m away
+        jobs = [job("1", "11", same_room=True), far, job("3", "13")]
         self.run_all(self.build(jobs, lambda candidate: True, on_near=on_near))
         self.assertEqual(handed, [["1"]])
 
@@ -339,7 +341,9 @@ class W10MenuTests(unittest.TestCase):
         self.rooms = {}  # no object in her room: the near part is empty, so nothing is written before the menu
         self.build_at(100.0)
         menus = self.menus()
-        self.assertEqual([[item["object_id"] for item in menu["objects"]] for menu in menus], [["11", "12"]])
+        # R3 (PROBE3-3): the object 2 m away is near, so the near part holds it; the whole menu follows.
+        self.assertEqual([[item["object_id"] for item in menu["objects"]] for menu in menus], [["11"], ["11", "12"]])
+        self.assertEqual([menu.get("near") for menu in menus], [True, None])
 
     def test_a_later_build_in_the_same_zone_writes_once_when_it_finishes(self):
         self.build_at(100.0)

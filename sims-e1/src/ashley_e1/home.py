@@ -11,6 +11,7 @@ import json
 import time
 
 from . import e2_lineage
+from . import e2_trial
 from . import schema
 
 try:
@@ -33,6 +34,9 @@ SAVE_CONFIRM_S = 120
 # A removal the game has queued (a sale, or an object made for a purchase that failed) is confirmed gone within this
 # many real seconds; after that it is UNKNOWN, and its money is not moved (HOME-9, S6).
 GONE_CONFIRM_S = 30
+# R3 (PROBE3-7): a sale whose object is still there after GONE_CONFIRM_S stays armed this many real seconds; when the
+# object is seen gone in that time, the sale is paid once (late). After it, the sale is let go.
+LATE_SALE_S = 3600
 THINGS_MAX = 600
 # The catalogue parts: at most this many items, and about this many bytes of JSON (a record is 48 KiB). The things
 # list is written by the probe's lists tick (reach.ListWriter), not here.
@@ -111,27 +115,15 @@ def _bool_or_none(value):
     return value if type(value) is bool else None
 
 
-def _words(name):
-    """The CamelCase words of a class name, lower case (no regular expressions: the guards allow no re import)."""
-    words, current = [], ""
-    for ch in str(name):
-        if ch.isupper() and current:
-            words.append(current.lower())
-            current = ""
-        if ch.isalnum():
-            current += ch
-    if current:
-        words.append(current.lower())
-    return words
-
-
 def is_build_class(name):
-    """True for a build item (a wall, floor, roof, stair, door, window, terrain ...) by its class name's last word."""
-    words = _words(name)
-    return bool(words) and words[-1] in BUILD_LAST_WORDS
+    """True for a build item (a wall, floor, roof, stair, door, window, terrain ...) by its class name's kind word
+    (e2_trial.kind_word: the word after "object" in a live name, else the last word). R3 (PROBE3-5): object_floorTile
+    and object_fence_wood are build items; object_light_wall is a light."""
+    return e2_trial.kind_word(name) in BUILD_LAST_WORDS
 
 
-# 2.40.0 (W13 R2, HOME2-7): a route is the class name's last word (a bed, a toilet, a fridge), not a word inside it.
+# 2.40.0 (W13 R2, HOME2-7): a route is the class name's kind word (a bed, a toilet, a fridge), not a word inside it.
+# R3 (PROBE3-5): object_toiletFC_01 is a toilet; the kind word is the word after "object" (e2_trial.kind_word).
 ROUTE_LAST_WORDS = (("bed", "bed"), ("toilet", "toilet"), ("fridge", "fridge"), ("refrigerator", "fridge"))
 
 
@@ -140,11 +132,10 @@ def route_kind(name, portal):
     None for others."""
     if portal:
         return "door"
-    words = _words(name)
-    last = words[-1] if words else ""
-    for word, kind in ROUTE_LAST_WORDS:
-        if last == word:
-            return kind
+    kind = e2_trial.kind_word(name)
+    for word, route in ROUTE_LAST_WORDS:
+        if kind == word:
+            return route
     return None
 
 
@@ -672,10 +663,36 @@ def _settle_removals(control, now):
                      **pending["base"])
             state.pending_gone.pop(key, None)
         elif now - pending["at"] >= GONE_CONFIRM_S:
+            if pending["kind"] == "sale":
+                # R3 (PROBE3-7): the sale stays armed. It is paid, once, when the object is seen gone (late), until
+                # LATE_SALE_S has passed; the act says that the payment may still come.
+                if not pending.get("late"):
+                    pending["late"] = True
+                    _finish(control, pending["act_id"], pending["connection"], "UNKNOWN", "SELL_UNCONFIRMED",
+                            detail="the object is still there; the payment may still come",
+                            **dict(pending["base"], object_id=key))
+                elif now - pending["at"] >= LATE_SALE_S:
+                    del state.pending_gone[key]
+                continue
             del state.pending_gone[key]
-            code = "SELL_UNCONFIRMED" if pending["kind"] == "sale" else "REMOVE_UNCONFIRMED"
-            _finish(control, pending["act_id"], pending["connection"], "UNKNOWN", code,
+            _finish(control, pending["act_id"], pending["connection"], "UNKNOWN", "REMOVE_UNCONFIRMED",
                     **dict(pending["base"], object_id=key))
+
+
+def _read_back_charge(control, act_id, connection, base, readback):
+    """R3 (PROBE3-8): a purchase whose charge could not be read, settled once its object is gone. The money is read
+    again: refunded only when that read shows the price fell (a read-back), else nothing is refunded. When it still
+    cannot be read, the act is UNKNOWN and the money is not refunded."""
+    after = e2_actuator.funds_money(readback["funds"])
+    if after is None:
+        return _finish(control, act_id, connection, "UNKNOWN", "CHARGE_UNKNOWN",
+                       detail="the money could not be read after the removal; not refunded", **base)
+    if not charge_made(readback["before"], after, readback["price"]):
+        return _finish(control, act_id, connection, "REJECTED", "NO_FUNDS", detail="the money did not fall", **base)
+    if not e2_actuator.funds_add(readback["funds"], readback["price"], readback["sim"], count_as_earnings=False):
+        return _finish(control, act_id, connection, "UNKNOWN", "CHARGE_UNKNOWN",
+                       detail="charged; the refund failed", **base)
+    return _finish(control, act_id, connection, "REJECTED", "CHARGE_UNKNOWN", detail="charged, and refunded", **base)
 
 
 def _settled(control, pending):
@@ -686,8 +703,13 @@ def _settled(control, pending):
     if pending["kind"] == "sale":
         if not e2_actuator.funds_add(pending["funds"], pending["value"], pending["sim"], count_as_earnings=True):
             return _finish(control, act_id, connection, "UNKNOWN", "SELL_FAILED", detail="not paid", **base)
+        # R3 (PROBE3-7): a sale paid after its confirm window says so.
+        late = {"detail": "paid after the confirm window"} if pending.get("late") else {}
         return _finish(control, act_id, connection, "FINISHED", "SOLD",
-                       result=sell_facts(pending["value"], e2_actuator.funds_money(pending["funds"])), **base)
+                       result=sell_facts(pending["value"], e2_actuator.funds_money(pending["funds"])),
+                       **dict(base, **late))
+    if pending.get("readback") is not None:
+        return _read_back_charge(control, act_id, connection, base, pending["readback"])
     detail = pending.get("detail")
     refund = pending.get("refund")
     # 2.40.0 (W13 R2, SEAM2-10): a refund is not earnings (an event's refund is not either).
@@ -698,7 +720,7 @@ def _settled(control, pending):
                    **base)
 
 
-def _undo(control, act_id, connection, obj, code, detail=None, refund=None, phase="REJECTED"):
+def _undo(control, act_id, connection, obj, code, detail=None, refund=None, phase="REJECTED", readback=None):
     """A purchase that failed after its object was made: the object is removed, and the act settles only once the game
     has finished the removal (tick). The money is refunded then, never before (a failed path never refunds while the
     object may still exist). A removal the game refuses is UNKNOWN with the object's id, and nothing is refunded.
@@ -707,7 +729,8 @@ def _undo(control, act_id, connection, obj, code, detail=None, refund=None, phas
     if not e2_actuator.remove_created(obj):
         return _finish(control, act_id, connection, "UNKNOWN", "REMOVE_UNCONFIRMED", object_id=key, guid64=None)
     pending = {"kind": "undo", "act_id": act_id, "connection": connection, "base": {"object_id": None, "guid64": None},
-               "at": time.time(), "code": code, "detail": detail, "refund": refund, "phase": phase}
+               "at": time.time(), "code": code, "detail": detail, "refund": refund, "phase": phase,
+               "readback": readback}
     if e2_actuator.object_gone(key) is True:
         _settled(control, pending)
     else:
@@ -764,8 +787,10 @@ def cmd_buy(control, args, connection):
     if money_after is None:
         # 2.40.0 (W13 R2, SEAM2-5 / T4): the money cannot be read, so whether she paid is not known. The object is
         # removed as a failed purchase is, with no refund, and the act says so.
+        # R3 (PROBE3-8): once the object is gone the money is read again; refund only by that read-back.
         return _undo(control, act_id, connection, obj, "CHARGE_UNKNOWN", phase="UNKNOWN",
-                     detail="the money could not be read; the object was removed and not refunded")
+                     detail="the money could not be read; the object is removed, and the money is read again",
+                     readback={"funds": funds, "sim": sim, "before": money_before, "price": price})
     if not charge_made(money_before, money_after, price):
         return _undo(control, act_id, connection, obj, "NO_FUNDS")
     refund = {"funds": funds, "amount": price, "sim": sim}
