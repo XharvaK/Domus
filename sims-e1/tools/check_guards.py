@@ -20,6 +20,8 @@ PRODUCTION_MODULES = (
     "e2_trial", "preflight", "food", "situation",
     # 2.40.0 (W13 P1): her reach (discovery and lists; pure).
     "reach",
+    # 2.40.0 (W13 P2): the home verbs and the things and catalogue lists.
+    "home",
 )
 # DS3: build_buy also holds world mutators; only its read-only room lookup may be
 # imported, and only by name (never `import build_buy`).
@@ -101,6 +103,10 @@ ACTUATOR_ONLY_CALLS = {
     # 2.40.0 (W13 P1): her trip (the game's travel service), her planned event (the zone's situation manager) and the
     # household's funds for that event: the actuator's own effect calls, e2_actuator.py only.
     "travel_sim_to_zone", "create_situation", "try_remove",
+    # 2.40.0 (W13 P2, home): her save (PersistenceService.save_using, as the game's save command calls it) and the
+    # removal of a household object: destroy is called by sell_object, and by remove_created (an object the same
+    # command just made, after a failed placement). Nothing else removes anything.
+    "save_using", "destroy",
 }
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.

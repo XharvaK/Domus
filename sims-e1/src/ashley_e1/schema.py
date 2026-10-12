@@ -105,6 +105,10 @@ E2_PAYLOAD_KEYS.update({
     "phone": ("kind", "from_sim_id", "notifies"),
 })
 E2_PAYLOAD_KEYS["act_event"] = E2_PAYLOAD_KEYS["act_event"] + ("result",)
+# 2.40.0 (W13 P2, home): the catalogue record (`catalog`), in parts. The things list is a `lists` record (kind things).
+EVENT_KINDS = EVENT_KINDS + ("catalog",)
+E2_EVENT_KINDS = E2_EVENT_KINDS + ("catalog",)
+E2_PAYLOAD_KEYS["catalog"] = ("catalog_rev", "part", "parts", "items")
 ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN", "WAITING", "NOTED")
 # 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
 ACT_MAX_ALIASES = 4
@@ -158,6 +162,8 @@ COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "pace", "answer", "cancel", "menu_near")
 # 2.40.0 (W13 P1): travel, a planned event, and a fresh read of the lists. Own line, so the commands of other blocks merge.
 COMMANDS = COMMANDS + ("go", "event", "lists_now")
+# 2.40.0 (W13 P2, home): her save and her home edits, and the catalogue dump (home.COMMANDS).
+COMMANDS = COMMANDS + ("save", "buy", "place", "move", "sell", "catalog_dump")
 
 
 def _command_id(value):
@@ -747,6 +753,12 @@ def _validate_e2(row):
         _validate_menu(payload)
     elif kind in ("discovery", "lists", "phone"):
         _validate_reach(kind, payload)
+        if kind == "lists" and payload["kind"] == "things":
+            # 2.40.0 (W13 P2): each things row has the things keys.
+            for item in payload["items"]:
+                _validate_thing(item)
+    elif kind == "catalog":
+        _validate_catalog_record(payload)
     elif kind == "speed_event":
         _require(payload["phase"] in SPEED_PHASES, "speed phase")
         for key in ("code", "detail"):
@@ -782,6 +794,7 @@ def _validate_result(value):
     if value is None:
         return
     _require(isinstance(value, dict) and len(value) <= RESULT_MAX_KEYS, "act result")
+    _require(set(value) <= RESULT_KEY_NAMES, "act result keys")
     for key, item in value.items():
         bounded_string(key, 32, "act result key", False)
         if item is None or type(item) in (int, bool):
@@ -790,8 +803,9 @@ def _validate_result(value):
             _require(len(item) <= 64, "act result word")
             continue
         _require(type(item) is list and len(item) <= RESULT_LIST_MAX and
-                 all(type(x) is str and len(x) <= 16 for x in item), "act result value")
+                 all(type(x) is str and len(x) <= 20 for x in item), "act result value")
     _require(len(json.dumps(value, separators=(",", ":"))) <= RESULT_MAX_BYTES, "act result size")
+    _validate_home_facts(value)
 
 
 def _validate_reach(kind, payload):
@@ -1867,3 +1881,88 @@ def validate_record(row):
 def serialize_record(row):
     validate_record(row)
     return json.dumps(row, ensure_ascii=True, separators=(",", ":"), sort_keys=False).encode("utf-8")
+
+
+# 2.40.0 (W13 P2, home): the things list, the catalogue record and an act's result. Plain values only; bounded.
+THING_WHERE = ("room", "inventory", "outside")
+THING_KEYS = ("object_id", "definition_id", "name_key", "where", "room_id", "value", "made_by_her", "states",
+              "in_use", "count", "placement")
+THING_MAX_STATES = 4
+CATALOG_KEYS = ("definition_id", "price", "buy_category", "placement", "tags", "purchasable")
+CATALOG_MAX_PART_ITEMS = 256
+LIST_MAX_PART_ITEMS = 128
+LIST_MAX_PARTS = 64
+PLACEMENT_WORDS = ("floor", "wall", "surface")
+ROUTE_WORDS = ("door", "bed", "toilet", "fridge")
+RESULT_KEYS = ("room_id", "wall", "wall_has", "beside", "facing_id", "routes_lost", "price", "funds", "value")
+# Every key an act result may carry: the home facts (P2) and the go/event facts (P1).
+RESULT_KEY_NAMES = frozenset(RESULT_KEYS + ("zone_id", "cost", "start_min"))
+RESULT_MAX_IDS = 4
+
+
+def _is_digits(value):
+    return type(value) is str and 1 <= len(value) <= 20 and value.isdigit()
+
+
+def _is_int_or_none(value):
+    return value is None or (type(value) is int and not isinstance(value, bool))
+
+
+def _validate_part(payload, label):
+    _require(type(payload["part"]) is int and type(payload["parts"]) is int, "%s part" % label)
+    _require(0 <= payload["part"] < payload["parts"] <= LIST_MAX_PARTS, "%s part range" % label)
+
+
+def _validate_thing(item):
+    _require(set(item) == set(THING_KEYS), "thing keys")
+    _require(_is_digits(item["object_id"]), "thing object_id")
+    for key in ("definition_id", "name_key", "room_id"):
+        _require(item[key] is None or _is_digits(item[key]), "thing %s" % key)
+    _require(item["where"] in THING_WHERE, "thing where")
+    _require((item["where"] == "room") == (item["room_id"] is not None), "thing room")
+    _require(_is_int_or_none(item["value"]), "thing value")
+    _require(item["made_by_her"] is None or type(item["made_by_her"]) is bool, "thing made_by_her")
+    _require(type(item["states"]) is list and len(item["states"]) <= THING_MAX_STATES, "thing states")
+    for state in item["states"]:
+        _require(type(state) is dict and set(state) == {"state", "value"} and type(state["state"]) is str and
+                 len(state["state"]) <= 64, "thing state")
+        _require(state["value"] is None or type(state["value"]) in (int, float, str), "thing state value")
+    _require(item["in_use"] is None or type(item["in_use"]) is bool, "thing in_use")
+    _require(_is_int_or_none(item["count"]), "thing count")
+    _require(item["placement"] is None or item["placement"] in PLACEMENT_WORDS, "thing placement")
+
+
+def _validate_catalog_record(payload):
+    """2.40.0: one part of the catalogue: at most CATALOG_MAX_PART_ITEMS items, each with the catalogue keys."""
+    bounded_string(payload["catalog_rev"], 64, "catalog rev", False)
+    _validate_part(payload, "catalog")
+    items = payload["items"]
+    _require(type(items) is list and len(items) <= CATALOG_MAX_PART_ITEMS, "catalog items")
+    for item in items:
+        _require(type(item) is dict and set(item) == set(CATALOG_KEYS), "catalog item keys")
+        _require(_is_digits(item["definition_id"]), "catalog definition_id")
+        _require(type(item["price"]) is int and item["price"] >= 0, "catalog price")
+        _require(type(item["buy_category"]) is list or item["buy_category"] is None, "catalog buy_category")
+        _require(item["placement"] is None or (type(item["placement"]) is list and
+                 all(flag in PLACEMENT_WORDS for flag in item["placement"])), "catalog placement")
+        _require(type(item["tags"]) is list and len(item["tags"]) <= 8, "catalog tags")
+        _require(type(item["purchasable"]) is bool, "catalog purchasable")
+
+
+def _validate_home_facts(result):
+    """2.40.0 (W13 P2): the home facts of a result, where present: ids as digits, the routes as their words, no text."""
+    for key in ("room_id", "facing_id"):
+        if result.get(key) is not None:
+            _require(_is_digits(result[key]), "act result %s" % key)
+    if result.get("wall") is not None:
+        _require(type(result["wall"]) is bool, "act result wall")
+    for key in ("wall_has", "beside"):
+        ids = result.get(key)
+        if ids is not None:
+            _require(type(ids) is list and len(ids) <= RESULT_MAX_IDS and all(_is_digits(i) for i in ids),
+                     "act result %s" % key)
+    lost = result.get("routes_lost")
+    if lost is not None:
+        _require(type(lost) is list and all(word in ROUTE_WORDS for word in lost), "act result routes_lost")
+    for key in ("price", "funds", "value"):
+        _require(_is_int_or_none(result.get(key)), "act result %s" % key)

@@ -58,6 +58,7 @@ from . import tuned
 from . import e2_actuator
 from . import e2_admission
 from . import e2_control
+from . import home  # 2.40.0 (W13 P2, home): her save, home edits and the catalogue dump.
 from . import observers
 from . import reach
 from . import schema
@@ -193,6 +194,8 @@ _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
                      "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk", "pace",
                      "go", "event")
+# 2.40.0 (W13 P2, home): her save, home edits and the catalogue dump are refused in calibrate mode too.
+_OBSERVE_REFUSED = _OBSERVE_REFUSED + home.COMMANDS
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -736,6 +739,9 @@ def _inbox_dispatch(cmd, connection):
         return _E2.cmd_talk(args['text'], args.get('sim_id'), connection)
     if name == 'pace':
         return _E2.cmd_pace(args['need_drain'], args['slow_time'], connection)
+    if name in home.COMMANDS:
+        # 2.40.0 (W13 P2, home): her save, her home edits and the catalogue dump (home.py answers each).
+        return home.dispatch(_E2, name, args, connection)
     if name == 'menu_near':
         return request_menu_near()
     if name == 'atlas_dump':
