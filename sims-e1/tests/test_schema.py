@@ -40,6 +40,10 @@ class SchemaContractTests(unittest.TestCase):
                 "writer_failed",
                 "act_event",
                 "act_menu",
+                # 2.40.0 (W13 P1): the discovery record, the lists and a phone event.
+                "discovery",
+                "lists",
+                "phone",
                 "experiment_event",
                 "speed_event",
                 "lineage_event",

@@ -5,6 +5,8 @@ COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
             'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
             'cancel', 'camera', 'talk', 'pace', 'menu_near')
+# 2.40.0 (W13 P1): travel, a planned event, and a fresh read of the lists. Own line, so the commands of other blocks merge.
+COMMANDS = COMMANDS + ('go', 'event', 'lists_now')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')
@@ -109,10 +111,12 @@ def parse(raw_bytes, now_ms, used_ids):
     elif good and name == 'act':
         # 2.24.0: owner is present (and true) only when her Thought said the User asked for it.
         # 2.39.0 (W12 G1): variant is present only for a pie-menu choice: an int from 0 to 999.
-        good = (set(args) - {'owner', 'variant'} == {'act_id', 'object_id', 'guid64'} and
+        # 2.40.0 (W13 P1): sim_id is present only for a phone act that opens a Sim picker: the Sim she picks (digits).
+        good = (set(args) - {'owner', 'variant', 'sim_id'} == {'act_id', 'object_id', 'guid64'} and
                 valid_hex(args.get('act_id'), 32) and _digits(args.get('object_id')) and
                 _digits(args.get('guid64')) and ('owner' not in args or args['owner'] is True) and
-                ('variant' not in args or (type(args['variant']) is int and 0 <= args['variant'] <= 999)))
+                ('variant' not in args or (type(args['variant']) is int and 0 <= args['variant'] <= 999)) and
+                ('sim_id' not in args or _digits(args['sim_id'])))
     elif good and name == 'answer':
         # 2.18.0: her answer to a game dialog: a picker row (digits) or a button by name.
         # 2.31.0: optional rows (several picked rows, each with its count) and text (one value per
@@ -141,6 +145,23 @@ def parse(raw_bytes, now_ms, used_ids):
                 1 <= len(text) <= 240 and text.strip() == text and
                 all(ch >= ' ' and ch != '\x7f' for ch in text) and
                 ('sim_id' not in args or _digits(args['sim_id'])))
+    elif good and name == 'go':
+        # 2.40.0 (W13 P1): her trip to a place she knows (a zone id); her act is the one the reply names.
+        good = (set(args) == {'act_id', 'zone_id'} and valid_hex(args.get('act_id'), 32) and
+                _digits(args.get('zone_id')))
+    elif good and name == 'event':
+        # 2.40.0 (W13 P1): a planned event: a situation id, 0 to 16 guest sim ids, and a start: "now" or a game time
+        # (day_offset 0 for today or 1 for tomorrow, hour, minute).
+        start = args.get('start')
+        start_ok = start == 'now' or (type(start) is dict and set(start) == {'day_offset', 'hour', 'minute'} and
+                                      type(start['day_offset']) is int and start['day_offset'] in (0, 1) and
+                                      type(start['hour']) is int and 0 <= start['hour'] <= 23 and
+                                      type(start['minute']) is int and 0 <= start['minute'] <= 59)
+        guests = args.get('guests')
+        good = (set(args) == {'act_id', 'situation_id', 'guests', 'start'} and
+                valid_hex(args.get('act_id'), 32) and _digits(args.get('situation_id')) and
+                type(guests) is list and len(guests) <= 16 and all(_digits(item) for item in guests) and
+                start_ok)
     elif good and name == 'pace':
         # 2.31.0 (W3p): her needs drain and the game's clock, as fractions of normal pace (1.0 is off).
         good = (set(args) == {'need_drain', 'slow_time'} and _pace_factor(args['need_drain']) and
