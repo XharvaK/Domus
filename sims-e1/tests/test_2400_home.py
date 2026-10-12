@@ -146,6 +146,11 @@ class FakeActuator(object):
         self.rooms_forgotten = 0
         self.removal_queued = False
         self.queued = []
+        self.remove_refused = False
+        self.charge_refused = False
+        self.money_hidden = False
+        self.money_hidden_after_charge = False
+        self.refund_refused = False
 
     # reads
     def at_home(self, household_id):
@@ -232,9 +237,6 @@ class FakeActuator(object):
     def can_afford(self, funds, amount):
         return funds.can_afford(amount)
 
-    def funds_money(self, funds):
-        return funds.money
-
     def value_of(self, obj):
         return obj.value
 
@@ -250,10 +252,20 @@ class FakeActuator(object):
     # effects
     def funds_try_remove(self, funds, amount, sim):
         self.calls.append(("try_remove", amount))
-        return funds.try_remove(amount, "x", sim, True)
+        if self.charge_refused:
+            return False
+        taken = funds.try_remove(amount, "x", sim, True)
+        if self.money_hidden_after_charge:
+            self.money_hidden = True
+        return taken
+
+    def funds_money(self, funds):
+        return None if self.money_hidden else funds.money
 
     def funds_add(self, funds, amount, sim):
         self.calls.append(("add", amount))
+        if self.refund_refused:
+            return False
         funds.add(amount, "x")
         return True
 
@@ -268,8 +280,13 @@ class FakeActuator(object):
 
     def remove_created(self, obj):
         self.calls.append(("remove_created", obj.id))
+        if self.remove_refused:
+            return False
         obj.removed = True
-        self.objects.pop(obj.id, None)
+        if self.removal_queued:
+            self.queued.append(obj.id)
+        else:
+            self.objects.pop(obj.id, None)
         return True
 
     def place(self, obj, spot):
@@ -800,13 +817,68 @@ class BuyTests(HomeCase):
         self.assertEqual(calls, ["create", "find_spot", "remove_created"])
         self.assertEqual(self.actuator.funds.money, 500)
 
-    def test_a_failed_placement_refunds_and_removes_what_it_made(self):
+    def test_a_failed_placement_removes_what_it_made_then_refunds_it(self):
         self.actuator.place_error = RuntimeError("refused")
         self.assertFalse(self.run_cmd("buy", self.args))
         self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
+        self.assertEqual(self.control.events[-1]["detail"], "RuntimeError")
         calls = [c[0] for c in self.actuator.calls]
-        self.assertEqual(calls, ["create", "find_spot", "try_remove", "place", "add", "remove_created"])
+        self.assertEqual(calls, ["create", "find_spot", "try_remove", "place", "remove_created", "add"])
         self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_a_failed_placement_is_refunded_only_once_the_game_has_removed_the_object(self):
+        """HOME-11: the refund waits for the removal to finish; a failed path never refunds while the object exists."""
+        self.actuator.removal_queued = True
+        self.actuator.place_error = RuntimeError("refused")
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
+        self.home.tick(self.control, 1000.0)
+        self.assertEqual(self.actuator.funds.money, 350)
+        self.actuator.process_queue()
+        self.home.tick(self.control, 1001.0)
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
+        self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_a_removal_the_game_refuses_after_a_failed_placement_is_unknown_and_not_refunded(self):
+        self.actuator.place_error = RuntimeError("refused")
+        self.actuator.remove_refused = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_an_object_still_there_after_thirty_seconds_is_unknown_and_not_refunded(self):
+        self.actuator.removal_queued = True
+        self.actuator.place_error = RuntimeError("refused")
+        self.run_cmd("buy", self.args)
+        self.home.tick(self.control, 1000.0)
+        self.home.tick(self.control, 1031.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "REMOVE_UNCONFIRMED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+        self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_charge_that_cannot_be_read_is_unknown_and_the_object_is_kept(self):
+        """HOME-10: she may have paid, so the object stays (never removed unpaid) and the act is UNKNOWN."""
+        self.actuator.money_hidden_after_charge = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "CHARGE_UNKNOWN"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+        self.assertFalse(self.actuator.created[0].removed)
+
+    def test_a_charge_the_funds_refuse_removes_the_object_and_takes_nothing(self):
+        self.actuator.charge_refused = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "NO_FUNDS"))
+        self.assertTrue(self.actuator.created[0].removed)
+        self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_a_refund_that_fails_is_said_in_the_refusal(self):
+        self.actuator.place_error = RuntimeError("refused")
+        self.actuator.refund_refused = True
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
+        self.assertEqual(self.control.events[-1]["detail"], "refund failed")
+        self.assertEqual(self.actuator.funds.money, 350)
 
     def test_a_game_that_cannot_create_refuses_with_place_failed(self):
         self.actuator.create_fail = True

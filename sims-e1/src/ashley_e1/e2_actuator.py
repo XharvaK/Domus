@@ -1512,8 +1512,8 @@ def create_unplaced(defn):
 
 
 def remove_created(obj):
-    """Effect: remove an object this command just created, after a failed placement (money refunded first). The only
-    removal besides sell_object. False when the game refuses."""
+    """Effect: remove an object this command just created (a purchase that failed; home.py refunds only once the game
+    has finished the removal). The only removal besides sell_object. False when the game refuses now."""
     try:
         obj.destroy()
     except Exception:
