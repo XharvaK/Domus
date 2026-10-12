@@ -170,7 +170,7 @@ def offers_for(obj, context, guid64):
 # changes zones, so a phone act that travels is not offered in this version.
 # 2.37.0 (W10 P3): 256 (was 64), so the menu's own phone cap (act_menu.PHONE_CANDIDATES) is the one that binds.
 PHONE_SCAN_LIMIT = 256
-PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "inviteto", "askon", "vacation",
+PHONE_TRAVEL_PARTS = ("travel", "goto", "visitlot", "mappicker", "askon", "vacation",
                       "lodging")
 # 2.29.0: her phone is how she calls, texts and invites people over, so the blanket name bans that
 # kept every phone act out (call_, phone_call, invite, social) do not apply to it. What still stays
@@ -416,11 +416,12 @@ def needs_sim(affordance):
 
 def picker_parameters(sim_info, sim_id):
     """2.40.0: the interaction parameters that make a Sim picker choose this Sim (picked_item_ids, included_override,
-    as the game's picker reads them), or None when the Sim cannot be named."""
+    as the game's picker reads them), or None when the Sim cannot be named.
+    2.40.0 (W13 R2): included_override holds the sim id, not the sim info: the game's picker reads the ids."""
     if sim_info is None:
         return None
     try:
-        return {"picked_item_ids": frozenset((int(sim_id),)), "included_override": [sim_info]}
+        return {"picked_item_ids": frozenset((int(sim_id),)), "included_override": [int(sim_id)]}
     except (TypeError, ValueError):
         return None
 
@@ -478,8 +479,14 @@ def event_guest_list(host_sim_id, guest_ids, job_type):
         return None
     try:
         guest_list = SituationGuestList(True, int(host_sim_id), None)
-        # 2.40.0 (W13 P1 fix): she is the host; a guest list never names her a second time.
-        guests = [sim_id for sim_id in guest_ids if str(sim_id) != str(host_sim_id)]
+        # 2.40.0 (W13 P1 fix): she is the host; a guest list never names her a second time. 2.40.0 (W13 R2): and each
+        # guest is named once.
+        seen = set([str(host_sim_id)])
+        guests = []
+        for sim_id in guest_ids:
+            if str(sim_id) not in seen:
+                seen.add(str(sim_id))
+                guests.append(sim_id)
         for sim_id in [host_sim_id] + guests:
             guest_list.add_guest_info(SituationGuestInfo.construct_from_purpose(
                 int(sim_id), job_type, SituationInvitationPurpose.INVITED))
@@ -509,19 +516,26 @@ def funds_of(household):
         return None
 
 
-def charge(household, amount, sim, reason):
-    """Act: the household's funds pay amount, all of it or nothing (the game's own try_remove). True when paid, False
-    when the funds cannot pay, None when the call itself failed (the funds are unread, so nothing is known)."""
-    try:
-        paid = funds_of(household).try_remove(amount, reason, sim, require_full_amount=True)
-    except Exception:
-        return None
-    return bool(paid)
-
-
 def situation_cost(situation):
     """Read: a situation type's cost (its tuned cost, an int), or None when unread."""
     cost = tuned._class_plain(situation, "cost")
+    return cost if type(cost) is int and cost >= 0 else None
+
+
+def guest_cap(situation):
+    """2.40.0 (W13 R2, Q-d): the most guests the event type takes, its tuned max_participants (an int of at least 1), or
+    None when unread. The game's own count of the host is not read here: the game makes the event and decides."""
+    cap = tuned._class_plain(situation, "max_participants")
+    return cap if type(cap) is int and cap >= 1 else None
+
+
+def hire_cost(guest_list):
+    """2.40.0 (W13 R2): the hire cost of a guest list (SituationGuestList.get_hire_cost, an int), or None when unread.
+    The game's create_situation takes it with the type's cost from the host household."""
+    try:
+        cost = guest_list.get_hire_cost()
+    except Exception:
+        return None
     return cost if type(cost) is int and cost >= 0 else None
 
 

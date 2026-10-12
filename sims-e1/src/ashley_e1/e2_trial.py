@@ -70,8 +70,13 @@ def denied_part(name, parts):
 
 
 def denied_name(name):
-    """2.31.0: the DENY_NAME_PARTS entry whose words come next to each other in the name, else None."""
-    return denied_part(name, DENY_NAME_PARTS)
+    """2.31.0: the DENY_NAME_PARTS entry whose words come next to each other in the name, else None.
+    2.40.0 (W13 R2, Q-a): a career act's leave (CareerLeaveWorkEarly, CareerLeaveSchoolEarly) is not leaving the lot;
+    the word "leave" stays denied in every other name."""
+    parts = DENY_NAME_PARTS
+    if name_words(name)[:1] == ["career"]:
+        parts = tuple(part for part in DENY_NAME_PARTS if part != "leave")
+    return denied_part(name, parts)
 
 # 2.17.0: her socials toward another Sim (greet, invite in, talk) are hers to choose.
 # 2.37.1: so are the ones that change a life or a household; testers' and cheat acts stay out, a trip off the lot

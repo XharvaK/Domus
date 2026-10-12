@@ -41,6 +41,16 @@ class _Unpriced(object):
     guid64 = 9003
 
 
+class _Guests(object):
+    """A guest list with a readable hire cost (invented): get_hire_cost is the game's SituationGuestList call."""
+
+    def __init__(self, hire):
+        self.hire = hire
+
+    def get_hire_cost(self):
+        return self.hire
+
+
 class FixActTests(unittest.TestCase):
     """The verbs and the phone through the probe's inbox, with the act fixtures of test_w13_p1."""
     ready = test_w13_p1.ReachActTests.ready
@@ -69,16 +79,16 @@ class FixActTests(unittest.TestCase):
     def test_an_unread_cost_is_refused_before_any_charge(self):
         self.ready()
         self.probe._KNOWN_EVENTS.add("9003")
-        charges = []
+        made = []
         with _patched(self.probe.e2_actuator, "situation_type", lambda guid: _Unpriced), \
                 _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 1000), \
-                _patched(self.probe.e2_actuator, "charge", lambda *args: charges.append(args) or True), \
+                _patched(self.probe.e2_actuator, "create_event", lambda *args: made.append(args) or "909"), \
                 _patched(self.probe.observers, "household_money", lambda info: 1000):
             ok, _connection = self.sending_event("9003")
         self.assertFalse(ok)
         refusal = self.act_events("REJECTED")[-1]
         self.assertEqual((refusal["code"], refusal["detail"]), ("CREATE_FAILED", "cost unread"))
-        self.assertEqual(charges, [])
+        self.assertEqual(made, [])
 
     def test_a_created_event_whose_id_is_an_int_is_finished_and_not_refunded(self):
         self.ready()
@@ -88,8 +98,7 @@ class FixActTests(unittest.TestCase):
         with _patched(self.probe.e2_actuator, "situation_type", lambda guid: _Situation), \
                 _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 1000), \
                 _patched(self.probe.e2_actuator, "default_job", lambda s: "job"), \
-                _patched(self.probe.e2_actuator, "event_guest_list", lambda *args: "list"), \
-                _patched(self.probe.e2_actuator, "charge", lambda *args: True), \
+                _patched(self.probe.e2_actuator, "event_guest_list", lambda *args: _Guests(0)), \
                 _patched(self.probe.e2_actuator, "refund", lambda *args: refunds.append(args) or True), \
                 _patched(self.base.services, "current_zone_id", lambda: 1), \
                 _patched(self.base.services, "get_zone_situation_manager", lambda zone: manager), \
@@ -164,14 +173,14 @@ class FixActTests(unittest.TestCase):
     def test_a_refund_that_fails_is_said_on_the_refusal(self):
         self.ready()
         self.probe._KNOWN_EVENTS.add("9")
+        money = iter([1000, 750])
         with _patched(self.probe.e2_actuator, "situation_type", lambda guid: _Situation), \
                 _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 1000), \
                 _patched(self.probe.e2_actuator, "default_job", lambda s: "job"), \
-                _patched(self.probe.e2_actuator, "event_guest_list", lambda *args: "list"), \
-                _patched(self.probe.e2_actuator, "charge", lambda *args: True), \
+                _patched(self.probe.e2_actuator, "event_guest_list", lambda *args: _Guests(0)), \
                 _patched(self.probe.e2_actuator, "create_event", lambda *args: None), \
                 _patched(self.probe.e2_actuator, "refund", lambda *args: False), \
-                _patched(self.probe.observers, "household_money", lambda info: 1000):
+                _patched(self.probe.observers, "household_money", lambda info: next(money)):
             ok, _connection = self.sending_event()
         self.assertFalse(ok)
         refusal = self.act_events("REJECTED")[-1]
@@ -253,13 +262,13 @@ class FixActTests(unittest.TestCase):
 
     def test_an_event_id_the_newest_events_list_does_not_offer_is_refused_before_any_charge(self):
         self.ready()
-        charges = []
-        with _patched(self.probe.e2_actuator, "charge", lambda *args: charges.append(args) or True), \
+        made = []
+        with _patched(self.probe.e2_actuator, "create_event", lambda *args: made.append(args) or "909"), \
                 _patched(self.probe.observers, "household_money", lambda info: 1000):
             ok, _connection = self.sending_event("9")
         self.assertFalse(ok)
         self.assertEqual(self.act_events("REJECTED")[-1]["code"], "NOT_AN_EVENT")
-        self.assertEqual(charges, [])
+        self.assertEqual(made, [])
 
     def test_a_refused_act_row_falls_back_to_an_unknown_row_without_the_result(self):
         self.ready()
@@ -273,7 +282,8 @@ class FixActTests(unittest.TestCase):
         with _patched(self.probe._E2, "_event", refuse_the_finish):
             ok = self.probe._E2._act_event_safe(ACT, "FINISHED", code="CREATED", object_id=None, guid64=None,
                                                 result={"cost": 1})
-        self.assertTrue(ok)
+        # 2.40.0 (W13 R2): False after a fallback, so the verb that wrote the row stops.
+        self.assertFalse(ok)
         self.assertEqual(writes[-1]["phase"], "UNKNOWN")
         self.assertEqual(writes[-1]["code"], "ROW_INVALID")
         self.assertNotIn("result", writes[-1])
@@ -387,6 +397,8 @@ class FixObserverTests(unittest.TestCase):
                 _patched(self.observers, "read_events", lambda: None):
             record = self.observers.read_discovery(None, None, None)
         self.assertIn("venues", record["unread"])
+        # 2.40.0 (W13 R2): the population section has no reader, so the record names it as unread.
+        self.assertIn("population", record["unread"])
 
 
 class FixListTests(unittest.TestCase):
@@ -478,6 +490,14 @@ class FixListTests(unittest.TestCase):
                          types.SimpleNamespace(construct_from_purpose=lambda sim, job, purpose: sim)), \
                 _patched(actuator, "SituationInvitationPurpose", types.SimpleNamespace(INVITED="invited")):
             actuator.event_guest_list(1, ["1", "4"], "job")
+        self.assertEqual(added, [1, 4])
+        # 2.40.0 (W13 R2): each guest is named once, and her own id never twice.
+        del added[:]
+        with _patched(actuator, "SituationGuestList", _List), \
+                _patched(actuator, "SituationGuestInfo",
+                         types.SimpleNamespace(construct_from_purpose=lambda sim, job, purpose: sim)), \
+                _patched(actuator, "SituationInvitationPurpose", types.SimpleNamespace(INVITED="invited")):
+            actuator.event_guest_list(1, ["4", "4", "1", "4"], "job")
         self.assertEqual(added, [1, 4])
 
 

@@ -1379,6 +1379,11 @@ def _inbox_tick(alarm_handle=None):
         _inbox_tick_body()
     except Exception:
         _INBOX_ERRORS += 1
+    # 2.40.0 (W13 R2): a pending trip is closed from the inbox tick too: sampling may not resume after a zone change.
+    try:
+        _E2.tick_verbs()
+    except Exception:
+        _INBOX_ERRORS += 1
     try:
         _supervise_sampling()
     except Exception:

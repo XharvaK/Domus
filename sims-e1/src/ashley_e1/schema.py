@@ -878,8 +878,9 @@ def _validate_person(item):
         _require(_is_flag_or_none(item[key]), "person %s" % key)
 
 
-def _validate_place(item):
-    """2.40.0 (W13 P1 fix): a place she can go, as reach.place_item writes it."""
+def _validate_place_item(item):
+    """2.40.0 (W13 P1 fix): a place she can go, as reach.place_item writes it. 2.40.0 (W13 R2): renamed from
+    _validate_place, which is the self-place row's name."""
     _require(set(item) == PLACE_KEYS, "place keys")
     _require(_is_digits(item["zone_id"]), "place zone_id")
     _require(item["kind"] in PLACE_KIND_NAMES, "place kind")
@@ -897,7 +898,7 @@ def _validate_event(item):
     _require(_is_flag_or_none(item["schedulable"]), "event schedulable")
 
 
-LIST_ITEM_VALIDATORS = {"people": _validate_person, "places": _validate_place, "events": _validate_event}
+LIST_ITEM_VALIDATORS = {"people": _validate_person, "places": _validate_place_item, "events": _validate_event}
 
 
 def _validate_menu(payload):
@@ -1969,7 +1970,8 @@ RESULT_MAX_IDS = 4
 
 
 def _is_digits(value):
-    return type(value) is str and 1 <= len(value) <= 20 and value.isdigit()
+    # 2.40.0 (W13 R2): ASCII digits only (str.isdigit also takes other scripts' digits).
+    return type(value) is str and 1 <= len(value) <= 20 and all(ch in "0123456789" for ch in value)
 
 
 def _is_int_or_none(value):

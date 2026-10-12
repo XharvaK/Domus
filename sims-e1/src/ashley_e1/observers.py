@@ -2709,7 +2709,7 @@ def read_career_discovery(sim_info):
 
 
 # 2.40.0 (W13 P1 fix): what the probe does not read yet, said plainly in the discovery record.
-UNREAD_NOW = ("venues", "event schedulable", "off-lot commodities", "career early and available flags")
+UNREAD_NOW = ("venues", "event schedulable", "off-lot commodities", "career early and available flags", "population")
 
 
 def read_discovery(sim_info, phone_pickers=None, phone_tests=None):

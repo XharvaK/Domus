@@ -138,10 +138,12 @@ class PhoneMenuTests(unittest.TestCase):
             return type(name, (object,), {"guid64": 1, "allow_user_directed": True})
         for kept in ("phone_Picker_Chat", "phone_Picker_Text", "phone_Picker_Invite_Over",
                      "phone_Picker_VideoCall", "phone_Picker_PrankCall", "phone_Burglar_CallPolice",
-                     "phone_Business_MakeBusinessCalls"):
+                     "phone_Business_MakeBusinessCalls",
+                     # 2.40.0 (W13 R2, Q-5): "invite to" is shown now; it is not a trip for her.
+                     "phone_Picker_InviteTo_NEW"):
             # 2.37.1: money, jobs, emergencies and family are hers to choose.
             self.assertIsNone(actuator.phone_act_excluded(named(kept)), kept)
-        for out in ("phone_mapPicker_AskOnDate", "phone_Picker_InviteTo_NEW", "phone_simPicker_AskOnHangout_CAD",
+        for out in ("phone_mapPicker_AskOnDate", "phone_simPicker_AskOnHangout_CAD",
                     "phone_simPicker_InviteToJoinVacation", "phone_CallBackToLodging",
                     "phone_Picker_Chat_Autonomous", "phone_CallOver_EventNPC",
                     "phone_Debug_Sample", "phone_Cheat_Sample", "phone_Sample_PieMenu"):

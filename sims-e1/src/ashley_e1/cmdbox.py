@@ -204,17 +204,18 @@ def parse(raw_bytes, now_ms, used_ids):
         good = (set(args) == {'act_id', 'zone_id'} and valid_hex(args.get('act_id'), 32) and
                 _digits(args.get('zone_id')))
     elif good and name == 'event':
-        # 2.40.0 (W13 P1): a planned event: a situation id, 0 to 16 guest sim ids, and a start: "now" or a game time
-        # (day_offset 0 for today or 1 for tomorrow, hour, minute).
+        # 2.40.0 (W13 P1): a planned event: a situation id, 0 to 64 guest sim ids, and a start: "now" or a game time
+        # (day_offset 0 for today up to 99 days ahead, hour, minute). 2.40.0 (W13 R2, Q-d): the wire bounds; the event
+        # type's own max_participants is checked by the probe.
         start = args.get('start')
         start_ok = start == 'now' or (type(start) is dict and set(start) == {'day_offset', 'hour', 'minute'} and
-                                      type(start['day_offset']) is int and start['day_offset'] in (0, 1) and
+                                      type(start['day_offset']) is int and 0 <= start['day_offset'] <= 99 and
                                       type(start['hour']) is int and 0 <= start['hour'] <= 23 and
                                       type(start['minute']) is int and 0 <= start['minute'] <= 59)
         guests = args.get('guests')
         good = (set(args) == {'act_id', 'situation_id', 'guests', 'start'} and
                 valid_hex(args.get('act_id'), 32) and _digits(args.get('situation_id')) and
-                type(guests) is list and len(guests) <= 16 and all(_digits(item) for item in guests) and
+                type(guests) is list and len(guests) <= 64 and all(_digits(item) for item in guests) and
                 start_ok)
     elif good and name == 'pace':
         # 2.31.0 (W3p): her needs drain and the game's clock, as fractions of normal pace (1.0 is off).

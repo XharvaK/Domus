@@ -225,7 +225,8 @@ class DiscoveryAndPhoneTests(unittest.TestCase):
         self.assertEqual(reach.start_minute(0, 11, 0, now_min, day), day * 1440 + 660)
         self.assertEqual(reach.start_minute(1, 9, 30, now_min, day), (day + 1) * 1440 + 570)
         self.assertIsNone(reach.start_minute(0, 9, 0, now_min, day))
-        self.assertIsNone(reach.start_minute(2, 9, 0, now_min, day))
+        self.assertEqual(reach.start_minute(2, 9, 0, now_min, day), (day + 2) * 1440 + 540)
+        self.assertIsNone(reach.start_minute(100, 9, 0, now_min, day))
         self.assertIsNone(reach.start_minute(0, 25, 0, now_min, day))
 
     def test_guest_ids_are_digits_and_at_most_the_limit(self):
@@ -296,10 +297,10 @@ class CommandWireTests(unittest.TestCase):
                                            "start": "now"})[1])
         start = {"day_offset": 1, "hour": 9, "minute": 30}
         self.assertIsNone(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": [], "start": start})[1])
-        bad = dict(start, day_offset=2)
+        bad = dict(start, day_offset=100)
         self.assertEqual(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": [], "start": bad})[1],
                          "BAD_ARGS")
-        self.assertEqual(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": ["1"] * 17,
+        self.assertEqual(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": ["1"] * 65,
                                           "start": "now"})[1], "BAD_ARGS")
 
     def test_lists_now_takes_no_arguments(self):
@@ -386,7 +387,7 @@ class ActorActuatorTests(unittest.TestCase):
         e2_actuator = self._actuator()
         info = ActorSims(123)
         self.assertEqual(e2_actuator.picker_parameters(info, "123"),
-                         {"picked_item_ids": frozenset({123}), "included_override": [info]})
+                         {"picked_item_ids": frozenset({123}), "included_override": [123]})
         self.assertIsNone(e2_actuator.picker_parameters(None, "123"))
 
 
@@ -457,7 +458,7 @@ class ReachActTests(unittest.TestCase):
                 _patched(self.probe.observers, "her_sim_info", lambda: None):
             ok, connection = self.act(sim_id="123")
         self.assertTrue(ok)
-        self.assertEqual(self.pushed, [{"picked_item_ids": frozenset({123}), "included_override": [info]}])
+        self.assertEqual(self.pushed, [{"picked_item_ids": frozenset({123}), "included_override": [123]}])
         self.assertEqual(self.act_events()[-1]["phase"], "PUSHED")
 
     def test_a_sim_given_to_an_act_that_is_not_a_picker_is_refused(self):
@@ -510,7 +511,8 @@ class ReachActTests(unittest.TestCase):
                 _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 2 * 1440 + 600), \
                 _patched(self.probe.e2_actuator, "situation_cost", lambda s: 0), \
                 _patched(self.probe.e2_actuator, "default_job", lambda s: "job"), \
-                _patched(self.probe.e2_actuator, "event_guest_list", lambda host, guests, job: ("list", guests)), \
+                _patched(self.probe.e2_actuator, "event_guest_list",
+                         lambda host, guests, job: types.SimpleNamespace(guests=guests, get_hire_cost=lambda: 0)), \
                 _patched(self.probe.e2_actuator, "create_event", lambda zone, s, guest_list, when: created.append((zone, guest_list, when)) or "909"), \
                 _patched(self.probe.observers, "household_money", lambda info: 500):
             ok, connection = self.send("event", {"act_id": ACT, "situation_id": "9", "guests": ["4"], "start": "now"})
@@ -518,7 +520,7 @@ class ReachActTests(unittest.TestCase):
         last = self.act_events()[-1]
         self.assertEqual((last["phase"], last["code"]), ("FINISHED", "CREATED"))
         self.assertEqual(last["result"], {"cost": 0, "funds": 500, "start_min": 2 * 1440 + 600})
-        self.assertEqual(created[0][1], ("list", ["4"]))
+        self.assertEqual(created[0][1].guests, ["4"])
 
     def test_an_event_her_household_cannot_pay_for_is_refused(self):
         self.ready()
@@ -526,28 +528,13 @@ class ReachActTests(unittest.TestCase):
         with _patched(self.probe.e2_actuator, "situation_type", lambda guid: object()), \
                 _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 1000), \
                 _patched(self.probe.e2_actuator, "situation_cost", lambda s: 300), \
+                _patched(self.probe.e2_actuator, "default_job", lambda s: "job"), \
+                _patched(self.probe.e2_actuator, "event_guest_list",
+                         lambda host, guests, job: types.SimpleNamespace(get_hire_cost=lambda: 0)), \
                 _patched(self.probe.observers, "household_money", lambda info: 100):
             ok, _connection = self.send("event", {"act_id": ACT, "situation_id": "9", "guests": [], "start": "now"})
         self.assertFalse(ok)
         self.assertEqual(self.act_events("REJECTED")[-1]["code"], "NO_FUNDS")
-
-    def test_a_failed_creation_gives_the_money_back(self):
-        self.ready()
-        self.probe._KNOWN_EVENTS.add("9")
-        refunds = []
-        with _patched(self.probe.e2_actuator, "situation_type", lambda guid: object()), \
-                _patched(self.probe.e2_actuator, "now_absolute_minutes", lambda: 1000), \
-                _patched(self.probe.e2_actuator, "situation_cost", lambda s: 300), \
-                _patched(self.probe.e2_actuator, "default_job", lambda s: "job"), \
-                _patched(self.probe.e2_actuator, "event_guest_list", lambda *args: "list"), \
-                _patched(self.probe.e2_actuator, "charge", lambda household, amount, sim, reason: True), \
-                _patched(self.probe.e2_actuator, "create_event", lambda *args: None), \
-                _patched(self.probe.e2_actuator, "refund", lambda household, amount, sim, reason: refunds.append(amount) or True), \
-                _patched(self.probe.observers, "household_money", lambda info: 1000):
-            ok, _connection = self.send("event", {"act_id": ACT, "situation_id": "9", "guests": [], "start": "now"})
-        self.assertFalse(ok)
-        self.assertEqual(refunds, [300])
-        self.assertEqual(self.act_events("REJECTED")[-1]["code"], "CREATE_FAILED")
 
     def test_a_call_from_another_sim_is_held_for_her(self):
         caller = types.SimpleNamespace(target_sim_id=77)
