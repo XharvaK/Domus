@@ -182,20 +182,31 @@ def _place(item, refs, households=None, **_):
     return {"ref": refs.ref(zone, prefix="h"), "id": zone, "name": lot or what, "kind": kind, "what": what}
 
 
-def _where(item, rooms):
-    """Her thing's place in words: a room's name (the labels she knows), inventory or outside. None when unreadable."""
+def _placed(item):
+    """W13 (H, S5): a thing's place as the probe writes it: (kind, room id as digits). The kind is inventory, outside,
+    room or None (unreadable); the room id is set only for a room."""
     where = item.get("where")
-    kind, room = None, item.get("room_id")
+    kind, room = None, _ident(item.get("room_id"))
     if isinstance(where, dict):
         kind = where.get("where") or where.get("kind") or ("room" if where.get("room_id") is not None else None)
-        room = where.get("room_id", room)
+        if where.get("room_id") is not None:
+            room = _ident(where.get("room_id"))
     elif isinstance(where, str):
         kind = where
+    if kind == "room" or (kind is None and room is not None):
+        return "room", room
+    return kind, None
+
+
+def _where(item, rooms):
+    """Her thing's place in words: its room's label (from the things list, S5), inventory or outside. None when the
+    place is unreadable or its room has no label: a room is never "a room"."""
+    kind, room = _placed(item)
     if kind in ("inventory", "outside"):
         return kind
-    if kind == "room" or (kind is None and room is not None):
-        label = (rooms or {}).get(str(room)) if room is not None else None
-        return (label if isinstance(label, str) and label else "a room")[:WHERE_LIMIT]
+    if kind == "room" and room is not None:
+        label = (rooms or {}).get(room)
+        return label[:WHERE_LIMIT] if isinstance(label, str) and label else None
     return None
 
 
@@ -215,15 +226,8 @@ def _states(raw):
     return words
 
 
-def _thing(item, refs, rooms=None, resolve=None, catalog=None, **_):
-    oid = _ident(item.get("object_id"))
-    if oid is None:
-        raise _Skip("id")
-    where = _where(item, rooms)
-    if where is None:
-        raise _Skip("where")
-    if type(item.get("value")) is not int:
-        raise _Skip("value")
+def _thing_name(item, resolve=None, catalog=None):
+    """A thing's name in words: its own name key, else its catalogue entry's; None when neither reads."""
     name = _text_key(resolve, item.get("name_key"))
     if name is None and catalog is not None and item.get("definition_id") is not None:
         try:
@@ -231,14 +235,47 @@ def _thing(item, refs, rooms=None, resolve=None, catalog=None, **_):
         except Exception:
             entry = None
         name = _text_key(resolve, (entry or {}).get("name_key")) if entry else None
+    return name
+
+
+def room_labels(raw, *, resolve=None, catalog=None):
+    """W13 (H, S5): a label for each room of the things list, from the names of the things in it: "the room with the
+    Test Bed and the Test Lamp" (three names at most). Equal labels get " (2)", " (3)" in ascending room id order; a room
+    with no named thing has no label. A thing's place is its room's label, and a place's room name is matched to these."""
+    names = {}
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        kind, room = _placed(item)
+        name = _thing_name(item, resolve, catalog) if kind == "room" and room is not None else None
+        if name is not None:
+            names.setdefault(room, set()).add(name)
+    labels, counts = {}, {}
+    for room in sorted(names, key=int):
+        base = ("the room with the %s" % " and the ".join(sorted(names[room], key=str.casefold)[:3]))[:WHERE_LIMIT]
+        counts[base] = counts.get(base, 0) + 1
+        labels[room] = base if counts[base] == 1 else "%s (%d)" % (base, counts[base])
+    return labels
+
+
+def _thing(item, refs, rooms=None, resolve=None, catalog=None, **_):
+    oid = _ident(item.get("object_id"))
+    if oid is None:
+        raise _Skip("id")
+    where = _where(item, rooms)
+    if where is None:
+        raise _Skip("where")
+    name = _thing_name(item, resolve, catalog)
     if name is None:
         raise _Skip("name")
     made = item.get("made_by_her")
     placement = item.get("placement")
     thing = {"ref": refs.ref(oid, prefix="t"), "id": oid, "name": name, "where": where,
-             "value": item["value"], "made_by_her": made if isinstance(made, bool) else None,
+             "made_by_her": made if isinstance(made, bool) else None,
              "states": _states(item.get("states")), "in_use": item.get("in_use") is True,
              "placement": placement if isinstance(placement, str) and 1 <= len(placement) <= PLACEMENT_LIMIT else None}
+    if type(item.get("value")) is int:
+        thing["value"] = item["value"]  # A4-11: a thing without a readable value is kept; Natalis takes its absence
     if type(item.get("count")) is int and item["count"] >= 0:
         thing["count"] = item["count"]
     return thing
@@ -274,6 +311,9 @@ def list_words(kind, raw, *, refs, rooms=None, resolve=None, catalog=None, house
             found.append(maker(item, refs, rooms=rooms, resolve=resolve, catalog=catalog, households=households))
         except _Skip as skip:
             _note(skipped, skip.reason)
+    if kind == "things":
+        # A6-17: her inventory comes first, so the size cut takes lot objects before what she carries (stable otherwise).
+        found.sort(key=lambda thing: thing["where"] != "inventory")
     if len(found) > LIMITS[kind]:
         _note(skipped, "over_limit")
     return found[:LIMITS[kind]]
@@ -318,9 +358,18 @@ def _names(ids, name_of):
     return names
 
 
-def result_words(result, *, name_of=None, room_of=None, place_of=None):
+def _start_words(start):
+    """W13 (S7): an event's start in words, from the act's own start: "Starts now.", or the game time and today or
+    tomorrow (its day offset). Never a day count."""
+    if start == "now":
+        return "Starts now."
+    return "Starts at %02d:%02d %s." % (start["hour"], start["minute"], "tomorrow" if start["day_offset"] == 1 else "today")
+
+
+def result_words(result, *, name_of=None, room_of=None, place_of=None, start=None):
     """A verb act's result facts in plain words, at most RESULT_WORDS_MAX characters, or None when there are none.
-    name_of gives a thing's name by its id; room_of a room's name by its id; place_of a place's name by its zone id.
+    name_of gives a thing's name by its id; room_of a room's name by its id; place_of a place's name by its zone id;
+    start is the act's own start (an event), "now" or {day_offset, hour, minute}.
     The sentences: where it is (room, wall, what it is beside), what it faces, what it cuts off, the money, the start."""
     if not isinstance(result, dict):
         return None
@@ -358,9 +407,8 @@ def result_words(result, *, name_of=None, room_of=None, place_of=None):
         sentences.append("Costs §%d%s." % (cost, "; you have §%d" % funds if funds is not None else ""))
     elif funds is not None:
         sentences.append("You have §%d." % funds)
-    start = result.get("start_min")
-    if type(start) is int and start >= 0:
-        sentences.append("Starts at %02d:%02d on day %d." % ((start % 1440) // 60, start % 60, start // 1440))
+    if start is not None:
+        sentences.append(_start_words(start))
     zone = _ident(result.get("zone_id"))
     if zone is not None:
         place = place_of(zone) if place_of is not None else None

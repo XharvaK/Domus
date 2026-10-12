@@ -140,6 +140,7 @@ class Bridge:
         # the spool; the parts of a list still arriving; the names and conditions derived from the lists; the catalogue dump.
         self._lists = {}
         self._households = {}
+        self._rooms_table = {}  # W13 (S5): room id -> label, from the newest things list
         self._list_parts = reach.ListParts()
         self._list_retry_ms = {}
         self._index = reach.index({})
@@ -338,6 +339,7 @@ class Bridge:
             held = json.loads(raw)
             self._lists = held.get("lists") or {}
             self._households = held.get("households") or {}
+            self._rooms_table = held.get("rooms") or {}
         self._set_index()
         self._fires = int(self.spool.get_kv("thalamus_fires") or 0)
         self._enqueued = int(self.spool.get_kv("thalamus_enqueued") or 0)
@@ -704,6 +706,9 @@ class Bridge:
         against, so a list is sent again only when its words change."""
         if kind == "people":
             self._households = reach.households_of(raw)
+        if kind == "things":
+            # W13 (S5): the room labels come from this list, and the things are placed by them.
+            self._rooms_table = reach.room_labels(raw, resolve=self._resolve_text.raw, catalog=self._catalog_lookup())
         skipped = []
         words = reach.list_words(kind, raw, refs=self._refs, rooms=self._room_labels(), resolve=self._resolve_text.raw,
                                  catalog=self._catalog_lookup(), households=self._households, skipped=skipped)
@@ -717,7 +722,8 @@ class Bridge:
                              "skipped": reasons, "cut": len(words) - len(items)})
         self._lists[kind] = {"digest": reach.digest(items), "items": items}
         self._set_index()
-        self.spool.put_kv("domus_lists", json.dumps({"lists": self._lists, "households": self._households}))
+        self.spool.put_kv("domus_lists", json.dumps({"lists": self._lists, "households": self._households,
+                                                     "rooms": self._rooms_table}))
 
     def _set_index(self):
         """W13 (H): the names and conditions of things and places, and the names of people, from the lists held. The
@@ -733,11 +739,12 @@ class Bridge:
                 self._catalog = False
         return self._catalog or None
 
-    def _result_words(self, result):
-        """W13 (D9.3): a verb act's result facts in words: names from the things and places she holds, rooms from her notebook."""
+    def _result_words(self, result, start=None):
+        """W13 (D9.3): a verb act's result facts in words: names from the things and places she holds, rooms from the
+        labels of her things' rooms (S5). start is the act's own start, for an event (S7)."""
         rooms = self._room_labels()
         return reach.result_words(result, name_of=self._index["things"].get, room_of=rooms.get,
-                                  place_of=self._index["places"].get)
+                                  place_of=self._index["places"].get, start=start)
 
     def _answered(self, answer, client, helper_session):
         """W13 (H): what a sync answer asks of the helper. A list Natalis does not hold at its digest is sent now, and one
@@ -802,11 +809,8 @@ class Bridge:
             return set()
 
     def _room_labels(self):
-        """HE6: the interim room names of this world (room id -> label), or {} when the notebook cannot say."""
-        try:
-            return self.notebook.room_labels(self._world())
-        except (sqlite3.Error, ValueError, TypeError, KeyError):
-            return {}
+        """W13 (S5): the room labels of her things' rooms (room id -> label), from the newest things list; {} until one."""
+        return dict(self._rooms_table)
 
     def _notebook_slice(self, wall_ms):
         try:

@@ -114,7 +114,7 @@ def test_a_verb_act_is_sent_as_its_probe_command_with_the_act_id_and_natalis_arg
     assert [event["phase"] for event in _refused(client.last_events(), VERB_ACT)] == ["received"]
 
 
-TEST_ROOMS = {3: "Test Kitchen", 4: "Test Den", 5: "Twin Room", 6: "Twin Room"}
+TEST_ROOMS = {"3": "Test Kitchen", "4": "Test Den", "5": "Twin Room", "6": "Twin Room"}
 
 
 # W13 (D9.3): a place names its room as her view does; the probe takes the room's id. No room, or two, is refused here.
@@ -122,7 +122,7 @@ def test_a_place_room_name_is_sent_as_its_room_id_matched_ignoring_case(tmp_path
     courier, sent = _courier(tmp_path, rooms=lambda: TEST_ROOMS)
     place = {"rel": "wall", "room": "test KITCHEN", "facing": "room"}
     courier.tick(_Mint(acts=[_verb("buy", {"definition_id": "7", "place": place})]), "h", 1000, True, probe="2.40.0")
-    assert sent == [("buy", {"definition_id": "7", "place": {"rel": "wall", "room_id": 3, "facing": "room"},
+    assert sent == [("buy", {"definition_id": "7", "place": {"rel": "wall", "room_id": "3", "facing": "room"},
                              "act_id": VERB_ACT})]
 
 
@@ -138,8 +138,9 @@ def test_a_place_room_name_that_is_no_room_or_more_than_one_is_refused_by_the_he
     courier.tick(client, "h", 1200, True, probe="2.40.0")
     assert sent == []
     everything = [event for body in client.bodies for event in body["events"]]
-    assert _refused(everything, VERB_ACT)[0]["detail"] == {"code": "UNKNOWN_ROOM", "by": "helper"}
-    assert _refused(everything, other)[0]["detail"] == {"code": "UNKNOWN_ROOM", "by": "helper"}
+    assert _refused(everything, VERB_ACT)[0]["detail"] == {
+        "code": "UNKNOWN_ROOM", "by": "helper", "detail": "rooms known: Test Den; Test Kitchen; Twin Room; Twin Room"}
+    assert _refused(everything, other)[0]["detail"]["code"] == "UNKNOWN_ROOM"
 
 
 def test_a_verb_act_on_a_probe_older_than_2_40_is_refused_by_the_helper_and_never_sent(tmp_path):
@@ -213,7 +214,7 @@ def test_a_sim_on_a_window_is_refused_because_a_window_names_no_sim(tmp_path):
 
 # W13 (D9.3): the probe's result facts of a verb act are words in its event, at most 400 characters.
 def test_the_result_of_a_finished_verb_act_is_words_in_its_event(tmp_path):
-    courier, _sent = _courier(tmp_path, result_words=lambda result: "In the Test Kitchen. Costs §%d." % result["price"])
+    courier, _sent = _courier(tmp_path, result_words=lambda result, start=None: "In the Test Kitchen. Costs §%d." % result["price"])
     courier.tick(_Mint(acts=[_verb("buy", {"definition_id": "7", "place": {"in": "Test Kitchen"}})]), "h", 1000, True,
                  probe="2.40.0")
     courier.on_row({"event_kind": "act_event", "telemetry_session_id": "s", "wall_timestamp_ms": 2000,
@@ -223,7 +224,7 @@ def test_the_result_of_a_finished_verb_act_is_words_in_its_event(tmp_path):
 
 
 def test_a_result_is_cut_to_400_characters(tmp_path):
-    courier, _sent = _courier(tmp_path, result_words=lambda result: "x" * 900)
+    courier, _sent = _courier(tmp_path, result_words=lambda result, start=None: "x" * 900)
     courier.tick(_Mint(acts=[_verb("move", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
     courier.on_row({"event_kind": "act_event", "telemetry_session_id": "s", "wall_timestamp_ms": 2000,
                     "e2": {"act_id": VERB_ACT, "phase": "FINISHED", "result": {"room_id": 3}}})
@@ -231,7 +232,7 @@ def test_a_result_is_cut_to_400_characters(tmp_path):
 
 
 def test_a_words_function_that_fails_says_nothing_and_the_event_is_still_written(tmp_path):
-    def broken(result):
+    def broken(result, start=None):
         raise KeyError("room")
     courier, _sent = _courier(tmp_path, result_words=broken)
     courier.tick(_Mint(acts=[_verb("move", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
@@ -310,10 +311,10 @@ def test_things_name_their_room_or_inventory_and_one_with_no_readable_place_is_l
     words = reach.list_words("things", raw, refs=RefBook(), rooms={"3": "Test Kitchen"}, resolve=names.get,
                              skipped=skipped)
     assert words == [
-        {"ref": "t1", "id": "77", "name": "Test Chair", "where": "Test Kitchen", "states": ["Dirty"],
-         "in_use": False, "value": 60, "made_by_her": True, "placement": "floor"},
         {"ref": "t2", "id": "78", "name": "Test Chair", "where": "inventory", "states": [], "in_use": True,
-         "value": 20, "made_by_her": None, "placement": None, "count": 2}]
+         "value": 20, "made_by_her": None, "placement": None, "count": 2},
+        {"ref": "t1", "id": "77", "name": "Test Chair", "where": "Test Kitchen", "states": ["Dirty"],
+         "in_use": False, "value": 60, "made_by_her": True, "placement": "floor"}]
     assert skipped == ["where"]
 
 
@@ -375,8 +376,8 @@ def test_a_purchase_says_where_it_is_what_it_is_beside_what_it_faces_and_what_it
 
 def test_a_sale_an_event_and_a_trip_say_their_money_and_their_time():
     assert reach.result_words({"value": 40, "funds": 500}) == "Worth §40; you have §500."
-    assert reach.result_words({"cost": 150, "funds": 350, "start_min": 1440 + 19 * 60 + 5}) == (
-        "Costs §150; you have §350. Starts at 19:05 on day 1.")
+    assert reach.result_words({"cost": 150, "funds": 350}, start={"day_offset": 1, "hour": 19, "minute": 5}) == (
+        "Costs §150; you have §350. Starts at 19:05 tomorrow.")
     assert reach.result_words({"zone_id": 4}, place_of={"4": "Test Lot"}.get) == "Now in Test Lot."
     assert reach.result_words({}) is None
 
@@ -697,14 +698,16 @@ def test_every_list_built_from_fake_probe_rows_keeps_natalis_bounds_and_an_unnam
                "in_use": False, "count": 2, "placement": "floor, wall, surface"} for n in range(610)]
     things.append({"object_id": "900", "name_key": "1", "where": {"where": "room", "room_id": 3}, "value": None})
     things.append({"object_id": "901", "name_key": "2", "where": "outside", "value": 3})
+    things.append({"object_id": "902", "name_key": "1", "where": "inventory", "value": 4})
     skipped = []
     thing_words = reach.list_words("things", things, refs=RefBook(), rooms={"3": "R" * 80},
                                    resolve={"1": long_name}.get, skipped=skipped)
     _check_list_items("things", thing_words)
-    assert len(thing_words) == 600 and skipped.count("value") == 1 and skipped.count("name") == 1
-    assert thing_words[0]["where"] == "R" * 64 and thing_words[0]["placement"] is None
-    assert thing_words[0]["states"] == ["S" * 40]
-    assert thing_words[0]["name"] == long_name[:64]
+    assert len(thing_words) == 600 and skipped.count("name") == 1 and "value" not in skipped
+    assert thing_words[0]["where"] == "inventory" and thing_words[0]["id"] == "902"
+    assert thing_words[1]["where"] == "R" * 64 and thing_words[1]["placement"] is None
+    assert thing_words[1]["states"] == ["S" * 40]
+    assert thing_words[1]["name"] == long_name[:64]
 
     events = [{"situation_id": 5000, "name_key": "1", "cost": 150}, {"situation_id": 5001, "name_key": "2"},
               {"situation_id": 5002, "name_key": "1", "cost": None}]
@@ -742,7 +745,7 @@ def test_a_sync_event_detail_stays_under_1024_bytes_and_its_result_under_400(tmp
     def detail_of(detail_chars, result_chars):
         folder = tmp_path / ("c%d_%d" % (detail_chars, result_chars))
         folder.mkdir()
-        courier, _sent = _courier(folder, result_words=lambda result: "r" * result_chars)
+        courier, _sent = _courier(folder, result_words=lambda result, start=None: "r" * result_chars)
         courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
         courier.on_row({"event_kind": "act_event", "telemetry_session_id": "s", "wall_timestamp_ms": 2000,
                         "e2": {"act_id": VERB_ACT, "phase": "FINISHED", "detail": "d" * detail_chars,

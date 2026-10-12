@@ -690,7 +690,16 @@ class ArgsInvalid(ValueError):
 
 
 class RoomUnknown(ValueError):
-    """W13 (H): the room a place names is not exactly one room of her view (none, or more than one)."""
+    """W13 (H): the room a place names is not exactly one room of her view (none, or more than one). known: the labels
+    of her rooms (at most 8), so the refusal can name them (A4-8)."""
+
+    def __init__(self, reason, known=()):
+        super().__init__(reason)
+        self.known = [name for name in known if isinstance(name, str)][:8]
+
+
+class EnvelopeRefused(ArgsInvalid):
+    """W13 (H, A6-30): the probe's envelope refused a command the helper wrote (its code is the message)."""
 
 
 _OPTION_ID = re.compile(r"[0-9]{1,20}")
@@ -756,10 +765,35 @@ def _place_args(args, rooms):
     matches = [room for room, label in (rooms or {}).items()
                if isinstance(label, str) and label.casefold() == name.casefold()]
     if len(matches) != 1 or not str(matches[0]).isdigit():
-        raise RoomUnknown("room")
+        raise RoomUnknown("room", sorted((label for label in (rooms or {}).values() if isinstance(label, str)),
+                                         key=str.casefold))
     moved = {key: value for key, value in place.items() if key != "room"}
-    moved["room_id"] = int(matches[0])
+    moved["room_id"] = str(matches[0])  # W13 (S4): a room id is a digit string on the wire
     return dict(args, place=moved)
+
+
+def _rooms_known(names):
+    """W13 (H, A4-8): the rooms she knows, in words for an UNKNOWN_ROOM refusal (at most 200 characters)."""
+    text = "rooms known: "
+    for index, name in enumerate(names):
+        piece = name if index == 0 else "; " + name
+        if len(text) + len(piece) > 200:
+            break
+        text += piece
+    return text if names else "rooms known: none"
+
+
+def _start_of(args):
+    """W13 (S7): an event's start as the helper words it: "now", or the day offset (0 today, 1 tomorrow) and the game
+    time; None when the args name no start the shape allows."""
+    start = args.get("start") if isinstance(args, dict) else None
+    if start == "now":
+        return "now"
+    if (type(start) is dict and set(start) == {"day_offset", "hour", "minute"} and type(start["day_offset"]) is int
+            and start["day_offset"] in (0, 1) and type(start["hour"]) is int and 0 <= start["hour"] <= 23
+            and type(start["minute"]) is int and 0 <= start["minute"] <= 59):
+        return {"day_offset": start["day_offset"], "hour": start["hour"], "minute": start["minute"]}
+    return None
 
 
 def _sim_of(act):
@@ -939,9 +973,10 @@ class ActCourier(object):
         window = _window_of(e2.get("detail"))
         if window is not None:
             detail["window"] = window  # W12: the question (dialog) the act is waiting on, when there is one
+        known = self._known.get(act_id)
         if isinstance(e2.get("result"), dict) and self._result_words is not None:
             # W13 (D9.3): the probe's facts about a verb act, in words for her (never the probe's ids).
-            words = self._words_of_result(e2["result"])
+            words = self._words_of_result(e2["result"], (known or {}).get("start"))
             if words:
                 detail["result"] = words[:RESULT_WORDS_MAX]
                 # Natalis takes a whole detail under 1024 bytes: the words give way first.
@@ -953,7 +988,6 @@ class ActCourier(object):
         at = row.get("wall_timestamp_ms")
         at = at if type(at) is int and at >= 0 else 0
         session = row.get("telemetry_session_id")
-        known = self._known.get(act_id)
         if phase == "pushed" and known is not None:
             known["pushed_ms"] = at
             known["session"] = session
@@ -984,11 +1018,11 @@ class ActCourier(object):
                 known["terminal"] = True
         self._save()
 
-    def _words_of_result(self, result):
+    def _words_of_result(self, result, start=None):
         """W13 (D9.3): the result words for an act's event, or None. A words function that fails says nothing; it never
-        stops the act's record from being written."""
+        stops the act's record from being written. start is the act's own start (W13 S7), or None."""
         try:
-            words = self._result_words(result)
+            words = self._result_words(result, start)
         except Exception:
             return None
         return words if isinstance(words, str) and words else None
@@ -1071,6 +1105,14 @@ class ActCourier(object):
                 self._answered(answer, client, helper_session)
         return written
 
+    def _push(self, command, args):
+        """W13 (H, A6-30): the probe's envelope refuses a command with a code (a ValueError): that is her act's refusal,
+        ARGS_INVALID, with the code in its detail. Any other error is not changed."""
+        try:
+            return self._publish(command, args)
+        except ValueError as error:
+            raise EnvelopeRefused(str(error)[:40]) from error
+
     def _send_alone(self, client, helper_session, now_ms, attached, probe):
         """Returns the acts written, and every answer that came (its pictures and memory asks are handled by the caller)."""
         written, answers = [], []
@@ -1134,15 +1176,18 @@ class ActCourier(object):
                     if _too_old(probe, PROBE_NEEDS[need]):
                         raise ProbeTooOld(need)
                 if verb is not None:
-                    command = self._publish(verb, dict(verb_args, act_id=act_id))
+                    # W13 (A4-19): the act is recorded before its command goes out, so a restart never sends it twice.
+                    self._known[act_id] = {"written_ms": now_ms, "answered": True, "object": None}
+                    self._save()
+                    command = self._push(verb, dict(verb_args, act_id=act_id))
                 elif object_id == QUEUE_OBJECT_ID:
                     # 2.20.0: she stops one of her own actions.
-                    command = self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
+                    command = self._push("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
                 elif object_id.startswith(DIALOG_PREFIX):
                     # 2.18.0: her answer to a game dialog (a picker row or a button). W2h: with
                     # her rows or text, the answer is the dialog's ok carrying them.
                     extra = _answer_args(act.get("answer"))
-                    command = self._publish("answer", dict({"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
+                    command = self._push("answer", dict({"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
                                                             "pick": "ok" if extra else str(act.get("guid64"))}, **extra))
                     self.answered_dialogs = (self.answered_dialogs + [object_id[len(DIALOG_PREFIX):]])[-ASKED_LIMIT:]
                 else:
@@ -1155,17 +1200,24 @@ class ActCourier(object):
                         args["owner"] = True
                     if sim is not None:
                         args["sim_id"] = sim  # W13 (D4.1): the Sim she picked for this phone act
-                    command = self._publish("act", args)
+                    command = self._push("act", args)
             except Exception as error:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
                 code = ("ANSWER_INVALID" if isinstance(error, AnswerInvalid) else "ARGS_INVALID" if isinstance(error, ArgsInvalid)
                         else "UNKNOWN_ROOM" if isinstance(error, RoomUnknown)
                         else "PROBE_TOO_OLD" if isinstance(error, ProbeTooOld) else "INBOX_" + type(error).__name__[:40])
-                self._event(act_id, "rejected", now_ms, {"code": code, "by": "helper"})
+                detail = {"code": code, "by": "helper"}
+                if isinstance(error, RoomUnknown):
+                    detail["detail"] = _rooms_known(error.known)  # W13 (A4-8): the rooms she knows
+                elif isinstance(error, EnvelopeRefused):
+                    detail["detail"] = str(error)  # W13 (A6-30): the probe's envelope code
+                self._event(act_id, "rejected", now_ms, detail)
                 continue
             known = {"written_ms": now_ms, "object": object_id if object_id.isdigit() else None}
             if isinstance(command, str):
                 known["cmd"] = command  # W12 (B3): the probe's reply to this command, read on the next ticks
+            if verb == "event":
+                known["start"] = _start_of(verb_args)  # W13 (S7): the start the event's words are said from
             words = act.get("words")
             if (object_id.isdigit() and isinstance(words, str) and 1 <= len(words) <= WORDS_MAX
                     and words.strip() == words):
