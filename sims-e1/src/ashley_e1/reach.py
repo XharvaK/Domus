@@ -53,7 +53,8 @@ def _id(value):
     if isinstance(value, bool) or value is None:
         return None
     text = str(value) if type(value) is int else value
-    if type(text) is str and text.isdigit() and 1 <= len(text) <= 20:
+    # 2.40.0 (W13 R2): ASCII digits only (str.isdigit also takes other scripts' digits).
+    if type(text) is str and 1 <= len(text) <= 20 and all(ch in "0123456789" for ch in text):
         return text
     return None
 
@@ -274,7 +275,7 @@ def picker_row(name, guid, minimums, filter_name, flags, radius, steps):
 # ------------------------------------------------------------------ phone
 
 def phone_event(kind, from_sim_id, notifies):
-    """2.40.0 (W13 P1): a text or an incoming call for her, as the probe writes it. kind is text or call; from_sim_id
+    """2.40.0 (W13 P1): a notice or an incoming call for her, as the probe writes it. kind is notice or call; from_sim_id
     the caller's or sender's sim id (digits); notifies the guid64 of the phone act it notifies, when readable."""
     if kind not in PHONE_KINDS:
         return None
