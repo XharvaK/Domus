@@ -689,3 +689,15 @@ def test_a_thing_whose_place_is_a_dict_is_not_placed_in_a_room_and_the_notebook_
 def test_a_sale_is_worded_as_sold_for_what_she_was_paid():
     assert reach.result_words({"value": 40, "funds": 500}) == "Sold for §40; you have §500."
     assert reach.result_words({"value": 0}) == "Sold for §0."
+
+
+# HELPER2-13: a verb's args are bounded as the probe measures the envelope (ASCII JSON), with room for the envelope's own
+# fields; non-ASCII args are measured as the probe measures them, not by their UTF-8 size.
+def test_verb_args_are_bounded_as_the_probe_measures_its_envelope(tmp_path):
+    courier, sent = _courier(tmp_path)
+    fits = _verb("save", {"note": "x" * 3400})
+    too_big = _verb("save", {"note": "é" * 700})  # 1400 bytes as UTF-8, 4200 as the probe's ASCII JSON
+    courier.tick(_Mint(acts=[fits, dict(too_big, act_id="%032x" % 7)]), "h", 1000, True, probe="2.40.0")
+    assert len(sent) == 1 and sent[0][1]["note"] == "x" * 3400
+    refused = [event for event in courier._events if event["phase"] == "rejected"]
+    assert len(refused) == 1 and refused[0]["detail"]["code"] == "ARGS_INVALID"

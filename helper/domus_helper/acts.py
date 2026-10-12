@@ -35,8 +35,10 @@ PROBE_NEEDS = {"cancel": (2, 20, 0), "answer": (2, 18, 0), "act": (2, 18, 0), "o
                "move": (2, 40, 0), "sell": (2, 40, 0), "sim": (2, 40, 0)}
 # W13 (H): the verb acts Natalis may send (SyncAct.verb); each is the probe command of the same name.
 VERBS = ("go", "save", "event", "buy", "place", "move", "sell")
-# W13 (H): a verb act's args are the probe command's args, as Natalis wrote them; this bounds what is forwarded.
-VERB_ARGS_BYTES = 4096
+# W13 (H): a verb act's args are the probe command's args, as Natalis wrote them; this bounds what is forwarded. It is
+# measured as the probe measures the envelope (ASCII JSON, HELPER2-13), with about 200 bytes left for the envelope's own
+# fields under the probe's 4096-byte limit.
+VERB_ARGS_BYTES = 3500
 # W13 (H): the most characters of a result's words the sync event carries (the contract's detail.result).
 RESULT_WORDS_MAX = 400
 # W13 (H): a sync event's whole detail is under this many bytes of JSON (Natalis's limit).
@@ -119,6 +121,11 @@ class RefBook(object):
 
 def _bytes(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _ascii_bytes(value):
+    """The size of a value as the probe reads it: ASCII JSON (its envelope limit is measured so; HELPER2-13)."""
+    return len(json.dumps(value, separators=(",", ":")).encode("ascii"))
 
 
 def humanize(name):
@@ -764,7 +771,7 @@ def _verb_args(args):
     are checked here; the probe checks the values. Nothing it carries is ever logged."""
     if args is None:
         return {}
-    if type(args) is not dict or not all(type(key) is str for key in args) or _bytes(args) > VERB_ARGS_BYTES:
+    if type(args) is not dict or not all(type(key) is str for key in args) or _ascii_bytes(args) > VERB_ARGS_BYTES:
         raise ArgsInvalid("args")
     return dict(args)
 
