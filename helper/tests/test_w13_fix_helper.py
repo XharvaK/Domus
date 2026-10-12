@@ -439,3 +439,41 @@ def test_two_rooms_with_the_same_long_names_get_distinct_labels_that_each_place_
     assert {thing["where"] for thing in things if thing["id"] in ("600", "601", "602")} == {labels["6"]}
     assert _place_args({"place": {"room": labels["5"]}}, labels)["place"]["room_id"] == "5"
     assert _place_args({"place": {"room": labels["6"]}}, labels)["place"]["room_id"] == "6"
+
+
+# HELPER2-3 / T1: a list post carries `total`: the probe's total when it sent one, else the count before the helper's own
+# byte cut. The digest covers the total, so a total that changes alone is sent again.
+def test_a_list_parts_total_is_kept_with_the_list_and_none_when_the_probe_sent_none():
+    parts = reach.ListParts()
+    assert parts.take("things", {"list_rev": 1, "part": 0, "parts": 1, "digest": "e" * 64, "count": 1, "total": 900,
+                                 "items": [{"x": 1}]}) == [{"x": 1}]
+    assert parts.totals["things"] == 900
+    assert parts.take("things", {"list_rev": 2, "part": 0, "parts": 1, "digest": "f" * 64, "count": 1,
+                                 "items": [{"x": 2}]}) == [{"x": 2}]
+    assert parts.totals["things"] is None
+
+
+def test_a_list_post_carries_the_probes_total_or_the_count_before_the_byte_cut_and_the_digest_covers_it(
+        paths, tmp_path, monkeypatch):
+    from domus_helper import tokens
+    from test_w13_helper import _Mint, _people_row
+    from test_bridge_thalamus import WALL, _append, _bridge, _data
+    _data(paths, tmp_path, monkeypatch)
+    row = _people_row(1)
+    row["e2"]["total"] = 5
+    _append(paths, [row])
+    client = _Mint()
+    bridge = _bridge(paths, {"ms": WALL}, client=client)
+    bridge.tick(WALL)
+    _settle(bridge)
+    body = client.posted["lists"][0]
+    assert body["total"] == 5 and body["digest"] == reach.digest(body["items"], 5)
+    assert reach.digest(body["items"], 6) != body["digest"]
+    bridge._resolve_text = tokens.Words(lambda key: "T" * 64)
+    things = [{"object_id": str(number), "name_key": "1", "where": "inventory", "value": 3, "made_by_her": False,
+               "states": [{"value": "s" * 40}] * 4, "in_use": False, "placement": "floor"} for number in range(600)]
+    bridge._store_list("things", things)
+    held = bridge._lists["things"]
+    assert held["total"] == 600 and 0 < len(held["items"]) < 600
+    bridge._store_list("things", things, total=900)
+    assert bridge._lists["things"]["total"] == 900

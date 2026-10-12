@@ -726,16 +726,17 @@ class Bridge:
             list_kind = e2.get("kind")
             raw = self._list_parts.take(list_kind, e2) if list_kind in reach.KINDS else None
             if raw is not None:
-                self._store_list(list_kind, raw)
+                self._store_list(list_kind, raw, total=self._list_parts.totals.get(list_kind))
         else:
             raw = self._list_parts.take("catalog", e2, rev_key="catalog_rev")
             if raw is not None and self.detected_build is not None:
                 catalog.store_flags(self.paths, self.detected_build, raw)
                 self._log.write({"wall_ms": clock_ms, "trigger": "catalog", "items": len(raw)})
 
-    def _store_list(self, kind, raw):
+    def _store_list(self, kind, raw, total=None):
         """W13 (H): a whole list, in words, held as Natalis will hold it. Its digest is what the sync answer is checked
-        against, so a list is sent again only when its words change."""
+        against, so a list is sent again only when its words change. total is the probe's count of the list (HELPER2-3);
+        without one, the total is the count before the helper's own byte cut."""
         if kind == "people":
             self._households = reach.households_of(raw)
         if kind == "things":
@@ -746,6 +747,8 @@ class Bridge:
         words = reach.list_words(kind, raw, refs=self._refs, rooms=self._room_labels(), resolve=self._resolve_text.raw,
                                  catalog=self._catalog_lookup(), households=self._households, skipped=skipped)
         items = reach.fit(words)
+        # Natalis takes a total no smaller than the items it is sent (T1): the probe's total, or the words before the cut.
+        total = max(total if total is not None else len(words), len(items))
         if skipped or len(items) < len(words):
             # W13 (H): what Natalis's shape left out, by reason and count (never the names).
             reasons = {}
@@ -754,7 +757,7 @@ class Bridge:
             self._log.write({"wall_ms": int(time.time() * 1000), "trigger": "lists", "kind": kind,
                              "skipped": reasons, "cut": len(words) - len(items)})
         with self._lists_lock:
-            self._lists[kind] = {"digest": reach.digest(items), "items": items}
+            self._lists[kind] = {"digest": reach.digest(items, total), "items": items, "total": total}
         self._set_index()
         self._spool_lists()
 
@@ -820,7 +823,7 @@ class Bridge:
         if now < self._list_retry_ms.get(kind, 0):
             return
         body = {"v": 1, "helper_session": helper_session, "kind": kind, "digest": entry["digest"],
-                "items": entry["items"]}
+                "items": entry["items"], "total": entry.get("total", len(entry["items"]))}
         try:
             sent = client.post_lists(body)
         except Exception:

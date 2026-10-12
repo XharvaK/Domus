@@ -40,9 +40,11 @@ SESSION_NAME = re.compile(r"[0-9A-Za-z_-]{1,64}")
 _DIGITS = re.compile(r"[0-9]{1,32}")
 
 
-def digest(items):
-    """SHA-256 hex of the canonical items: the list as Natalis holds it."""
-    raw = json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def digest(items, total=None):
+    """SHA-256 hex of the canonical items (and their total, when given): the list as Natalis holds it. The total is part
+    of what is sent, so a total that changes alone is sent again (HELPER2-3)."""
+    value = items if total is None else {"items": items, "total": total}
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -67,6 +69,7 @@ class ListParts(object):
 
     def __init__(self):
         self._pieces = {}
+        self.totals = {}  # kind -> the probe's `total` of the list take() last completed (None when it sent none)
 
     def take(self, kind, e2, rev_key="list_rev"):
         parts, part, rev = e2.get("parts"), e2.get("part"), e2.get(rev_key)
@@ -83,18 +86,21 @@ class ListParts(object):
         held = self._pieces.get(kind)
         if held is None or held["rev"] != rev or held["parts"] != parts or held["digest"] != content or held["count"] != count:
             held = self._pieces[kind] = {"rev": rev, "parts": parts, "digest": content, "count": count,
-                                         "items": {}, "sizes": {}}
+                                         "items": {}, "sizes": {}, "total": None}
         items = e2.get("items")
         items = items if isinstance(items, list) else []
         cap = CATALOG_PART_ITEMS if kind == "catalog" else PART_ITEMS
         held["sizes"][part] = len(items)
         held["items"][part] = [item for item in items if isinstance(item, dict)][:cap]
+        if type(e2.get("total")) is int and e2["total"] >= 0:
+            held["total"] = e2["total"]
         if len(held["items"]) < parts:
             return None
         kept = [item for index in range(parts) for item in held["items"][index]]
         if listed and (sum(held["sizes"].values()) != count or len(kept) != count):
             return None
         del self._pieces[kind]
+        self.totals[kind] = held["total"]
         return kept
 
 

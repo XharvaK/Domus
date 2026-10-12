@@ -571,7 +571,7 @@ def test_a_list_is_sent_in_words_until_natalis_holds_its_digest_and_not_sent_aga
     assert body["kind"] == "people" and body["helper_session"] == bridge.helper_session
     assert body["items"] == [{"ref": "p1", "id": "501", "name": "Test Person", "how": "Friend", "home": False,
                               "here": True, "waiting": False}]
-    assert body["digest"] == reach.digest(body["items"])
+    assert body["digest"] == reach.digest(body["items"], body["total"])
     client.answer["lists"] = {"people": body["digest"]}
     bridge.tick(WALL + 1000)
     assert len(client.posted["lists"]) == 1
