@@ -95,4 +95,4 @@ def test_portrait_place_situations_and_the_open_question():
         "dialog_id": "555", "title": "A title",
         "text": "A question about a like",
         "choices": [{"choice": "ok", "text": "Yes"}, {"choice": "cancel", "text": "No"}],
-        "answers_itself": False, "held": False, "whose": "hers"}]
+        "answers_itself": False, "held": False, "whose": "yours"}]

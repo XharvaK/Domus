@@ -13,6 +13,7 @@ OPTIONS_MAX_BYTES = 32768
 OBSERVATION_KEYS = frozenset({
     "v", "observation_id", "world", "branch", "session", "attachment", "body", "snapshot",
     "seq", "source_time_ms", "expires_at_ms", "lineage_class", "percepts", "portrait", "options", "options_cut", "day",
+    "choices_pending",  # W14 (S2): true while the game's choices have not come in this helper session
 })
 HEARTBEAT_KEYS = frozenset({"v", "helper_session", "sent_at_ms", "attached", "world", "probe_version", "inputs"})
 PERCEPT_KEYS = frozenset({"kind", "salience", "facts"})
@@ -150,6 +151,11 @@ def validate_observation(body, now_ms):
         normalized["options"] = options
     if "options_cut" in body:
         normalized["options_cut"] = _options_cut(body.get("options_cut"))
+    if "choices_pending" in body:
+        # W14 (S2): the flag is sent only when it is true (absent once the game's choices have come).
+        if body.get("choices_pending") is not True:
+            raise ContractError("invalid_body", "choices_pending")
+        normalized["choices_pending"] = True
     if "day" in body:
         normalized["day"] = _json_object(body.get("day"), 16384, "day")
     if expires_at_ms <= source_time_ms or expires_at_ms - source_time_ms > MAX_WINDOW_MS:

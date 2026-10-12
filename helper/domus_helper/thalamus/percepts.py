@@ -597,7 +597,7 @@ class Extractor:
         for thing, value in before.items():
             if thing not in now and thing.partition(":")[0] in _BOOK:
                 percepts.append(Percept("self", sim_s, thing, "", lineage=self.lineage_id,
-                                        facts=(("text", "Gone from her %s: %s." % (
+                                        facts=(("text", "Gone from your %s: %s." % (
                                             _BOOK[thing.partition(":")[0]], value)),)))
         return percepts
 

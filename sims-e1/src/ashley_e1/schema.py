@@ -684,8 +684,13 @@ def _validate_e2(row):
         # 2.40.0 (W13 R2, T1): total is optional; a list written before it omits it.
         if "total" not in payload:
             payload["total"] = None
+    expected_keys = set(E2_PAYLOAD_KEYS[kind])
+    # W14 (S1): a near part of a menu carries "near": true; a whole menu carries no near key (optional, act_menu only).
+    if kind == "act_menu" and isinstance(payload, dict) and "near" in payload:
+        _require(payload["near"] is True, "menu near")
+        expected_keys.add("near")
     _require(isinstance(payload, dict) and
-             set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
+             set(payload) == expected_keys, "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
     if kind == "command_event":
         _require(_command_id(payload["id"]), "command id")

@@ -15,7 +15,7 @@ from . import fingerprints as fingerprint_reader
 from . import pace
 from . import reach
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, options as act_options, people_heard, people_names, queue_options
+from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, merge_near, options as act_options, people_heard, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -139,6 +139,10 @@ class Bridge:
         # 8f: the probe's newest menu of what she can do ({session, payload}), and the courier
         # that carries her requested acts to the probe (only when Ashley is reachable).
         self._menu = None
+        # W14 (D3): the last whole menu of the session (kept under its telemetry session), which a near part is merged with.
+        self._whole_menu = None
+        # W14 (S2): no whole menu has arrived in this helper session yet (the view says the choices are still coming).
+        self._whole_seen = False
         self._refs = RefBook()  # N8 (F3): the refs of this helper session (reset at each attachment)
         self._menu_parts = MenuParts()  # N8 (F4): a menu arrives in parts; the whole one is the menu
         self._catalog = None
@@ -256,12 +260,27 @@ class Bridge:
         self._catalog_dump(now, probe)
         self._lists_now_due(now, probe)
         self.overlay.poll(self.client, self.helper_session, now)
+        for line in self.overlay.take_thoughts():  # W14 (S4): a line she chose shows in the game once, as her words
+            self.talk.say(line, sim_id=self._her_sim_id())
         self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
             live = self.overlay.published.get("mode") == "live" and _probe_ok(probe)
             self.director.tick(now, live)
         self.talk.tick(now, self._state == "attached" and _probe_ok(probe, _TALK_PROBE))
+
+    def _menu_shown(self, session, payload, clock_ms):
+        """W14 (D3, S2): the menu she sees for a complete set of menu parts. A whole menu replaces everything and is kept
+        as the session's whole menu. A near part is merged with that whole menu (acts.merge_near): her room and what is
+        near her come from the near part, the far rooms from the whole. Any whole menu marks the choices as come."""
+        if payload.get("near") is not True:
+            self._whole_seen = True
+            self._whole_menu = {"session": session, "payload": payload, "at_ms": clock_ms}
+            return payload
+        whole = self._whole_menu
+        if not isinstance(whole, dict) or whole.get("session") != session:
+            return payload
+        return merge_near(payload, whole.get("payload"))
 
     def _options(self, row, cut=None):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
@@ -348,6 +367,8 @@ class Bridge:
         self._set_her(self._last_body_row)
         raw = self.spool.get_kv("act_menu")
         self._menu = json.loads(raw) if raw else None
+        raw = self.spool.get_kv("act_menu_whole")  # W14 (D3): the whole menu a near part is merged with
+        self._whole_menu = json.loads(raw) if raw else None
         raw = self.spool.get_kv("domus_lists")  # W13 (H): the lists Natalis holds, kept across restarts
         if raw:
             held = json.loads(raw)
@@ -388,14 +409,15 @@ class Bridge:
             if kind == "act_menu" and isinstance(record.get("e2"), dict):
                 # HE12: the menu keeps its wall time and its room; its labels are read against her room now.
                 # N8 (F4): a menu is shown once all its parts have come (see MenuParts).
-                whole = self._menu_parts.take(record.get("telemetry_session_id"), record["e2"])
-                if whole is not None:
-                    self._menu = {"session": record.get("telemetry_session_id"), "payload": whole,
-                                  "at_ms": clock_ms}
-                    self._log_spot_stages(whole, clock_ms)  # W12 (C11): the spot stages, read from the log
-                    self._extractor.act_words = act_words_by_guid(whole, self._resolve_text.raw)  # W13 (S1)
+                session = record.get("telemetry_session_id")
+                taken = self._menu_parts.take(session, record["e2"])
+                if taken is not None:
+                    shown = self._menu_shown(session, taken, clock_ms)  # W14 (D3): a near part never replaces the whole
+                    self._menu = {"session": session, "payload": shown, "at_ms": clock_ms}
+                    self._log_spot_stages(shown, clock_ms)  # W12 (C11): the spot stages, read from the log
+                    self._extractor.act_words = act_words_by_guid(shown, self._resolve_text.raw)  # W13 (S1)
                     self._notebook_quietly(
-                        lambda: self.notebook.observe_menu(self._world(), whole, clock_ms))
+                        lambda: self.notebook.observe_menu(self._world(), shown, clock_ms))
             elif kind == "presence_snapshot":
                 self._notebook_quietly(
                     lambda: self.notebook.observe_presence(self._world(), record, clock_ms))
@@ -487,6 +509,13 @@ class Bridge:
     def _say_words(self, text, object_id):
         """W12 (S2): one talk line in her name (her words to the Sim the act targets)."""
         self.talk.say(text, sim_id=object_id)
+
+    def _her_sim_id(self):
+        """W14 (S4): her body's sim id from the newest body sample (None until one has come)."""
+        row = self._last_body_row or self._last_row
+        body = row.get("body") if isinstance(row, dict) else None
+        sim = body.get("sim_id") if isinstance(body, dict) else None
+        return None if sim is None else str(sim)
 
     def _log_spot_stages(self, menu, clock_ms):
         """W12 (C11): the menu's spot counters, written to the decision log when they change."""
@@ -652,6 +681,7 @@ class Bridge:
             "seen": self._seen,
             "options": self._options(body, cut=options_cut),
             "options_cut": options_cut,
+            "choices_pending": not self._whole_seen,  # W14 (S2): the game's choices have not come in this session
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
             "pace": pace.portrait(self._pace_block, self._pace_log.costs()),
@@ -965,6 +995,7 @@ class Bridge:
             "last_rowid": str(self._last_rowid),
             "obs_seq": str(self._obs_seq),
             "act_menu": json.dumps(self._menu),
+            "act_menu_whole": json.dumps(self._whole_menu),  # W14 (D3)
             "thalamus_fires": str(self._fires),
             "thalamus_enqueued": str(self._enqueued),
             "thalamus_last_reason": "" if self._last_fire_reason is None else self._last_fire_reason,

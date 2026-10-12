@@ -593,7 +593,7 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
                          if isinstance(choice, dict)],
              "answers_itself": item.get("auto_respond") is True,
              "held": item.get("held") is True,
-             "whose": "hers" if dialog_is_hers(item, body, row.get("schema_version")) else "the User's",
+             "whose": "yours" if dialog_is_hers(item, body, row.get("schema_version")) else "the User's",
              **_asked_answer_rules(item, resolve)}
             for item in dialogs["open"] if isinstance(item, dict)]
     own = row.get("self")
@@ -746,4 +746,6 @@ def build(decision, ctx):
                               room_labels=ctx.get("room_labels")),
         **({"options": ctx["options"]} if ctx.get("options") else {}),
         **({"options_cut": ctx["options_cut"]} if ctx.get("options_cut") else {}),
+        # W14 (S2): true while no whole menu of this helper session has come; absent otherwise.
+        **({"choices_pending": True} if ctx.get("choices_pending") is True else {}),
     }

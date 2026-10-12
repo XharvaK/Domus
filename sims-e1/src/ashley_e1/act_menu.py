@@ -368,13 +368,17 @@ class MenuBuild(object):
             if item["room"] is not None and item["room"] not in rooms and len(rooms) < schema.MENU_MAX_DROPPED_ROOMS:
                 rooms.append(item["room"])
         # 2.37.0 (W10 P2, P3): cached counts the candidates whose outcome the far cache gave (tested counts real tests).
-        return {"menu_rev": menu_rev, "room": room, "objects": kept,
+        menu = {"menu_rev": menu_rev, "room": room, "objects": kept,
                 "tested": self.tested, "cached": self.cached, "refused": self.refused,
                 "build_ms": round(self.build_ms, 2), "part": 0, "parts": 1,
                 "refused_phone": list(self.refused_phone),
                 "excluded_phone": list(self.excluded_phone),
                 "dropped": {"objects": len(dropped_objects), "rooms": rooms},
                 "spot_stages": dict(self.spot_stages) or None}
+        # W14 (S1): a near part says so. A whole menu carries no near key; the helper keeps a near part apart from it.
+        if near:
+            menu["near"] = True
+        return menu
 
     def _act_rows(self, oid, view):
         """2.39.0 (W12 C12): the acts of one object: texts folded (the first of each text kept), at most the

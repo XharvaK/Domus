@@ -81,7 +81,10 @@ class MenuParts(object):
         part = e2.get("part") if type(e2.get("part")) is int else 0
         if not 1 <= parts <= 64 or not 0 <= part < parts:
             return None
-        key = (session, e2.get("menu_rev"))
+        # W14 (D3): a set is one menu revision in one count of parts, whole or near. A row that differs in any of
+        # those starts a new set, so pieces of a 17-part write never mix with a 3-part write of the same revision.
+        near = e2.get("near") is True
+        key = (session, e2.get("menu_rev"), parts, near)
         if key != self._key:
             self._key, self._pieces = key, {}
         self._pieces[part] = e2
@@ -95,9 +98,33 @@ class MenuParts(object):
         head = self._pieces[0]
         self._key, self._pieces = None, {}
         # T2: the phone's lists are on part 0 too (the probe writes them there only).
-        return dict(e2, objects=objects, part=0, parts=1, dropped=head.get("dropped"),
-                    spot_stages=head.get("spot_stages"), refused_phone=head.get("refused_phone"),
-                    excluded_phone=head.get("excluded_phone"))
+        whole = dict(e2, objects=objects, part=0, parts=1, dropped=head.get("dropped"),
+                     spot_stages=head.get("spot_stages"), refused_phone=head.get("refused_phone"),
+                     excluded_phone=head.get("excluded_phone"))
+        # W14 (D3): a whole menu carries no near key; a near set keeps it (merge_near places it).
+        if not near:
+            whole.pop("near", None)
+        return whole
+
+
+# W14 (D3): an object is far from her when it is not in her room, not her phone, and more than NEAR_M metres away.
+def _far(item):
+    distance = item.get("distance_m")
+    return (item.get("same_room") is not True and item.get("phone") is not True
+            and isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance > NEAR_M)
+
+
+def merge_near(near, whole):
+    """W14 (D3): the menu she sees after a near part: the near part's objects first, then the objects of the last
+    whole menu of the session that the near part leaves out and that were far from her in that whole. With no whole
+    menu, the near part alone. A whole menu replaces everything; it never reaches this function."""
+    if not isinstance(whole, dict):
+        return near
+    near_objects = [item for item in near.get("objects") or [] if isinstance(item, dict)]
+    near_ids = {str(item.get("object_id")) for item in near_objects}
+    far = [item for item in whole.get("objects") or []
+           if isinstance(item, dict) and str(item.get("object_id")) not in near_ids and _far(item)]
+    return dict(near, objects=near_objects + far)
 
 
 class RefBook(object):
@@ -137,6 +164,17 @@ def humanize(name):
     when the game's own text for the action is not in the string index."""
     words = re.split(r"[_\-]+", name or "")
     return " ".join(_CAMEL.sub(" ", word) for word in words if word).strip()[:80] or "unnamed"
+
+
+def game_name(text):
+    """W14 (D6): an object's game name she can be shown. Not empty, not a debug name (starting with "*" or containing
+    "DEBUG"). None otherwise, and the caller names the object by its class or definition instead."""
+    if not isinstance(text, str):
+        return None
+    name = text.strip()
+    if not name or name.startswith("*") or "DEBUG" in name:
+        return None
+    return name
 
 
 _TOKEN = re.compile(r"\{([^{}]*)\}")
@@ -240,7 +278,8 @@ def _object_name(item, resolve, catalog, people=None):
             entry = catalog(item["definition_id"])
         except Exception:
             entry = None
-        text = _text(resolve, (entry or {}).get("name_key")) if entry else None
+        # W14 (D6): an empty, starred or DEBUG game name is not shown; the class names the object instead.
+        text = game_name(_text(resolve, (entry or {}).get("name_key")) if entry else None)
         if text:
             return text
     return humanize(item.get("class") or "object")
@@ -446,7 +485,7 @@ WITHHELD_SEED = (
     "planOutfit_Mirror_toddler", "planOutfit_Toddler",
     "dresser_TryOnOutfits_Start", "dresser_TryOnOutfits_End",
     "Dresser_TryOnOutfit_00", "Dresser_TryOnOutfit_01", "Dresser_TryOnOutfit_02", "Dresser_TryOnOutfit_03")
-NO_WAY ="the game sees no way for her to get there from where she is now"
+NO_WAY = "the game sees no way for you to get there from where you are now"
 
 
 def _where(item, menu_room, room):
@@ -568,6 +607,15 @@ def _fold(rows):
 
 PHONE_LEFT_OUT_LINES = 12
 PHONE_LEFT_OUT_CHARS = 160
+# W14 (D7): the plain-words reason of each code the probe gives a left-out phone act (its excluded_phone "why"). A code
+# with no words here is shown as the code itself.
+LEFT_OUT_REASONS = {
+    "pie_picker": "it opens a menu of choices, not an act",
+    "deny_name": "a debug or cheat act",
+    "travel": "it takes you off the lot",
+    "not_user_directed": "only the game starts it, not you",
+    "hidden": "the game keeps it out of your menu",
+}
 
 
 def _phone_left_out(menu, resolve):
@@ -578,7 +626,9 @@ def _phone_left_out(menu, resolve):
     for item in menu.get("excluded_phone") if isinstance(menu.get("excluded_phone"), list) else []:
         if isinstance(item, dict):
             act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
-            why = humanize(item["why"]) if isinstance(item.get("why"), str) and item["why"] else "not said"
+            # W14 (D7): the reason in plain words, so the line never shows the probe's code ("deny name").
+            code = item.get("why") if isinstance(item.get("why"), str) else None
+            why = LEFT_OUT_REASONS.get(code) or code or "not said"
             lines.append(("%s: left out: %s" % (act, why))[:PHONE_LEFT_OUT_CHARS])
     for item in menu.get("refused_phone") if isinstance(menu.get("refused_phone"), list) else []:
         if isinstance(item, dict):
@@ -625,7 +675,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
         if item.get("phone") is True:
-            where = "with her"  # 2.29.0: her phone is on her, so no distance and no room.
+            where = "with you"  # 2.29.0: your phone is on you, so no distance and no room.
         acts = []
         texts = set()
         for act in item["acts"]:

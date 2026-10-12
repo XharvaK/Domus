@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-from .acts import EVENT_DAYS_MAX, RESULT_WORDS_MAX, clean_text, humanize
+from .acts import EVENT_DAYS_MAX, RESULT_WORDS_MAX, clean_text, game_name, humanize
 
 KINDS = ("people", "places", "things", "events")
 # The probe writes at most this many items per part, and at most this many parts (a list of 600 is 5 parts).
@@ -249,14 +249,15 @@ def _states(raw):
 
 
 def _thing_name(item, resolve=None, catalog=None):
-    """A thing's name in words: its own name key, else its catalogue entry's; None when neither reads."""
-    name = _text_key(resolve, item.get("name_key"))
+    """A thing's name in words: its own name key, else its catalogue entry's (the definition's name); None when neither
+    reads. W14 (D6): an empty, starred or DEBUG name is no name, so the definition's name is tried instead."""
+    name = game_name(_text_key(resolve, item.get("name_key")))
     if name is None and catalog is not None and item.get("definition_id") is not None:
         try:
             entry = catalog(item["definition_id"])
         except Exception:
             entry = None
-        name = _text_key(resolve, (entry or {}).get("name_key")) if entry else None
+        name = game_name(_text_key(resolve, (entry or {}).get("name_key")) if entry else None)
     return name
 
 
@@ -274,11 +275,38 @@ def room_labels(raw, *, resolve=None, catalog=None):
             names.setdefault(room, set()).add(name)
     labels, counts = {}, {}
     for room in sorted(names, key=int):
-        # The base is cut before the " (n)" suffix, so a label is never longer than WHERE_LIMIT (HELPER2-2).
-        base = ("the room with the %s" % " and the ".join(sorted(names[room], key=str.casefold)[:3]))[:WHERE_LIMIT - 6]
+        # The base is fitted before the " (n)" suffix, so a label is never longer than WHERE_LIMIT (HELPER2-2).
+        base = _room_base(names[room])
         counts[base] = counts.get(base, 0) + 1
         labels[room] = base if counts[base] == 1 else "%s (%d)" % (base, counts[base])
     return labels
+
+
+# W14 (D5): the room label's base fits this, with its " (n)" suffix still inside WHERE_LIMIT.
+LABEL_BASE_LIMIT = WHERE_LIMIT - 6
+
+
+def _room_base(names):
+    """W14 (D5): "the room with the A and the B" (three names at most); when that is too long, "the room with the A";
+    when even that is too long, cut at its last whole word and end with an ellipsis. A label is never cut mid-word."""
+    ordered = sorted(names, key=str.casefold)[:3]
+    for count in range(len(ordered), 0, -1):
+        text = "the room with the %s" % " and the ".join(ordered[:count])
+        if len(text) <= LABEL_BASE_LIMIT:
+            return text
+    return _cut_at_word(text, LABEL_BASE_LIMIT)
+
+
+def _cut_at_word(text, limit):
+    """W14 (D5): the words of text that fit in limit characters with an ellipsis after them. A first word that is too
+    long for the limit is left out, so the result stops at the words before it."""
+    kept = ""
+    for word in text.split(" "):
+        candidate = word if not kept else "%s %s" % (kept, word)
+        if len(candidate) > limit - 1:
+            break
+        kept = candidate
+    return kept + "…"
 
 
 def _thing(item, refs, rooms=None, resolve=None, catalog=None, **_):
