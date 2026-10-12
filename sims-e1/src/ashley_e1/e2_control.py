@@ -1221,8 +1221,8 @@ class E2Control:
             ok, reason, reason_key = e2_actuator.preflight_test(sim, obj, affordance, context, parameters)
         if not ok:
             if parameters is not None:
-                # 2.40.0 (W13 P1 fix): the game's own picker test refused her Sim; its reason key is the fact.
-                return ("SIM_NOT_CHOOSABLE", reason_key, reason_key), None
+                # 2.40.0 (W13 P1 fix): the game's own picker test refused her Sim; its reason (else its key) is the fact.
+                return ("SIM_NOT_CHOOSABLE", reason if reason else reason_key, reason_key), None
             # 2.32.0 (PR10, PR11): a refusal during a fire, or in build mode, is named as such.
             if observers.fire_active() is True:
                 return ("FIRE_REFUSED", reason, reason_key), None

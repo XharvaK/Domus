@@ -148,7 +148,7 @@ class FixActTests(unittest.TestCase):
             ok, connection = self.act(sim_id="123")
         self.assertFalse(ok)
         refusal = self.act_events("REJECTED")[-1]
-        self.assertEqual((refusal["code"], refusal["detail"]), ("SIM_NOT_CHOOSABLE", "9876"))
+        self.assertEqual((refusal["code"], refusal["detail"]), ("SIM_NOT_CHOOSABLE", "Not now"))
         self.assertEqual(connection.lines[-1], "ACT_REJECT SIM_NOT_CHOOSABLE")
 
     def test_a_picker_the_game_allows_is_pushed_even_when_the_discovery_step_would_say_hidden(self):
