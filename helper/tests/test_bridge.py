@@ -346,7 +346,10 @@ def test_probe_version_warns_once_and_withholds_camera(paths, tmp_path, monkeypa
             return type("R", (), {"kind": "admitted", "status": 200})()
 
     def bridge_for(version):
-        session = _session(paths)
+        # SEAM3-21: the probe version is the one of a session's first row, and each game run has its own session file.
+        run = 2 if version == probe_schema.PROBE_VERSION else 1
+        session = paths.telemetry / ("ashley_e1_01234567-89ab-cdef-0123-%012d.jsonl" % run)
+        session.parent.mkdir(parents=True, exist_ok=True)
         _append(session, _row(1, wall=NOW, probe_version=version))
         bridge = Bridge(paths, client=Fake(), process=(1, "t"), detected_build="1.128.90.1030",
                         mono=lambda: 0)

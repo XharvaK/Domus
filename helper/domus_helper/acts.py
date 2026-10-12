@@ -133,12 +133,19 @@ def _carried(item, near_room):
     return out
 
 
+def zones_differ(first, second):
+    """R2: two menus are of different zones only when both name their zone and the zones are not the same. A missing
+    zone (an unknown zone, or an older probe) counts as the same zone."""
+    a, b = first.get("zone_id"), second.get("zone_id")
+    return a is not None and b is not None and a != b
+
+
 def merge_near(near, whole):
     """W14 (D3), merge rule (R3-H): the menu she sees after a near part: the near part's objects first, then EVERY object
     of the whole menu that the near part does not test (a far room, a thing with no distance, a same-room thing a build
     in progress has not tested yet). The whole's dropped count is kept. A near part with no whole, or with a whole of
     another zone (R2), is the near part alone."""
-    if not isinstance(whole, dict) or whole.get("zone_id") != near.get("zone_id"):
+    if not isinstance(whole, dict) or zones_differ(whole, near):
         return near
     near_objects = [item for item in near.get("objects") or [] if isinstance(item, dict)]
     near_ids = {str(item.get("object_id")) for item in near_objects}

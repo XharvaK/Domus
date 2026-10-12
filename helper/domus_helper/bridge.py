@@ -16,7 +16,7 @@ from . import fingerprints as fingerprint_reader
 from . import pace
 from . import reach
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, merge_near, options as act_options, people_heard, people_names, queue_options
+from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, merge_near, options as act_options, people_heard, people_names, queue_options, zones_differ
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -67,6 +67,8 @@ PACE_RETRY_MS = 30_000
 ROW_WRITE_EVERY_MS = 30_000
 # SEAM3-8: a look's view waits this long at most for the near part it asked for.
 LOOK_HOLD_MS = 3_000
+# SEAM3-13: a view's JSON is queued only under this size (the wire takes 64 KiB; the spool is checked before the post).
+OBSERVATION_BYTES = 60 * 1024
 
 
 def _view(payload):
@@ -81,6 +83,10 @@ def _choices_key(session, payload):
     listed = [[str(item.get("object_id")), [str(act.get("guid64")) for act in item.get("acts") or [] if isinstance(act, dict)]]
               for item in objects or [] if isinstance(item, dict)]
     return hashlib.sha256(json.dumps([session, listed], separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _json_size(value):
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def _body_sample(record):
@@ -161,6 +167,7 @@ class Bridge:
         # W14 (S2): no whole menu has arrived in this helper session yet (the view says the choices are still coming).
         self._choices_sent = None  # SEAM3-7: the choices key of the last view sent (a view goes when a new key comes)
         self._choices_due = False
+        self._near_warned = None  # SEAM3-10: the telemetry session the probe-version check has warned about
         self._look_hold = None  # SEAM3-8: a look's view waiting for its near part: {at_ms, after (the row it followed)}
         self._near_rowid = None  # the row of the newest near part read (a look's view waits for one after it)
         self._refs = RefBook()  # N8 (F3): the refs of this helper session (reset at each attachment)
@@ -227,7 +234,7 @@ class Bridge:
         self._maybe_rebuild_procedures(now)
         self.cursor.read_new()
         latest = self.spool.latest_record()
-        probe = latest.get("probe_version") if isinstance(latest, dict) else None
+        probe = self.spool.session_probe()  # SEAM3-21: the version of the current telemetry session, from its first row
         if isinstance(probe, str) and probe != schema.PROBE_VERSION and probe != self._probe_warned:
             print("probe %s is installed; this helper expects %s" % (probe, schema.PROBE_VERSION))
             self._probe_warned = probe
@@ -310,7 +317,7 @@ class Bridge:
         whole = self._whole_menu
         if not isinstance(whole, dict) or whole.get("session") != session:
             return _view(payload)
-        if (whole.get("payload") or {}).get("zone_id") != payload.get("zone_id"):
+        if zones_differ(whole.get("payload") or {}, payload):
             self._whole_menu = None  # R2: another zone's menu is not the base of this near part
             return _view(payload)
         return _view(merge_near(payload, whole.get("payload")))
@@ -321,7 +328,7 @@ class Bridge:
         whole = self._whole_menu
         return not (isinstance(whole, dict) and whole.get("final", True) is True and whole.get("session") == session)
 
-    def _options(self, row, cut=None):
+    def _options(self, row, cut=None, limit=OPTIONS_LIMIT):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
         the game is asking her (an open dialog that is hers) comes first, menu or not."""
         if not isinstance(row, dict):
@@ -337,7 +344,7 @@ class Bridge:
                 self._catalog = Catalog(self.paths)
             except Exception:
                 self._catalog = False
-        room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
+        room = limit - len(json.dumps(asked).encode("utf-8")) - 2 if asked else limit
         # 2.37.0 (W10 H3): act texts keep their tokens here; clean_text fills a person's name or drops them.
         listed = act_options(menu.get("payload"), self._resolve_text.raw, self._catalog or None,
                              people=people_names(row, self._seen_ids()), refs=self._refs, limit=max(0, room),
@@ -503,6 +510,12 @@ class Bridge:
         """The probe's act menu (HE12, N8 F4, W14 D3): the menu keeps its wall time and its room; a menu is shown once all its
         parts have come (see MenuParts), and a near part is merged with the whole (see _menu_shown)."""
         session = record.get("telemetry_session_id")
+        if record.get("probe_version") == schema.PROBE_VERSION and "zone_id" not in record["e2"] and session != self._near_warned:
+            # SEAM3-10: a probe at the version this helper expects sends the zone of each menu (the near parts come with it).
+            # A menu without one means the game's side is an older build with that version, and nothing else would show it.
+            self._near_warned = session
+            self._log.write({"wall_ms": clock_ms, "trigger": "probe_check", "error": "menu_without_zone",
+                             "probe": schema.PROBE_VERSION})
         taken = self._menu_parts.take(session, record["e2"])
         if taken is None:
             return
@@ -622,8 +635,7 @@ class Bridge:
     def _send_look(self, wall_ms):
         """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;
         the changes waiting go with it. With no body row yet nothing is sent, and the log says so."""
-        latest = self.spool.latest_record()
-        if _probe_ok(latest.get("probe_version") if isinstance(latest, dict) else None, _NEAR_PROBE):
+        if _probe_ok(self.spool.session_probe(), _NEAR_PROBE):
             # W12 (C1): a look asks for the near part of the menu now (her room and what is near her, read at the write).
             try:
                 commands.publish("menu_near", {}, "helper", paths=self.paths)
@@ -668,6 +680,7 @@ class Bridge:
         ctx = self._obs_ctx(wall_ms, event)
         decision = SimpleNamespace(percepts=[(percept, 0.0) for percept in percepts], reason=trigger)
         obs = build(decision, ctx)
+        ctx, obs = self._fit_options(ctx, obs, decision)  # SEAM3-13: a view too large for the wire loses options first
         dropped = None
         if self.client is not None and not self._telemetry_only:
             refusal = self._enqueue_view(obs, wall_ms)
@@ -716,6 +729,17 @@ class Bridge:
         if dropped_percepts:
             line["dropped_percepts"] = dropped_percepts
         self._log.write(line)
+
+    def _fit_options(self, ctx, obs, decision):
+        """SEAM3-13: while the view's JSON is over OBSERVATION_BYTES, her options are cut to half their budget, again and
+        again (the existing cut path, which names what it left out). Returns the context and the view that fit."""
+        limit = OPTIONS_LIMIT
+        while _json_size(obs) > OBSERVATION_BYTES and ctx.get("options") and limit > 0:
+            limit //= 2
+            cut = {}
+            ctx = dict(ctx, options=self._options(ctx["row"], cut=cut, limit=limit), options_cut=cut)
+            obs = build(decision, ctx)
+        return ctx, obs
 
     def _enqueue_view(self, obs, wall_ms):
         """2.37.0 (W10 H1): the spool takes the view (None) or refuses it (the ContractError or OutboxConflict)."""

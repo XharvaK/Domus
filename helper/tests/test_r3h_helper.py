@@ -163,7 +163,8 @@ def test_a_look_waits_for_the_near_part_it_asked_for_and_sends_after_three_secon
     monkeypatch.setattr(commands_module, "publish", lambda command, args, issuer, paths=None: sent.append(command))
     mono = {"ms": WALL}
     bridge = _bridge(paths, mono)
-    _append(paths, [_lineage(1, WALL), _snap(2, "ok", WALL, 10), _menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)]))])
+    _append(paths, [dict(_lineage(1, WALL), probe_version="2.40.0"), _snap(2, "ok", WALL, 10),
+                    _menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)]))])
     _tick(bridge, mono, WALL)
     fires = bridge._fires
     bridge._send_look(WALL + 1000)
@@ -485,3 +486,61 @@ def test_the_overlay_page_says_ashleys_queue_choice_and_body_not_her():
     text = overlay_page.PAGE
     assert "in Ashley's queue" in text and "Ashley's choice" in text and "Ashley's body" in text
     assert "in her queue" not in text and '"her body"' not in text
+
+
+# ----------------------------------------------------------------- the probe version, the near warning and the size of a view (SEAM3-21, SEAM3-10, SEAM3-13)
+
+def test_the_probe_version_is_the_one_of_the_first_row_of_the_newest_session(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    old = dict(_lineage(1, WALL), probe_version="2.37.1")
+    newer = dict(_menu_row(2, _menu(5, [_room_obj(11, 4, 1.0, True)])), probe_version="2.40.0")
+    _append(paths, [old, newer])
+    _tick(bridge, mono, WALL)
+    assert bridge.spool.session_probe() == "2.37.1"
+
+
+def test_a_menu_at_the_expected_probe_version_with_no_zone_is_logged_once_for_the_session(paths, tmp_path, monkeypatch):
+    from domus_helper.vendor import schema
+    from test_bridge_thalamus import _log_lines
+    data = _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    row = dict(_menu_row(2, _menu(5, [_room_obj(11, 4, 1.0, True)])), probe_version=schema.PROBE_VERSION)
+    _append(paths, [_lineage(1, WALL), row, dict(_menu_row(3, _menu(6, [_room_obj(12, 4, 1.0, True)])),
+                                                 probe_version=schema.PROBE_VERSION)])
+    _tick(bridge, mono, WALL)
+    lines = [line for line in _log_lines(data) if line.get("trigger") == "probe_check"]
+    assert len(lines) == 1 and lines[0]["error"] == "menu_without_zone"
+
+
+def test_a_view_over_sixty_kib_loses_its_options_first_until_it_fits(paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL})
+    monkeypatch.setattr(bridge_module, "build", lambda decision, ctx: {"opts": ctx["options"], "pad": "p" * 30000})
+    monkeypatch.setattr(bridge, "_options", lambda row, cut=None, limit=bridge_module.OPTIONS_LIMIT:
+                        [{"t": "a" * 1000}] * (limit // 1000) if cut is None else
+                        (cut.update(objects=0) or [{"t": "a" * 1000}] * (limit // 1000)))
+    ctx = {"options": [{"t": "a" * 1000}] * 32, "options_cut": {}, "row": {}}
+    obs = bridge_module.build(None, ctx)
+    ctx, obs = bridge._fit_options(ctx, obs, None)
+    assert bridge_module._json_size(obs) <= bridge_module.OBSERVATION_BYTES
+    assert 0 < len(ctx["options"]) < 32
+
+
+# ----------------------------------------------------------------- the probe's shapes (lead note): empty near parts, missing zones
+
+def test_an_empty_near_part_drops_the_old_near_set_and_shows_the_whole_menu_as_the_base():
+    whole = _zoned(_menu(5, [_room_obj(11, 4, 1.0, True), _room_obj(22, 2, 9.0, False)]), 1)
+    shown = merge_near(_zoned(_menu(6, [], near=True), 1), whole)
+    assert _ids(shown) == ["11", "22"]
+    assert shown["objects"][0]["distance_m"] is None and shown["objects"][1]["same_room"] is False
+
+
+def test_a_missing_zone_counts_as_the_same_zone_and_two_different_zones_do_not_merge():
+    whole = _menu(5, [_room_obj(22, 2, 9.0, False)])  # no zone key: an unknown zone
+    assert _ids(merge_near(_zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 3), whole)) == ["44", "22"]
+    assert _ids(merge_near(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), _zoned(dict(whole), 3))) == ["44", "22"]
+    assert _ids(merge_near(_zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 4), _zoned(dict(whole), 3))) == ["44"]

@@ -169,6 +169,21 @@ class Spool:
     def row_count(self):
         return self._con.execute("SELECT COUNT(*) AS n FROM rows").fetchone()["n"]
 
+    def session_probe(self):
+        """SEAM3-21: the probe version of the newest telemetry session, read from its first row (each session is one file,
+        so its first row is the first row of the session). None while no row has come."""
+        newest = self._con.execute("SELECT session FROM rows ORDER BY rowid DESC LIMIT 1").fetchone()
+        if newest is None:
+            return None
+        first = self._con.execute("SELECT json FROM rows WHERE session=? ORDER BY segment, offset LIMIT 1",
+                                  (newest["session"],)).fetchone()
+        record = json.loads(first["json"]) if first else None
+        value = record.get("probe_version") if isinstance(record, dict) else None
+        if value is None:  # a first row with no version (an older row): the newest row's version is the next best
+            newest_record = self.latest_record()
+            value = newest_record.get("probe_version") if isinstance(newest_record, dict) else None
+        return value
+
     def latest_record(self):
         row = self._con.execute("SELECT json FROM rows ORDER BY rowid DESC LIMIT 1").fetchone()
         return json.loads(row["json"]) if row else None
