@@ -392,6 +392,8 @@ def _start_words(start):
     tomorrow (its day offset). Never a day count."""
     if start == "now":
         return "Starts now."
+    if not isinstance(start, dict) or not all(type(start.get(key)) is int for key in ("hour", "minute", "day_offset")):
+        return None
     return "Starts at %02d:%02d %s." % (start["hour"], start["minute"], "tomorrow" if start["day_offset"] == 1 else "today")
 
 
@@ -437,7 +439,9 @@ def result_words(result, *, name_of=None, room_of=None, place_of=None, start=Non
     elif funds is not None:
         sentences.append("You have §%d." % funds)
     if start is not None:
-        sentences.append(_start_words(start))
+        words = _start_words(start)
+        if words is not None:
+            sentences.append(words)
     zone = _ident(result.get("zone_id"))
     if zone is not None:
         place = place_of(zone) if place_of is not None else None

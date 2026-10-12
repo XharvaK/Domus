@@ -53,6 +53,14 @@ def test_a_probe_placement_list_keeps_one_word_and_a_category_list_keeps_its_nam
     assert matched == 1 and items[0]["placement"] == "wall" and items[0]["category"] == "decor, lighting"
 
 
+
+def test_a_surface_such_as_a_table_or_counter_is_furniture_she_can_find_but_a_vehicle_is_not(tmp_path, monkeypatch):
+    paths = _catalog_db(tmp_path, monkeypatch, [(301, 1301)])
+    catalog.store_flags(paths, "1.128", [_probe_flag(301, ["SURFACE"], ["floor"], 80)])
+    assert catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get)[0] == 1
+    catalog.store_flags(paths, "1.128", [_probe_flag(301, ["VEHICLE"], ["floor"], 80)])
+    assert catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get) == (0, [])
+
 # W13 (H, S4/S5): a room is a digit string on every wire, and a room's label comes from the things in it.
 def _digits(value):
     """cmdbox._digits (2.40.0): a copy of the probe's rule, for the vendored cmdbox is still 2.39.0."""
