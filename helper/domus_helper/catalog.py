@@ -195,8 +195,9 @@ class Catalog(object):
 # W13 (H): the game's buy categories of furniture and decor (build_buy), surfaces (tables, counters) among them. Build
 # items (walls, floors, doors, windows, stairs, roofs, terrain) and vehicles are none of them, so the search never
 # offers them.
+# Q-f (the User, 2026-10-12): a vehicle is searched like furniture (VEHICLE joins the set).
 FURNITURE = frozenset({"APPLIANCES", "COMFORT", "DECOR", "ELECTRONICS", "ENTERTAINMENT", "KIDS", "LIGHTING",
-                       "PLUMBING", "STORAGE", "SURFACE"})
+                       "PLUMBING", "STORAGE", "SURFACE", "VEHICLE"})
 SEARCH_SHOWN = 12
 _WORDS = re.compile(r"[\W_]+")
 _DIGITS = re.compile(r"[0-9]{1,20}")

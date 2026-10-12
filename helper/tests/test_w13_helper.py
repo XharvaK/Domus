@@ -458,11 +458,11 @@ def test_the_flags_are_kept_per_game_version_and_a_dump_replaces_its_own(tmp_pat
 def test_a_search_offers_purchasable_furniture_and_decor_by_words_in_order_and_names_its_price(tmp_path, monkeypatch):
     paths = _catalog_fixture(tmp_path, monkeypatch)
     matched, items = catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get)
-    assert matched == 3
-    assert [item["definition_id"] for item in items] == [301, 307, 302]
+    assert matched == 4  # Q-f: the vehicle (306) is searched like furniture, found by its words
+    assert [item["definition_id"] for item in items] == [301, 307, 302, 306]
     assert items[0] == {"definition_id": 301, "name": "Test Chair", "price": 80, "placement": "floor",
                         "category": "comfort"}
-    assert catalog.search(paths, "1.128", "test chair", max_price=200, resolve=CATALOG_NAMES.get)[0] == 2
+    assert catalog.search(paths, "1.128", "test chair", max_price=200, resolve=CATALOG_NAMES.get)[0] == 3
     matched, items = catalog.search(paths, "1.128", "lamp", placement="wall", resolve=CATALOG_NAMES.get)
     assert matched == 1 and items[0]["placement"] == "wall" and items[0]["category"] == "lighting"
     assert catalog.search(paths, "1.128", "lamp", placement="floor", resolve=CATALOG_NAMES.get) == (0, [])
