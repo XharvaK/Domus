@@ -591,6 +591,20 @@ class ThingsWiringTests(HomeCase):
         self.assertEqual(items.total, 7)
         self.assertEqual(items[0]["object_id"], "41")
 
+    def test_the_written_rows_carry_the_total_and_a_total_that_changes_alone_is_written_again(self):
+        """T1: the writer puts the reader's total on every part; the same items with a new total are a new list."""
+        written = []
+        writer = self.probe.reach.ListWriter(lambda kind, row: written.append(row) or True)
+        reader = self.probe._lists_readers()["things"]
+        rows = [self.raw()]
+        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda *args: (rows, 7)):
+            self.assertEqual(writer.tick({"things": reader}, force=True), ["things"])
+        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda *args: (rows, 8)):
+            self.assertEqual(writer.tick({"things": reader}, force=True), ["things"])
+            self.assertEqual(writer.tick({"things": reader}, force=True), [])
+        self.assertEqual([row["total"] for row in written], [7, 8])
+        self.assertEqual(written[0]["digest"], written[1]["digest"])
+
     def test_the_lists_record_takes_an_optional_whole_total(self):
         """T1: total is an optional whole number on a things record; a negative one is refused."""
         def record(total):

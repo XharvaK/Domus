@@ -228,17 +228,24 @@ class ListWriter(object):
         if items is None:
             return False
         content = digest(items)
-        if self._digests.get(kind) == content:
+        # 2.40.0 (W13 R2, T1): the things list carries the game's total before its cut (home.ThingList.total); a total
+        # that changes alone is written again.
+        try:
+            total = entries.total
+        except AttributeError:
+            total = None  # every list but things
+        total = total if type(total) is int and total >= len(items) else None
+        if self._digests.get(kind) == (content, total):
             return False
         rev = self._revs.get(kind, 0) + 1
         parts = split_parts(items)
         rows = [{"kind": kind, "list_rev": rev, "part": index, "parts": len(parts), "digest": content,
-                 "count": len(items), "items": chunk} for index, chunk in enumerate(parts)]
+                 "count": len(items), "items": chunk, "total": total} for index, chunk in enumerate(parts)]
         if not all(self._emit(kind, row) for row in rows):
             # 2.40.0 (W13 P1 fix): a revision that was partly sent is never sent again: the next attempt is a new one.
             self._revs[kind] = rev
             return False
-        self._digests[kind] = content
+        self._digests[kind] = (content, total)
         self._revs[kind] = rev
         return True
 
