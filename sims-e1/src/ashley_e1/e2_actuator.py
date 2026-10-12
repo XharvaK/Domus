@@ -479,7 +479,10 @@ def event_guest_list(host_sim_id, guest_ids, job_type):
     if None in (SituationGuestList, SituationGuestInfo, SituationInvitationPurpose) or job_type is None:
         return None
     try:
-        guest_list = SituationGuestList(True, int(host_sim_id), None)
+        # 2.41.1 (live 2026-10-12): the requesting Sim is left at the game's own default (0), as the game's plan-event
+        # command does (server_commands.situation_commands). None there made every save of the event raise in
+        # situation_serialization (an int field), so the save could not write the event.
+        guest_list = SituationGuestList(True, int(host_sim_id))
         # 2.40.0 (W13 P1 fix): she is the host; a guest list never names her a second time. 2.40.0 (W13 R2): and each
         # guest is named once.
         seen = set([str(host_sim_id)])

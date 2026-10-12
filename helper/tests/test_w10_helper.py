@@ -176,7 +176,7 @@ def test_the_bridge_names_her_from_the_body_row_for_her_words(paths, tmp_path, m
 
 def test_the_vendored_schema_is_2_37_1_and_accepts_menus_of_schema_18_and_19():
     from domus_helper.vendor import schema
-    assert (schema.PROBE_VERSION, schema.OBSERVATION_SCHEMA_VERSION) == ("2.41.0", 21)
+    assert (schema.PROBE_VERSION, schema.OBSERVATION_SCHEMA_VERSION) == ("2.41.1", 21)
     assert {18, 19} <= set(schema.ACCEPTED_SCHEMA_VERSIONS)
     menu = {"menu_rev": 1, "room": "4", "tested": 1, "cached": 2, "refused": 0, "build_ms": 1.0, "part": 0,
             "parts": 1, "refused_phone": None, "excluded_phone": [{"name": "phone_thing", "why": "travel"}],

@@ -473,11 +473,12 @@ class FixListTests(unittest.TestCase):
             probe._KNOWN_EVENTS.update(saved)
 
     def test_a_guest_list_names_her_once(self):
-        added = []
+        added, made = [], []
 
         class _List(object):
-            def __init__(self, invite_only, host, requester):
+            def __init__(self, invite_only, host, requester=0):
                 self.host = host
+                made.append(requester)
 
             def add_guest_info(self, info):
                 added.append(info)
@@ -491,6 +492,8 @@ class FixListTests(unittest.TestCase):
                 _patched(actuator, "SituationInvitationPurpose", types.SimpleNamespace(INVITED="invited")):
             actuator.event_guest_list(1, ["1", "4"], "job")
         self.assertEqual(added, [1, 4])
+        # 2.41.1 (live): the requesting Sim is the game's default 0, never None (a save of the event raised on None).
+        self.assertEqual(made, [0])
         # 2.40.0 (W13 R2): each guest is named once, and her own id never twice.
         del added[:]
         with _patched(actuator, "SituationGuestList", _List), \
