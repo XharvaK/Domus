@@ -837,7 +837,8 @@ def _validate_reach(kind, payload):
                  all(ch in "0123456789abcdef" for ch in payload["digest"]), "list digest")
         _require(type(payload["count"]) is int and payload["count"] >= 0, "list count")
         # 2.40.0 (W13 R2, T1): the things the game holds that the list keeps (a whole number), optional.
-        _require(payload["total"] is None or (type(payload["total"]) is int and payload["total"] >= 0), "list total")
+        total = payload.get("total")
+        _require(total is None or (type(total) is int and total >= 0), "list total")
         items = payload["items"]
         _require(isinstance(items, list) and len(items) <= LIST_PART_MAX and
                  all(isinstance(item, dict) for item in items), "list items")
