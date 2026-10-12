@@ -540,13 +540,17 @@ def hire_cost(guest_list):
 
 
 def now_absolute_minutes():
-    """Read: the game's clock now, in absolute minutes (DateAndTime.absolute_minutes of the time service's sim_now);
-    None when unread."""
+    """Read: the game's clock now, in absolute minutes (DateAndTime.absolute_minutes of the time service's sim_now). The
+    game gives a float (seconds over 60); the whole minute is kept (floor). None when unread or not a finite number."""
     try:
         value = services.time_service().sim_now.absolute_minutes()
     except Exception:
         return None
-    return value if type(value) is int else None
+    if type(value) is int:
+        return value
+    if type(value) is float and math.isfinite(value):
+        return int(math.floor(value))
+    return None
 
 
 def scheduled_at(absolute_minutes):
