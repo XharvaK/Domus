@@ -225,7 +225,8 @@ class DiscoveryAndPhoneTests(unittest.TestCase):
         self.assertEqual(reach.start_minute(0, 11, 0, now_min, day), day * 1440 + 660)
         self.assertEqual(reach.start_minute(1, 9, 30, now_min, day), (day + 1) * 1440 + 570)
         self.assertIsNone(reach.start_minute(0, 9, 0, now_min, day))
-        self.assertIsNone(reach.start_minute(2, 9, 0, now_min, day))
+        self.assertEqual(reach.start_minute(2, 9, 0, now_min, day), (day + 2) * 1440 + 540)
+        self.assertIsNone(reach.start_minute(100, 9, 0, now_min, day))
         self.assertIsNone(reach.start_minute(0, 25, 0, now_min, day))
 
     def test_guest_ids_are_digits_and_at_most_the_limit(self):
@@ -296,10 +297,10 @@ class CommandWireTests(unittest.TestCase):
                                            "start": "now"})[1])
         start = {"day_offset": 1, "hour": 9, "minute": 30}
         self.assertIsNone(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": [], "start": start})[1])
-        bad = dict(start, day_offset=2)
+        bad = dict(start, day_offset=100)
         self.assertEqual(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": [], "start": bad})[1],
                          "BAD_ARGS")
-        self.assertEqual(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": ["1"] * 17,
+        self.assertEqual(_parse("event", {"act_id": ACT, "situation_id": "9", "guests": ["1"] * 65,
                                           "start": "now"})[1], "BAD_ARGS")
 
     def test_lists_now_takes_no_arguments(self):

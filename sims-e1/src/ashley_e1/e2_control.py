@@ -1525,10 +1525,11 @@ class E2Control:
             if cost is None:
                 # 2.40.0 (W13 P1 fix): an unread cost is refused, never taken for a free event.
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "cost unread")
-            # 2.40.0 (W13 R2): the guest cap is named on the refusal (the wire bound is the same number).
-            if type(guests) is list and len(guests) > reach.EVENT_GUESTS_MAX:
-                return self._reject(act_id, base, connection, "CREATE_FAILED",
-                                    "too many guests (at most %d)" % reach.EVENT_GUESTS_MAX)
+            # 2.40.0 (W13 R2, Q-d): more guests than the event type takes (its max_participants; the wire bound of
+            # EVENT_GUESTS_MAX when that is unread) is refused, with the cap named.
+            cap = e2_actuator.guest_cap(situation) or reach.EVENT_GUESTS_MAX
+            if type(guests) is list and len(guests) > cap:
+                return self._reject(act_id, base, connection, "CREATE_FAILED", "too many guests (at most %d)" % cap)
             guest_ids = reach.sim_ids(guests, reach.EVENT_GUESTS_MAX)
             if guest_ids is None:
                 return self._reject(act_id, base, connection, "CREATE_FAILED", "guests")

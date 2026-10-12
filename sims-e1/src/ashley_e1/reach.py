@@ -36,7 +36,10 @@ START_MINUTES_PER_DAY = 1440
 # The verbs (go, event): a trip's zone change is awaited this many real seconds; a planned event has at most this many
 # guests; the household funds' reason for an event's charge (the game's own text is not needed for it).
 GO_SEEN_S = 300.0
-EVENT_GUESTS_MAX = 16
+# 2.40.0 (W13 R2, Q-d): the wire bound on an event's guests and on its start's days ahead. An event type's own
+# max_participants is the limit when it is readable (the probe refuses above it); this is the bound when it is not.
+EVENT_GUESTS_MAX = 64
+START_DAYS_MAX = 99
 FUNDS_REASON = "ashley_e2_event"
 
 
@@ -292,9 +295,11 @@ def work_end_minute(end):
 
 
 def start_minute(day_offset, hour, minute, now_minute, now_day):
-    """The game minute of the day a start is asked for, as absolute minutes from day zero. day_offset is 0 or 1 (today
-    or tomorrow). None when the hour or minute is out of range or the start is past (before now)."""
-    if day_offset not in (0, 1) or type(hour) is not int or type(minute) is not int:
+    """The game minute of the day a start is asked for, as absolute minutes from day zero. day_offset is 0 (today) up to
+    START_DAYS_MAX days ahead (2.40.0 W13 R2, Q-d: the drama scheduler takes any specific time). None when the hour or
+    minute is out of range or the start is past (before now)."""
+    if type(day_offset) is not int or not 0 <= day_offset <= START_DAYS_MAX or type(hour) is not int or \
+            type(minute) is not int:
         return None
     if not 0 <= hour < 24 or not 0 <= minute < 60:
         return None

@@ -84,7 +84,7 @@ class R2Tests(unittest.TestCase):
     def event_send(self, situation_id="9", guests=(), start="now"):
         return self.send("event", {"act_id": ACT, "situation_id": situation_id, "guests": list(guests), "start": start})
 
-    def event_patches(self, manager=None, hire=40, cost=250, money_read=True, refund=None, guests=None):
+    def event_patches(self, manager=None, hire=40, cost=250, money_read=True, refund=None, guests=None, situation=None):
         """The event's game calls, patched: the situation and its cost, the guest list with its hire cost, the zone's
         manager, the funds read, and a refund that records what it gave back."""
         e2 = self.probe.e2_actuator
@@ -93,7 +93,7 @@ class R2Tests(unittest.TestCase):
             return True
 
         return [
-            _patched(e2, "situation_type", lambda guid: object()),
+            _patched(e2, "situation_type", lambda guid: situation if situation is not None else object()),
             _patched(e2, "now_absolute_minutes", lambda: 1000),
             _patched(e2, "situation_cost", lambda s: cost),
             _patched(e2, "default_job", lambda s: "job"),
@@ -332,12 +332,12 @@ class R2Tests(unittest.TestCase):
         connection = self.probe._InboxReply("helper")
 
         def sending():
-            return self.probe._E2.cmd_event(ACT, "9", ["1"] * 17, "now", connection, known_events=("9",))
+            return self.probe._E2.cmd_event(ACT, "9", ["1"] * 65, "now", connection, known_events=("9",))
 
         ok = self.run_with(patches, sending)
         self.assertFalse(ok)
         refusal = self.act_events("REJECTED")[-1]
-        self.assertEqual((refusal["code"], refusal["detail"]), ("CREATE_FAILED", "too many guests (at most 16)"))
+        self.assertEqual((refusal["code"], refusal["detail"]), ("CREATE_FAILED", "too many guests (at most 64)"))
         self.assertEqual(self.act_events("ACCEPTED"), [])
 
     # ----------------------------------------------------------- REACH2-10: ASCII digits only
@@ -355,3 +355,70 @@ class R2Tests(unittest.TestCase):
         with self.assertRaises(schema.SchemaError):
             schema._validate_place_item({"zone_id": "x", "kind": "home", "lot_name": None, "venue": None,
                                          "household_id": None})
+
+
+class _Small(object):
+    """An event type that takes few guests (invented): its tuned max_participants is 3, its cost is 0."""
+    max_participants = 3
+    cost = 0
+    guid64 = 9100
+
+
+class R2LimitTests(unittest.TestCase):
+    """2.40.0 (W13 R2, Q-d): the event's limits. A start up to 99 days ahead; the wire takes up to 64 guests; the probe
+    refuses more guests than the event type's max_participants allows, and the wire bound when it is unreadable."""
+
+    def test_a_start_may_be_up_to_99_days_ahead(self):
+        self.assertEqual(reach.start_minute(99, 9, 0, 600, 3), (3 + 99) * 1440 + 540)
+        self.assertIsNone(reach.start_minute(100, 9, 0, 600, 3))
+        self.assertIsNone(reach.start_minute(-1, 9, 0, 600, 3))
+
+    def test_the_wire_takes_a_start_up_to_99_days_and_up_to_64_guests(self):
+        start = {"day_offset": 99, "hour": 9, "minute": 30}
+        args = {"act_id": ACT, "situation_id": "9", "guests": [], "start": start}
+        self.assertIsNone(test_w13_p1._parse("event", args)[1])
+        self.assertEqual(test_w13_p1._parse("event", dict(args, start=dict(start, day_offset=100)))[1], "BAD_ARGS")
+        self.assertIsNone(test_w13_p1._parse("event", dict(args, guests=["1"] * 64, start="now"))[1])
+        self.assertEqual(test_w13_p1._parse("event", dict(args, guests=["1"] * 65, start="now"))[1], "BAD_ARGS")
+
+    def test_the_event_type_s_max_participants_is_read_or_none(self):
+        self.assertEqual(test_w13_p1.ActorActuatorTests._actuator(self).guest_cap(_Small), 3)
+        self.assertIsNone(test_w13_p1.ActorActuatorTests._actuator(self).guest_cap(object()))
+
+
+class R2CapTests(unittest.TestCase):
+    """The guest cap of an event through the inbox, with the event fakes of R2Tests (its helpers, shared)."""
+    setUp = R2Tests.setUp
+    tearDown = R2Tests.tearDown
+    ready = R2Tests.ready
+    send = R2Tests.send
+    event_send = R2Tests.event_send
+    event_patches = R2Tests.event_patches
+    run_with = R2Tests.run_with
+    act_events = R2Tests.act_events
+
+    def test_a_guest_list_longer_than_the_event_type_takes_is_refused_with_its_cap(self):
+        self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
+        patches = self.event_patches(manager=_game_manager(self.funds, 0, True), situation=_Small, cost=0, hire=0)
+        ok, _connection = self.run_with(patches, lambda: self.event_send(guests=["1", "2", "3", "4"]))
+        self.assertFalse(ok)
+        refusal = self.act_events("REJECTED")[-1]
+        self.assertEqual((refusal["code"], refusal["detail"]), ("CREATE_FAILED", "too many guests (at most 3)"))
+        self.assertEqual(self.act_events("ACCEPTED"), [])
+
+    def test_a_guest_list_at_the_event_type_s_cap_is_accepted(self):
+        self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
+        patches = self.event_patches(manager=_game_manager(self.funds, 0, True), situation=_Small, cost=0, hire=0)
+        ok, _connection = self.run_with(patches, lambda: self.event_send(guests=["1", "2", "3"]))
+        self.assertTrue(ok)
+        self.assertEqual(self.act_events()[-1]["code"], "CREATED")
+
+    def test_an_unreadable_cap_leaves_only_the_wire_bound_of_64(self):
+        self.ready()
+        self.probe._KNOWN_EVENTS.add("9")
+        patches = self.event_patches(manager=_game_manager(self.funds, 0, True), cost=0, hire=0)
+        ok, _connection = self.run_with(patches, lambda: self.event_send(guests=[str(n) for n in range(2, 19)]))
+        self.assertTrue(ok)
+        self.assertEqual(self.act_events()[-1]["code"], "CREATED")

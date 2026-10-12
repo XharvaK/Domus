@@ -509,6 +509,13 @@ def situation_cost(situation):
     return cost if type(cost) is int and cost >= 0 else None
 
 
+def guest_cap(situation):
+    """2.40.0 (W13 R2, Q-d): the most guests the event type takes, its tuned max_participants (an int of at least 1), or
+    None when unread. The game's own count of the host is not read here: the game makes the event and decides."""
+    cap = tuned._class_plain(situation, "max_participants")
+    return cap if type(cap) is int and cap >= 1 else None
+
+
 def hire_cost(guest_list):
     """2.40.0 (W13 R2): the hire cost of a guest list (SituationGuestList.get_hire_cost, an int), or None when unread.
     The game's create_situation takes it with the type's cost from the host household."""
