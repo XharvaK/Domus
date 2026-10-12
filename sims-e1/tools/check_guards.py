@@ -18,6 +18,8 @@ PRODUCTION_MODULES = (
     "__init__", "probe", "observers", "snapshot", "schema", "writer",
     "e2_admission", "e2_lineage", "e2_registry", "e2_cards", "e2_actuator", "e2_control", "cmdbox",
     "e2_trial", "preflight", "food", "situation",
+    # 2.40.0 (W13 P1): her reach (discovery and lists; pure).
+    "reach",
 )
 # DS3: build_buy also holds world mutators; only its read-only room lookup may be
 # imported, and only by name (never `import build_buy`).
@@ -35,7 +37,11 @@ NARROW_GAME_IMPORTS = {"build_buy": {"get_room_id", "is_location_pool"},
                        "sims.sim_dialogs": {"SimPersonalityAssignmentDialog"},
                        "ui.ui_dialog_picker": {"UiMapViewPicker", "UiApartmentPicker"},
                        # 2.23.0: the close message _dialog_cancel_internal builds. e2_control only.
-                       "protocolbuffers": {"Consts_pb2", "Dialog_pb2"}}
+                       "protocolbuffers": {"Consts_pb2", "Dialog_pb2"},
+                       # 2.40.0 (W13 P1): her trip's call, and the event's guest list (e2_actuator's own effect calls).
+                       "world.travel_service": {"travel_sim_to_zone"},
+                       "situations.situation_guest_list": {"SituationGuestInfo", "SituationGuestList",
+                                                           "SituationInvitationPurpose"}}
 # 2.31.0: modules whose names only e2_control.py may import.
 E2_CONTROL_ONLY_MODULES = frozenset(("protocolbuffers", "ui.ui_dialog", "ui.ui_dialog_notification",
                                      "ui.ui_dialog_picker", "objects.color.object_color_dialog",
@@ -92,11 +98,15 @@ ACTUATOR_ONLY_CALLS = {
     "remove_manual_save_complete_callback", "cancel",
     # 2.39.0 (W12 G1): a pie choice's own pair runs as a player's pick runs it; push_super_affordance is the same call.
     "test_and_execute",
+    # 2.40.0 (W13 P1): her trip (the game's travel service), her planned event (the zone's situation manager) and the
+    # household's funds for that event: the actuator's own effect calls, e2_actuator.py only.
+    "travel_sim_to_zone", "create_situation", "try_remove",
 }
 ACTUATOR_FILE = "e2_actuator.py"
 # Pure E2 modules: no game imports at all.
 PURE_FILES = {"e2_admission.py", "e2_lineage.py", "e2_registry.py", "e2_cards.py",
-              "e2_trial.py", "writer.py", "schema.py", "snapshot.py", "cmdbox.py"}
+              "e2_trial.py", "writer.py", "schema.py", "snapshot.py", "cmdbox.py",
+              "reach.py"}
 FORBIDDEN_CALL_NAMES = FORBIDDEN_CALL_NAMES | (ACTUATOR_ONLY_CALLS - {"push_super_affordance"})
 # 2.31.0 (W3p): clear_decay_rate_modifiers sets the list to None without recalculating, so the old rate stays
 # in force; the probe removes its own modifier instead. Forbidden everywhere.

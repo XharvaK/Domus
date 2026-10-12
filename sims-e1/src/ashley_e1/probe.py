@@ -59,6 +59,7 @@ from . import e2_actuator
 from . import e2_admission
 from . import e2_control
 from . import observers
+from . import reach
 from . import schema
 from .writer import TelemetryWriter, bootstrap_from_module_path, derive_telemetry_root, read_command_file, write_command_reply
 from .writer import read_small_json, remove_file, write_small_json
@@ -190,7 +191,8 @@ _ARMED_NAME = None
 _CALIBRATE = False
 _CAL_SPEED = None
 _OBSERVE_REFUSED = ("prepare", "sit", "sit_trial", "pause", "release", "trial",
-                     "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk", "pace")
+                     "preflight", "food_scan", "act", "answer", "cancel", "camera", "talk", "pace",
+                     "go", "event")
 _ARMED_SNAPSHOT = None
 _TELEMETRY_SESSION_ID = None
 _ALARM_HANDLE = None
@@ -321,10 +323,10 @@ def _dispatch_e2_trial(*args, _session_id=0, **kwargs):
     return _E2.cmd_trial(object_id, guid64, _session_id)
 
 
-def _dispatch_e2_act(act_id, object_id, guid64, _session_id=0, owner=False, variant=None):
+def _dispatch_e2_act(act_id, object_id, guid64, _session_id=0, owner=False, variant=None, sim_id=None):
     """8f: Ashley's chosen action (helper inbox only; cmdbox checked the shapes). 2.39.0 (W12 G1): variant names a pie
-    choice of that act (cmd_act checks it)."""
-    return _E2.cmd_act(act_id, object_id, guid64, _session_id, owner=owner, variant=variant)
+    choice of that act (cmd_act checks it). 2.40.0 (W13 P1): sim_id names the Sim a Sim picker takes (cmd_act checks it)."""
+    return _E2.cmd_act(act_id, object_id, guid64, _session_id, owner=owner, variant=variant, sim_id=sim_id)
 
 
 class _InboxReply:
@@ -715,7 +717,14 @@ def _inbox_dispatch(cmd, connection):
     if name == 'act':
         return _dispatch_e2_act(args['act_id'], args['object_id'], args['guid64'],
                                 _session_id=connection, owner=args.get('owner') is True,
-                                variant=args.get('variant'))
+                                variant=args.get('variant'), sim_id=args.get('sim_id'))
+    # 2.40.0 (W13 P1): her trip, her planned event, and a fresh read of the lists. Own lines, so other blocks merge.
+    if name == 'go':
+        return _E2.cmd_go(args['act_id'], args['zone_id'], connection, _KNOWN_ZONES)
+    if name == 'event':
+        return _E2.cmd_event(args['act_id'], args['situation_id'], args['guests'], args['start'], connection)
+    if name == 'lists_now':
+        return request_lists_now()
     if name == 'answer':
         return _E2.cmd_answer(args['act_id'], args['dialog_id'], args['pick'], connection,
                               rows=args.get('rows'), text=args.get('text'))
@@ -2037,6 +2046,8 @@ def _menu_phone_offers(item, sim, context, excluded):
             "guid64": str(guid), "name": name if type(name) is str else "",
             "text_key": observers._string_key(tuned._class_plain(affordance, "display_name")),
             "obj": sim, "affordance": affordance, "sim": sim, "context": context,
+            # 2.40.0 (W13 P1): a phone act that opens a Sim picker is listed with needs_sim (she names the Sim).
+            "needs_sim": True if e2_actuator.needs_sim(affordance) else None,
         })
     return jobs
 
@@ -2322,6 +2333,9 @@ def _menu_test(job):
     _menu_reach(job)
     if job.get("choice") is not None:
         ok, _reason, reason_key = e2_actuator.choice_test(job["choice"], job["context"])
+    elif job.get("needs_sim") is True:
+        # 2.40.0 (W13 P1): a Sim picker is listed when the game has a Sim it could choose; the Sim is her pick at the push.
+        ok, reason_key = e2_actuator.picker_offers(job["affordance"], job["obj"], job["context"]) is True, None
     else:
         ok, _reason, reason_key = e2_actuator.preflight_test(
             job["sim"], job["obj"], job["affordance"], job["context"])
@@ -2461,6 +2475,82 @@ def request_menu_near():
     global _MENU_NEAR_REQUESTED
     _MENU_NEAR_REQUESTED = True
     return True
+
+
+# ---------------------------------------------------------------- 2.40.0 (W13 P1): her reach (lists, discovery)
+# The lists her view counts are written when their content changed: each list at most once every 60 real seconds, and
+# on a zone load or a lists_now command (reach.ListWriter). The discovery record is written once per zone load, after
+# the zone runs. Both are reads: nothing here changes the game. The places she knows are kept for the go command.
+def _lists_emit(kind, row):
+    """Writes one lists row; the places' ids are kept (the go command accepts only a place of the newest places list)."""
+    if kind == "places":
+        if row.get("part") == 0:
+            _KNOWN_ZONES.clear()
+        _KNOWN_ZONES.update(item["zone_id"] for item in row.get("items") or ())
+    return bool(_E2._event("lists", row))
+
+
+_LISTS = reach.ListWriter(_lists_emit)
+_KNOWN_ZONES = set()
+_LISTS_ZONE = _NO_ZONE
+_LISTS_FORCE = False
+_DISCOVERY_ZONE = _NO_ZONE
+_DISCOVERY_REV = 0
+
+
+def request_lists_now():
+    """2.40.0 (W13 P1): the next sampling tick writes every list whose content changed (lists_now is idempotent)."""
+    global _LISTS_FORCE
+    _LISTS_FORCE = True
+    return True
+
+
+def _lists_readers():
+    """The readers of the lists her view counts (people, places, events). places reads its own people, so a tick that
+    reads places alone still has the households she knows."""
+    def people():
+        return observers.read_people(observers.her_sim_info())
+
+    def places():
+        sim_info = observers.her_sim_info()
+        return observers.read_places(sim_info, observers.read_people(sim_info))
+
+    return {"people": people, "places": places, "events": observers.read_events}
+
+
+def _write_discovery():
+    """2.40.0 (W13 P1): the discovery record of this zone load, once. Read-only; each section is guarded. Her Sim must
+    be instanced; when it is not, this zone has no record (the next zone load tries again)."""
+    global _DISCOVERY_REV
+    sim_info = observers.her_sim_info()
+    sim = observers._safe(lambda: sim_info.get_sim_instance())
+    if sim_info is None or sim is None:
+        return
+    known = observers._safe(lambda: list(sim_info.relationship_tracker.get_target_sim_infos())) or []
+    pickers, tests = e2_actuator.phone_discovery(sim, e2_actuator.phone_affordances(sim), known)
+    _DISCOVERY_REV += 1
+    _E2._event("discovery", {"discovery_rev": _DISCOVERY_REV,
+                             "sections": observers.read_discovery(sim_info, pickers, tests)})
+
+
+def _reach_tick(row):
+    """2.40.0 (W13 P1): her reach, one step each sampling tick. The verbs' pending trip is checked on every tick. Once the
+    zone runs: the discovery record (once per zone load), and the lists that are due (or all of them after a zone load or
+    a lists_now). A sense: the caller catches what it raises."""
+    global _LISTS_ZONE, _LISTS_FORCE, _DISCOVERY_ZONE
+    _E2.tick_verbs()
+    if row.get("event_kind") != "presence_snapshot" or not _E2._zone_running():
+        return
+    zone = _current_zone()
+    if zone is not _LISTS_ZONE:
+        _LISTS_ZONE = zone
+        _LISTS.new_zone()
+        _LISTS_FORCE = True
+    if _DISCOVERY_ZONE is not zone:
+        _DISCOVERY_ZONE = zone
+        _write_discovery()
+    force, _LISTS_FORCE = _LISTS_FORCE, False
+    _LISTS.tick(_lists_readers(), force=force)
 
 
 def _poll_tick(alarm_handle=None):
@@ -2628,3 +2718,8 @@ def _poll_tick_body():
             # The menu is a sense, never a reason to stop sampling; the next build retries.
             _MENU_FAILURES += 1
             _menu_reset(keep_last=True)
+    # 2.40.0 (W13 P1): her reach (the lists, the discovery record, a pending trip). A sense too: a failed read never stops sampling.
+    try:
+        _reach_tick(row)
+    except Exception:
+        pass
