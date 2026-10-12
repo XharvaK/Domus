@@ -99,7 +99,7 @@ class MoodNameTests(unittest.TestCase):
         self.assertIsNone(row["sim_signals"][0]["tuning_name"])
         self.assertIsNone(row["mood"]["name"])
         _probe, probe, _calls = load_probe()
-        self.assertEqual(probe.schema.OBSERVATION_SCHEMA_VERSION, 20)
+        self.assertEqual(probe.schema.OBSERVATION_SCHEMA_VERSION, 21)
 
 
 class SchemaDualTests(unittest.TestCase):

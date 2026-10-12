@@ -237,7 +237,7 @@ class WeatherTests(_Base):
         self._weather({_Named("Rain")}, _Named("Summer"))
         row = self.row()
         self.assertEqual(row["weather"], {"types": ["Rain"], "season": "Summer"})
-        self.assertEqual(row["schema_version"], 20)
+        self.assertEqual(row["schema_version"], 21)
 
     def row(self):
         return ds3.PollOnceTests.row(self)
@@ -425,8 +425,8 @@ class NoticeHookTests(_Base):
 class SchemaEighteenTests(_Base):
     def test_version_and_self_shapes(self):
         self.assertEqual((self.schema.OBSERVATION_SCHEMA_VERSION, self.schema.TELEMETRY_SCHEMA_ID),
-                         (20, "e1.telemetry/v20"))
-        self.assertEqual(self.schema.PROBE_VERSION, "2.39.0")
+                         (21, "e1.telemetry/v21"))
+        self.assertEqual(self.schema.PROBE_VERSION, "2.40.0")
         self.assertIn(18, self.schema.ACCEPTED_SCHEMA_VERSIONS)
 
     def test_the_self_fields_validate_and_bad_ones_are_refused(self):
