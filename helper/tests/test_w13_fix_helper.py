@@ -811,6 +811,18 @@ def test_the_lab_crawl_refuses_to_start_without_the_lab_flag_and_its_usage_says_
     assert usage.startswith("usage:") and "--lab" in usage.split(chr(10))[0]
 
 
+
+# Q-7: the food scan and the hunger trial drive the game too, so they refuse to start without --lab as the crawl does.
+def test_the_food_driver_refuses_to_start_without_the_lab_flag(capsys, monkeypatch):
+    from domus_helper import food
+
+    def touched(**kwargs):
+        raise AssertionError("the game was touched")
+    monkeypatch.setattr(food, "DomusTools", touched)
+    assert food.main(["--scan"]) == 2
+    assert "--lab" in capsys.readouterr().err
+    assert "--lab" in food.__doc__
+
 # Q-d (the User, 2026-10-12): an event may start up to 99 days ahead; its start words say the day, and the game's own
 # limits (the guests) are the probe's to check. The helper keeps a start within 0..99 days and says "in N days" past one.
 def test_an_event_start_up_to_ninety_nine_days_ahead_is_worded_and_one_past_it_is_not():

@@ -1,4 +1,8 @@
-"""One food scan and one hunger trial. The crawl does not push these guids."""
+"""One food scan and one hunger trial. The crawl does not push these guids.
+
+Lab only: it refuses to start unless it gets --lab on its command line (the User's ruling, 2026-10-12: the lab drivers
+never run against HOME). Usage: python -m domus_helper.food --lab (--scan | --eat)
+"""
 import argparse
 import json
 import re
@@ -307,10 +311,15 @@ def eat(client, timeout=EAT_TIMEOUT_S, sleep=time.sleep, monotonic=time.monotoni
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, usage="%(prog)s --lab (--scan | --eat)")
+    parser.add_argument("--lab", action="store_true",
+                        help="required: the scan and the trial run against the lab save only, never HOME (the User, 2026-10-12)")
     parser.add_argument("--scan", action="store_true")
     parser.add_argument("--eat", action="store_true")
     args = parser.parse_args(argv)
+    if not args.lab:
+        print("refused: the food scan and trial run only against the lab save; pass --lab", file=sys.stderr)
+        return 2
     if args.scan == args.eat:
         print("pass one of --scan or --eat", file=sys.stderr)
         return 1
