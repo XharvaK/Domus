@@ -17,6 +17,7 @@ CAP = 32
 QUESTION = "question"
 QUIET = "quiet"
 OLDEST = "oldest"
+CHOICES = "choices"  # SEAM3-7: the game's choices came in (the first whole of a session, or a new act list): at once
 
 
 @dataclass(frozen=True)
@@ -37,8 +38,10 @@ def _asked(percept):
     return percept.kind == "env" and percept.bucket == "asked"
 
 
-def due(state, now_ms):
-    """The reason a view goes now, or None."""
+def due(state, now_ms, choices=False):
+    """The reason a view goes now, or None. choices: the game's choices came in and have not gone out yet."""
+    if choices:
+        return CHOICES
     if not state.items:
         return None
     if any(_asked(percept) for percept, _ in state.items):

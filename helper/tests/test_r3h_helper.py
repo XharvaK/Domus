@@ -1,0 +1,571 @@
+"""R3 (helper, Worker H): the menu merge rule after a near part (every object of the whole menu the near part does not test is
+kept, with its room flag judged against the near part's room), a first-build partial menu as the merge base (R1), the zone of
+a menu (R2), the choices that are pending until a final whole of the session (S2), and the choices reason of the coalescer
+(SEAM3-7). Every row is invented; the game and Mint are fakes."""
+import pytest
+
+from domus_helper import coalesce
+from domus_helper.acts import MenuParts, merge_near
+from test_bridge_thalamus import WALL, _bridge, _data, _lineage, _snap
+from test_w14_helper import _append, _ids, _menu, _menu_row, _obj, _tick
+
+
+def _room_obj(object_id, room, distance=None, same_room=None, phone=None):
+    item = _obj(object_id, distance, same_room, phone)
+    item["room"] = str(room)
+    return item
+
+
+def _zoned(payload, zone):
+    payload["zone_id"] = str(zone)
+    return payload
+
+
+# ----------------------------------------------------------------- the merge rule
+
+def test_a_near_part_after_a_room_move_keeps_the_objects_of_the_room_she_left_as_elsewhere():
+    whole = _menu(5, [_room_obj(11, 1, 1.0, True), _room_obj(22, 2, 9.0, False)])
+    near = _menu(6, [_room_obj(44, 2, 1.0, True)], near=True)
+    near["room"] = "2"
+    shown = merge_near(near, whole)
+    assert _ids(shown) == ["44", "11", "22"]
+    old, far = shown["objects"][1], shown["objects"][2]
+    assert old["same_room"] is False and old["distance_m"] is None  # the room she left: not here, no stale distance
+    assert far["same_room"] is True and far["distance_m"] is None  # her new room now: the whole's distance is stale
+
+
+def test_an_object_with_no_distance_in_the_whole_is_kept_by_a_near_part():
+    whole = _menu(5, [_room_obj(33, 9, None, False)])
+    shown = merge_near(_menu(6, [_room_obj(44, 4, 2.0, True)], near=True), whole)
+    assert _ids(shown) == ["44", "33"]
+    assert shown["objects"][1]["distance_m"] is None
+
+
+def test_a_near_part_written_mid_build_keeps_the_same_room_objects_it_has_not_tested():
+    whole = _menu(5, [_room_obj(11, 4, 1.0, True), _room_obj(22, 4, 2.5, True)])
+    near = _menu(6, [_room_obj(44, 4, 0.5, True)], near=True)
+    shown = merge_near(near, whole)
+    assert _ids(shown) == ["44", "11", "22"]
+    assert all(item["distance_m"] is None for item in shown["objects"][1:])
+
+
+def test_the_merged_menu_takes_the_dropped_count_of_the_whole_menu():
+    whole = _menu(5, [_room_obj(11, 4, 1.0, True)], dropped={"objects": 3, "rooms": ["2"]})
+    shown = merge_near(_menu(6, [_room_obj(44, 4, 0.5, True)], near=True, dropped={"objects": 1}), whole)
+    assert shown["dropped"] == {"objects": 3, "rooms": ["2"]}
+
+
+def test_a_near_part_of_another_zone_is_the_near_part_alone():
+    whole = _zoned(_menu(5, [_room_obj(22, 2, 9.0, False)]), 1)
+    near = _zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 2)
+    assert _ids(merge_near(near, whole)) == ["44"]
+    same = _zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 1)
+    assert _ids(merge_near(same, whole)) == ["44", "22"]
+
+
+# ----------------------------------------------------------------- R1: the first build's partial menu
+
+def test_a_partial_set_is_its_own_set_and_never_mixes_with_a_whole_of_the_same_revision():
+    parts = MenuParts()
+    assert parts.take("s", _menu(5, [_room_obj(11, 4)], part=0, parts=2, partial=True)) is None
+    assert parts.take("s", _menu(5, [_room_obj(22, 4)], part=0, parts=1)) is not None
+    whole = parts.take("s", _menu(5, [_room_obj(33, 4)], part=0, parts=2, partial=True))
+    assert whole is None
+    shown = parts.take("s", _menu(5, [_room_obj(44, 4)], part=1, parts=2, partial=True))
+    assert _ids(shown) == ["33", "44"] and shown["partial"] is True
+
+
+def test_the_bridge_shows_a_partial_menu_and_a_near_part_merges_with_it_while_the_choices_stay_pending(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    _append(paths, [_lineage(1, WALL),
+                    _menu_row(2, _menu(5, [_room_obj(11, 4, 1.0, True)], part=0, parts=2, partial=True)),
+                    _menu_row(3, _menu(5, [_room_obj(22, 4, 2.0, True)], part=1, parts=2, partial=True))])
+    _tick(bridge, mono, WALL)
+    assert _ids(bridge._menu["payload"]) == ["11", "22"]
+    assert "partial" not in bridge._menu["payload"]
+    assert bridge._obs_ctx(WALL)["choices_pending"] is True
+    _append(paths, [_menu_row(4, _menu(6, [_room_obj(33, 4, 0.5, True)], near=True))])
+    _tick(bridge, mono, WALL + 1500)
+    assert _ids(bridge._menu["payload"]) == ["33", "11", "22"]
+    assert bridge._obs_ctx(WALL + 1500)["choices_pending"] is True
+    _append(paths, [_menu_row(5, _menu(7, [_room_obj(55, 4, 1.0, True)]))])
+    _tick(bridge, mono, WALL + 3000)
+    assert bridge._obs_ctx(WALL + 3000)["choices_pending"] is False
+
+
+def test_a_final_whole_menu_restored_after_a_restart_ends_the_pending_choices_and_a_partial_does_not(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    _append(paths, [_lineage(1, WALL), _menu_row(2, _menu(5, [_room_obj(11, 4, 1.0, True)], part=0, parts=1, partial=True))])
+    _tick(bridge, mono, WALL)
+    bridge._persist_thalamus(WALL + 1000)
+    again = _bridge(paths, mono)
+    _tick(again, mono, WALL + 1500)
+    assert _ids(again._menu["payload"]) == ["11"]
+    assert again._obs_ctx(WALL + 2000)["choices_pending"] is True
+    _append(paths, [_menu_row(3, _menu(6, [_room_obj(11, 4, 1.0, True)]))])
+    _tick(again, mono, WALL + 2500)
+    again._persist_thalamus(WALL + 3000)
+    third = _bridge(paths, mono)
+    _tick(third, mono, WALL + 3500)
+    assert third._obs_ctx(WALL + 3500)["choices_pending"] is False
+
+
+# ----------------------------------------------------------------- R2: the zone of a menu
+
+def test_a_near_part_of_a_new_zone_drops_the_old_zones_whole_menu(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    _append(paths, [_lineage(1, WALL), _menu_row(2, _zoned(_menu(5, [_room_obj(22, 2, 9.0, False)]), 1))])
+    _tick(bridge, mono, WALL)
+    _append(paths, [_menu_row(3, _zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 2))])
+    _tick(bridge, mono, WALL + 1500)
+    assert _ids(bridge._menu["payload"]) == ["44"]
+    assert bridge._whole_menu is None
+    _append(paths, [_menu_row(4, _zoned(_menu(7, [_room_obj(66, 4, 1.0, True)], near=True), 2))])
+    _tick(bridge, mono, WALL + 3000)
+    assert _ids(bridge._menu["payload"]) == ["66"]
+
+
+# ----------------------------------------------------------------- SEAM3-7: the choices reason
+
+def test_the_coalescer_sends_a_view_at_once_for_the_choices():
+    assert coalesce.due(coalesce.Pending(), WALL, choices=True) == coalesce.CHOICES
+    assert coalesce.due(coalesce.Pending(), WALL) is None
+
+
+def test_a_whole_menu_sends_the_choices_once_and_again_only_when_its_act_list_changes(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL})
+    first = _menu(5, [_room_obj(11, 4, 1.0, True)])
+    bridge._menu_shown("sess-1", dict(first), WALL)
+    assert bridge._choices_due is True
+    bridge._choices_due = False
+    bridge._choices_sent = bridge._whole_menu["key"]  # what a view that carried these choices leaves behind
+    bridge._menu_shown("sess-1", dict(first, menu_rev=6), WALL + 1)
+    assert bridge._choices_due is False  # the same acts again: nothing new to say about the choices
+    changed = _menu(7, [_room_obj(11, 4, 1.0, True), _room_obj(22, 4, 2.0, True)])
+    bridge._menu_shown("sess-1", changed, WALL + 2)
+    assert bridge._choices_due is True
+    bridge._menu_shown("sess-2", dict(first), WALL + 3)
+    assert bridge._choices_due is True  # a new session's first whole
+
+
+# SEAM3-8: a look's view waits for the near part it asked for, or three seconds.
+def test_a_look_waits_for_the_near_part_it_asked_for_and_sends_after_three_seconds(paths, tmp_path, monkeypatch):
+    from domus_helper import commands as commands_module
+    _data(paths, tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(commands_module, "publish", lambda command, args, issuer, paths=None: sent.append(command))
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    _append(paths, [dict(_lineage(1, WALL), probe_version="2.40.0"), _snap(2, "ok", WALL, 10),
+                    _menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)]))])
+    _tick(bridge, mono, WALL)
+    fires = bridge._fires
+    bridge._send_look(WALL + 1000)
+    assert "menu_near" in sent and bridge._fires == fires
+    _tick(bridge, mono, WALL + 1500)
+    assert bridge._fires == fires  # no near part yet: the look still holds
+    _append(paths, [_menu_row(4, _menu(6, [_room_obj(44, 4, 1.0, True)], near=True))])
+    _tick(bridge, mono, WALL + 2000)
+    assert bridge._fires == fires + 1 and bridge._look_hold is None
+    bridge._send_look(WALL + 5000)
+    _tick(bridge, mono, WALL + 7000)
+    assert bridge._fires == fires + 1 and bridge._look_hold is not None
+    _tick(bridge, mono, WALL + 8100)
+    assert bridge._fires == fires + 2 and bridge._look_hold is None
+
+
+# ----------------------------------------------------------------- her thoughts in the game (HELPER3-5/6/7/12/20)
+
+def _chosen(pass_id, line, at_ms=None):
+    return {"inputs": "chosen", "pass": pass_id, "line": line, "at_ms": at_ms}
+
+
+class _Feed(object):
+    def __init__(self, items):
+        self.items = items
+
+    def post_feed(self, body):
+        return {"status": "ok", "items": self.items}
+
+
+W14_NOW = 1_800_000_000_000
+
+
+def _overlay(tmp_path, now_ms):
+    from domus_helper import overlay
+    from domus_helper.spool import Spool
+    spool = Spool(tmp_path / "spool.db")
+    return spool, overlay.Overlay(spool, tmp_path, now_ms - overlay.HUMAN_HAND_MS - 1)
+
+
+def test_a_line_said_before_a_restart_is_not_said_again_after_it(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        view.poll(_Feed([_chosen("p1", "The toast smells good.", W14_NOW - 1000)]), "h1", W14_NOW)
+        assert view.take_thoughts() == ["The toast smells good."]
+        again = overlay.Overlay(spool, tmp_path, W14_NOW - overlay.HUMAN_HAND_MS - 1)
+        again.poll(_Feed([_chosen("p1", "The toast smells good.", W14_NOW - 1000)]), "h1",
+                   W14_NOW + overlay.FEED_EVERY_MS)
+        assert again.take_thoughts() == []
+    finally:
+        spool.close()
+
+
+def test_the_said_pass_ids_are_kept_to_the_last_two_hundred(tmp_path):
+    import json
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        for index in range(overlay.SAID_LIMIT + 5):
+            view.poll(_Feed([_chosen("p%d" % index, "Line %d." % index, W14_NOW - 1000)]), "h1",
+                      W14_NOW + index * overlay.FEED_EVERY_MS)
+            view.take_thoughts()
+        kept = json.loads(spool.get_kv(overlay.SAID_KEY))
+        assert len(kept) == overlay.SAID_LIMIT and kept[-1] == "p%d" % (overlay.SAID_LIMIT + 4) and kept[0] == "p5"
+    finally:
+        spool.close()
+
+
+def test_the_curtain_on_means_nothing_of_hers_is_said_in_the_game(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        spool.put_kv(overlay.CURTAIN_KEY, "on")
+        view.poll(_Feed([_chosen("p1", "Hidden line.", W14_NOW - 1000)]), "h1", W14_NOW)
+        assert view.take_thoughts() == []
+        spool.put_kv(overlay.CURTAIN_KEY, "off")
+        view.poll(_Feed([_chosen("p1", "Hidden line.", W14_NOW - 1000)]), "h1", W14_NOW + overlay.FEED_EVERY_MS)
+        assert view.take_thoughts() == []  # said once or not at all: the curtain's pass is not a new one later
+    finally:
+        spool.close()
+
+
+def test_the_passes_seen_in_one_process_are_capped(tmp_path):
+    from domus_helper import overlay
+    spool, view = _overlay(tmp_path, W14_NOW)
+    try:
+        for index in range(overlay.PASSES_SEEN_LIMIT + 10):
+            view._accept([_chosen("q%d" % index, "x", W14_NOW - 1000)], W14_NOW, False)
+        assert len(view._passes_seen) == overlay.PASSES_SEEN_LIMIT
+    finally:
+        spool.close()
+
+
+def test_a_line_waits_in_the_overlay_while_her_sim_id_is_unknown(paths, tmp_path, monkeypatch):
+    from test_bridge_thalamus import _Client
+    _data(paths, tmp_path, monkeypatch)
+
+    class _FeedClient(_Client):
+        def __init__(self, items):
+            self.items = items
+
+        def post_feed(self, body):
+            return {"status": "ok", "items": self.items}
+
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono, client=_FeedClient([_chosen("p9", "Waiting line.", WALL - 1000)]))
+    said = []
+    bridge.talk.say = lambda text, sim_id=None: said.append((text, sim_id))
+    _append(paths, [_lineage(1, WALL)])
+    _tick(bridge, mono, WALL)
+    assert said == []
+    snap = _snap(2, "ok", WALL + 100, 10)
+    snap["body"]["sim_id"] = "118245043779534862"
+    _append(paths, [snap])
+    _tick(bridge, mono, WALL + 200)
+    assert said == [("Waiting line.", "118245043779534862")]
+
+
+def _talk_reply(lines, command_id):
+    return {"id": command_id, "status": "REJECTED", "code": None, "result": {"ok": False, "lines": lines}}
+
+
+def test_a_talk_line_the_probe_refuses_as_too_soon_is_sent_once_more_and_no_more(tmp_path):
+    from domus_helper.talk import Talk
+    sent, replies = [], {}
+
+    def publish(command, args):
+        sent.append(args["text"])
+        command_id = "c%d" % len(sent)
+        replies[command_id] = _talk_reply(["TALK_REJECT TOO_SOON"], command_id)
+        return command_id
+
+    from domus_helper.spool import Spool
+    spool = Spool(tmp_path / "spool.db")
+    talk = Talk(spool, publish, reply=lambda command_id: replies.get(command_id))
+    try:
+        talk.say("First line.", sim_id="7")
+        talk.tick(WALL, True)
+        talk.tick(WALL + 3000, True)  # the refusal is read: the line goes once more
+        talk.tick(WALL + 6000, True)
+        talk.tick(WALL + 9000, True)
+        assert sent == ["First line.", "First line."]
+    finally:
+        spool.close()
+
+
+def test_a_talk_line_the_probe_accepts_is_not_sent_again_and_one_with_no_answer_is_given_up(tmp_path):
+    from domus_helper.talk import REPLY_WAIT_MS, Talk
+    from domus_helper.spool import Spool
+    sent, replies = [], {}
+
+    def publish(command, args):
+        sent.append(args["text"])
+        command_id = "c%d" % len(sent)
+        if len(sent) == 1:
+            replies[command_id] = _talk_reply(["TALK_OK"], command_id)
+        return command_id
+
+    spool = Spool(tmp_path / "spool.db")
+    talk = Talk(spool, publish, reply=lambda command_id: replies.get(command_id))
+    try:
+        talk.say("Accepted.", sim_id="7")
+        talk.say("Never answered.", sim_id="7")
+        talk.tick(WALL, True)
+        talk.tick(WALL + 3000, True)  # the answer to the first line is read, and the second goes
+        assert sent == ["Accepted.", "Never answered."]
+        talk.tick(WALL + 6000, True)  # no answer to the second: it is given up after the wait, and never sent again
+        talk.tick(WALL + 6000 + REPLY_WAIT_MS, True)
+        talk.tick(WALL + 9000 + REPLY_WAIT_MS, True)
+        assert sent == ["Accepted.", "Never answered."]
+    finally:
+        spool.close()
+
+
+# ----------------------------------------------------------------- HELPER3-10: a bad row never ends the bridge
+
+_JUNK = (None, 0, 1, -1, "", "x", [], [1, "a"], {}, {"a": 1}, True, 2.5)
+_KEYS = ("event_kind", "body", "presence", "dialogs", "interactions", "e2", "pace", "telemetry_session_id",
+         "wall_timestamp_ms", "zone", "probe_version", "written_sequence")
+
+
+@pytest.mark.parametrize("seed", [20261012, 7, 99])
+def test_a_fuzz_of_bad_rows_never_ends_the_bridge_and_each_row_is_passed_over(paths, tmp_path, monkeypatch, seed):
+    import random
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    rng = random.Random(seed)
+    bases = [_lineage(1, WALL), _snap(2, "ok", WALL, 10), _menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)])),
+             _menu_row(4, _menu(6, [_room_obj(12, 4, 1.0, True)], near=True))]
+    rows = []
+    for index in range(240):
+        row = dict(rng.choice(bases))
+        for _ in range(rng.randint(1, 3)):
+            row[rng.choice(_KEYS)] = rng.choice(_JUNK)
+        if rng.random() < 0.3:
+            row["e2"] = {"objects": rng.choice(_JUNK), "parts": rng.choice(_JUNK), "part": rng.choice(_JUNK),
+                         "near": rng.choice(_JUNK), "menu_rev": rng.choice(_JUNK)}
+        rows.append(row)
+    _append(paths, rows)
+    _tick(bridge, mono, WALL)
+    _tick(bridge, mono, WALL + 1000)
+    assert bridge._last_rowid == bridge.spool.row_count()
+    _append(paths, [_snap(900, "low", WALL + 2000, 20)])
+    _tick(bridge, mono, WALL + 2000)
+    assert bridge._last_rowid == bridge.spool.row_count()
+
+
+# ----------------------------------------------------------------- left-out wording (HELPER3-17, SEAM3-16/17, CONTRA3-2/3, VOICE3-8/9)
+
+def test_a_phone_act_is_named_in_the_game_words_when_the_menu_has_them_and_the_cut_takes_the_name_first():
+    from domus_helper.acts import _phone_left_out
+    menu = {"objects": [{"object_id": "11", "class": "object_phone", "phone": True,
+                         "acts": [{"guid64": "1", "name": "phone_Call", "text_key": "key.call"}]}],
+            "excluded_phone": [{"name": "phone_Call", "why": "travel"},
+                               {"name": "phone_" + "Long" * 40, "why": "hidden"}]}
+    lines = _phone_left_out(menu, {"key.call": "Call {0.SimFirstName}"}.get)
+    assert lines[0] == "Call: left out: it can take you off the lot"
+    assert lines[1].endswith(": left out: the game keeps it out of your menu") and len(lines[1]) <= 160
+
+
+def test_a_debug_or_empty_act_name_is_an_act_and_a_deny_name_act_is_never_named():
+    from domus_helper.acts import _phone_left_out
+    menu = {"excluded_phone": [{"name": "DEBUG_thing", "why": "hidden"}, {"name": "", "why": "hidden"},
+                               {"name": "phone_Cheat", "why": "deny_name"}],
+            "refused_phone": [{"name": "*star", "reason_key": None}]}
+    assert _phone_left_out(menu, {}.get) == [
+        "an act: left out: the game keeps it out of your menu",
+        "an act: left out: the game keeps it out of your menu",
+        "an act: left out: a debug, cheat or test act",
+        "an act: refused: no reason given"]
+
+
+def test_the_left_out_cut_adds_one_line_per_reason_for_the_rest_and_no_more_than_twelve():
+    from domus_helper.acts import _phone_left_out
+    excluded = [{"name": "phone_Act%02d" % number, "why": "travel" if number % 2 else "hidden"} for number in range(20)]
+    lines = _phone_left_out({"excluded_phone": excluded}, {}.get)
+    assert len(lines) <= 12
+    summaries = [line for line in lines if " more acts: left out: " in line]
+    assert len(summaries) == 2
+    counts = {line.split(" more acts")[0]: line for line in summaries}
+    assert sum(int(line.split(" more acts")[0]) for line in summaries) == 20 - (12 - len(summaries))
+    assert any(line.endswith("it can take you off the lot") for line in summaries)
+
+
+def test_the_act_on_her_phone_and_the_screen_marker_say_your_summoner_not_the_user():
+    from domus_helper.acts import OPENS_SCREEN
+    assert OPENS_SCREEN == "a screen only your summoner can use"
+
+
+# ----------------------------------------------------------------- names, labels and relationships (HELPER3-8, SEAM3-15, HELPER3-19)
+
+def test_a_thing_with_no_usable_name_is_named_by_its_class_and_kept_never_left_out():
+    from domus_helper import reach
+    from domus_helper.acts import RefBook
+    raw = [{"object_id": "9", "name_key": "901", "class": "object_test_chair", "where": "inventory"},
+           {"object_id": "10", "name_key": "902", "class": "**DEBUG**", "where": "inventory"},
+           {"object_id": "11", "name_key": None, "class": "", "where": "inventory"}]
+    skipped = []
+    things = reach.list_words("things", raw, refs=RefBook(), resolve={"901": "** DEBUG **", "902": "*Star"}.get,
+                              skipped=skipped)
+    assert [thing["name"] for thing in things] == ["object test chair", "object", "object"]
+    assert "name" not in skipped
+
+
+def test_a_room_whose_name_does_not_fit_is_labelled_by_its_id_and_never_as_an_empty_the_room_with_the():
+    from domus_helper import reach
+    long_name = "x" * 70
+    labels = reach.room_labels([{"object_id": "9", "name_key": "k", "where": "room", "room_id": "6"}],
+                               resolve={"k": long_name}.get)
+    assert labels == {"6": "room 6"}
+    fits = reach.room_labels([{"object_id": "9", "name_key": "k", "where": "room", "room_id": "6"}],
+                             resolve={"k": "Test Lamp"}.get)
+    assert fits == {"6": "the room with the Test Lamp"}
+
+
+def test_a_relationship_says_its_labels_and_no_track_number_and_a_track_with_no_label_is_left_out():
+    from domus_helper.reach import _how
+    assert _how(["friend"], {"Romance": 40, "Trust": {"label": "trusted"}, "Anger": -3}) == "friend; trusted"
+    assert _how([], {"Romance": 40}) == ""
+    assert _how(None, None) == ""
+
+
+# ----------------------------------------------------------------- lineage: a save that continues her life, and a death (VOICE3-4, R3)
+
+def _life(seq, record, lineage_class, **e2):
+    from test_thalamus_percepts import _row
+    return _row(seq, kind="lineage_event", e2=dict({"slot_id": 3, "guid": "abc", "lineage_class": lineage_class,
+                                                    "record": record}, **e2))
+
+
+def test_a_save_that_only_continues_her_life_does_not_wake_her_and_a_body_gone_always_does():
+    from domus_helper.thalamus.percepts import Extractor
+    ext = Extractor()
+    first = [p for p in ext.step(_life(1, "CLASSIFIED", "HOUSEHOLD")) if p.kind == "lineage"]
+    assert first[0].urgency == "wake"  # a first classification is news
+    again = [p for p in ext.step(_life(2, "CLASSIFIED", "HOUSEHOLD")) if p.kind == "lineage"]
+    assert again[0].urgency == "normal"  # the same class after a save: her life goes on, nothing to wake for
+    changed = [p for p in ext.step(_life(3, "CLASSIFIED", "LOADED")) if p.kind == "lineage"]
+    assert changed[0].urgency == "wake"
+    gone = [p for p in ext.step(_life(4, "BODY_GONE", "BODY_GONE", reason="DEAD", death_type="Drowning"))
+            if p.kind == "lineage"]
+    assert gone[0].urgency == "wake" and dict(gone[0].facts) == {"reason": "DEAD", "death_type": "Drowning"}
+
+
+def test_a_death_type_is_a_fact_only_when_the_game_gave_one_and_it_is_at_most_forty_characters():
+    from domus_helper.thalamus.percepts import Extractor
+    ext = Extractor()
+    no_type = [p for p in ext.step(_life(1, "BODY_GONE", "BODY_GONE", reason="GHOST")) if p.kind == "lineage"]
+    assert dict(no_type[0].facts) == {"reason": "GHOST"}
+    long = [p for p in ext.step(_life(2, "BODY_GONE", "BODY_GONE", reason="DEAD", death_type="d" * 60))
+            if p.kind == "lineage"]
+    assert dict(long[0].facts)["death_type"] == "d" * 40
+
+
+def test_the_overlay_page_says_ashleys_queue_choice_and_body_not_her():
+    from domus_helper import overlay_page
+    text = overlay_page.PAGE
+    assert "in Ashley's queue" in text and "Ashley's choice" in text and "Ashley's body" in text
+    assert "in her queue" not in text and '"her body"' not in text
+
+
+# ----------------------------------------------------------------- the probe version, the near warning and the size of a view (SEAM3-21, SEAM3-10, SEAM3-13)
+
+def test_the_probe_version_is_the_one_of_the_first_row_of_the_newest_session(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    old = dict(_lineage(1, WALL), probe_version="2.37.1")
+    newer = dict(_menu_row(2, _menu(5, [_room_obj(11, 4, 1.0, True)])), probe_version="2.40.0")
+    _append(paths, [old, newer])
+    _tick(bridge, mono, WALL)
+    assert bridge.spool.session_probe() == "2.37.1"
+
+
+def test_a_menu_at_the_expected_probe_version_with_no_zone_is_logged_once_for_the_session(paths, tmp_path, monkeypatch):
+    from domus_helper.vendor import schema
+    from test_bridge_thalamus import _log_lines
+    data = _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    row = dict(_menu_row(2, _menu(5, [_room_obj(11, 4, 1.0, True)])), probe_version=schema.PROBE_VERSION)
+    _append(paths, [_lineage(1, WALL), row, dict(_menu_row(3, _menu(6, [_room_obj(12, 4, 1.0, True)])),
+                                                 probe_version=schema.PROBE_VERSION)])
+    _tick(bridge, mono, WALL)
+    lines = [line for line in _log_lines(data) if line.get("trigger") == "probe_check"]
+    assert len(lines) == 1 and lines[0]["error"] == "menu_without_zone"
+
+
+def test_a_view_over_sixty_kib_loses_its_options_first_until_it_fits(paths, tmp_path, monkeypatch):
+    from domus_helper import bridge as bridge_module
+    _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL})
+    monkeypatch.setattr(bridge_module, "build", lambda decision, ctx: {"opts": ctx["options"], "pad": "p" * 30000})
+    monkeypatch.setattr(bridge, "_options", lambda row, cut=None, limit=bridge_module.OPTIONS_LIMIT:
+                        [{"t": "a" * 1000}] * (limit // 1000) if cut is None else
+                        (cut.update(objects=0) or [{"t": "a" * 1000}] * (limit // 1000)))
+    ctx = {"options": [{"t": "a" * 1000}] * 32, "options_cut": {}, "row": {}}
+    obs = bridge_module.build(None, ctx)
+    ctx, obs = bridge._fit_options(ctx, obs, None)
+    assert bridge_module._json_size(obs) <= bridge_module.OBSERVATION_BYTES
+    assert 0 < len(ctx["options"]) < 32
+
+
+# ----------------------------------------------------------------- the probe's shapes (lead note): empty near parts, missing zones
+
+def test_an_empty_near_part_drops_the_old_near_set_and_shows_the_whole_menu_as_the_base():
+    whole = _zoned(_menu(5, [_room_obj(11, 4, 1.0, True), _room_obj(22, 2, 9.0, False)]), 1)
+    shown = merge_near(_zoned(_menu(6, [], near=True), 1), whole)
+    assert _ids(shown) == ["11", "22"]
+    assert shown["objects"][0]["distance_m"] is None and shown["objects"][1]["same_room"] is False
+
+
+def test_a_missing_zone_counts_as_the_same_zone_and_two_different_zones_do_not_merge():
+    whole = _menu(5, [_room_obj(22, 2, 9.0, False)])  # no zone key: an unknown zone
+    assert _ids(merge_near(_zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 3), whole)) == ["44", "22"]
+    assert _ids(merge_near(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), _zoned(dict(whole), 3))) == ["44", "22"]
+    assert _ids(merge_near(_zoned(_menu(6, [_room_obj(44, 4, 1.0, True)], near=True), 4), _zoned(dict(whole), 3))) == ["44"]
+
+
+# ----------------------------------------------------------------- R4: whose a window is ("yours" for hers, "the User's" for others)
+
+def test_a_window_of_hers_says_yours_and_one_of_the_users_says_the_users():
+    from domus_helper.thalamus import observation
+    from test_2152_helper import TEXT, _open, _v9
+    hers = dict(_open(), cause="hers")
+    users = dict(_open(), dialog_id="556", cause="user")
+    row = _v9(1, 601, {"open": [hers, users], "closed": [], "truncated": False})
+    asked = observation._portrait(row, TEXT.get)["asked"]
+    assert [item["whose"] for item in asked] == ["yours", "the User's"]
+
+
+def test_the_first_whole_menu_sends_a_view_at_once_even_when_nothing_else_has_changed(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    _append(paths, [dict(_lineage(1, WALL), probe_version="2.40.0"), dict(_snap(2, "ok", WALL, 10), probe_version="2.40.0")])
+    _tick(bridge, mono, WALL + 2000)
+    sent = bridge._fires
+    _append(paths, [_menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)]))])
+    _tick(bridge, mono, WALL + 2100)
+    assert bridge._fires == sent + 1 and bridge._choices_due is False
+    assert bridge._obs_ctx(WALL + 2100)["choices_pending"] is False

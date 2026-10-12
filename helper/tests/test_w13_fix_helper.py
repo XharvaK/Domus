@@ -767,7 +767,7 @@ def test_the_phone_option_object_names_the_phone_acts_left_out_and_refused_with_
                        refused=[{"name": "phone_Plan", "reason_key": None}])
     listed = options(menu, resolve={}.get, refs=RefBook())
     assert len(listed) == 1 and listed[0]["left_out"] == [
-        "phone Call: left out: it takes you off the lot", "phone Plan: refused: no reason given"]
+        "phone Call: left out: it can take you off the lot", "phone Plan: refused: no reason given"]
 
 
 def test_the_phone_left_out_lines_are_at_most_twelve_of_at_most_160_characters_and_the_last_counts_the_rest():
@@ -776,7 +776,7 @@ def test_the_phone_left_out_lines_are_at_most_twelve_of_at_most_160_characters_a
     listed = options(_phone_menu(excluded=excluded), resolve={}.get, refs=RefBook())
     left_out = listed[0]["left_out"]
     assert len(left_out) == 12 and all(len(line) <= 160 for line in left_out)
-    assert left_out[-1] == "and 3 more"
+    assert left_out[-1] == "3 more acts: left out: the game keeps it out of your menu"  # R5: one line per reason
     assert "left_out" not in options(_phone_menu(), resolve={}.get, refs=RefBook())[0]
 
 

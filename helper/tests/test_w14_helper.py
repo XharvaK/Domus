@@ -39,20 +39,20 @@ def _ids(payload):
 
 # ----------------------------------------------------------------- D3: the merge rule and the set keys
 
-def test_a_near_part_keeps_the_far_objects_of_the_last_whole_menu():
+def test_a_near_part_keeps_the_objects_of_the_last_whole_menu_that_it_does_not_test():
     whole = _menu(5, [_obj(11, 2.0, True), _obj(22, 9.0, False), _obj(33, phone=True)])
     near = _menu(6, [_obj(11, 1.0, True, guid=110), _obj(44, 3.0, True)], near=True)
     shown = merge_near(near, whole)
-    assert _ids(shown) == ["11", "44", "22"]
+    assert _ids(shown) == ["11", "44", "22", "33"]
     assert shown["objects"][0]["acts"][0]["guid64"] == "110"  # the near part's own read wins
     assert shown["menu_rev"] == 6
 
 
-def test_the_far_rule_is_more_than_near_m_away_and_not_her_room_or_phone():
+def test_a_near_part_with_no_objects_keeps_every_object_of_the_whole_menu():
     whole = _menu(5, [_obj(1, NEAR_M, False), _obj(2, NEAR_M + 0.5, False), _obj(3, None, False),
                       _obj(4, 9.0, True), _obj(5, phone=True), _obj(6, 9.0, None), _obj(7, 9.0, False)])
     shown = merge_near(_menu(6, [], near=True), whole)
-    assert _ids(shown) == ["2", "6", "7"]
+    assert _ids(shown) == ["1", "2", "3", "4", "5", "6", "7"]
 
 
 def test_a_near_part_with_no_whole_menu_is_the_near_part_alone():
@@ -280,8 +280,8 @@ def test_each_left_out_code_the_probe_sends_is_said_in_plain_words_and_an_unknow
     lines = listed[0]["left_out"]
     assert lines == [
         "phone Act0: left out: it opens a menu of choices, not an act",
-        "phone Act1: left out: a debug or cheat act",
-        "phone Act2: left out: it takes you off the lot",
+        "an act: left out: a debug, cheat or test act",
+        "phone Act2: left out: it can take you off the lot",
         "phone Act3: left out: only the game starts it, not you",
         "phone Act4: left out: the game keeps it out of your menu",
         "phone Act5: left out: a_new_code"]
@@ -294,7 +294,7 @@ def test_the_left_out_words_never_show_the_debug_code_or_an_internal_name():
     for words in LEFT_OUT_REASONS.values():
         assert "_" not in words and "DEBUG" not in words and words[0].islower()
     lines = _phone_left_out({"excluded_phone": [{"name": "phone_Cheat", "why": "deny_name"}]}, {}.get)
-    assert lines == ["phone Cheat: left out: a debug or cheat act"]
+    assert lines == ["an act: left out: a debug, cheat or test act"]
 
 
 # ----------------------------------------------------------------- D8: her body is "you" in every text that reaches her
@@ -316,10 +316,17 @@ def test_no_string_she_or_her_is_in_the_helper_text_except_the_user_screens_and_
     import tokenize
     from pathlib import Path
     pattern = re.compile(r"\b(she|her|hers|herself|She|Her|Hers)\b")
-    allowed_files = {"overlay.py", "overlay_page.py", "talk.py"}
+    allowed_files = {"overlay.py", "overlay_page.py", "talk.py"}  # the page is checked on its own below
     allowed_strings = {'"queue:her"', '"hers"'}
     root = Path(__file__).resolve().parents[1] / "domus_helper"
     found = []
+    # HELPER3-18: the overlay page is the User's screen. Its text is the quoted strings of its script (the keys and class
+    # names are identifiers, not screen text), and none of those says she or her.
+    page = (root / "overlay_page.py").read_text(encoding="utf-8")
+    for line_no, line in enumerate(page.splitlines(), start=1):
+        for quoted in re.findall(r'"[^"]*"', line):
+            if pattern.search(quoted):
+                found.append(("overlay_page.py", line_no, quoted[:60]))
     for path in sorted(root.rglob("*.py")):
         if "vendor" in path.parts or path.name in allowed_files:
             continue

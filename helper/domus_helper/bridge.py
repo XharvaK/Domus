@@ -1,5 +1,6 @@
 """Helper bridge: spool telemetry, heartbeat, and flush the observation outbox."""
 import argparse
+import hashlib
 import json
 import secrets
 import sqlite3
@@ -15,7 +16,7 @@ from . import fingerprints as fingerprint_reader
 from . import pace
 from . import reach
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, merge_near, options as act_options, people_heard, people_names, queue_options
+from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, merge_near, options as act_options, people_heard, people_names, queue_options, zones_differ
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -64,6 +65,28 @@ REQUEUE_LIMIT = 3
 PACE_RETRY_MS = 30_000
 # HE17: the newest row is kept in the spool when it changed, and at most this often.
 ROW_WRITE_EVERY_MS = 30_000
+# SEAM3-8: a look's view waits this long at most for the near part it asked for.
+LOOK_HOLD_MS = 3_000
+# SEAM3-13: a view's JSON is queued only under this size (the wire takes 64 KiB; the spool is checked before the post).
+OBSERVATION_BYTES = 60 * 1024
+
+
+def _view(payload):
+    """The menu as it is shown and kept: the probe's markers (near, partial) are not part of the view (R1, W14 D3)."""
+    return {key: value for key, value in payload.items() if key not in ("near", "partial")}
+
+
+def _choices_key(session, payload):
+    """SEAM3-7: a digest of a whole menu's choices (its objects and their acts) in its session. A view that carries the same
+    key as the last one sent has nothing new to say about the choices."""
+    objects = payload.get("objects") if isinstance(payload, dict) else None
+    listed = [[str(item.get("object_id")), [str(act.get("guid64")) for act in item.get("acts") or [] if isinstance(act, dict)]]
+              for item in objects or [] if isinstance(item, dict)]
+    return hashlib.sha256(json.dumps([session, listed], separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _json_size(value):
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def _body_sample(record):
@@ -142,7 +165,11 @@ class Bridge:
         # W14 (D3): the last whole menu of the session (kept under its telemetry session), which a near part is merged with.
         self._whole_menu = None
         # W14 (S2): no whole menu has arrived in this helper session yet (the view says the choices are still coming).
-        self._whole_seen = False
+        self._choices_sent = None  # SEAM3-7: the choices key of the last view sent (a view goes when a new key comes)
+        self._choices_due = False
+        self._near_warned = None  # SEAM3-10: the telemetry session the probe-version check has warned about
+        self._look_hold = None  # SEAM3-8: a look's view waiting for its near part: {at_ms, after (the row it followed)}
+        self._near_rowid = None  # the row of the newest near part read (a look's view waits for one after it)
         self._refs = RefBook()  # N8 (F3): the refs of this helper session (reset at each attachment)
         self._menu_parts = MenuParts()  # N8 (F4): a menu arrives in parts; the whole one is the menu
         self._catalog = None
@@ -180,7 +207,8 @@ class Bridge:
         self.director = None if self.client is None else Director(
             self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
         # 2.26.0: social talk on the User's screen; local only, so it works without Ashley too.
-        self.talk = Talk(self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths))
+        self.talk = Talk(self.spool, lambda command, args: commands.publish(command, args, "helper", paths=self.paths),
+                         reply=lambda command_id: commands.read_reply(command_id, paths=self.paths))  # HELPER3-12
         if self._acts is not None:
             self.overlay.answered = self._acts.answered_dialogs
         self.notebook = notebook.Notebook(self.paths.data_dir / notebook.DB_NAME)
@@ -206,7 +234,7 @@ class Bridge:
         self._maybe_rebuild_procedures(now)
         self.cursor.read_new()
         latest = self.spool.latest_record()
-        probe = latest.get("probe_version") if isinstance(latest, dict) else None
+        probe = self.spool.session_probe()  # SEAM3-21: the version of the current telemetry session, from its first row
         if isinstance(probe, str) and probe != schema.PROBE_VERSION and probe != self._probe_warned:
             print("probe %s is installed; this helper expects %s" % (probe, schema.PROBE_VERSION))
             self._probe_warned = probe
@@ -260,8 +288,10 @@ class Bridge:
         self._catalog_dump(now, probe)
         self._lists_now_due(now, probe)
         self.overlay.poll(self.client, self.helper_session, now)
-        for line in self.overlay.take_thoughts():  # W14 (S4): a line she chose shows in the game once, as her words
-            self.talk.say(line, sim_id=self._her_sim_id())
+        sim = self._her_sim_id()
+        if sim is not None:  # HELPER3-7: a line she chose waits, unsaid, until her own Sim is known
+            for line in self.overlay.take_thoughts():  # W14 (S4): a line she chose shows in the game once, as her words
+                self.talk.say(line, sim_id=sim)
         self.overlay.act_name = self._act_names()
         self.overlay.publish(now, self._state == "attached")
         if self.director is not None:
@@ -270,19 +300,35 @@ class Bridge:
         self.talk.tick(now, self._state == "attached" and _probe_ok(probe, _TALK_PROBE))
 
     def _menu_shown(self, session, payload, clock_ms):
-        """W14 (D3, S2): the menu she sees for a complete set of menu parts. A whole menu replaces everything and is kept
-        as the session's whole menu. A near part is merged with that whole menu (acts.merge_near): her room and what is
-        near her come from the near part, the far rooms from the whole. Any whole menu marks the choices as come."""
+        """W14 (D3, S2), R1-R3: the menu she sees for a complete set of menu parts. A final whole menu replaces everything
+        and is kept as the session's whole menu. A first-build partial (R1) is shown and is the merge base for the next near
+        part, but it is not the whole, so the choices stay pending. A near part is merged with the whole menu of its zone
+        (acts.merge_near): her room and what is near her come from the near part, the rest from the whole. A near part of
+        another zone drops the old whole (R2). The view carries neither the near nor the partial marker."""
+        if payload.get("partial") is True:
+            self._whole_menu = {"session": session, "payload": payload, "at_ms": clock_ms, "final": False}
+            return _view(payload)
         if payload.get("near") is not True:
-            self._whole_seen = True
-            self._whole_menu = {"session": session, "payload": payload, "at_ms": clock_ms}
-            return payload
+            key = _choices_key(session, payload)
+            self._whole_menu = {"session": session, "payload": payload, "at_ms": clock_ms, "final": True, "key": key}
+            if key != self._choices_sent:
+                self._choices_due = True  # SEAM3-7: the first whole of a session, or a whole whose act list changed
+            return _view(payload)
         whole = self._whole_menu
         if not isinstance(whole, dict) or whole.get("session") != session:
-            return payload
-        return merge_near(payload, whole.get("payload"))
+            return _view(payload)
+        if zones_differ(whole.get("payload") or {}, payload):
+            self._whole_menu = None  # R2: another zone's menu is not the base of this near part
+            return _view(payload)
+        return _view(merge_near(payload, whole.get("payload")))
 
-    def _options(self, row, cut=None):
+    def _choices_pending(self, session):
+        """S2 (HELPER3-13/14, SEAM3-2/19): the choices are pending until a final whole menu of this telemetry session is held,
+        a restored one included. A partial menu (R1) does not end it."""
+        whole = self._whole_menu
+        return not (isinstance(whole, dict) and whole.get("final", True) is True and whole.get("session") == session)
+
+    def _options(self, row, cut=None, limit=OPTIONS_LIMIT):
         """8f: her options from the newest menu of this telemetry session; 2.18.0: a question
         the game is asking her (an open dialog that is hers) comes first, menu or not."""
         if not isinstance(row, dict):
@@ -298,7 +344,7 @@ class Bridge:
                 self._catalog = Catalog(self.paths)
             except Exception:
                 self._catalog = False
-        room = OPTIONS_LIMIT - len(json.dumps(asked).encode("utf-8")) - 2 if asked else OPTIONS_LIMIT
+        room = limit - len(json.dumps(asked).encode("utf-8")) - 2 if asked else limit
         # 2.37.0 (W10 H3): act texts keep their tokens here; clean_text fills a person's name or drops them.
         listed = act_options(menu.get("payload"), self._resolve_text.raw, self._catalog or None,
                              people=people_names(row, self._seen_ids()), refs=self._refs, limit=max(0, room),
@@ -403,54 +449,83 @@ class Bridge:
         # D2: nothing here judges a change. Each one waits in the coalescer until its view goes.
         self._load_state()
         for rowid, record in self.spool.rows_after(self._last_rowid):
-            kind = record.get("event_kind") if isinstance(record, dict) else None
-            written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
-            clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
-            if kind == "act_menu" and isinstance(record.get("e2"), dict):
-                # HE12: the menu keeps its wall time and its room; its labels are read against her room now.
-                # N8 (F4): a menu is shown once all its parts have come (see MenuParts).
-                session = record.get("telemetry_session_id")
-                taken = self._menu_parts.take(session, record["e2"])
-                if taken is not None:
-                    shown = self._menu_shown(session, taken, clock_ms)  # W14 (D3): a near part never replaces the whole
-                    self._menu = {"session": session, "payload": shown, "at_ms": clock_ms}
-                    self._log_spot_stages(shown, clock_ms)  # W12 (C11): the spot stages, read from the log
-                    self._extractor.act_words = act_words_by_guid(shown, self._resolve_text.raw)  # W13 (S1)
-                    self._notebook_quietly(
-                        lambda: self.notebook.observe_menu(self._world(), shown, clock_ms))
-            elif kind == "presence_snapshot":
-                self._notebook_quietly(
-                    lambda: self.notebook.observe_presence(self._world(), record, clock_ms))
-                if self.diary is not None:
-                    self._notebook_quietly(
-                        lambda: self.diary.tick(clock_ms, record, self._world()))
-            if kind == "act_event" and self._acts is not None:
-                self._acts.on_row(record)
-            if kind in ("discovery", "lists", "catalog"):
-                # W13 (H): the probe's facts for the lead and for her lists and catalogue; nothing here reaches her view directly.
-                self._reach_quietly(lambda: self._reach_row(kind, record, clock_ms))
-            self._windows.on_row(record, clock_ms)
-            self._pace_log.on_row(record)
-            block = record.get("pace") if isinstance(record, dict) else None
-            if isinstance(block, dict):
-                self._pace_observe(block, clock_ms)
-            held = withheld_of(record)
-            if held is not None:
-                self._notebook_quietly(lambda: self.notebook.observe_withheld(held[0], held[1], clock_ms))
-            if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
-                self._acts.on_sample(record)
-            self.overlay.on_row(record, wall_ms)
-            if self.director is not None:
-                self.director.on_row(record, wall_ms)
-            self.talk.on_row(record, wall_ms, _body_sample(record))
-            self._coalesced = coalesce.add(self._coalesced, self._extractor.step(record), clock_ms)
-            self._last_row = record
-            if _body_sample(record):
-                self._last_body_row = record
-                self._body_fresh = True
-                self._set_her(record)
-                self._seen.observe(record)
-            self._last_rowid = rowid
+            self._consume_row(rowid, record, wall_ms)
+            self._last_rowid = rowid  # HELPER3-10: a row is passed over once read, whatever its consumers did with it
+
+    def _guard(self, rowid, consumer, wall_ms, step):
+        """HELPER3-10: one consumer's step on one row. A row a consumer cannot read is logged and passed over; it never ends
+        the bridge. Returns the step's value, or None when it failed."""
+        try:
+            return step()
+        except Exception as error:
+            self._log.write({"wall_ms": wall_ms, "trigger": "row_error", "row": rowid, "consumer": consumer,
+                             "error": type(error).__name__})
+            return None
+
+    def _consume_row(self, rowid, record, wall_ms):
+        """One telemetry row through each consumer (see _guard)."""
+        kind = record.get("event_kind") if isinstance(record, dict) else None
+        written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
+        clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
+        if kind == "act_menu" and isinstance(record.get("e2"), dict):
+            self._guard(rowid, "menu", wall_ms, lambda: self._menu_row(rowid, record, clock_ms))
+        elif kind == "presence_snapshot":
+            self._guard(rowid, "notebook", wall_ms, lambda: self._notebook_quietly(
+                lambda: self.notebook.observe_presence(self._world(), record, clock_ms)))
+            if self.diary is not None:
+                self._guard(rowid, "diary", wall_ms, lambda: self._notebook_quietly(
+                    lambda: self.diary.tick(clock_ms, record, self._world())))
+        if kind == "act_event" and self._acts is not None:
+            self._guard(rowid, "acts", wall_ms, lambda: self._acts.on_row(record))
+        if kind in ("discovery", "lists", "catalog"):
+            # W13 (H): the probe's facts for the lead and for her lists and catalogue; nothing here reaches her view directly.
+            self._guard(rowid, "reach", wall_ms, lambda: self._reach_quietly(lambda: self._reach_row(kind, record, clock_ms)))
+        self._guard(rowid, "windows", wall_ms, lambda: self._windows.on_row(record, clock_ms))
+        self._guard(rowid, "pace_log", wall_ms, lambda: self._pace_log.on_row(record))
+        block = record.get("pace") if isinstance(record, dict) else None
+        if isinstance(block, dict):
+            self._guard(rowid, "pace", wall_ms, lambda: self._pace_observe(block, clock_ms))
+        held = self._guard(rowid, "withheld", wall_ms, lambda: withheld_of(record))
+        if held is not None:
+            self._guard(rowid, "notebook", wall_ms, lambda: self._notebook_quietly(
+                lambda: self.notebook.observe_withheld(held[0], held[1], clock_ms)))
+        if self._acts is not None and isinstance(record, dict) and "dialogs" in record:
+            self._guard(rowid, "dialogs", wall_ms, lambda: self._acts.on_sample(record))
+        self._guard(rowid, "overlay", wall_ms, lambda: self.overlay.on_row(record, wall_ms))
+        if self.director is not None:
+            self._guard(rowid, "director", wall_ms, lambda: self.director.on_row(record, wall_ms))
+        body_sample = self._guard(rowid, "talk", wall_ms, lambda: _body_sample(record))
+        self._guard(rowid, "talk", wall_ms, lambda: self.talk.on_row(record, wall_ms, body_sample))
+        found = self._guard(rowid, "extractor", wall_ms, lambda: self._extractor.step(record))
+        if found is not None:
+            self._coalesced = coalesce.add(self._coalesced, found, clock_ms)
+        self._last_row = record
+        if body_sample:
+            self._last_body_row = record
+            self._body_fresh = True
+            self._guard(rowid, "body", wall_ms, lambda: self._set_her(record))
+            self._guard(rowid, "seen", wall_ms, lambda: self._seen.observe(record))
+
+    def _menu_row(self, rowid, record, clock_ms):
+        """The probe's act menu (HE12, N8 F4, W14 D3): the menu keeps its wall time and its room; a menu is shown once all its
+        parts have come (see MenuParts), and a near part is merged with the whole (see _menu_shown)."""
+        session = record.get("telemetry_session_id")
+        if record.get("probe_version") == schema.PROBE_VERSION and "zone_id" not in record["e2"] and session != self._near_warned:
+            # SEAM3-10: a probe at the version this helper expects sends the zone of each menu (the near parts come with it).
+            # A menu without one means the game's side is an older build with that version, and nothing else would show it.
+            self._near_warned = session
+            self._log.write({"wall_ms": clock_ms, "trigger": "probe_check", "error": "menu_without_zone",
+                             "probe": schema.PROBE_VERSION})
+        taken = self._menu_parts.take(session, record["e2"])
+        if taken is None:
+            return
+        shown = self._menu_shown(session, taken, clock_ms)  # W14 (D3): a near part never replaces the whole
+        if taken.get("near") is True:
+            self._near_rowid = rowid  # SEAM3-8: the look's view waits for a near part after its request
+        self._menu = {"session": session, "payload": shown, "at_ms": clock_ms}
+        self._log_spot_stages(shown, clock_ms)  # W12 (C11): the spot stages, read from the log
+        self._extractor.act_words = act_words_by_guid(shown, self._resolve_text.raw)  # W13 (S1)
+        self._notebook_quietly(lambda: self.notebook.observe_menu(self._world(), shown, clock_ms))
 
     def _follow_refs(self, latest):
         """W12 (B2): the refs of her menu are kept for one game session. An attach flip keeps them; a new telemetry
@@ -491,6 +566,7 @@ class Bridge:
         so no view shows an act's effect before the act's record is with Mint. The changes wait with it."""
         if self._acts is None or self._acts.sync_ok:
             self._send_diary(wall_ms)
+            self._look_due(wall_ms)
             self._flush_views(wall_ms)
         self._persist_thalamus(wall_ms)
 
@@ -529,11 +605,16 @@ class Bridge:
 
     def _flush_views(self, wall_ms):
         """D2: a view goes when the coalescer says so; nothing pending sends nothing. W12 (F3): not from a restored row."""
-        reason = coalesce.due(self._coalesced, wall_ms)
+        if self._look_hold is not None:
+            return  # SEAM3-8: the look's view goes first, with the changes waiting now
+        reason = coalesce.due(self._coalesced, wall_ms, choices=self._choices_due)
         if reason is None or self._body_is_restored(wall_ms):
             return
         percepts, self._coalesced = coalesce.take(self._coalesced)
-        self._send_view(percepts, reason, wall_ms)
+        try:
+            self._send_view(percepts, reason, wall_ms)
+        except Exception as error:  # HELPER3-10: a view the newest rows cannot build is logged, and the next view tries again
+            self._log.write({"wall_ms": wall_ms, "trigger": reason, "error": "view_error:%s" % type(error).__name__})
 
     def _set_her(self, row):
         """2.37.0 (W10 H3): her names, from the presence row of her body (the probe's is_body entry), for the words of
@@ -554,13 +635,28 @@ class Bridge:
     def _send_look(self, wall_ms):
         """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;
         the changes waiting go with it. With no body row yet nothing is sent, and the log says so."""
-        latest = self.spool.latest_record()
-        if _probe_ok(latest.get("probe_version") if isinstance(latest, dict) else None, _NEAR_PROBE):
+        if _probe_ok(self.spool.session_probe(), _NEAR_PROBE):
             # W12 (C1): a look asks for the near part of the menu now (her room and what is near her, read at the write).
             try:
                 commands.publish("menu_near", {}, "helper", paths=self.paths)
             except (OSError, ValueError):
                 pass
+            # SEAM3-8: the look's view waits for the near part it asked for (see _look_due), so it shows the new room.
+            self._look_hold = {"at_ms": wall_ms, "after": self._last_rowid}
+            return
+        self._send_look_view(wall_ms)
+
+    def _look_due(self, wall_ms):
+        """SEAM3-8: a look's view goes when a near part written after the look has arrived, or LOOK_HOLD_MS after the look."""
+        hold = self._look_hold
+        if hold is None:
+            return
+        fresh = self._near_rowid is not None and self._near_rowid > hold["after"]
+        if fresh or wall_ms - hold["at_ms"] >= LOOK_HOLD_MS:
+            self._look_hold = None
+            self._send_look_view(wall_ms)
+
+    def _send_look_view(self, wall_ms):
         body = self._last_body_row
         if body is None:
             self._log.write({"wall_ms": wall_ms, "trigger": "look", "percepts": 0, "kinds": [],
@@ -573,6 +669,7 @@ class Bridge:
         """One view of her body now, carrying these changes. Salience is 0: the view says what changed, not what
         matters. One line in the decision log per view sent. event: the row the view is about (default the newest)."""
         self._fires += 1
+        self._choices_due = False  # SEAM3-7: one attempt per reason; a refused view is not retried for the choices alone
         self._last_fire_reason = trigger
         self._last_fire_wall_ms = wall_ms
         enqueued = False
@@ -583,6 +680,7 @@ class Bridge:
         ctx = self._obs_ctx(wall_ms, event)
         decision = SimpleNamespace(percepts=[(percept, 0.0) for percept in percepts], reason=trigger)
         obs = build(decision, ctx)
+        ctx, obs = self._fit_options(ctx, obs, decision)  # SEAM3-13: a view too large for the wire loses options first
         dropped = None
         if self.client is not None and not self._telemetry_only:
             refusal = self._enqueue_view(obs, wall_ms)
@@ -598,6 +696,7 @@ class Bridge:
             if refusal is None:
                 enqueued = True
                 self._requeued = 0
+                self._choices_sent = (self._whole_menu or {}).get("key") if isinstance(self._whole_menu, dict) else None
                 self._pace_log.observed(_ticks(self._last_body_row or self._last_row))
                 observation_id = obs["observation_id"]
                 self._obs_seq += 1
@@ -630,6 +729,17 @@ class Bridge:
         if dropped_percepts:
             line["dropped_percepts"] = dropped_percepts
         self._log.write(line)
+
+    def _fit_options(self, ctx, obs, decision):
+        """SEAM3-13: while the view's JSON is over OBSERVATION_BYTES, her options are cut to half their budget, again and
+        again (the existing cut path, which names what it left out). Returns the context and the view that fit."""
+        limit = OPTIONS_LIMIT
+        while _json_size(obs) > OBSERVATION_BYTES and ctx.get("options") and limit > 0:
+            limit //= 2
+            cut = {}
+            ctx = dict(ctx, options=self._options(ctx["row"], cut=cut, limit=limit), options_cut=cut)
+            obs = build(decision, ctx)
+        return ctx, obs
 
     def _enqueue_view(self, obs, wall_ms):
         """2.37.0 (W10 H1): the spool takes the view (None) or refuses it (the ContractError or OutboxConflict)."""
@@ -681,7 +791,7 @@ class Bridge:
             "seen": self._seen,
             "options": self._options(body, cut=options_cut),
             "options_cut": options_cut,
-            "choices_pending": not self._whole_seen,  # W14 (S2): the game's choices have not come in this session
+            "choices_pending": self._choices_pending(session),  # W14 (S2): no final whole menu of this session yet
             "notebook": self._notebook_slice(wall_ms),
             "windows": self._windows.recent(wall_ms, session),
             "pace": pace.portrait(self._pace_block, self._pace_log.costs()),

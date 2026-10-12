@@ -177,7 +177,7 @@ def test_a_look_asks_for_the_near_part_of_the_menu_on_a_probe_that_has_it(paths,
     bridge.spool.ingest("s", 0, 0, dict(_lineage(1, WALL), probe_version="2.38.0"), raw_len=10)
     bridge._send_look(WALL)
     assert "menu_near" not in sent
-    bridge.spool.ingest("s", 0, 10, dict(_lineage(2, WALL + 1), probe_version="2.39.0"), raw_len=10)
+    bridge.spool.ingest("t", 0, 0, dict(_lineage(2, WALL + 1), probe_version="2.39.0"), raw_len=10)  # a new game session's file
     bridge._send_look(WALL + 2)
     assert "menu_near" in sent
     assert data.exists()

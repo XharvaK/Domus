@@ -29,6 +29,8 @@ class Spool:
         # W12 (F3, F6): what the last flush did that a log should say: failed posts (by kind) and expired views.
         self.last_failures = []
         self.last_expired = 0
+        # HELPER3-10: the error names of the rows the last ingest passed over (a row the store cannot take never stops a read).
+        self.last_refused = []
         self._con = sqlite3.connect(str(path))
         self._con.row_factory = sqlite3.Row
         version = self._con.execute("PRAGMA user_version").fetchone()[0]
@@ -107,12 +109,17 @@ class Spool:
         """W12 (F2): one tick's rows in one commit. Each entry is (segment, offset, record, raw_len); a record of None
         is a line that is not a row, which only moves the cursor past it."""
         at_ms = int(time.time() * 1000) if at_ms is None else at_ms
+        self.last_refused = []
         with self._con:
             for segment, offset, record, raw_len in entries:
                 if record is None:
                     self._put_cursor(session, segment, offset + raw_len)
-                else:
+                    continue
+                try:
                     self._ingest_row(session, segment, offset, record, raw_len, at_ms)
+                except Exception as error:  # HELPER3-10: a row the store cannot take is passed over, and the read goes on
+                    self.last_refused.append(type(error).__name__)
+                    self._put_cursor(session, segment, offset + raw_len)
 
     def _ingest_row(self, session, segment, offset, record, raw_len, at_ms):
         seq = record.get("written_sequence") if isinstance(record, dict) else None
@@ -161,6 +168,21 @@ class Spool:
 
     def row_count(self):
         return self._con.execute("SELECT COUNT(*) AS n FROM rows").fetchone()["n"]
+
+    def session_probe(self):
+        """SEAM3-21: the probe version of the newest telemetry session, read from its first row (each session is one file,
+        so its first row is the first row of the session). None while no row has come."""
+        newest = self._con.execute("SELECT session FROM rows ORDER BY rowid DESC LIMIT 1").fetchone()
+        if newest is None:
+            return None
+        first = self._con.execute("SELECT json FROM rows WHERE session=? ORDER BY segment, offset LIMIT 1",
+                                  (newest["session"],)).fetchone()
+        record = json.loads(first["json"]) if first else None
+        value = record.get("probe_version") if isinstance(record, dict) else None
+        if value is None:  # a first row with no version (an older row): the newest row's version is the next best
+            newest_record = self.latest_record()
+            value = newest_record.get("probe_version") if isinstance(newest_record, dict) else None
+        return value
 
     def latest_record(self):
         row = self._con.execute("SELECT json FROM rows ORDER BY rowid DESC LIMIT 1").fetchone()

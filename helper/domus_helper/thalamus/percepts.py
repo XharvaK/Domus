@@ -311,7 +311,15 @@ class Extractor:
         # 2.32.0 (PR5): a BODY_GONE record says why (her Sim died); the reason is a fact of the percept.
         reason = e2.get("reason")
         facts = (("reason", str(reason)[:64]),) if isinstance(reason, str) and reason else ()
-        percept = Percept("lineage", slot, guid, lineage_class, urgency="wake", lineage="", facts=facts)
+        # R3 (death): the game's death type, when the probe could read it (a string of up to 40 characters).
+        death_type = e2.get("death_type")
+        if isinstance(death_type, str) and death_type:
+            facts += (("death_type", death_type[:40]),)
+        # VOICE3-4 (R3-H): a save that only continues her life (CLASSIFIED with the class unchanged) does not wake her; a body
+        # that is gone always does.
+        continued = e2.get("record") == "CLASSIFIED" and lineage_class == self.lineage_class
+        urgency = "normal" if continued else "wake"
+        percept = Percept("lineage", slot, guid, lineage_class, urgency=urgency, lineage="", facts=facts)
         self.slot_id = e2.get("slot_id")
         self.guid = e2.get("guid")
         self.lineage_class = lineage_class

@@ -15,6 +15,7 @@ from .thalamus.observation import _named, _portrait, _seen_memory, _sentence, _s
 MIN_GAP_MS = 2_100
 FORGET_MS = 60_000
 WAITING_MAX = 3
+REPLY_WAIT_MS = 10_000  # HELPER3-12: how long a line waits for the probe to answer it
 WORDS_MAX = 8
 TEXT_MAX = 240
 SWITCH_KEY = "talk"
@@ -61,13 +62,17 @@ def sentences(row):
 
 
 class Talk:
-    def __init__(self, spool, publish):
+    def __init__(self, spool, publish, reply=None):
         self._spool = spool
         self._publish = publish
+        # HELPER3-12: reply(command_id) is the probe's answer to one command (None while it has not answered).
+        self._reply = reply
         self._present = {}
         self._waiting = []
         # W12 (S2): her own words to a Sim, shown before the sentences the portrait waits on; at most a few.
         self._words = []
+        self._again = []  # a line the probe refused as TOO_SOON: sent once more, first
+        self._sent = None  # the line on its way until the probe answers: {id, queue, item, at_ms, again}
         self._sent_ms = None
         self.last = None
 
@@ -94,29 +99,56 @@ class Talk:
             del self._present[key]
         del self._waiting[:-WAITING_MAX]
 
+    def _answered(self, now_ms):
+        """HELPER3-12: whether the line on its way is done. The probe's TALK_REJECT TOO_SOON puts the line back once, first in
+        line. A line with no answer after REPLY_WAIT_MS is done; so is every line when there is no reply reader."""
+        sent = self._sent
+        if sent["id"] is None or self._reply is None:
+            self._sent = None
+            return True
+        reply = self._reply(sent["id"])
+        if reply is None:
+            if now_ms - sent["at_ms"] < REPLY_WAIT_MS:
+                return False
+            self._sent = None
+            return True
+        self._sent = None
+        lines = [str(line) for line in (reply.get("result") or {}).get("lines") or []]
+        if (any("TALK_REJECT TOO_SOON" in line for line in lines) or reply.get("code") == "TOO_SOON") and not sent["again"]:
+            self._again.insert(0, (sent["item"], sent["queue"]))
+        return True
+
     def tick(self, now_ms, live):
         try:
             if not live or self._spool.get_kv(SWITCH_KEY) == "off":
                 self._waiting.clear()
                 self._words.clear()
+                self._again.clear()
+                self._sent = None
                 return None
-            if not self._waiting and not self._words:
+            if self._sent is not None and not self._answered(now_ms):
+                return None
+            if not self._waiting and not self._words and not self._again:
                 return None
             if self._sent_ms is not None and now_ms - self._sent_ms < MIN_GAP_MS:
                 return None
-            if self._words:
-                key, text, sim_id = self._words.pop(0)
+            again = bool(self._again)
+            if again:
+                (key, text, sim_id), queue = self._again.pop(0)
+            elif self._words:
+                (key, text, sim_id), queue = self._words.pop(0), "words"
             else:
-                key, text, sim_id = self._waiting.pop(0)
+                (key, text, sim_id), queue = self._waiting.pop(0), "waiting"
             args = {"text": text}
             if sim_id is not None:
                 args["sim_id"] = sim_id
             try:
-                self._publish("talk", args)
+                command_id = self._publish("talk", args)
             except (OSError, ValueError):
                 self.last = "publish failed"
                 return None
             self._sent_ms = now_ms
+            self._sent = {"id": command_id, "queue": queue, "item": (key, text, sim_id), "at_ms": now_ms, "again": again}
             self.last = "talk %s" % (key[0],)
             return text
         except Exception:

@@ -41,6 +41,11 @@ PRIVACY_FILE = "overlay_privacy.txt"
 SAVE_NAMES_FILE = "overlay_save_names.json"
 SAVE_NAMES_EVERY_MS = 60_000
 CURTAIN_KEY = "overlay_curtain"
+# HELPER3-5/20 (R3-H): the pass ids she has said, kept in the spool across restarts; the passes seen in this process are capped.
+SAID_KEY = "overlay_said"
+SAID_LIMIT = 200
+PASSES_SEEN_LIMIT = 2000
+THOUGHTS_LIMIT = 8
 PASSES_SHOWN = 6
 # O1: the one stamp a feed line may carry; she chose to show it.
 CHOSEN = "chosen"
@@ -254,8 +259,10 @@ class Overlay:
         self._items = []
         # W14 (S4): the passes this helper session has seen (a pass's line is shown in the game once), the lines the
         # bridge takes to say in the game, and whether a feed has been read yet (the first read is the one with a rule).
-        self._passes_seen = set()
+        self._passes_seen = {}  # insertion-ordered: the oldest is dropped past PASSES_SEEN_LIMIT
         self._thoughts = []
+        raw = spool.get_kv(SAID_KEY)
+        self._said = list(json.loads(raw)) if raw else []  # the pass ids said, newest last (at most SAID_LIMIT)
         self._fed_once = False
         self._polled_ms = None
         self._feed_ok = None
@@ -316,7 +323,14 @@ class Overlay:
     def take_thoughts(self):
         """W14 (S4): the lines she chose since the last take, each once: the bridge says them in the game."""
         lines, self._thoughts = self._thoughts, []
+        if curtain(self._spool):
+            return []  # User ruling 2026-10-12: the curtain on means nothing of hers shows, in the game either
         return lines
+
+    def _said_now(self, pass_id):
+        """HELPER3-5: a pass whose line is said is kept, so a restart does not say it again."""
+        self._said = (self._said + [pass_id])[-SAID_LIMIT:]
+        self._spool.put_kv(SAID_KEY, json.dumps(self._said))
 
     def _marks(self, marks, now_ms):
         """E4: a word-watch flag on Ashley's side: logged in the proof ledger once, and the capture
@@ -343,7 +357,9 @@ class Overlay:
             pass_id = item.get("pass")
             new_pass = isinstance(pass_id, str) and bool(pass_id) and pass_id not in self._passes_seen
             if new_pass:
-                self._passes_seen.add(pass_id)
+                self._passes_seen[pass_id] = True
+                while len(self._passes_seen) > PASSES_SEEN_LIMIT:
+                    self._passes_seen.pop(next(iter(self._passes_seen)))  # HELPER3-20
             shown = {"at_ms": item.get("at_ms"), "_pass": item.get("pass"),
                      "_regime": item.get("regime") if isinstance(item.get("regime"), dict) else {}}
             line = item.get("line")
@@ -353,8 +369,9 @@ class Overlay:
                 shown["held"] = True
             else:
                 shown["line"] = line[:400]
-                if new_pass and (not first or _young(item.get("at_ms"), now_ms)):
-                    self._thoughts.append(shown["line"])
+                if new_pass and pass_id not in self._said and (not first or _young(item.get("at_ms"), now_ms)):
+                    self._thoughts = (self._thoughts + [shown["line"]])[-THOUGHTS_LIMIT:]
+                    self._said_now(pass_id)
             act = item.get("act")
             if isinstance(act, dict):
                 shown["act"] = {"label": self._label(act.get("label")), "state": str(act.get("state")),

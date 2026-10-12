@@ -84,7 +84,9 @@ class MenuParts(object):
         # W14 (D3): a set is one menu revision in one count of parts, whole or near. A row that differs in any of
         # those starts a new set, so pieces of a 17-part write never mix with a 3-part write of the same revision.
         near = e2.get("near") is True
-        key = (session, e2.get("menu_rev"), parts, near)
+        # R1 (the probe's first build): a partial set is the menu so far; it is its own set, never mixed with a whole.
+        partial = e2.get("partial") is True
+        key = (session, e2.get("menu_rev"), parts, near, partial)
         if key != self._key:
             self._key, self._pieces = key, {}
         self._pieces[part] = e2
@@ -107,24 +109,50 @@ class MenuParts(object):
         return whole
 
 
-# W14 (D3): an object is far from her when it is not in her room, not her phone, and more than NEAR_M metres away.
-def _far(item):
+def _same_room(item, near_room):
+    """R3-H merge: whether an object is in the near part's room. A room unknown on either side keeps the whole's flag."""
+    room = item.get("room")
+    if room is None or near_room is None:
+        return item.get("same_room")
+    return str(room) == str(near_room)
+
+
+def _was_near(item):
     distance = item.get("distance_m")
-    return (item.get("same_room") is not True and item.get("phone") is not True
-            and isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance > NEAR_M)
+    close = isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance <= NEAR_M
+    return item.get("same_room") is True or item.get("phone") is True or close
+
+
+def _carried(item, near_room):
+    """An object of the whole menu that the near part does not test. Its room flag is judged against the near part's room.
+    Its distance is cleared when the room flag changed or the object was near in the whole: the whole's reading is stale."""
+    same = _same_room(item, near_room)
+    out = dict(item, same_room=same)
+    if same != item.get("same_room") or _was_near(item):
+        out["distance_m"] = None
+    return out
+
+
+def zones_differ(first, second):
+    """R2: two menus are of different zones only when both name their zone and the zones are not the same. A missing
+    zone (an unknown zone, or an older probe) counts as the same zone."""
+    a, b = first.get("zone_id"), second.get("zone_id")
+    return a is not None and b is not None and a != b
 
 
 def merge_near(near, whole):
-    """W14 (D3): the menu she sees after a near part: the near part's objects first, then the objects of the last
-    whole menu of the session that the near part leaves out and that were far from her in that whole. With no whole
-    menu, the near part alone. A whole menu replaces everything; it never reaches this function."""
-    if not isinstance(whole, dict):
+    """W14 (D3), merge rule (R3-H): the menu she sees after a near part: the near part's objects first, then EVERY object
+    of the whole menu that the near part does not test (a far room, a thing with no distance, a same-room thing a build
+    in progress has not tested yet). The whole's dropped count is kept. A near part with no whole, or with a whole of
+    another zone (R2), is the near part alone."""
+    if not isinstance(whole, dict) or zones_differ(whole, near):
         return near
     near_objects = [item for item in near.get("objects") or [] if isinstance(item, dict)]
     near_ids = {str(item.get("object_id")) for item in near_objects}
-    far = [item for item in whole.get("objects") or []
-           if isinstance(item, dict) and str(item.get("object_id")) not in near_ids and _far(item)]
-    return dict(near, objects=near_objects + far)
+    near_room = near.get("room")
+    carried = [_carried(item, near_room) for item in whole.get("objects") or []
+               if isinstance(item, dict) and str(item.get("object_id")) not in near_ids]
+    return dict(near, objects=near_objects + carried, dropped=whole.get("dropped"))
 
 
 class RefBook(object):
@@ -468,7 +496,7 @@ def people_heard(row, seen_ids):
     return heard
 
 
-OPENS_SCREEN = "a screen only the User's hands can use"
+OPENS_SCREEN = "a screen only your summoner can use"  # VOICE3-9: her words name you, not the User
 # N8 (F2): interactions that open such a screen, so they are marked before the notebook has seen one end on it:
 # the event planner (phone), Create a Sim (terrain, every age and sex), Change Sim, outfit planning and try-on.
 # Tuning names as the game's atlas lists them; the notebook adds to this list, it never removes from it.
@@ -608,35 +636,66 @@ def _fold(rows):
 PHONE_LEFT_OUT_LINES = 12
 PHONE_LEFT_OUT_CHARS = 160
 # W14 (D7): the plain-words reason of each code the probe gives a left-out phone act (its excluded_phone "why"). A code
-# with no words here is shown as the code itself.
+# with no words here is shown as the code itself. R3-H (CONTRA3-2, CONTRA3-3): "travel" is any part that can take her off
+# the lot, not every phone act, so the words say "can"; the debug words cover cheat, debug and test acts only.
 LEFT_OUT_REASONS = {
     "pie_picker": "it opens a menu of choices, not an act",
-    "deny_name": "a debug or cheat act",
-    "travel": "it takes you off the lot",
+    "deny_name": "a debug, cheat or test act",
+    "travel": "it can take you off the lot",
     "not_user_directed": "only the game starts it, not you",
     "hidden": "the game keeps it out of your menu",
 }
+AN_ACT = "an act"
+
+
+def _phone_act(item, words, code):
+    """R3-H (HELPER3-17, SEAM3-16/17, VOICE3-8): a phone act's name in her words. The game's act words when the menu has them,
+    else the humanized name. A name that fails game_name, or any act the guard left out for its name, is "an act"."""
+    name = item.get("name") if isinstance(item.get("name"), str) else ""
+    if code == "deny_name" or game_name(name) is None:
+        return AN_ACT
+    return words(name)[:64] or AN_ACT
+
+
+def _phone_line(act, verb, reason):
+    """One left-out or refused line: the act is cut first, and the reason is kept whole."""
+    tail = ": %s: %s" % (verb, reason)
+    room = max(PHONE_LEFT_OUT_CHARS - len(tail), 0)
+    return (act[:room].rstrip() or AN_ACT) + tail
 
 
 def _phone_left_out(menu, resolve):
-    """T2: her phone's acts the newest menu left out, in words: "<act>: left out: <reason>" for each excluded one (the
-    guard's reason), then "<act>: refused: <reason>" for each one the game refused (its own sentence). At most
-    PHONE_LEFT_OUT_LINES lines of PHONE_LEFT_OUT_CHARS characters; past that the last line is "and <n> more"."""
-    lines = []
+    """T2, R3-H (R5): her phone's acts the newest menu left out, in words: "<act>: left out: <reason>" for each excluded one
+    (the guard's reason), then "<act>: refused: <reason>" for each one the game refused (its own sentence). At most
+    PHONE_LEFT_OUT_LINES lines. When the cap cuts lines, each reason of the cut left-out lines gets one line instead:
+    "<N> more acts: left out: <reason>", and the cut refusals get "and <N> more"."""
+    words = act_names(menu, resolve)
+    entries = []
     for item in menu.get("excluded_phone") if isinstance(menu.get("excluded_phone"), list) else []:
         if isinstance(item, dict):
-            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
-            # W14 (D7): the reason in plain words, so the line never shows the probe's code ("deny name").
             code = item.get("why") if isinstance(item.get("why"), str) else None
             why = LEFT_OUT_REASONS.get(code) or code or "not said"
-            lines.append(("%s: left out: %s" % (act, why))[:PHONE_LEFT_OUT_CHARS])
+            entries.append(("left", why, _phone_line(_phone_act(item, words, code), "left out", why)))
     for item in menu.get("refused_phone") if isinstance(menu.get("refused_phone"), list) else []:
         if isinstance(item, dict):
-            act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
             reason = _sentence(resolve, item.get("reason_key")) or "no reason given"
-            lines.append(("%s: refused: %s" % (act, reason))[:PHONE_LEFT_OUT_CHARS])
-    if len(lines) > PHONE_LEFT_OUT_LINES:
-        lines = lines[:PHONE_LEFT_OUT_LINES - 1] + ["and %d more" % (len(lines) - (PHONE_LEFT_OUT_LINES - 1))]
+            entries.append(("refused", reason, _phone_line(_phone_act(item, words, None), "refused", reason)))
+    if len(entries) <= PHONE_LEFT_OUT_LINES:
+        return [line for _kind, _reason, line in entries]
+    keep = PHONE_LEFT_OUT_LINES
+    while True:
+        tail = entries[keep:]
+        reasons = list(dict.fromkeys(reason for kind, reason, _line in tail if kind == "left"))
+        refused = sum(1 for kind, _reason, _line in tail if kind == "refused")
+        if keep + len(reasons) + (1 if refused else 0) <= PHONE_LEFT_OUT_LINES or keep == 0:
+            break
+        keep -= 1
+    lines = [line for _kind, _reason, line in entries[:keep]]
+    for reason in reasons:
+        count = sum(1 for kind, why, _line in tail if kind == "left" and why == reason)
+        lines.append("%d more acts: left out: %s" % (count, reason))
+    if refused:
+        lines.append("and %d more" % refused)
     return lines
 
 

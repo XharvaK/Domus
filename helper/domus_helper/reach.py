@@ -145,15 +145,17 @@ def _number(value):
 
 
 def _how(labels, tracks):
-    """Relationship labels and tracks in words (at most 80 characters)."""
+    """Relationship labels in the game's words, at most 80 characters. HELPER3-19 (User ruling 2026-10-12): no scores. A track
+    is said only by its own label; a track with a number and no label is left out."""
     parts = []
     names = [humanize(label) for label in (labels if isinstance(labels, list) else [])[:4] if isinstance(label, str) and label]
     if names:
         parts.append(", ".join(names))
     if isinstance(tracks, dict):
         for track, value in list(tracks.items())[:4]:
-            if isinstance(track, str) and track and isinstance(value, (int, float)) and not isinstance(value, bool):
-                parts.append("%s %s" % (humanize(track), _number(value)))
+            label = value.get("label") if isinstance(value, dict) else None
+            if isinstance(track, str) and track and isinstance(label, str) and label:
+                parts.append(humanize(label))
     return "; ".join(parts)[:80]
 
 
@@ -276,7 +278,7 @@ def room_labels(raw, *, resolve=None, catalog=None):
     labels, counts = {}, {}
     for room in sorted(names, key=int):
         # The base is fitted before the " (n)" suffix, so a label is never longer than WHERE_LIMIT (HELPER2-2).
-        base = _room_base(names[room])
+        base = _room_base(names[room], room)
         counts[base] = counts.get(base, 0) + 1
         labels[room] = base if counts[base] == 1 else "%s (%d)" % (base, counts[base])
     return labels
@@ -286,15 +288,19 @@ def room_labels(raw, *, resolve=None, catalog=None):
 LABEL_BASE_LIMIT = WHERE_LIMIT - 6
 
 
-def _room_base(names):
+def _room_base(names, room=None):
     """W14 (D5): "the room with the A and the B" (three names at most); when that is too long, "the room with the A";
-    when even that is too long, cut at its last whole word and end with an ellipsis. A label is never cut mid-word."""
+    when even that is too long, cut at its last whole word and end with an ellipsis. A label is never cut mid-word.
+    R3-H (SEAM3-15): when no name fits, the label is "room <id>", never "the room with the…" with no name in it."""
     ordered = sorted(names, key=str.casefold)[:3]
     for count in range(len(ordered), 0, -1):
         text = "the room with the %s" % " and the ".join(ordered[:count])
         if len(text) <= LABEL_BASE_LIMIT:
             return text
-    return _cut_at_word(text, LABEL_BASE_LIMIT)
+    cut = _cut_at_word(text, LABEL_BASE_LIMIT)
+    if cut.rstrip("\u2026") in ("", "the room with the", "the room with"):
+        return "room %s" % room if room is not None else "a room"
+    return cut
 
 
 def _cut_at_word(text, limit):
@@ -309,6 +315,12 @@ def _cut_at_word(text, limit):
     return kept + "…"
 
 
+def _class_name(item):
+    """HELPER3-8 (W14 D6): a thing with no usable name is named by its humanized class, else "object". It is never left out."""
+    cls = item.get("class")
+    return (game_name(humanize(cls)) if isinstance(cls, str) and cls.strip() else None) or "object"
+
+
 def _thing(item, refs, rooms=None, resolve=None, catalog=None, **_):
     oid = _ident(item.get("object_id"))
     if oid is None:
@@ -316,9 +328,7 @@ def _thing(item, refs, rooms=None, resolve=None, catalog=None, **_):
     where = _where(item, rooms)
     if where is None:
         raise _Skip("where")
-    name = _thing_name(item, resolve, catalog)
-    if name is None:
-        raise _Skip("name")
+    name = _thing_name(item, resolve, catalog) or _class_name(item)
     made = item.get("made_by_her")
     placement = item.get("placement")
     thing = {"ref": refs.ref(oid, prefix="t"), "id": oid, "name": name, "where": where,

@@ -135,10 +135,10 @@ html[data-layout="vertical"] .scene .wordmark { width: 70vw; }
 </section>
 <script>
 const layout = document.documentElement.dataset.layout;
-const STATES = { requested: "asked", received: "on its way", accepted: "on its way", pushed: "in her queue",
+const STATES = { requested: "asked", received: "on its way", accepted: "on its way", pushed: "in Ashley's queue",
   finished: "done", rejected: "the game said no", expired: "never reached the game", unknown: "lost track",
   invalid: "not on the list", planned: "next", dropped: "let go" };
-const BY = { her: "her choice", body: "her body", game: "the game", human: "human hand" };
+const BY = { her: "Ashley's choice", body: "Ashley's body", game: "the game", human: "human hand" };
 const el = (tag, cls, text) => { const node = document.createElement(tag); if (cls) node.className = cls;
   if (text !== undefined && text !== null) node.textContent = text; return node; };
 const word = (value) => String(value || "").toLowerCase().replace(/_/g, " ");
