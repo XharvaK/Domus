@@ -309,6 +309,26 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(window.sent, [("T", "m", False)])
         self.assertEqual(self.control.held, {})
 
+    def test_a_window_on_her_sim_opened_by_another_sims_script_is_hers(self):
+        # 2.40.0 (W13 R2, Q-g): the window's first interaction is on her Sim (its target); the actor is another Sim's script.
+        def on_her(number, source):
+            return types.SimpleNamespace(id=number, sim=types.SimpleNamespace(id=OTHER),
+                                         target=types.SimpleNamespace(id=HER), group_id=None,
+                                         context=types.SimpleNamespace(source="InteractionSource." + source))
+        window = self.window(dialog_id=732, interaction=on_her(797, "SCRIPT"), owner=OTHER)
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [])
+        self.assertIsNone(self.control.held["732"]["act_id"])
+
+    def test_a_pie_menu_or_hand_of_another_sim_on_her_sim_stays_the_users(self):
+        for number, source in enumerate(("PIE_MENU", "SCRIPT_WITH_USER_INTENT")):
+            window = self.window(dialog_id=733 + number, owner=OTHER, interaction=types.SimpleNamespace(
+                id=798 + number, sim=types.SimpleNamespace(id=OTHER), target=types.SimpleNamespace(id=HER),
+                group_id=None, context=types.SimpleNamespace(source="InteractionSource." + source)))
+            window.distribute_dialog("T", "m")
+            self.assertEqual(window.sent, [("T", "m", False)], source)
+        self.assertEqual(self.control.held, {})
+
     def test_a_window_from_an_unknown_source_on_her_sim_is_the_users(self):
         window = self.window(dialog_id=731, interaction=self.her_interaction(
             796, source="InteractionSource.NOT_A_SOURCE"))

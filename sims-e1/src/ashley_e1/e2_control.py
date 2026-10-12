@@ -319,6 +319,11 @@ def _target_or_actor_is(interaction, her):
     return _same_id(target, her)
 
 
+def _on_her_sim(interaction, her):
+    """2.40.0 (W13 R2, Q-g): the interaction is on her Sim: its target or its actor is her. Never raises."""
+    return _same_id(_read(lambda: interaction.target), her) or _same_id(_read(lambda: interaction.sim), her)
+
+
 def _is_commands_file(path):
     path = str(path).replace("\\", "/")
     return "sims4" in path and path.endswith("commands.py")
@@ -2314,7 +2319,8 @@ class E2Control:
             first = interactions[0]
             source = _read(lambda: str(first.context.source))
             name = _interaction_source_name(source)
-            if _same_id(_read(lambda: first.sim), her):
+            # 2.40.0 (W13 R2, Q-g): on her Sim means her Sim is the target or the actor, whoever's script opened it.
+            if _on_her_sim(first, her):
                 if name in HER_INTERACTION_SOURCES:
                     return "hers", None
                 if name == "SCRIPT_WITH_USER_INTENT" and self._pushed_recently():
