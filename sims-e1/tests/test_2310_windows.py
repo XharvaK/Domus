@@ -13,6 +13,7 @@ HER = "118245043779534861"
 OTHER = "4242"
 PET = "5555"
 OPENER = 900
+GROUP = 5150
 ACT_ID = "a" * 32
 # 2.37.0 (W10 P1): the game's interaction sources that make a window on her Sim hers (every source but the two the User drives).
 HER_SOURCES = ("AUTONOMY", "SCRIPT", "REACTION", "SOCIAL_ADJUSTMENT", "POSTURE_GRAPH", "GET_COMFORTABLE",
@@ -149,9 +150,23 @@ class WindowTests(unittest.TestCase):
             "act_id": act_id, "base": {"object_id": CHAIR, "guid64": "4242"}, "tuning_name": name,
             "interaction_id": str(interaction_id), "seen": True, "misses": 0}
 
-    def her_interaction(self, interaction_id, source="InteractionSource.AUTONOMY", sim=HER):
-        return types.SimpleNamespace(id=interaction_id, sim=types.SimpleNamespace(id=sim),
+    def her_interaction(self, interaction_id, source="InteractionSource.AUTONOMY", sim=HER, group=None):
+        return types.SimpleNamespace(id=interaction_id, sim=types.SimpleNamespace(id=sim), group_id=group,
                                      context=types.SimpleNamespace(source=source))
+
+    def push_with_group(self, group, interaction_id=777):
+        """2.38.0 (W11 P1): her act (cmd_act) pushed; the game's interaction for it carries group_id `group`."""
+        original = self.base.sim.push_super_affordance
+
+        def push(affordance, target, context):
+            result = original(affordance, target, context)
+            result.execute_result.interaction.group_id = group
+            return result
+
+        self.base.sim.push_super_affordance = push
+        ok, connection = self.case.act(act_id=ACT_ID)
+        self.assertTrue(ok, connection.lines)
+        return interaction_id
 
     def window(self, dialog_id=601, interaction=None, owner=HER, cls=Base):
         dialog = cls(dialog_id, interaction=interaction, owner=owner)
@@ -650,6 +665,7 @@ class WindowTests(unittest.TestCase):
         ok, connection = self.push_then(lambda: None)
         self.assertTrue(ok, connection.lines)
         self.assertIsNone(self.control.pushing)
+        self.now[0] += 121  # 2.38.0 (W11 P1): past the 120 s source window of her last push
         window = self.window(dialog_id=607, interaction=self.her_interaction(
             999, source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
         window.distribute_dialog("T", "m")
@@ -664,6 +680,92 @@ class WindowTests(unittest.TestCase):
             998, source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
         window.distribute_dialog("T", "m")
         self.assertEqual(window.sent, [("T", "m", False)])
+
+
+    # 2.38.0 (W11 P1): her errand's windows. A window whose resolver interaction continues her pushed act (the same
+    # group_id, kept 10 minutes) is hers with that act; a SCRIPT_WITH_USER_INTENT window on her Sim is hers for 120 s
+    # after her last push; a pie menu on her Sim stays the User's.
+    def test_a_window_continuing_her_pushed_act_by_group_is_hers_with_that_act(self):
+        self.push_with_group(GROUP)
+        self.now[0] += 1
+        window = self.window(dialog_id=610, interaction=self.her_interaction(
+            991, source="InteractionSource.SCRIPT_WITH_USER_INTENT", group=GROUP))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [])
+        self.assertEqual(self.control.held["610"]["act_id"], ACT_ID)
+        self.assertEqual(self.last_speed(), ("DIALOG_HELD", None, "dialog 610 act %s" % ACT_ID))
+
+    def test_a_group_match_is_kept_ten_minutes_after_the_push_and_no_longer(self):
+        self.push_with_group(GROUP)
+        self.now[0] += 599
+        window = self.window(dialog_id=611, interaction=self.her_interaction(
+            992, source="InteractionSource.SCRIPT_WITH_USER_INTENT", group=GROUP))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(self.control.held["611"]["act_id"], ACT_ID)
+        self.now[0] += 2  # 601 s after the push: the group has expired, and the source window closed long ago
+        late = self.window(dialog_id=612, interaction=self.her_interaction(
+            993, source="InteractionSource.SCRIPT_WITH_USER_INTENT", group=GROUP))
+        late.distribute_dialog("T", "m")
+        self.assertEqual(late.sent, [("T", "m", False)])
+        self.assertNotIn("612", self.control.held)
+
+    def test_a_group_is_not_matched_by_another_group_or_by_no_group(self):
+        self.push_with_group(GROUP)
+        other = self.window(dialog_id=613, interaction=self.her_interaction(
+            994, source="InteractionSource.PIE_MENU", group=GROUP + 1))
+        other.distribute_dialog("T", "m")
+        self.assertEqual(other.sent, [("T", "m", False)])
+        none = self.window(dialog_id=614, interaction=self.her_interaction(
+            995, source="InteractionSource.PIE_MENU", group=None))
+        none.distribute_dialog("T", "m")
+        self.assertEqual(none.sent, [("T", "m", False)])
+        self.assertEqual(self.control.held, {})
+
+    def test_a_script_with_user_intent_window_on_her_sim_is_hers_for_120_seconds_after_her_push(self):
+        self.push_with_group(GROUP)
+        self.now[0] += 119
+        window = self.window(dialog_id=615, interaction=self.her_interaction(
+            996, source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [])
+        self.assertIsNone(self.control.held["615"]["act_id"])
+
+    def test_a_script_with_user_intent_window_after_120_seconds_is_the_users(self):
+        self.push_with_group(GROUP)
+        self.now[0] += 121
+        window = self.window(dialog_id=616, interaction=self.her_interaction(
+            997, source="InteractionSource.SCRIPT_WITH_USER_INTENT"))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
+        self.assertEqual(self.control.held, {})
+
+    def test_a_pie_menu_window_on_her_sim_during_her_errand_stays_the_users(self):
+        self.push_with_group(GROUP)
+        window = self.window(dialog_id=617, interaction=self.her_interaction(
+            998, source="InteractionSource.PIE_MENU"))
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
+        self.assertEqual(self.control.held, {})
+
+    def test_a_group_the_probe_cannot_read_never_raises_and_is_not_hers_by_group(self):
+        self.push_with_group(GROUP)
+
+        class Unreadable(object):
+            @property
+            def group_id(self):
+                raise RuntimeError("game")
+
+        self.assertIsNone(self.control._group_pushed_for(Unreadable()))
+        self.assertIsNone(self.control._group_pushed_for(None))
+
+    def test_watch_act_keeps_the_group_of_the_act_and_of_each_alias(self):
+        act = types.SimpleNamespace(id=OPENER, group_id=GROUP)
+        alias = types.SimpleNamespace(id=888, group_id=GROUP + 2)
+        base = {"object_id": CHAIR, "guid64": "4242"}
+        self.control._watch_act(ACT_ID, base, str(OPENER), "plan", act, {"888": alias})
+        window = self.window(dialog_id=618, interaction=self.her_interaction(
+            999, source="InteractionSource.PIE_MENU", group=GROUP + 2))
+        self.assertEqual(self.control._decide_window(window), ("hers", self.control.pushed["888"]))
 
 
 if __name__ == "__main__":

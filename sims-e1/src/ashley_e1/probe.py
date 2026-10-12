@@ -2162,10 +2162,12 @@ def _menu_jobs(row):
         # The room lookup is only worth it for objects of this lot or near her.
         room = (observers._room(obj, position)
                 if on_lot is True or (distance is not None and distance <= 20.0) else None)
-        if person and not observers.seen_here(room, None if position is None else position.get("level"),
-                                              distance, body_room,
-                                              None if body_position is None else body_position.get("level")):
-            continue  # 2.32.0 (SS4-v2, PR3): a person she cannot see is not offered (2.17.0: the same test, wider)
+        # 2.38.0 (W11 H2): a Sim on her lot she cannot see is heard, and is offered too (the helper says so); off the
+        # lot, a Sim she cannot see is not offered (2.32.0, SS4-v2, PR3).
+        if person and on_lot is not True and not observers.seen_here(
+                room, None if position is None else position.get("level"),
+                distance, body_room, None if body_position is None else body_position.get("level")):
+            continue
         items.append({
             "object_id": object_id, "obj": obj, "distance_m": distance, "on_lot": on_lot,
             "room": room, "person": person, "position": position,
@@ -2221,15 +2223,20 @@ def _lazy_jobs(pairs):
             yield job
 
 
-def _menu_test(job):
-    """One candidate act: the game's own test of the push. 2.25.0: the first act of each
-    object also asks, once per build, whether the game sees a way from her to it; the
-    answer travels with the object (shown, never hidden)."""
+def _menu_reach(job):
+    """2.25.0: the first act of each object also asks, once per build, whether the game sees a way from her to it; the
+    answer travels with the object (shown, never hidden). 2.38.0 (W11 P3): per object, so a candidate whose outcome
+    the far cache gave is asked too."""
     seen = job.get("reach_seen")
     if seen is not None:
         if job["object_id"] not in seen:
             seen[job["object_id"]] = e2_actuator.reachable(job["sim"], job["obj"])
         job["reach"] = seen[job["object_id"]]
+
+
+def _menu_test(job):
+    """One candidate act: the game's own test of the push (its reach first, see _menu_reach)."""
+    _menu_reach(job)
     ok, _reason, reason_key = e2_actuator.preflight_test(
         job["sim"], job["obj"], job["affordance"], job["context"])
     if not ok:
@@ -2285,7 +2292,8 @@ def _menu_tick(row):
             _MENU_PARTIAL_S = now
             _MENU = act_menu.MenuBuild(jobs, _menu_test, spots=jobs.spots, excluded_phone=jobs.excluded_phone,
                                        budget_ms=act_menu.FIRST_BUDGET_MS if _MENU_FIRST else 8.0,
-                                       far=_MENU_FAR, on_near=_menu_near_part if _MENU_FIRST else None)
+                                       far=_MENU_FAR, on_near=_menu_near_part if _MENU_FIRST else None,
+                                       reach=_menu_reach)
             _MENU_ZONE = zone
 
 

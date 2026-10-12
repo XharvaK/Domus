@@ -13,7 +13,8 @@ def spot(object_id, room, level, kind="room", distance=2.0, same=True):
 
 
 def thing(object_id, room, distance=1.0, same=True):
-    return {"object_id": object_id, "class": "object_thing", "room": room, "distance_m": distance,
+    # 2.38.0 (W11 H1): each thing has its own name, so identical things do not fold into one entry here.
+    return {"object_id": object_id, "class": "object_thing_%s" % object_id, "room": room, "distance_m": distance,
             "same_room": same, "acts": [{"guid64": "4001", "name": "Read", "text_key": None}]}
 
 

@@ -1,5 +1,6 @@
 """2.25.0: each menu object says whether the game sees a way from her to it (the check the
 game's own autonomy makes); an object she cannot reach is still listed."""
+import types
 import unittest
 
 import test_2160_act as acts
@@ -80,6 +81,76 @@ class ReachTests(unittest.TestCase):
         row["e2"]["objects"][0]["reach"] = "yes"
         with self.assertRaises(schema.SchemaError):
             schema.validate_record(row)
+
+
+    # 2.38.0 (W11 P2): a door, gate or archway is a portal. The game's connectivity check answered False for every
+    # door on the live lot (the front door too), so a portal's reach is True when the game says so, else None
+    # (unknown), never False.
+    def test_a_portal_is_never_reported_unreachable_only_unknown(self):
+        e2_actuator = self.probe.e2_actuator
+        sim = types.SimpleNamespace(id=1)
+
+        class FrontDoor(object):
+            def __init__(self, answer):
+                self.answer = answer
+
+            def is_connected(self, sim):
+                if isinstance(self.answer, Exception):
+                    raise self.answer
+                return self.answer
+
+        class DoubleDoor(FrontDoor):
+            pass
+
+        class Gate(FrontDoor):
+            pass
+
+        class Archway(FrontDoor):
+            pass
+
+        self.assertIsNone(e2_actuator.reachable(sim, FrontDoor(False)))
+        self.assertIsNone(e2_actuator.reachable(sim, DoubleDoor(False)))
+        self.assertIsNone(e2_actuator.reachable(sim, Gate(False)))
+        self.assertIsNone(e2_actuator.reachable(sim, Archway(False)))
+        self.assertIsNone(e2_actuator.reachable(sim, FrontDoor(RuntimeError("game"))))
+        self.assertIsNone(e2_actuator.reachable(sim, FrontDoor(None)))
+        self.assertIs(e2_actuator.reachable(sim, FrontDoor(True)), True)
+        self.assertIs(e2_actuator.reachable(sim, DoubleDoor(True)), True)
+
+    def test_an_object_that_is_not_a_portal_keeps_the_game_answer(self):
+        e2_actuator = self.probe.e2_actuator
+        sim = types.SimpleNamespace(id=1)
+
+        class Chair(object):
+            def __init__(self, answer):
+                self.answer = answer
+
+            def is_connected(self, sim):
+                return self.answer
+
+        self.assertIs(e2_actuator.reachable(sim, Chair(False)), False)
+        self.assertIs(e2_actuator.reachable(sim, Chair(True)), True)
+        self.assertIsNone(e2_actuator.reachable(sim, Chair("maybe")))
+
+    def test_a_door_in_the_menu_reads_unknown_and_a_chair_still_reads_no_way(self):
+        class Door(object):
+            pass
+
+        door, chair = self.case_thing(51, 2.0, Door), self.case_thing(52, 3.0, None)
+        chair.is_connected = lambda sim: False
+        door.is_connected = lambda sim: False
+        self.case.allowed = {int(GUID)}
+        payload = self._menu([door, chair])
+        reach = {item["object_id"]: item["reach"] for item in payload["objects"]}
+        self.assertIsNone(reach.get("51"))
+        self.assertIs(reach.get("52"), False)
+
+    def case_thing(self, object_id, x, klass):
+        """A menu object of the given class (None: the plain fake)."""
+        thing = _Thing(object_id, x, [ReadBook])
+        if klass is not None:
+            thing.__class__ = type(klass.__name__, (_Thing,), {"is_sim": False})
+        return thing
 
 
 if __name__ == "__main__":

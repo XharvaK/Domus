@@ -11,7 +11,7 @@ from . import commands
 from . import fingerprints as fingerprint_reader
 from . import pace
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, dialog_options, options as act_options, people_names, queue_options
+from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, dialog_options, options as act_options, people_heard, people_names, queue_options
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -228,6 +228,7 @@ class Bridge:
         # 2.37.0 (W10 H3): act texts keep their tokens here; clean_text fills a person's name or drops them.
         listed = act_options(menu.get("payload"), self._resolve_text.raw, self._catalog or None,
                              people=people_names(row, self._seen_ids()), refs=self._refs, limit=max(0, room),
+                             heard=people_heard(row, self._seen_ids()),
                              withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"),
                              room_labels=self._room_labels(), cut=cut,
                              objects_limit=max(0, OPTIONS_OBJECTS_LIMIT - len(asked)))

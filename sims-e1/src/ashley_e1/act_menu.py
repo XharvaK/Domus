@@ -62,7 +62,9 @@ def is_far(job):
 
 class FarCache(object):
     """2.37.0 (W10 P2): the test outcomes of far candidates, by (object id, guid64). An outcome is kept for FAR_CACHE_S
-    seconds on the clock given, and is never a near candidate's (see is_far). clear() when the zone changes."""
+    seconds on the clock given, and is never a near candidate's (see is_far). clear() when the zone changes.
+    2.38.0 (W11 P3): also kept by (definition id, guid64) when the candidate has a definition, so identical far objects
+    share one test per act. The fields kept are the test's own (refused, reason_key); reach is asked per object."""
 
     def __init__(self, clock=time.monotonic, ttl_s=FAR_CACHE_S):
         self._clock = clock
@@ -70,25 +72,31 @@ class FarCache(object):
         self._entries = {}
 
     @staticmethod
-    def _key(job):
-        return (job.get("object_id"), job.get("guid64"))
+    def _keys(job):
+        keys = [("object", job.get("object_id"), job.get("guid64"))]
+        if job.get("definition_id") is not None:
+            keys.append(("definition", job.get("definition_id"), job.get("guid64")))
+        return keys
 
     def get(self, job):
-        """The stored outcome {ok, fields} of this candidate, or None when it has none or it is too old."""
-        key = self._key(job)
-        entry = self._entries.get(key)
-        if entry is None:
-            return None
-        stamp, outcome = entry
-        if self._clock() - stamp >= self._ttl_s:
-            self._entries.pop(key, None)
-            return None
-        return outcome
+        """The stored outcome {ok, fields} of this candidate under either key, or None when it has none or it is too old."""
+        for key in self._keys(job):
+            entry = self._entries.get(key)
+            if entry is None:
+                continue
+            stamp, outcome = entry
+            if self._clock() - stamp >= self._ttl_s:
+                self._entries.pop(key, None)
+                continue
+            return outcome
+        return None
 
     def put(self, job, ok):
         """Keeps what the test said of this candidate: whether it passed, and the fields the test set on it."""
-        fields = dict((name, job[name]) for name in ("refused", "reason_key", "reach") if name in job)
-        self._entries[self._key(job)] = (self._clock(), {"ok": ok, "fields": fields})
+        fields = dict((name, job[name]) for name in ("refused", "reason_key") if name in job)
+        entry = (self._clock(), {"ok": ok, "fields": fields})
+        for key in self._keys(job):
+            self._entries[key] = entry
 
     def clear(self):
         self._entries = {}
@@ -174,9 +182,11 @@ class MenuBuild(object):
     failed is set when reading the jobs raised; a failed build publishes nothing."""
 
     def __init__(self, jobs, runner, budget_ms=8.0, max_per_chunk=80, clock=time.perf_counter, spots=None,
-                 far=None, excluded_phone=None, on_near=None):
+                 far=None, excluded_phone=None, on_near=None, reach=None):
         self._jobs = iter(jobs)
         self._runner = runner
+        # 2.38.0 (W11 P3): asks a job's own reach; run for a far candidate whose outcome the cache gave, since reach is per object.
+        self._reach = reach
         self.budget_ms = budget_ms
         self.max_per_chunk = max_per_chunk
         self.clock = clock
@@ -207,6 +217,11 @@ class MenuBuild(object):
             if hit is not None:
                 self.cached += 1
                 job.update(hit["fields"])
+                if self._reach is not None:
+                    try:
+                        self._reach(job)
+                    except Exception:
+                        pass
                 return hit["ok"]
         self.tested += 1
         try:

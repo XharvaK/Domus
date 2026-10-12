@@ -322,14 +322,29 @@ def dialog_options(row, resolve=None, refs=None):
 
 def people_names(row, seen_ids=None):
     """{sim id: name} from a presence row: who her menu's people are. SS4-v2: with seen_ids, only the
-    Sims she can see are named (the rest are someone she hears, and her menu does not offer them)."""
+    Sims she can see are named. 2.38.0 (W11 H2): a Sim she hears on her lot (on the lot, not seen) is named too;
+    a Sim off her lot that she does not see is not."""
     names = {}
     for item in (row or {}).get("presence") or []:
         if isinstance(item, dict) and item.get("id") is not None and isinstance(item.get("name"), str):
-            if seen_ids is not None and str(item["id"]) not in seen_ids and item.get("is_body") is not True:
+            if (seen_ids is not None and str(item["id"]) not in seen_ids and item.get("is_body") is not True
+                    and item.get("on_lot") is not True):
                 continue
             names[str(item["id"])] = item["name"]
     return names
+
+
+def people_heard(row, seen_ids):
+    """2.38.0 (W11 H2): the ids of the Sims she hears on her lot and does not see: on the lot (on_lot True) and not
+    in the seen list. Empty until the seen list is known, so nothing is called heard before it is."""
+    heard = set()
+    if seen_ids is None:
+        return heard
+    for item in (row or {}).get("presence") or []:
+        if (isinstance(item, dict) and item.get("id") is not None and item.get("is_body") is not True
+                and item.get("on_lot") is True and str(item["id"]) not in seen_ids):
+            heard.add(str(item["id"]))
+    return heard
 
 
 OPENS_SCREEN = "a screen only the User's hands can use"
@@ -407,8 +422,42 @@ def _spot_name(item, label):
     return "a room upstairs" if upstairs else "a room"
 
 
+# 2.38.0 (W11 H2): where a Sim she hears on her lot says so (the distance follows it, as for any object).
+HEARD_WHERE = "heard, not seen"
+# 2.38.0 (W11 H1): how a folded entry says how many objects it stands for, and in how many rooms.
+FOLD_TAIL = "; %d of them%s, the nearest is listed"
+
+
+def _fold(rows):
+    """2.38.0 (W11 H1): objects with the same shown name and the same act words are one entry. The first in the
+    given order (the nearest, the menu's order) keeps its acts and refs; its where says how many there are, and in
+    how many rooms when they span more than one. A spot, her phone and a person are never folded. rows are
+    (entry, where_named, room_id, is_spot, foldable); the folded rows are not in the result."""
+    first_of, counts, rooms_of = {}, {}, {}
+    kept = []
+    for row in rows:
+        entry, _name, room_id, _is_spot, foldable = row
+        if not foldable:
+            kept.append(row)
+            continue
+        key = (entry["object"], tuple(act["text"] for act in entry["acts"]))
+        if key not in first_of:
+            first_of[key] = row
+            kept.append(row)
+            counts[key], rooms_of[key] = 0, set()
+        counts[key] += 1
+        if room_id is not None:
+            rooms_of[key].add(room_id)
+    for key, first in first_of.items():
+        if counts[key] > 1:
+            rooms = len(rooms_of[key])
+            clause = " in %d rooms" % rooms if rooms > 1 else ""
+            first[0]["where"] = first[0]["where"] + FOLD_TAIL % (counts[key], clause)
+    return kept
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
-            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT):
+            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
     (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
     of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
@@ -431,6 +480,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             continue
         distance = item.get("distance_m")
         where = _where(item, menu.get("room"), room)
+        if item.get("class") == "sim" and heard is not None and str(item.get("object_id")) in heard:
+            where = HEARD_WHERE  # 2.38.0 (W11 H2): a Sim she hears on her lot, not seen: the room word does not apply
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
         if item.get("phone") is True:
@@ -469,13 +520,17 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
             where_named = label[:64] if label else (str(item["room"])[:64] if item.get("room") is not None else None)
             room_id = None if item.get("room") is None else str(item["room"])
-            result.append((entry, where_named, room_id, is_spot))
+            # 2.38.0 (W11 H1): a thing is folded with its identical kin; a spot, her phone and a person are not.
+            foldable = not is_spot and item.get("phone") is not True and item.get("class") != "sim"
+            result.append((entry, where_named, room_id, is_spot, foldable))
     # Near first; then the rooms in the menu's order, and a spot before the objects of its own room, so a cut takes
     # a spot only once its room's objects are gone (2.35.0, D3). Within a room the menu's order is kept.
     heads = {}
     for index, row in enumerate(result):
         heads.setdefault(row[2], index)
     result.sort(key=lambda row: (row[0]["near"] is not True, heads[row[2]], not row[3]))
+    # 2.38.0 (W11 H1): folded before the budget, so the budget counts what she is shown, not the same thing many times.
+    result = _fold(result)
     while result and (len(result) > objects_limit or _bytes([row[0] for row in result]) > limit):
         left_out.append(result.pop()[1])
     if cut is not None and left_out:

@@ -83,7 +83,8 @@ def lot(objects=150, rooms=8, acts=2):
     menu_objects = []
     for index in range(objects):
         room = str(index % rooms + 1)
-        menu_objects.append({"object_id": str(1000 + index), "class": "object_thing", "room": room,
+        # 2.38.0 (W11 H1): each object has its own name, so identical objects do not fold into one entry here.
+        menu_objects.append({"object_id": str(1000 + index), "class": "object_thing_%d" % index, "room": room,
                              "distance_m": float(index % 40) + 0.5, "same_room": room == "1",
                              "acts": [{"guid64": str(50000 + index * 10 + number), "name": "thing_Act%d" % number,
                                        "text_key": "k%d" % number} for number in range(acts)]})

@@ -504,20 +504,39 @@ class MenuSenseTests(unittest.TestCase):
         # 2.37.1 (User 2026-10-12): the neighbour's Propose is hers to choose, so it is on the menu too.
         self.assertIn("4345", [job["guid64"] for job in jobs if job["object_id"] == "31"])
 
-    def test_a_person_she_cannot_see_is_not_offered(self):
-        # 2.32.0 (PR3, SS4-v2): a Sim in another room, or on another level, is heard, not offered.
+    def test_a_person_she_cannot_see_off_her_lot_is_not_offered(self):
+        # 2.32.0 (PR3, SS4-v2): a Sim not on her lot, in another room, is not offered.
         through_wall = _Thing(41, 3.0, [Greet])
         through_wall.is_sim = True
-        through_wall.is_on_active_lot = lambda: True
+        through_wall.is_on_active_lot = lambda: False
         other_level = _Thing(42, 2.0, [Greet])
         other_level.is_sim = True
-        other_level.is_on_active_lot = lambda: True
+        other_level.is_on_active_lot = lambda: False
         other_level.level = 1
         self.things = [through_wall, other_level]
         self.rooms = {41: "5", 42: "4"}
         self.allowed = {int(GUID)}
         jobs, _room = self._jobs(self.row)
         self.assertEqual(jobs, [])
+
+    def test_a_person_she_hears_on_her_lot_is_offered_and_one_off_it_is_not(self):
+        # 2.38.0 (W11 H2): a Sim on her lot she cannot see is heard, and her menu offers what she can do with them
+        # (the courier at the front door, 14 m off, was heard and had no act). Off the lot, still not offered.
+        heard = _Thing(41, 14.0, [Greet])
+        heard.is_sim = True
+        heard.is_on_active_lot = lambda: True
+        heard_other_level = _Thing(43, 2.0, [Greet])
+        heard_other_level.is_sim = True
+        heard_other_level.is_on_active_lot = lambda: True
+        heard_other_level.level = 1
+        off_lot = _Thing(42, 2.0, [Greet])
+        off_lot.is_sim = True
+        off_lot.is_on_active_lot = lambda: False
+        self.things = [heard, heard_other_level, off_lot]
+        self.rooms = {41: "5", 43: "5", 42: "5"}
+        self.allowed = {int(GUID)}
+        jobs, _room = self._jobs(self.row)
+        self.assertEqual(sorted((job["object_id"], job["class"]) for job in jobs), [("41", "sim"), ("43", "sim")])
 
     def test_a_pet_on_the_lot_is_a_person_in_her_menu_not_an_object(self):
         # 2.32.0 (PR13): a pet is offered as a person (the helper names it from her presence), in her room.
