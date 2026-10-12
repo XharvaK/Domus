@@ -767,7 +767,7 @@ def test_the_phone_option_object_names_the_phone_acts_left_out_and_refused_with_
                        refused=[{"name": "phone_Plan", "reason_key": None}])
     listed = options(menu, resolve={}.get, refs=RefBook())
     assert len(listed) == 1 and listed[0]["left_out"] == [
-        "phone Call: left out: travel", "phone Plan: refused: no reason given"]
+        "phone Call: left out: it takes you off the lot", "phone Plan: refused: no reason given"]
 
 
 def test_the_phone_left_out_lines_are_at_most_twelve_of_at_most_160_characters_and_the_last_counts_the_rest():

@@ -262,3 +262,34 @@ def test_a_thing_with_a_debug_name_takes_its_definition_name_and_one_with_neithe
     raw = [{"object_id": "9", "name_key": "901", "definition_id": 77, "where": "inventory"}]
     things = reach.list_words("things", raw, refs=RefBook(), resolve=names.get, catalog=catalog)
     assert [thing["name"] for thing in things] == ["Test Lamp"]
+
+
+# ----------------------------------------------------------------- D7: every left-out code has its plain words
+
+def test_each_left_out_code_the_probe_sends_is_said_in_plain_words_and_an_unknown_code_is_shown_as_itself():
+    from domus_helper.acts import options
+    from domus_helper.acts import RefBook
+    codes = ["pie_picker", "deny_name", "travel", "not_user_directed", "hidden", "a_new_code"]
+    phone = {"object_id": "11", "class": "object_phone", "phone": True, "distance_m": 0.0, "same_room": True,
+             "acts": [{"guid64": "4242", "name": "phone_Read", "text_key": None}]}
+    menu = {"menu_rev": 1, "room": "4", "objects": [phone], "refused_phone": None,
+            "excluded_phone": [{"name": "phone_Act%d" % index, "why": code} for index, code in enumerate(codes)]}
+    listed = options(menu, resolve={}.get, refs=RefBook())
+    lines = listed[0]["left_out"]
+    assert lines == [
+        "phone Act0: left out: it opens a menu of choices, not an act",
+        "phone Act1: left out: a debug or cheat act",
+        "phone Act2: left out: it takes you off the lot",
+        "phone Act3: left out: only the game starts it, not you",
+        "phone Act4: left out: the game keeps it out of your menu",
+        "phone Act5: left out: a_new_code"]
+    assert not any(code in " ".join(lines) for code in ("deny_name", "not_user_directed", "pie_picker"))
+
+
+def test_the_left_out_words_never_show_the_debug_code_or_an_internal_name():
+    from domus_helper.acts import LEFT_OUT_REASONS, _phone_left_out
+    assert set(LEFT_OUT_REASONS) == {"pie_picker", "deny_name", "travel", "not_user_directed", "hidden"}
+    for words in LEFT_OUT_REASONS.values():
+        assert "_" not in words and "DEBUG" not in words and words[0].islower()
+    lines = _phone_left_out({"excluded_phone": [{"name": "phone_Cheat", "why": "deny_name"}]}, {}.get)
+    assert lines == ["phone Cheat: left out: a debug or cheat act"]

@@ -607,6 +607,15 @@ def _fold(rows):
 
 PHONE_LEFT_OUT_LINES = 12
 PHONE_LEFT_OUT_CHARS = 160
+# W14 (D7): the plain-words reason of each code the probe gives a left-out phone act (its excluded_phone "why"). A code
+# with no words here is shown as the code itself.
+LEFT_OUT_REASONS = {
+    "pie_picker": "it opens a menu of choices, not an act",
+    "deny_name": "a debug or cheat act",
+    "travel": "it takes you off the lot",
+    "not_user_directed": "only the game starts it, not you",
+    "hidden": "the game keeps it out of your menu",
+}
 
 
 def _phone_left_out(menu, resolve):
@@ -617,7 +626,9 @@ def _phone_left_out(menu, resolve):
     for item in menu.get("excluded_phone") if isinstance(menu.get("excluded_phone"), list) else []:
         if isinstance(item, dict):
             act = humanize(item["name"]) if isinstance(item.get("name"), str) and item["name"] else "an act"
-            why = humanize(item["why"]) if isinstance(item.get("why"), str) and item["why"] else "not said"
+            # W14 (D7): the reason in plain words, so the line never shows the probe's code ("deny name").
+            code = item.get("why") if isinstance(item.get("why"), str) else None
+            why = LEFT_OUT_REASONS.get(code) or code or "not said"
             lines.append(("%s: left out: %s" % (act, why))[:PHONE_LEFT_OUT_CHARS])
     for item in menu.get("refused_phone") if isinstance(menu.get("refused_phone"), list) else []:
         if isinstance(item, dict):
