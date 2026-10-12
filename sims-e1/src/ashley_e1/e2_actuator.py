@@ -442,7 +442,9 @@ def event_guest_list(host_sim_id, guest_ids, job_type):
         return None
     try:
         guest_list = SituationGuestList(True, int(host_sim_id), None)
-        for sim_id in [host_sim_id] + list(guest_ids):
+        # 2.40.0 (W13 P1 fix): she is the host; a guest list never names her a second time.
+        guests = [sim_id for sim_id in guest_ids if str(sim_id) != str(host_sim_id)]
+        for sim_id in [host_sim_id] + guests:
             guest_list.add_guest_info(SituationGuestInfo.construct_from_purpose(
                 int(sim_id), job_type, SituationInvitationPurpose.INVITED))
     except Exception:
@@ -452,15 +454,15 @@ def event_guest_list(host_sim_id, guest_ids, job_type):
 
 def create_event(zone_id, situation, guest_list, scheduled_time=None):
     """Act: the zone's situation manager makes the event she planned, user-facing, at scheduled_time (None: now).
-    Returns the new situation's id (digits), or None when the game made none."""
+    Returns the new situation's id (digits), or None when the game made none. The game's create_situation returns
+    the id itself (an int), not the situation."""
     try:
         manager = services.get_zone_situation_manager(int(zone_id))
         created = manager.create_situation(situation, guest_list, user_facing=True, zone_id=int(zone_id),
                                            scheduled_time=scheduled_time)
-        found = created.id
     except Exception:
         return None
-    return None if found is None else str(found)
+    return None if created is None else str(created)
 
 
 def funds_of(household):
@@ -509,9 +511,10 @@ def scheduled_at(absolute_minutes):
 
 
 def refund(household, amount, sim, reason):
-    """Act: the money a charge took goes back to the household's funds (the game's own add), when a later step failed."""
+    """Act: the money a charge took goes back to the household's funds (the game's own add), when a later step failed.
+    Not counted as earnings (the game's count_as_earnings is True by default). False when the game's call fails."""
     try:
-        funds_of(household).add(amount, reason, sim)
+        funds_of(household).add(amount, reason, sim, tags=None, count_as_earnings=False)
     except Exception:
         return False
     return True
@@ -546,7 +549,11 @@ def phone_discovery(sim, affordances, known_sims):
                                             observers._type_name(type(sim_filter)), flags,
                                             tuned._class_plain(affordance, "radius"), steps))
         if len(tests) < PHONE_TESTS_MAX:
-            ok, reason, reason_key = preflight_test(sim, sim, affordance, context)
+            # 2.40.0 (W13 P1 fix): one test that raises is a test with no reason, not a lost discovery record.
+            try:
+                ok, reason, reason_key = preflight_test(sim, sim, affordance, context)
+            except Exception:
+                ok, reason, reason_key = None, None, None
             tests.append({"name": reach._text(name, reach.LABEL_MAX), "guid64": reach._id(guid),
                           "reason": None if ok else reach._text(reason, TEST_REASON_MAX),
                           "tooltip_key": reason_key if type(reason_key) is str else None})

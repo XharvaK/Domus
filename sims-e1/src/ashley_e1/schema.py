@@ -784,9 +784,15 @@ RESULT_LIST_MAX = 4
 DISCOVERY_MAX_RECORD_BYTES = 40 * 1024 + 4096
 LIST_PART_MAX = 128
 LIST_KIND_NAMES = ("people", "places", "things", "events")
-PHONE_KIND_NAMES = ("text", "call")
+# 2.40.0 (W13 P1 fix): a phone row is a notice on her phone or a call held for her.
+PHONE_KIND_NAMES = ("notice", "call")
 DISCOVERY_KEY_NAMES = frozenset(("pickers", "phone_tests", "off_lot", "save", "situations", "career",
-                                 "population", "dropped"))
+                                 "population", "dropped", "unread"))
+PLACE_KIND_NAMES = ("home", "household", "venue")
+PERSON_KEYS = frozenset(("sim_id", "first_name", "last_name", "labels", "tracks", "household_id", "has_home", "on_lot",
+                         "waiting"))
+PLACE_KEYS = frozenset(("zone_id", "kind", "lot_name", "venue", "household_id"))
+EVENT_KEYS = frozenset(("situation_id", "name_key", "cost", "schedulable"))
 
 
 def _validate_result(value):
@@ -813,6 +819,8 @@ def _validate_reach(kind, payload):
         _require(type(payload["discovery_rev"]) is int and payload["discovery_rev"] >= 1, "discovery rev")
         sections = payload["sections"]
         _require(isinstance(sections, dict) and set(sections) <= DISCOVERY_KEY_NAMES, "discovery sections")
+        for name, value in sections.items():
+            _require(type(value) in (dict, list), "discovery section %s" % name)
         _require(len(json.dumps(payload, separators=(",", ":"))) <= DISCOVERY_MAX_RECORD_BYTES, "discovery size")
     elif kind == "lists":
         _require(payload["kind"] in LIST_KIND_NAMES, "list kind")
@@ -825,11 +833,62 @@ def _validate_reach(kind, payload):
         items = payload["items"]
         _require(isinstance(items, list) and len(items) <= LIST_PART_MAX and
                  all(isinstance(item, dict) for item in items), "list items")
+        # 2.40.0 (W13 P1 fix): each item of a people, places or events list has its keys and value shapes (things: below).
+        for item in items if payload["kind"] in LIST_ITEM_VALIDATORS else ():
+            LIST_ITEM_VALIDATORS[payload["kind"]](item)
     else:
         _require(payload["kind"] in PHONE_KIND_NAMES, "phone kind")
         for key in ("from_sim_id", "notifies"):
             if payload[key] is not None:
                 string_id(payload[key], "phone %s" % key)
+
+
+def _is_flag_or_none(value):
+    return value is None or type(value) is bool
+
+
+def _is_short_text_or_none(value, limit):
+    return value is None or (type(value) is str and len(value) <= limit)
+
+
+def _validate_person(item):
+    """2.40.0 (W13 P1 fix): a person she knows, as reach.person_item writes it."""
+    _require(set(item) == PERSON_KEYS, "person keys")
+    _require(_is_digits(item["sim_id"]), "person sim_id")
+    _require(item["household_id"] is None or _is_digits(item["household_id"]), "person household_id")
+    for key in ("first_name", "last_name"):
+        _require(_is_short_text_or_none(item[key], 64), "person %s" % key)
+    labels = item["labels"]
+    _require(type(labels) is list and len(labels) <= 4 and
+             all(type(label) is str and 1 <= len(label) <= 40 for label in labels), "person labels")
+    tracks = item["tracks"]
+    _require(type(tracks) is dict and len(tracks) <= 4 and
+             all(type(name) is str and len(name) <= 40 and type(value) is int for name, value in tracks.items()),
+             "person tracks")
+    for key in ("has_home", "on_lot", "waiting"):
+        _require(_is_flag_or_none(item[key]), "person %s" % key)
+
+
+def _validate_place(item):
+    """2.40.0 (W13 P1 fix): a place she can go, as reach.place_item writes it."""
+    _require(set(item) == PLACE_KEYS, "place keys")
+    _require(_is_digits(item["zone_id"]), "place zone_id")
+    _require(item["kind"] in PLACE_KIND_NAMES, "place kind")
+    _require(_is_short_text_or_none(item["lot_name"], 64), "place lot_name")
+    _require(_is_short_text_or_none(item["venue"], 64), "place venue")
+    _require(item["household_id"] is None or _is_digits(item["household_id"]), "place household_id")
+
+
+def _validate_event(item):
+    """2.40.0 (W13 P1 fix): an event type she may plan, as reach.event_item writes it."""
+    _require(set(item) == EVENT_KEYS, "event keys")
+    _require(_is_digits(item["situation_id"]), "event situation_id")
+    _require(_is_short_text_or_none(item["name_key"], 32), "event name_key")
+    _require(_is_int_or_none(item["cost"]), "event cost")
+    _require(_is_flag_or_none(item["schedulable"]), "event schedulable")
+
+
+LIST_ITEM_VALIDATORS = {"people": _validate_person, "places": _validate_place, "events": _validate_event}
 
 
 def _validate_menu(payload):

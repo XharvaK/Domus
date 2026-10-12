@@ -43,11 +43,22 @@ def _class_plain(cls, name):
             if name not in klass.__dict__:
                 continue
             value = klass.__dict__[name]
-            if _descriptor(value):
-                continue
-            return value
+            if not _descriptor(value):
+                return value
+            # 2.40.0 (W13 P1 fix): a property or classmethod over the tuned value (the game's Situation.cost is a
+            # classmethod over _cost; display_name a property over _display_name). The tuned value is read under _<name>.
+            return _tuned_value(cls, "_" + name)
         return None
     return _plain(cls, name, True)
+
+
+def _tuned_value(cls, name):
+    """2.40.0 (W13 P1 fix): the first class attribute named so, when it is a plain value (not a descriptor); else None."""
+    for klass in cls.__mro__:
+        if name in klass.__dict__:
+            value = klass.__dict__[name]
+            return None if _descriptor(value) else value
+    return None
 
 
 def _int_or_null(value):
