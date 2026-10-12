@@ -5,6 +5,7 @@ import json
 import re
 
 from . import snapshot
+from .transport import SyncRefused
 
 # N8 (F4): the options of one view: at most 160 objects and 32,768 bytes (contract.py takes the same).
 OPTIONS_LIMIT = 32768
@@ -24,7 +25,9 @@ ACT_CEILING_MS = 60 * 60_000
 DETACH_GRACE_MS = 2 * 60_000
 # A9-9: the oldest probe that understands each command the helper sends. cancel 2.20.0 (her queue), answer 2.18.0
 # (her dialog answers, with the menu they come from), act 2.18.0 (the menu's acts), owner 2.24.0 (the User's act first).
-PROBE_NEEDS = {"cancel": (2, 20, 0), "answer": (2, 18, 0), "act": (2, 18, 0), "owner": (2, 24, 0)}
+# W12 (F5): a pie-menu choice (variant) and a numbered response need 2.39.0; every command is gated the same way.
+PROBE_NEEDS = {"cancel": (2, 20, 0), "answer": (2, 18, 0), "act": (2, 18, 0), "owner": (2, 24, 0),
+               "variant": (2, 39, 0), "response": (2, 39, 0)}
 _TERMINAL = ("finished", "rejected", "unknown")
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
@@ -34,7 +37,16 @@ ASKED_LIMIT = 8
 # real time, so a question that opens while it waits is matched over a longer span; the slack is unchanged.
 ASKED_SLACK_MS = 1_000
 _PHASES = {"ACCEPTED": "accepted", "REJECTED": "rejected", "PUSHED": "pushed",
-           "FINISHED": "finished", "UNKNOWN": "unknown"}
+           "FINISHED": "finished", "UNKNOWN": "unknown",
+           # W12 (A1): a pushed act waits behind an open window (not finished, not gone); a screen withheld (not terminal).
+           "WAITING": "waiting", "NOTED": "noted"}
+# W12 (B4): Mint takes at most this many events in one sync; the rest wait for the next tick.
+EVENTS_PER_SYNC = 64
+QUARANTINE_LIMIT = 32
+# W12 (S2): her words to a Sim, as the request carries them (1 to 240 characters).
+WORDS_MAX = 240
+_WINDOW = re.compile(r"\bdialog (\d{1,20})\b")
+_GUID_VARIANT = re.compile(r"([0-9]{1,20})(?:v([0-9]{1,3}))?")
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 
@@ -61,8 +73,12 @@ class MenuParts(object):
         objects = []
         for index in range(parts):
             objects.extend(self._pieces[index].get("objects") or [])
+        # W12 (C8, C11): the facts the probe writes with part 0 (what the object cap left out, the spot counters)
+        # belong to the whole menu, whichever part came last.
+        head = self._pieces[0]
         self._key, self._pieces = None, {}
-        return dict(e2, objects=objects, part=0, parts=1)
+        return dict(e2, objects=objects, part=0, parts=1, dropped=head.get("dropped"),
+                    spot_stages=head.get("spot_stages"))
 
 
 class RefBook(object):
@@ -184,7 +200,16 @@ def _object_name(item, resolve, catalog, people=None):
 
 
 DIALOG_PREFIX = "dialog:"
-DIALOG_ROWS_SHOWN = 12
+# W12 (A7): the probe keeps 40 rows of a picker; the helper shows them all and says "N of M" when it shows fewer.
+DIALOG_ROWS_SHOWN = 40
+# W12 (C2, C9): room 0 is the outside of the house. It is never "near" by its room, and it is named "outside".
+OUTSIDE_ROOM = "0"
+OUTSIDE_NAME = "outside"
+OUTSIDE_WHERE = "outside"
+OUTSIDE_ON_LOT_WHERE = "outside, on your lot"
+OUTSIDE_OFF_LOT_WHERE = "outside, off your lot"
+OFF_LOT_WHERE = "off your lot"
+REFUSALS_SHOWN = 8
 QUEUE_OBJECT_ID = "queue:her"
 QUEUE_SHOWN = 6
 # Posture plumbing is not something she chose or the client shows to stop.
@@ -297,7 +322,9 @@ def dialog_options(row, resolve=None, refs=None):
             continue
         rules = answer_rules(dialog, resolve)
         acts = []
-        for entry in [r for r in dialog.get("rows") or [] if isinstance(r, dict) and r.get("enabled")][:DIALOG_ROWS_SHOWN]:
+        enabled = [r for r in dialog.get("rows") or [] if isinstance(r, dict) and r.get("enabled")]
+        shown = enabled[:DIALOG_ROWS_SHOWN]
+        for entry in shown:
             text = _text(resolve, entry.get("name_key")) or "choice %s" % entry.get("option_id")
             if isinstance(entry.get("price"), int):
                 text = "%s (§%d)" % (text, entry["price"])
@@ -307,15 +334,23 @@ def dialog_options(row, resolve=None, refs=None):
             name = response.get("response") if isinstance(response, dict) else None
             if not isinstance(name, str) or (acts and name == "ok" and rules is None):
                 continue  # with rows, picking a row is the ok (unless her answer has rules)
+            # W12: a custom button the probe names response_<N> reads as choice N, never a bare name or number.
+            custom = name[len("response_"):] if name.startswith("response_") and name[len("response_"):].isdigit() else None
+            words = _text(resolve, response.get("text_key")) or ("choice %s" % custom if custom else name)
             acts.append({"ref": refs.ref(("dialog", str(dialog["dialog_id"]), "response", name)), "guid64": name,
-                         "text": _text(resolve, response.get("text_key")) or name})
+                         "text": words})
         if acts:
             title = _text(resolve, dialog.get("title_key")) or _text(resolve, dialog.get("text_key"))
+            where = "asked now" if len(shown) == len(enabled) else "asked now, %d of %d choices" % (len(shown), len(enabled))
             entry = {"object": "The game asks: %s" % (title or "a question"),
                      "object_id": DIALOG_PREFIX + str(dialog["dialog_id"]),
-                     "where": "asked now", "acts": acts}
+                     "where": where, "acts": acts}
             if rules is not None:
                 entry["answer_rules"] = rules
+            # W12 (hold_left_s): the whole seconds until the window's fallback hands it to the User.
+            held_for = dialog.get("hold_left_s")
+            if type(held_for) is int and held_for >= 0:
+                entry["hold_left_s"] = held_for
             result.append(entry)
     return result
 
@@ -379,13 +414,38 @@ def _where(item, menu_room, room):
     return "elsewhere" if same is True else "nearby"
 
 
+def _is_outside(item):
+    """W12 (C2, C9): an object in room 0 is outside the house."""
+    return item.get("room") is not None and str(item.get("room")) == OUTSIDE_ROOM
+
+
 def _in_her_room(item, room):
     """N8 (F4): whether an object is in the room she is in now. The probe's room id for the object decides
-    when both are known; an older menu without one is judged by the probe's same_room flag."""
+    when both are known; an older menu without one is judged by the probe's same_room flag.
+    W12 (C2): outside is no room: an outdoor object is not near her by its room, nor is one indoors when she is out."""
     object_room = item.get("room")
+    if _is_outside(item) or (room is not None and str(room) == OUTSIDE_ROOM):
+        return False
     if object_room is not None and room is not None:
         return str(object_room) == str(room)
     return item.get("same_room") is True
+
+
+def _refusals(item, resolve, near):
+    """W12 (C4): the acts the game refused on an object near her, in the game's own words: "<act>: refused: <reason>".
+    Only near objects carry them (the probe sends them for those alone); at most REFUSALS_SHOWN."""
+    if near is not True or not isinstance(item.get("refusals"), list):
+        return []
+    found = []
+    for refusal in item["refusals"]:
+        if not isinstance(refusal, dict):
+            continue
+        act = _text(resolve, refusal.get("text_key")) or humanize("act")
+        reason = _sentence(resolve, refusal.get("reason_key")) or "no reason given"
+        found.append(("%s: refused: %s" % (act, reason))[:240])
+        if len(found) >= REFUSALS_SHOWN:
+            break
+    return found
 
 
 def _near(item, room):
@@ -395,10 +455,13 @@ def _near(item, room):
 
 
 def _room_label(item, room_labels):
-    """N8 (F4): the room's label when it is known; None when it is not (the object then names no room)."""
+    """N8 (F4): the room's label when it is known; None when it is not (the object then names no room).
+    W12 (C9): the outside of the house is named outside, whatever the notebook says."""
     object_room = item.get("room")
     if object_room is None:
         return None
+    if str(object_room) == OUTSIDE_ROOM:
+        return OUTSIDE_NAME
     return (room_labels or {}).get(str(object_room))
 
 
@@ -482,6 +545,11 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         where = _where(item, menu.get("room"), room)
         if item.get("class") == "sim" and heard is not None and str(item.get("object_id")) in heard:
             where = HEARD_WHERE  # 2.38.0 (W11 H2): a Sim she hears on her lot, not seen: the room word does not apply
+        elif _is_outside(item):
+            # W12 (C9, G3): outside the house, and on her lot or not. A meal left at the step is a thing with acts.
+            where = {True: OUTSIDE_ON_LOT_WHERE, False: OUTSIDE_OFF_LOT_WHERE}.get(item.get("on_lot"), OUTSIDE_WHERE)
+        elif item.get("on_lot") is False:
+            where = OFF_LOT_WHERE  # W12 (C10): a neighbour's thing is said to be off her lot
         if isinstance(distance, (int, float)) and not isinstance(distance, bool):
             where = "%s, %.1f m" % (where, distance)
         if item.get("phone") is True:
@@ -498,25 +566,35 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if text in texts:
                 continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
             texts.add(text)
+            guid = str(act["guid64"])
+            if type(act.get("variant")) is int and not isinstance(act.get("variant"), bool):
+                # W12 (G1): a pie-menu choice is its own act; its guid64 carries its variant ("<guid64>v<variant>").
+                guid = "%sv%d" % (guid, act["variant"])
             if is_spot:
                 # 2.35.0 (D3): a spot's ref is its room, level and kind, not the probe's number (it can change).
                 ref_key = ("spot", str(item.get("room")), item.get("level"), item.get("spot"))
             else:
-                ref_key = ("act", str(item.get("object_id")), str(act["guid64"]))
-            listed = {"ref": refs.ref(ref_key), "guid64": str(act["guid64"]), "text": text}
+                ref_key = ("act", str(item.get("object_id")), guid)
+            listed = {"ref": refs.ref(ref_key), "guid64": guid, "text": text}
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
             acts.append(listed)
         if acts:
             label = _room_label(item, room_labels)
             name = _spot_name(item, label) if is_spot else _object_name(item, resolve, catalog, people)
+            near = _near(item, room)
             entry = {"object": name, "object_id": str(item.get("object_id")), "where": where, "acts": acts,
-                     "near": _near(item, room)}
+                     "near": near}
             if label:
                 entry["room"] = label[:64]
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
+            refused = _refusals(item, resolve, near)
+            if refused:
+                entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)
+            if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
+                entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
             where_named = label[:64] if label else (str(item["room"])[:64] if item.get("room") is not None else None)
             room_id = None if item.get("room") is None else str(item["room"])
@@ -533,10 +611,23 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     result = _fold(result)
     while result and (len(result) > objects_limit or _bytes([row[0] for row in result]) > limit):
         left_out.append(result.pop()[1])
-    if cut is not None and left_out:
-        cut["objects"] = len(left_out)
-        cut["rooms"] = sorted({name for name in left_out if name})[:16]
+    # W12 (C8): what the probe's own object cap left out joins the cut, named by room (labels when known).
+    dropped = menu.get("dropped") if isinstance(menu.get("dropped"), dict) else {}
+    dropped_objects = dropped.get("objects") if type(dropped.get("objects")) is int and dropped["objects"] > 0 else 0
+    dropped_rooms = [_probe_room_name(value, room_labels) for value in (dropped.get("rooms") or [])[:16]
+                     if isinstance(value, (str, int)) and not isinstance(value, bool)]
+    if cut is not None and (left_out or dropped_objects):
+        cut["objects"] = len(left_out) + dropped_objects
+        cut["rooms"] = sorted({name for name in left_out + dropped_rooms if name})[:16]
     return [row[0] for row in result]
+
+
+def _probe_room_name(value, room_labels):
+    """W12 (C8, C9): a room the probe names by its id, in words: its label, outside, or "room <id>"."""
+    if str(value) == OUTSIDE_ROOM:
+        return OUTSIDE_NAME
+    label = (room_labels or {}).get(str(value))
+    return (label if isinstance(label, str) and label else "room %s" % str(value))[:64]
 
 
 def _version(probe):
@@ -598,24 +689,69 @@ def _answer_args(answer):
     return extra
 
 
+def _window_of(detail):
+    """W12 (A1): the question a waiting or noted act names in its detail ("dialog <id> ..."), or None."""
+    match = _WINDOW.search(detail) if isinstance(detail, str) else None
+    return match.group(1) if match else None
+
+
+def _refusal_code(reply):
+    """W12 (B3): the probe's code for a refusal: its reply code, else the word after a "*_REJECT " line, else REFUSED."""
+    code = reply.get("code")
+    if isinstance(code, str) and 0 < len(code) <= 64:
+        return code
+    for line in (reply.get("result") or {}).get("lines") or []:
+        if isinstance(line, str) and "_REJECT " in line:
+            word = line.split("_REJECT ", 1)[1].split(" ")[0]
+            if word:
+                return word[:64]
+    return "REFUSED"
+
+
+def _split_guid(value):
+    """W12 (G1): an option's guid64 is "<guid64>v<variant>" for a pie-menu choice; the probe takes the two apart.
+    Anything else passes through unchanged, as before."""
+    match = _GUID_VARIANT.fullmatch(str(value))
+    if match is None:
+        return str(value), None
+    return match.group(1), (int(match.group(2)) if match.group(2) is not None else None)
+
+
+def _variant_of(value):
+    """W12 (G1): the variant in an option's guid64, or None when it has none."""
+    return _split_guid(value)[1] if value is not None else None
+
+
 class ActCourier(object):
     """Carries her requested acts to the probe and the probe's record of them back.
 
     One push per act id: an id written once is never written again, across restarts
-    (the spool keeps them). Events to Mint are kept until Mint answered the round trip."""
+    (the spool keeps them). Events to Mint are kept until Mint answered the round trip.
+    W12 (B3): the probe's refusal of a command is read from its reply (by the probe); the helper's own refusals say
+    by the helper. W12 (B4): a failed round trip is logged; an event Mint refuses is quarantined; unsent events are
+    never trimmed. W12 (S2): her words go out as one talk line when the act is pushed. W12 (G1): a pie choice's
+    variant is gated on the probe."""
 
-    def __init__(self, spool, publish, resolve=None, memory=None):
+    def __init__(self, spool, publish, resolve=None, memory=None, *, reply=None, log=None, say=None, her_name=None):
         self._spool = spool
         self._publish = publish
         self._resolve = resolve
         # D7b: called with each sync answer's memory asks, the client and the helper session; it answers off the tick.
         self._memory = memory
+        # W12: the probe's reply to one command id (or None while it has not answered); a log line sink; the talk line
+        # for her words (text, object id); her first name, or None.
+        self._reply = reply
+        self._log = log
+        self._say = say
+        self._her_name = her_name
         raw = spool.get_kv("acts_known")
         self._known = json.loads(raw) if raw else {}
         raw = spool.get_kv("acts_events")
         self._events = json.loads(raw) if raw else []
+        raw = spool.get_kv("acts_quarantined")
+        self.quarantined = json.loads(raw) if raw else []
         # Live 2026-10-06: Cook opens the recipe question instead of entering her queue, so the
-        # probe called it gone (LEFT_QUEUE) and she cooked again and again. Dialogs seen open.
+        # probe called it gone (LEFT_QUEUE) and she cooked again and again. Dialogs seen open, per telemetry session.
         raw = spool.get_kv("acts_asked")
         self._asked = json.loads(raw) if raw else []
         # H0.5: steps of her plan Ashley still holds (the view sender no longer reads them, D2).
@@ -624,15 +760,19 @@ class ActCourier(object):
         self.look_owed = False
         # E3: the game dialogs she answered herself in this run (the overlay tells her hand from a human's).
         self.answered_dialogs = []
+        # W12 (F1): whether the last round trip was answered; a view waits while it is not.
+        self.sync_ok = True
 
     def _save(self):
         if len(self._known) > KNOWN_LIMIT:
             for act_id in sorted(self._known, key=lambda key: self._known[key]["written_ms"])[:-KNOWN_LIMIT]:
                 del self._known[act_id]
-        del self._events[:-EVENTS_LIMIT]
+        # W12 (B4): unsent events are never trimmed (the round trip sends at most EVENTS_PER_SYNC at a time).
         del self._asked[:-ASKED_LIMIT]
+        del self.quarantined[:-QUARANTINE_LIMIT]
         self._spool.put_many_kv({"acts_known": json.dumps(self._known, sort_keys=True),
                                  "acts_events": json.dumps(self._events),
+                                 "acts_quarantined": json.dumps(self.quarantined),
                                  "acts_asked": json.dumps(self._asked),
                                  "acts_planned": str(self.planned)})
 
@@ -642,28 +782,53 @@ class ActCourier(object):
             event["detail"] = detail
         self._events.append(event)
 
+    def _log_line(self, now_ms, trigger, error, count):
+        """W12 (B4, F6): one line per failed round trip (the decision log's record; never raises)."""
+        if self._log is None:
+            return
+        try:
+            self._log({"wall_ms": int(now_ms), "trigger": trigger, "error": error, "events": int(count)})
+        except (OSError, ValueError, TypeError):
+            pass
+
     def on_sample(self, row):
-        """Any probe row: remember when each game dialog was first seen open."""
+        """Any probe row: remember when each game dialog was first seen open, per telemetry session (B1)."""
         dialogs = row.get("dialogs") if isinstance(row, dict) else None
         if not isinstance(dialogs, dict):
             return
         at = row.get("wall_timestamp_ms")
-        seen = {item["dialog_id"] for item in self._asked}
+        session = row.get("telemetry_session_id")
+        seen = {(item.get("session"), item["dialog_id"]) for item in self._asked}
         added = False
         for item in dialogs.get("open") or []:
             dialog_id = item.get("dialog_id") if isinstance(item, dict) else None
-            if dialog_id is None or str(dialog_id) in seen or type(at) is not int:
+            if dialog_id is None or (session, str(dialog_id)) in seen or type(at) is not int:
                 continue
-            self._asked.append({"dialog_id": str(dialog_id), "kind": str(item.get("kind") or "a question"), "at_ms": at})
+            self._asked.append({"dialog_id": str(dialog_id), "session": session,
+                                "kind": str(item.get("kind") or "a question"), "at_ms": at})
+            seen.add((session, str(dialog_id)))
             added = True
         if added:
             self._save()
 
-    def _asked_after(self, pushed_ms, until_ms):
+    def _asked_after(self, session, pushed_ms, until_ms):
+        """W12 (B1): a question first seen in this telemetry session, between the push and the removal."""
         for item in self._asked:
-            if pushed_ms - ASKED_SLACK_MS <= item["at_ms"] <= until_ms:
+            if item.get("session") == session and pushed_ms - ASKED_SLACK_MS <= item["at_ms"] <= until_ms:
                 return item
         return None
+
+    def _say_words(self, known):
+        """W12 (S2): her words, as one talk line in her name, once, when the act is pushed."""
+        words = known.get("words")
+        if not words or known.get("said") or self._say is None:
+            return
+        known["said"] = True
+        first = self._her_name() if self._her_name is not None else None
+        if not first:
+            self._log_line(known.get("pushed_ms") or 0, "act_words", "no_name", 0)
+            return
+        self._say('%s: "%s"' % (first, words), known.get("object"))
 
     def on_row(self, row):
         """An act_event row from the probe's telemetry."""
@@ -679,13 +844,21 @@ class ActCourier(object):
         if type(e2.get("started")) is bool:
             # 2.24.0: did the game ever begin the pushed act.
             detail["started"] = e2["started"]
+        window = _window_of(e2.get("detail"))
+        if window is not None:
+            detail["window"] = window  # W12: the question (dialog) the act is waiting on, when there is one
         at = row.get("wall_timestamp_ms")
         at = at if type(at) is int and at >= 0 else 0
+        session = row.get("telemetry_session_id")
         known = self._known.get(act_id)
         if phase == "pushed" and known is not None:
             known["pushed_ms"] = at
+            known["session"] = session
+            self._say_words(known)
+            if known.get("words"):
+                detail["words"] = known["words"]  # W12 (S2): her words, kept with the act for her outcome and day records
         if phase == "unknown" and detail.get("code") == "LEFT_QUEUE" and known is not None and "pushed_ms" in known:
-            asked = self._asked_after(known["pushed_ms"], at)
+            asked = self._asked_after(known.get("session"), known["pushed_ms"], at)
             if asked is not None:
                 # It did not vanish: the game turned it into a question to her.
                 phase = "finished"
@@ -697,6 +870,10 @@ class ActCourier(object):
             sentence = _sentence(self._resolve, e2.get("reason_key"))
             if sentence:
                 detail["reason"] = sentence
+                detail["text"] = sentence
+            if phase == "rejected":
+                # W12 (B3): the game's own sentence means the game refused it; with none, the probe did.
+                detail["by"] = "game" if sentence else "probe"
         self._event(act_id, phase, at, detail)
         if known is not None:
             known["answered"] = True
@@ -708,6 +885,24 @@ class ActCourier(object):
         """D2 (H3): whether a look was asked since the last call; the flag is cleared when it is read."""
         owed, self.look_owed = self.look_owed, False
         return owed
+
+    def _read_replies(self, now_ms):
+        """W12 (B3): the probe's refusal of a command of hers, read from its reply, is a REJECTED by the probe; a reply
+        that accepted it is read once and says nothing. An act the probe already told about is left alone."""
+        if self._reply is None:
+            return
+        for act_id, known in self._known.items():
+            command_id = known.get("cmd")
+            if not command_id or known.get("reply_read") or known.get("terminal") or known.get("answered"):
+                continue
+            reply = self._reply(command_id)
+            if not isinstance(reply, dict):
+                continue
+            known["reply_read"] = True
+            if reply.get("status") in ("REJECTED", "ERROR"):
+                self._event(act_id, "rejected", now_ms, {"code": _refusal_code(reply), "by": "probe"})
+                known["answered"] = True
+                known["terminal"] = True
 
     def tick(self, client, helper_session, now_ms, attached, probe=None):
         """One round trip: send what happened, receive what to do. Returns the acts written.
@@ -732,12 +927,57 @@ class ActCourier(object):
                 self._event(act_id, "unknown", now_ms, {"code": "NO_END_REPORTED"})
             else:
                 known.pop("detached_ms", None)
-        sending = list(self._events)
-        response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": sending})
-        if response is None:
+        self._read_replies(now_ms)
+        batch = self._events[:EVENTS_PER_SYNC]
+        response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": list(batch)})
+        written = []
+        answers = []
+        if isinstance(response, SyncRefused):
+            # W12 (B4): Mint refused the batch as a whole; each event is sent alone, and the ones Mint refuses are
+            # quarantined, so one bad event cannot hold the others for ever.
+            self._log_line(now_ms, "acts_sync", "refused:%s" % (response.reason or "unknown"), len(batch))
+            written, answers = self._send_alone(client, helper_session, now_ms, attached, probe)
+        elif response is None:
+            self.sync_ok = False
+            self._log_line(now_ms, "acts_sync", "no_reply", len(batch))
             self._save()
             return []
-        self._events = self._events[len(sending):]
+        else:
+            self.sync_ok = True
+            del self._events[:len(batch)]
+            written = self._receive(response, now_ms, attached, probe)
+            answers = [response]
+        self._save()
+        for answer in answers:
+            # SNAPSHOT: after the acts, on its own thread, so a picture never delays one. Never raises.
+            snapshot.handle_requests_in_background(answer.get("snapshots") or [], client, helper_session=helper_session)
+            # D7b: her questions to the game's memory; the search runs on its own thread, never on this one.
+            if self._memory is not None:
+                self._memory(answer.get("memory") or [], client, helper_session)
+        return written
+
+    def _send_alone(self, client, helper_session, now_ms, attached, probe):
+        """Returns the acts written, and every answer that came (its pictures and memory asks are handled by the caller)."""
+        written, answers = [], []
+        for _ in range(min(len(self._events), EVENTS_PER_SYNC)):
+            event = self._events[0]
+            response = client.sync_acts({"v": 1, "helper_session": helper_session, "events": [event]})
+            if response is None:
+                self.sync_ok = False
+                self._log_line(now_ms, "acts_sync", "no_reply", 1)
+                break
+            del self._events[0]
+            if isinstance(response, SyncRefused):
+                self.quarantined.append({"event": event, "reason": response.reason or "unknown", "at_ms": int(now_ms)})
+                self._log_line(now_ms, "acts_quarantined", "refused:%s" % (response.reason or "unknown"), 1)
+                continue
+            self.sync_ok = True
+            answers.append(response)
+            written += self._receive(response, now_ms, attached, probe)
+        return written, answers
+
+    def _receive(self, response, now_ms, attached, probe):
+        """What Mint answered: the plan, a look, and the acts to push to the probe."""
         planned = response.get("planned")
         self.planned = planned if type(planned) is int and planned >= 0 else 0
         if response.get("look") is True:
@@ -749,43 +989,52 @@ class ActCourier(object):
                 continue
             if not attached:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
-                self._event(act_id, "rejected", now_ms, {"code": "NOT_ATTACHED"})
+                self._event(act_id, "rejected", now_ms, {"code": "NOT_ATTACHED", "by": "helper"})
                 continue
             try:
                 object_id = str(act.get("object_id"))
-                # A9-9: a probe older than the command needs would ignore it (or refuse it as unknown): say so, never send it.
-                if _too_old(probe, PROBE_NEEDS[_needs(act, object_id)]):
-                    raise ProbeTooOld(_needs(act, object_id))
+                needs = [_needs(act, object_id)]
+                if _variant_of(act.get("guid64")) is not None:
+                    needs.append("variant")  # W12 (G1): a pie-menu choice needs the probe that can push one
+                if object_id.startswith(DIALOG_PREFIX) and str(act.get("guid64")).startswith("response_"):
+                    needs.append("response")  # W12: a numbered response needs the probe that answers by its number
+                for need in needs:
+                    # A9-9: a probe older than the command needs would ignore it (or refuse it as unknown): say so, never send it.
+                    if _too_old(probe, PROBE_NEEDS[need]):
+                        raise ProbeTooOld(need)
                 if object_id == QUEUE_OBJECT_ID:
                     # 2.20.0: she stops one of her own actions.
-                    self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
+                    command = self._publish("cancel", {"act_id": act_id, "interaction_id": str(act.get("guid64"))})
                 elif object_id.startswith(DIALOG_PREFIX):
                     # 2.18.0: her answer to a game dialog (a picker row or a button). W2h: with
                     # her rows or text, the answer is the dialog's ok carrying them.
                     extra = _answer_args(act.get("answer"))
-                    self._publish("answer", dict({"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
-                                                  "pick": "ok" if extra else str(act.get("guid64"))}, **extra))
+                    command = self._publish("answer", dict({"act_id": act_id, "dialog_id": object_id[len(DIALOG_PREFIX):],
+                                                            "pick": "ok" if extra else str(act.get("guid64"))}, **extra))
                     self.answered_dialogs = (self.answered_dialogs + [object_id[len(DIALOG_PREFIX):]])[-ASKED_LIMIT:]
                 else:
-                    args = {"act_id": act_id, "object_id": object_id, "guid64": str(act.get("guid64"))}
+                    guid, variant = _split_guid(act.get("guid64"))
+                    args = {"act_id": act_id, "object_id": object_id, "guid64": guid}
+                    if variant is not None:
+                        args["variant"] = variant
                     if act.get("owner") is True:
                         # 2.24.0: her Thought said the User asked for it; the probe pushes it first.
                         args["owner"] = True
-                    self._publish("act", args)
+                    command = self._publish("act", args)
             except Exception as error:
                 self._known[act_id] = {"written_ms": now_ms, "answered": True}
                 code = ("ANSWER_INVALID" if isinstance(error, AnswerInvalid) else "PROBE_TOO_OLD" if isinstance(error, ProbeTooOld)
                         else "INBOX_" + type(error).__name__[:40])
-                self._event(act_id, "rejected", now_ms, {"code": code})
+                self._event(act_id, "rejected", now_ms, {"code": code, "by": "helper"})
                 continue
-            self._known[act_id] = {"written_ms": now_ms}
+            known = {"written_ms": now_ms, "object": object_id if object_id.isdigit() else None}
+            if isinstance(command, str):
+                known["cmd"] = command  # W12 (B3): the probe's reply to this command, read on the next ticks
+            words = act.get("words")
+            if (object_id.isdigit() and isinstance(words, str) and 1 <= len(words) <= WORDS_MAX
+                    and words.strip() == words):
+                known["words"] = words  # W12 (S2): her words to the Sim this act targets
+            self._known[act_id] = known
             self._event(act_id, "received", now_ms)
             written.append(act_id)
-        self._save()
-        # SNAPSHOT: after the acts, on its own thread, so a picture never delays one. Never raises.
-        snapshot.handle_requests_in_background(response.get("snapshots") or [], client,
-                                               helper_session=helper_session)
-        # D7b: her questions to the game's memory; the search runs on its own thread, never on this one.
-        if self._memory is not None:
-            self._memory(response.get("memory") or [], client, helper_session)
         return written

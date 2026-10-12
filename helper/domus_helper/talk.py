@@ -15,6 +15,7 @@ from .thalamus.observation import _named, _portrait, _seen_memory, _sentence, _s
 MIN_GAP_MS = 2_100
 FORGET_MS = 60_000
 WAITING_MAX = 3
+WORDS_MAX = 8
 TEXT_MAX = 240
 SWITCH_KEY = "talk"
 
@@ -65,8 +66,18 @@ class Talk:
         self._publish = publish
         self._present = {}
         self._waiting = []
+        # W12 (S2): her own words to a Sim, shown before the sentences the portrait waits on; at most a few.
+        self._words = []
         self._sent_ms = None
         self.last = None
+
+    def say(self, text, sim_id=None):
+        """W12 (S2): one line in her name (her words), queued for the same throttle as the sentences; it is dropped
+        when talk is off or the game is not live, as they are. Never raises."""
+        line = _line(text)
+        if line is not None:
+            self._words.append((("words", line[:32]), line, _digits(sim_id)))
+            del self._words[:-WORDS_MAX]
 
     def on_row(self, record, now_ms, body_sample):
         if not body_sample or not isinstance(record, dict):
@@ -87,12 +98,16 @@ class Talk:
         try:
             if not live or self._spool.get_kv(SWITCH_KEY) == "off":
                 self._waiting.clear()
+                self._words.clear()
                 return None
-            if not self._waiting:
+            if not self._waiting and not self._words:
                 return None
             if self._sent_ms is not None and now_ms - self._sent_ms < MIN_GAP_MS:
                 return None
-            key, text, sim_id = self._waiting.pop(0)
+            if self._words:
+                key, text, sim_id = self._words.pop(0)
+            else:
+                key, text, sim_id = self._waiting.pop(0)
             args = {"text": text}
             if sim_id is not None:
                 args["sim_id"] = sim_id

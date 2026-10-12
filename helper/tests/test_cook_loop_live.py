@@ -70,7 +70,8 @@ def test_the_dialogs_she_was_asked_survive_a_restart(tmp_path):
     first = ActCourier(spool, lambda command, args: None)
     first.on_sample(_sample(2500, [{"dialog_id": "4", "kind": "UiRecipePicker"}]))
     again = ActCourier(spool, lambda command, args: None)
-    assert again._asked_after(2001, 7000)["kind"] == "UiRecipePicker"
+    # W12 (B1): a question is kept per telemetry session (this sample has none), with its first-seen time.
+    assert again._asked_after(None, 2001, 7000)["kind"] == "UiRecipePicker"
 
 
 def test_her_portrait_shows_what_waits_in_her_queue():

@@ -51,7 +51,7 @@ def test_a_spot_outdoors_at_the_front_door_or_upstairs_is_named_as_its_place():
 def test_the_front_door_is_named_as_the_front_door_even_with_no_label():
     entry = only(options(menu(spot("3", "0", 0, kind="front_door"), room="0"), room="0", room_labels={}))
     assert entry["object"] == "the front door, outside"
-    assert "room" not in entry  # no label is known for it, so it names no room (as an object with none)
+    assert entry["room"] == "outside"  # W12 (C9): the outside of the house is named outside, whatever the label
 
 
 def test_the_spot_act_text_is_go_here_whatever_the_probe_names_the_act():

@@ -26,24 +26,24 @@ def _block(need=0.5, slow=1.0, scale=1.0, foreign=False):
 def test_nothing_is_sent_while_the_game_is_not_attached(paths, tmp_path, monkeypatch):
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     bridge._state = "detached"
-    bridge._pace_tick(NOW)
+    bridge._pace_tick(NOW, "2.39.0")
     assert sent == []
 
 
 def test_the_settings_are_published_once_when_the_game_attaches(paths, tmp_path, monkeypatch):
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
-    bridge._pace_tick(NOW + 1_000)
+    bridge._pace_tick(NOW, "2.39.0")
+    bridge._pace_tick(NOW + 1_000, "2.39.0")
     assert sent == [("pace", WANTED)]
 
 
 def test_a_changed_setting_is_published_again(paths, tmp_path, monkeypatch):
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
+    bridge._pace_tick(NOW, "2.39.0")
     (tmp_path / "pace.json").write_text('{"slow_time": 0.5}', encoding="utf-8")
-    bridge._pace_tick(NOW + 1_000)
+    bridge._pace_tick(NOW + 1_000, "2.39.0")
     assert sent[-1] == ("pace", {"need_drain": 0.5, "slow_time": 0.5})
     assert len(sent) == 2
 
@@ -51,46 +51,46 @@ def test_a_changed_setting_is_published_again(paths, tmp_path, monkeypatch):
 def test_a_reattach_publishes_again(paths, tmp_path, monkeypatch):
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
+    bridge._pace_tick(NOW, "2.39.0")
     bridge._state = "detached"
-    bridge._pace_tick(NOW + 1_000)
+    bridge._pace_tick(NOW + 1_000, "2.39.0")
     bridge._state = "attached"
-    bridge._pace_tick(NOW + 2_000)
+    bridge._pace_tick(NOW + 2_000, "2.39.0")
     assert len(sent) == 2
 
 
 def test_three_rows_in_a_row_that_differ_ask_for_one_resend(paths, tmp_path, monkeypatch):
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
+    bridge._pace_tick(NOW, "2.39.0")
     later = NOW + 120_000
     bridge._pace_observe(_block(need=1.0), later)
     bridge._pace_observe(_block(need=1.0), later)
-    bridge._pace_tick(later)
+    bridge._pace_tick(later, "2.39.0")
     assert len(sent) == 1
     bridge._pace_observe(_block(need=1.0), later)
-    bridge._pace_tick(later)
+    bridge._pace_tick(later, "2.39.0")
     assert len(sent) == 2
 
 
 def test_a_matching_row_restarts_the_count(paths, tmp_path, monkeypatch):
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
+    bridge._pace_tick(NOW, "2.39.0")
     later = NOW + 120_000
     for block in (_block(need=1.0), _block(need=1.0), _block(), _block(need=1.0), _block(need=1.0)):
         bridge._pace_observe(block, later)
-    bridge._pace_tick(later)
+    bridge._pace_tick(later, "2.39.0")
     assert len(sent) == 1
 
 
 def test_a_mismatch_within_a_minute_of_the_last_send_does_not_resend(paths, tmp_path, monkeypatch):
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
+    bridge._pace_tick(NOW, "2.39.0")
     for _ in range(3):
         bridge._pace_observe(_block(need=1.0), NOW + 2_000)
-    bridge._pace_tick(NOW + 2_000)
+    bridge._pace_tick(NOW + 2_000, "2.39.0")
     assert len(sent) == 1
 
 
@@ -98,11 +98,11 @@ def test_a_refused_clock_is_not_asked_again_for_slow_time(paths, tmp_path, monke
     bridge, sent = _bridge(paths, tmp_path, monkeypatch)
     (tmp_path / "pace.json").write_text('{"slow_time": 0.5}', encoding="utf-8")
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
+    bridge._pace_tick(NOW, "2.39.0")
     later = NOW + 120_000
     for _ in range(4):
         bridge._pace_observe(_block(slow=1.0, foreign=True), later)
-    bridge._pace_tick(later)
+    bridge._pace_tick(later, "2.39.0")
     assert len(sent) == 1
 
 
@@ -116,12 +116,12 @@ def test_a_failed_write_is_tried_again_after_thirty_seconds(paths, tmp_path, mon
 
     monkeypatch.setattr(commands, "publish", refuse)
     bridge._state = "attached"
-    bridge._pace_tick(NOW)
-    bridge._pace_tick(NOW + 5_000)
+    bridge._pace_tick(NOW, "2.39.0")
+    bridge._pace_tick(NOW + 5_000, "2.39.0")
     assert len(attempts) == 1
     assert "pace not sent: ValueError" in capsys.readouterr().out
     monkeypatch.setattr(commands, "publish", lambda command, args, issuer, paths=None: sent.append((command, args)))
-    bridge._pace_tick(NOW + bridge_module.PACE_RETRY_MS)
+    bridge._pace_tick(NOW + bridge_module.PACE_RETRY_MS, "2.39.0")
     assert sent == [("pace", WANTED)]
 
 

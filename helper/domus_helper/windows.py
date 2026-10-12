@@ -95,8 +95,9 @@ class WindowLog(object):
             phase = e2.get("phase")
             code = e2.get("code")
             act_id = _act_of(e2.get("detail"))
-            if phase == DIALOG_SHOWN and isinstance(code, str) and (
-                    code == "TIMEOUT" or code == "IDENTITY_USER" or code.startswith("NOT_ANSWERABLE:")):
+            if phase == DIALOG_SHOWN and isinstance(code, str) and code:
+                # W12 (A10): every code the probe writes when a window is released, shown or passed through is a fact
+                # (TIMEOUT, IDENTITY_USER, NOT_ANSWERABLE:<class>, ARM, STOP, FAILED:<name>, PASS_THROUGH).
                 changed = self._add(DIALOG_SHOWN, code[:64], act_id, clock_ms, session)
             elif phase == DIALOG_DROPPED and code in DROP_CODES:
                 changed = self._add(DIALOG_DROPPED, code, act_id, clock_ms, session)
