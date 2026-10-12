@@ -668,6 +668,33 @@ class BuildNameTests(unittest.TestCase):
             self.assertFalse(self.home.is_build_class(name), name)
 
 
+class WallKindsTests(unittest.TestCase):
+    """S2: wall_kinds is parallel to wall_has, each a door or a window; the schema refuses any other word."""
+
+    def setUp(self):
+        self.home = modules()[1]
+        self.schema = modules()[3]
+
+    def test_a_door_and_a_window_on_the_wall_are_named_in_order(self):
+        near = [{"object_id": "1", "distance": 0.4, "portal": True, "window": False},
+                {"object_id": "2", "distance": 0.5, "portal": False, "window": True},
+                {"object_id": "3", "distance": 0.9, "portal": False, "window": False}]
+        facts = self.home.placement_facts("5", True, near)
+        self.assertEqual((facts["wall_has"], facts["wall_kinds"]), (["1", "2"], ["door", "window"]))
+        self.assertEqual(facts["beside"], ["3"])
+
+    def test_no_wall_means_no_wall_kinds(self):
+        facts = self.home.placement_facts("5", False, [{"object_id": "1", "distance": 0.4, "portal": True,
+                                                         "window": False}])
+        self.assertEqual((facts["wall_has"], facts["wall_kinds"]), ([], []))
+
+    def test_the_schema_accepts_doors_and_windows_only_and_parallel_to_wall_has(self):
+        self.schema._validate_home_facts({"wall_has": ["1", "2"], "wall_kinds": ["door", "window"]})
+        for bad in ({"wall_has": ["1"], "wall_kinds": ["cabinet"]}, {"wall_has": ["1"], "wall_kinds": []}):
+            with self.assertRaises(self.schema.SchemaError):
+                self.schema._validate_home_facts(bad)
+
+
 class ResultFactTests(HomeCase):
     def test_the_wall_names_what_it_backs_on_and_what_is_beside(self):
         near = [{"object_id": "1", "distance": 0.4, "portal": True, "window": False},
