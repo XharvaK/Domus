@@ -519,5 +519,22 @@ class FixSchemaTests(unittest.TestCase):
         schema._validate_reach("discovery", {"discovery_rev": 1, "sections": {"unread": ["venues"]}})
 
 
+class FixPhoneDiscoveryTests(unittest.TestCase):
+    def test_a_phone_test_that_raises_gives_no_reason_and_keeps_the_record(self):
+        base = test_e2.ControlFlowTests()
+        base.setUp()
+        actuator = base.probe.e2_actuator
+
+        def raises(affordance, target, context, **kwargs):
+            raise RuntimeError("the game's test failed")
+
+        base.sim.test_super_affordance = raises
+        pickers, tests = actuator.phone_discovery(base.sim, [test_w13_p1._Shape], [])
+        self.assertEqual(len(pickers), 1)
+        self.assertEqual(len(tests), 1)
+        self.assertIsNone(tests[0]["reason"])
+        self.assertIsNone(tests[0]["tooltip_key"])
+
+
 if __name__ == "__main__":
     unittest.main()
