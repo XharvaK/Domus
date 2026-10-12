@@ -556,3 +556,16 @@ def test_a_window_of_hers_says_yours_and_one_of_the_users_says_the_users():
     row = _v9(1, 601, {"open": [hers, users], "closed": [], "truncated": False})
     asked = observation._portrait(row, TEXT.get)["asked"]
     assert [item["whose"] for item in asked] == ["yours", "the User's"]
+
+
+def test_the_first_whole_menu_sends_a_view_at_once_even_when_nothing_else_has_changed(paths, tmp_path, monkeypatch):
+    _data(paths, tmp_path, monkeypatch)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    _append(paths, [dict(_lineage(1, WALL), probe_version="2.40.0"), dict(_snap(2, "ok", WALL, 10), probe_version="2.40.0")])
+    _tick(bridge, mono, WALL + 2000)
+    sent = bridge._fires
+    _append(paths, [_menu_row(3, _menu(5, [_room_obj(11, 4, 1.0, True)]))])
+    _tick(bridge, mono, WALL + 2100)
+    assert bridge._fires == sent + 1 and bridge._choices_due is False
+    assert bridge._obs_ctx(WALL + 2100)["choices_pending"] is False
