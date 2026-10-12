@@ -1596,14 +1596,15 @@ def funds_try_remove(funds, amount, sim):
     return _read(lambda: funds.try_remove(amount, FUNDS_REASON, sim, require_full_amount=True)) is True
 
 
-def funds_add(funds, amount, sim):
+def funds_add(funds, amount, sim, count_as_earnings=True):
     """Effect (HOME-12): pay the amount into the funds (_Funds.add with an amount and a reason, as the game's own cheat
     calls it; the sim is not passed, as the cheat does not either). True when the money went up by exactly the amount,
     read before and after, so a notice that raises after the money moved still counts; when the money cannot be read,
-    True when the add did not raise."""
+    True when the add did not raise. 2.40.0 (W13 R2, SEAM2-10): count_as_earnings is the game's flag (a sale counts,
+    a refund does not)."""
     before = funds_money(funds)
     try:
-        funds.add(amount, FUNDS_REASON)
+        funds.add(amount, FUNDS_REASON, count_as_earnings=count_as_earnings)
         added = True
     except Exception:
         added = False
@@ -1648,18 +1649,19 @@ def save_now(slot_id, slot_name):
     persistence.save_using(persistence.save_game_gen, data, send_save_message=True, check_cooldown=False)
 
 
-def things_rows():
-    """Read: the raw rows of the things list: her household's objects on her home lot (not Sims; home.things_items
-    leaves out walls, floors, roofs, stairs and terrain), and her inventory. None when she has no body, when her home
-    cannot be read, or when her inventory cannot: an unreadable list is never written as an empty one (HOME-18). On a
-    lot that is not her home (at_home False), only her inventory. Never raises."""
+def things_rows(listed, limit):
+    """Read: the things list's raw rows and their total, as (rows, total): her household's objects on her home lot (not
+    Sims), and her inventory, which comes first (2.40.0 W13 R2, SEAM2-4). Only the first `limit` things that
+    listed(class_name) keeps are read in full (states, placement; HOME2-11); total counts every thing it keeps. None when
+    she has no body, when her home cannot be read, or when her inventory cannot: an unreadable list is never written as
+    an empty one (HOME-18). On a lot that is not her home (at_home False), only her inventory. Never raises."""
     try:
-        return _things_rows()
+        return _things_rows(listed, limit)
     except Exception:
         return None
 
 
-def _things_rows():
+def _things_rows(listed, limit):
     sim_info, sim = _body()
     if sim_info is None:
         return None
@@ -1668,20 +1670,27 @@ def _things_rows():
     items = _read(lambda: list(sim.inventory_component))
     if home_now is None or items is None:
         return None
-    rows = []
+    things = [(item, "inventory") for item in items]
     if home_now is True:
         for obj in lot_objects():
-            if owner_of(obj) != household or is_sim(obj) is True:
-                continue
+            if owner_of(obj) == household and is_sim(obj) is not True:
+                things.append((obj, "lot"))
+    kept = [(obj, where) for obj, where in things if listed(class_name(obj))]
+    rows = []
+    for obj, where in kept[:limit]:
+        if where == "inventory":
+            rows.append(_thing_raw(obj, "inventory", None))
+        else:
             room = room_of(obj)
             rows.append(_thing_raw(obj, "outside" if room is None else "room", room))
-    inventory = [_thing_raw(item, "inventory", None) for item in items]
     stacks = {}
-    for row in inventory:
-        stacks[row["definition_id"]] = stacks.get(row["definition_id"], 0) + 1
-    for row in inventory:
-        row["count"] = stacks.get(row["definition_id"], 1)
-    return rows + inventory
+    for row in rows:
+        if row["where"] == "inventory":
+            stacks[row["definition_id"]] = stacks.get(row["definition_id"], 0) + 1
+    for row in rows:
+        if row["where"] == "inventory":
+            row["count"] = stacks.get(row["definition_id"], 1)
+    return rows, len(kept)
 
 
 def _thing_raw(obj, where, room_id):

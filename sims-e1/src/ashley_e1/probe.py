@@ -2543,10 +2543,14 @@ def request_lists_now():
 
 
 def _things_reader():
-    """2.40.0 (W13 P2, home): the things list: her home's objects and her inventory (home.things_items shapes them).
-    None when the read is unreadable, so the writer keeps the list it sent last."""
-    rows = e2_actuator.things_rows()
-    return None if rows is None else home.things_items(rows)
+    """2.40.0 (W13 P2, home): the things list: her home's objects and her inventory (home.things_items shapes them), with
+    the total the game's read counted (2.40.0 W13 R2, T1). None when the read is unreadable, so the writer keeps the list
+    it sent last."""
+    read = e2_actuator.things_rows(home.thing_listed, home.THINGS_MAX)
+    if read is None:
+        return None
+    rows, total = read
+    return home.things_items(rows, total)
 
 
 def _lists_readers():

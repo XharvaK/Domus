@@ -241,10 +241,22 @@ def shape_thing(raw):
     }
 
 
-def things_items(raw_rows):
+class ThingList(list):
+    """The things list's items. total: the things the game holds that the list keeps, before its cut (2.40.0 W13 R2, T1)."""
+    total = 0
+
+
+def thing_listed(class_name):
+    """2.40.0 (W13 R2, SEAM2-4 / HOME2-11): a thing the list keeps is not a build item (walls, floors, roofs, stairs,
+    doors, terrain). The probe reads a thing in full only when this is True."""
+    return not is_build_class(class_name)
+
+
+def things_items(raw_rows, total=None):
     """The things list: the shaped rows, in the order read, at most THINGS_MAX. Build items (walls, floors, roofs,
-    stairs, terrain) are not things; a Sim is never one (the raw rows leave both out already)."""
-    items = []
+    stairs, terrain) are not things; a Sim is never one (the raw rows leave both out already). total: the things the
+    game holds that the list keeps (the probe's count before its cut); the items it holds when none is given."""
+    items = ThingList()
     for raw in raw_rows or ():
         if type(raw) is dict and is_build_class(raw.get("class_name") or ""):
             continue
@@ -253,6 +265,7 @@ def things_items(raw_rows):
             items.append(item)
         if len(items) >= THINGS_MAX:
             break
+    items.total = len(items) if total is None else total
     return items
 
 
@@ -362,8 +375,12 @@ def write_catalog(control, raw_rows, rev=None):
 
 def _row(control, act_id, phase, **payload):
     """One act row (CORE-9). A row the schema refuses is replaced by an UNKNOWN row without the result (ROW_INVALID),
-    so the act is never left open for want of a row the probe could not write."""
+    so the act is never left open for want of a row the probe could not write. 2.40.0 (W13 R2, SEAM2-9): a FINISHED
+    row whose facts the schema refuses is written FINISHED without them, so a placed or paid edit keeps its object id."""
     if control._act_event(act_id, phase, **payload) is False:
+        if phase == "FINISHED" and payload.get("result") is not None:
+            if control._act_event(act_id, phase, **dict(payload, result=None)) is not False:
+                return True
         control._act_event(act_id, "UNKNOWN", code="ROW_INVALID", object_id=None, guid64=None)
         return False
     return True
@@ -647,8 +664,13 @@ def _settle_removals(control, now):
     for key, pending in list(state.pending_gone.items()):
         gone = e2_actuator.object_gone(key)
         if gone is True:
-            del state.pending_gone[key]
-            _settled(control, pending)
+            try:
+                _settled(control, pending)
+            except Exception as error:
+                # 2.40.0 (W13 R2, HOME2-12): a settlement that raises ends its act UNKNOWN; it is not settled again.
+                _row(control, pending["act_id"], "UNKNOWN", code=("E2_EXCEPTION:%s" % type(error).__name__)[:64],
+                     **pending["base"])
+            state.pending_gone.pop(key, None)
         elif now - pending["at"] >= GONE_CONFIRM_S:
             del state.pending_gone[key]
             code = "SELL_UNCONFIRMED" if pending["kind"] == "sale" else "REMOVE_UNCONFIRMED"
@@ -662,13 +684,15 @@ def _settled(control, pending):
     e2_actuator.forget_rooms()
     act_id, connection, base = pending["act_id"], pending["connection"], pending["base"]
     if pending["kind"] == "sale":
-        if not e2_actuator.funds_add(pending["funds"], pending["value"], pending["sim"]):
+        if not e2_actuator.funds_add(pending["funds"], pending["value"], pending["sim"], count_as_earnings=True):
             return _finish(control, act_id, connection, "UNKNOWN", "SELL_FAILED", detail="not paid", **base)
         return _finish(control, act_id, connection, "FINISHED", "SOLD",
                        result=sell_facts(pending["value"], e2_actuator.funds_money(pending["funds"])), **base)
     detail = pending.get("detail")
     refund = pending.get("refund")
-    if refund is not None and not e2_actuator.funds_add(refund["funds"], refund["amount"], refund["sim"]):
+    # 2.40.0 (W13 R2, SEAM2-10): a refund is not earnings (an event's refund is not either).
+    if refund is not None and not e2_actuator.funds_add(refund["funds"], refund["amount"], refund["sim"],
+                                                        count_as_earnings=False):
         detail = "refund failed"
     return _finish(control, act_id, connection, pending.get("phase", "REJECTED"), pending["code"], detail=detail,
                    **base)

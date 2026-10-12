@@ -80,6 +80,7 @@ class FakeControl(object):
 
     def __init__(self):
         self.refuse_phases = ()
+        self.refuse_results = False
         self.raise_phases = ()
         self.refuse_catalog = False
         self.act_ids = set()
@@ -100,6 +101,8 @@ class FakeControl(object):
         return {"sim_id": "7"}
 
     def _act_event(self, act_id, phase, **payload):
+        if self.refuse_results and payload.get("result") is not None:
+            return False
         if phase in self.refuse_phases:
             return False
         if phase in self.raise_phases:
@@ -163,6 +166,7 @@ class FakeActuator(object):
         self.refund_refused = False
         self.spot_error = None
         self.save_fires = False
+        self.earnings = []
         self.zone = 7
         self.order = []
 
@@ -277,8 +281,8 @@ class FakeActuator(object):
     def catalog_rows(self, wanted=None):
         return self.catalog
 
-    def things_rows(self):
-        return self.things
+    def things_rows(self, listed=None, limit=None):
+        return None if self.things is None else (self.things, len(self.things))
 
     # effects
     def funds_try_remove(self, funds, amount, sim):
@@ -293,8 +297,9 @@ class FakeActuator(object):
     def funds_money(self, funds):
         return None if self.money_hidden else funds.money
 
-    def funds_add(self, funds, amount, sim):
+    def funds_add(self, funds, amount, sim, count_as_earnings=True):
         self.calls.append(("add", amount))
+        self.earnings.append(count_as_earnings)
         if self.refund_refused:
             return False
         funds.add(amount, "x")
@@ -422,6 +427,12 @@ class HomeCase(unittest.TestCase):
         return row.get("result")
 
 
+def _read_things(actuator, limit=600):
+    """The raw things rows the actuator reads (every thing kept, up to the limit), without their total."""
+    read = actuator.things_rows(lambda name: True, limit)
+    return None if read is None else read[0]
+
+
 def _place(rel="on", target="41", **extra):
     place = {"rel": rel}
     if rel in ("on", "beside", "instead"):
@@ -520,6 +531,11 @@ class ThingsListTests(HomeCase):
         rows = [self.raw(object_id=1000 + index) for index in range(700)]
         self.assertEqual(len(self.home.things_items(rows)), self.home.THINGS_MAX)
 
+    def test_the_things_list_carries_the_total_it_was_given(self):
+        """SEAM2-4 / T1: a list given a total carries it; without one, its total is the items it holds."""
+        self.assertEqual(self.home.things_items([self.raw()], total=9).total, 9)
+        self.assertEqual(self.home.things_items([self.raw()]).total, 1)
+
     def test_a_thing_with_a_bad_room_fails_the_record_check(self):
         item = self.home.shape_thing(self.raw())
         item["room_id"] = "room five"
@@ -542,7 +558,8 @@ class ThingsWiringTests(HomeCase):
         written = []
         writer = self.probe.reach.ListWriter(lambda kind, row: written.append((kind, row)) or True)
         readers = self.probe._lists_readers()
-        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda: rows):
+        with mock.patch.object(self.probe.e2_actuator, "things_rows",
+                               lambda *args: None if rows is None else (rows, len(rows))):
             kinds = writer.tick({"things": readers["things"]}, force=force)
         return kinds, written
 
@@ -562,9 +579,29 @@ class ThingsWiringTests(HomeCase):
         rows = [self.raw()]
         writer = self.probe.reach.ListWriter(lambda kind, row: True)
         readers = self.probe._lists_readers()
-        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda: rows):
+        with mock.patch.object(self.probe.e2_actuator, "things_rows",
+                               lambda *args: None if rows is None else (rows, len(rows))):
             self.assertEqual(writer.tick({"things": readers["things"]}, force=True), ["things"])
             self.assertEqual(writer.tick({"things": readers["things"]}, force=True), [])
+
+    def test_the_things_reader_passes_the_total_on(self):
+        """SEAM2-4 / T1: the probe's things reader gives the writer the total the game's read counted."""
+        with mock.patch.object(self.probe.e2_actuator, "things_rows", lambda *args: ([self.raw()], 7)):
+            items = self.probe._lists_readers()["things"]()
+        self.assertEqual(items.total, 7)
+        self.assertEqual(items[0]["object_id"], "41")
+
+    def test_the_lists_record_takes_an_optional_whole_total(self):
+        """T1: total is an optional whole number on a things record; a negative one is refused."""
+        def record(total):
+            row = {"kind": "things", "list_rev": 1, "part": 0, "parts": 1, "digest": "0" * 64, "count": 1,
+                   "items": list(self.home.things_items([self.raw()])), "total": total}
+            return self.schema.make_record("lists", telemetry_session_id="s" * 32, wall_timestamp_ms=1,
+                                           monotonic_ns=2, e2=row)
+
+        self.schema.validate_record(record(9))
+        with self.assertRaises(self.schema.SchemaError):
+            self.schema.validate_record(record(-1))
 
     def test_the_written_things_rows_validate(self):
         _kinds, written = self.tick([self.raw(), self.raw(object_id=42, where="inventory", room_id=None, count=2)])
@@ -1104,6 +1141,12 @@ class BuyTests(HomeCase):
         self.assertEqual(calls, ["create", "find_spot", "try_remove", "place", "remove_created", "add"])
         self.assertEqual(self.actuator.funds.money, 500)
 
+    def test_a_refund_of_a_failed_purchase_is_not_earnings(self):
+        """SEAM2-10 / W13 R2: the refund of a purchase that failed is not counted as earnings (as an event's is not)."""
+        self.actuator.place_error = RuntimeError("refused")
+        self.assertFalse(self.run_cmd("buy", self.args))
+        self.assertEqual(self.actuator.earnings, [False])
+
     def test_a_failed_placement_is_refunded_only_once_the_game_has_removed_the_object(self):
         """HOME-11: the refund waits for the removal to finish; a failed path never refunds while the object exists."""
         self.actuator.removal_queued = True
@@ -1210,6 +1253,14 @@ class BuyTests(HomeCase):
         self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
         self.assertEqual(self.control.events[-1]["detail"], "refund failed")
         self.assertEqual(self.actuator.funds.money, 350)
+
+    def test_a_placed_purchase_whose_facts_the_schema_refuses_is_still_finished_with_its_object(self):
+        """SEAM2-9 / W13 R2: a refused FINISHED row keeps its phase and object id; only its facts are left out."""
+        self.control.refuse_results = True
+        self.assertTrue(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "PLACED"))
+        self.assertEqual(self.control.events[-1]["object_id"], "9000")
+        self.assertIsNone(self.control.events[-1]["result"])
 
     def test_a_game_that_cannot_create_refuses_with_place_failed(self):
         self.actuator.create_fail = True
@@ -1468,6 +1519,30 @@ class SellTests(HomeCase):
         self.assertEqual(self.control.events[-1]["code"], "IN_USE")
         self.assertEqual(self.control.events[-1]["detail"], "unreadable")
         self.assertFalse(self.chair.removed)
+
+    def test_a_sale_counts_as_earnings(self):
+        """SEAM2-10 / W13 R2: a sale is earnings (funds_add with count_as_earnings True)."""
+        self.assertTrue(self.run_cmd("sell", {"object_id": "41"}))
+        self.tick(1000.0)
+        self.assertEqual(self.actuator.earnings, [True])
+
+    def test_a_settlement_that_raises_ends_its_act_unknown_and_is_not_settled_again(self):
+        """HOME2-12 / W13 R2: a raise in the settlement is UNKNOWN E2_EXCEPTION for the act, and the removal is not
+        settled a second time."""
+        self.actuator.removal_queued = True
+        self.run_cmd("sell", {"object_id": "41"})
+        self.actuator.process_queue()
+
+        def broken(funds, amount, sim, count_as_earnings=True):
+            raise RuntimeError("row")
+
+        self.actuator.funds_add = broken
+        self.tick(1001.0)
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "E2_EXCEPTION:RuntimeError"))
+        del self.actuator.funds_add
+        self.tick(1002.0)
+        self.assertEqual(len(self.control.events), 2)
+        self.assertEqual(self.actuator.funds.money, 500)
 
     def test_a_sim_is_not_sold(self):
         self.chair.is_sim = True
@@ -1802,8 +1877,10 @@ class FundsEffectTests(unittest.TestCase):
             self.money = money
             self.notice_raises = notice_raises
             self.adds = adds
+            self.earned = []
 
-        def add(self, amount, reason):
+        def add(self, amount, reason, count_as_earnings=True):
+            self.earned.append(count_as_earnings)
             if self.adds:
                 self.money += amount
             if self.notice_raises:
@@ -1816,6 +1893,13 @@ class FundsEffectTests(unittest.TestCase):
         funds = self.Funds(500, notice_raises=True)
         self.assertTrue(self.actuator.funds_add(funds, 40, None))
         self.assertEqual(funds.money, 540)
+
+    def test_a_payment_is_earnings_unless_the_caller_says_it_is_not(self):
+        """SEAM2-10 / W13 R2: a refund passes count_as_earnings False; a sale passes nothing and counts."""
+        funds = self.Funds(500)
+        self.assertTrue(self.actuator.funds_add(funds, 40, None, count_as_earnings=False))
+        self.assertTrue(self.actuator.funds_add(funds, 40, None))
+        self.assertEqual(funds.earned, [False, True])
 
     def test_a_payment_that_did_not_move_the_money_is_not_paid(self):
         funds = self.Funds(500, adds=False)
@@ -1865,7 +1949,8 @@ class ThingsRowsReadTests(unittest.TestCase):
         self.body = (self.info, self.sim)
         self.home = True
         self.lot = []
-        patches = [mock.patch.object(self.actuator, "_body", lambda: self.body),
+        patches = [mock.patch.object(self.actuator, "room_of", lambda obj: "5"),
+                   mock.patch.object(self.actuator, "_body", lambda: self.body),
                    mock.patch.object(self.actuator, "at_home", lambda household: self.home),
                    mock.patch.object(self.actuator, "lot_objects", lambda: self.lot)]
         for patch in patches:
@@ -1874,24 +1959,49 @@ class ThingsRowsReadTests(unittest.TestCase):
 
     def test_no_body_is_none(self):
         self.body = (None, None)
-        self.assertIsNone(self.actuator.things_rows())
+        self.assertIsNone(_read_things(self.actuator))
 
     def test_an_unreadable_home_is_none(self):
         self.home = None
-        self.assertIsNone(self.actuator.things_rows())
+        self.assertIsNone(_read_things(self.actuator))
 
     def test_an_unreadable_inventory_is_none(self):
         self.sim.inventory_component = None
-        self.assertIsNone(self.actuator.things_rows())
+        self.assertIsNone(_read_things(self.actuator))
 
     def test_a_lot_that_is_not_her_home_gives_the_inventory_only(self):
         self.home = False
         self.lot.append(types.SimpleNamespace(id=7))
-        rows = self.actuator.things_rows()
+        rows = _read_things(self.actuator)
         self.assertEqual([(row["object_id"], row["where"]) for row in rows], [(5, "inventory")])
 
+    class LotThing(object):
+        def __init__(self, object_id):
+            self.id = object_id
+            self.is_sim = False
+
+        def get_household_owner_id(self):
+            return 9
+
+    def test_the_inventory_comes_first_and_the_total_counts_what_the_list_keeps(self):
+        """SEAM2-4 / T1: her inventory first, then the lot; a build item is not counted; total is what the list keeps."""
+        wall = type("Wall", (self.LotThing,), {})
+        self.lot.extend([self.LotThing(100), wall(101), self.LotThing(102)])
+        rows, total = self.actuator.things_rows(modules()[1].thing_listed, 600)
+        self.assertEqual([row["object_id"] for row in rows], [5, 100, 102])
+        self.assertEqual(total, 3)
+
+    def test_only_the_things_the_list_keeps_are_read_in_full(self):
+        """HOME2-11 / W13 R2: states are read for the things the list keeps up to its limit, not for the rest."""
+        read = []
+        self.lot.extend(self.LotThing(100 + index) for index in range(5))
+        with mock.patch.object(self.actuator, "_thing_states", lambda obj: read.append(obj.id) or []):
+            rows, total = self.actuator.things_rows(lambda name: True, 2)
+        self.assertEqual(read, [5, 100])
+        self.assertEqual((len(rows), total), (2, 6))
+
     def test_her_home_and_inventory_are_read_together(self):
-        rows = self.actuator.things_rows()
+        rows = _read_things(self.actuator)
         self.assertEqual([row["where"] for row in rows], ["inventory"])
 
 
