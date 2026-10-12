@@ -889,6 +889,36 @@ class DispatchTests(HomeCase):
         self.assertNotIn("getattr", text)
 
 
+class ActuatorReadTests(unittest.TestCase):
+    """The game's members as the actuator reads them: in_use is a property (27 reads in the game's code, none called),
+    and a runtime slot's name is a property too. A read that fails is None, never a guess."""
+
+    def setUp(self):
+        self.actuator = modules()[0].e2_actuator
+
+    def test_in_use_is_read_as_the_property_it_is(self):
+        self.assertIs(self.actuator.in_use(types.SimpleNamespace(in_use=True)), True)
+        self.assertIs(self.actuator.in_use(types.SimpleNamespace(in_use=False)), False)
+
+    def test_an_unreadable_in_use_is_none(self):
+        self.assertIsNone(self.actuator.in_use(types.SimpleNamespace()))
+
+    def test_a_slot_takes_the_object_under_its_name_property(self):
+        calls = []
+
+        class Slot(object):
+            empty = True
+            slot_name_or_hash = "joint_top"
+
+            def add_child(self, child, joint):
+                calls.append((child, joint))
+
+        obj = object()
+        self.actuator.place(obj, {"slot": Slot(), "translation": None, "orientation": None,
+                                  "routing_surface": None})
+        self.assertEqual(calls, [(obj, "joint_top")])
+
+
 class ProbeRouteTests(unittest.TestCase):
     """The real probe: the inbox routes a home command to home.py, and its rows validate. The act harness arms her
     body; the game's save and catalogue reads are the fakes of the harness, so only the routing is real here."""

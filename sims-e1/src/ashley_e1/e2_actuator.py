@@ -827,7 +827,7 @@ def in_inventory(obj):
 
 def in_use(obj):
     """Read: whether a Sim holds or uses the object (ReservationMixin.in_use): True, False, or None."""
-    value = _read(lambda: obj.in_use())
+    value = _read(lambda: obj.in_use)
     return value if type(value) is bool else None
 
 
@@ -961,7 +961,7 @@ def place(obj, spot):
     game's own replace code moves a new object). Raises when the game refuses."""
     slot = spot.get("slot")
     if slot is not None:
-        slot.add_child(obj, slot.slot_name_or_hash())
+        slot.add_child(obj, slot.slot_name_or_hash)
         return
     obj.move_to(routing_surface=spot["routing_surface"], translation=spot["translation"],
                 orientation=spot["orientation"])
