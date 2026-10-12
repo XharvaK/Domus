@@ -163,6 +163,8 @@ class FakeActuator(object):
         self.refund_refused = False
         self.spot_error = None
         self.save_fires = False
+        self.zone = 7
+        self.order = []
 
     # reads
     def at_home(self, household_id):
@@ -171,6 +173,9 @@ class FakeActuator(object):
     def build_mode(self):
         return self.build
 
+    def current_zone(self):
+        return self.zone
+
     def room_of(self, obj):
         return "5"
 
@@ -178,6 +183,7 @@ class FakeActuator(object):
         return obj.wall
 
     def near_objects(self, obj, radius):
+        self.order.append("near")
         if self.near_raises:
             raise RuntimeError("near")
         return list(obj.near)
@@ -218,7 +224,7 @@ class FakeActuator(object):
     def find_thing(self, object_id):
         return self.objects.get(str(object_id))
 
-    def find_spot(self, obj, sim, place, wall_item=False):
+    def find_spot(self, obj, sim, place, wall_item=False, lot=None):
         self.calls.append(("find_spot", place["rel"]))
         self.wall_items.append(wall_item)
         if self.spot_error is not None:
@@ -228,11 +234,12 @@ class FakeActuator(object):
     def object_placement_flags(self, obj):
         return self.placement_flags
 
-    def against_wall(self, obj):
+    def against_wall(self, obj, lot=None):
         return obj.wall
 
     def forget_rooms(self):
         self.rooms_forgotten += 1
+        self.order.append("forget")
 
     def spot_of(self, obj):
         return obj.spot
@@ -980,6 +987,30 @@ class SaveTests(HomeCase):
         self.assertEqual(self.actuator.calls, [])
 
 
+class RoomGridWatchTests(HomeCase):
+    """HOME2-4 / W13 R2: the room grids are read again after a zone change and after build mode ends (the User may have
+    changed walls there); a steady tick keeps them."""
+
+    def test_the_grids_are_dropped_when_build_mode_ends(self):
+        self.home.tick(self.control, 1000.0)
+        base = self.actuator.rooms_forgotten
+        self.actuator.build = True
+        self.home.tick(self.control, 1001.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base)
+        self.actuator.build = False
+        self.home.tick(self.control, 1002.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base + 1)
+        self.home.tick(self.control, 1003.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base + 1)
+
+    def test_the_grids_are_dropped_when_the_zone_changes(self):
+        self.home.tick(self.control, 1000.0)
+        base = self.actuator.rooms_forgotten
+        self.actuator.zone = 8
+        self.home.tick(self.control, 1001.0)
+        self.assertEqual(self.actuator.rooms_forgotten, base + 1)
+
+
 class BodyTests(HomeCase):
     """HOME2-3 / W13 R2: the observers raise when her body is ambiguous or unreadable; that is refused BODY_UNAVAILABLE."""
 
@@ -1219,6 +1250,11 @@ class PlaceTests(HomeCase):
         self.actuator.placement_flags = 1
         self.assertTrue(self.run_cmd("place", self.args()))
         self.assertEqual(self.actuator.wall_items, [True])
+
+    def test_the_rooms_are_kept_for_the_facts_and_dropped_once_the_edit_is_done(self):
+        """HOME2-5 / W13 R2: the grid is read once per edit, so it is not dropped before the facts that read it."""
+        self.assertTrue(self.run_cmd("place", self.args()))
+        self.assertEqual(self.actuator.order, ["near", "forget"])
 
     def test_an_inventory_item_leaves_her_inventory_when_it_is_placed(self):
         """HOME-2: the game's own removal from the inventory comes before the move, so the item is not in two places."""
@@ -1667,6 +1703,21 @@ class RoomSearchTests(unittest.TestCase):
                                                             z=spot["translation"].z)))
 
 
+    def test_a_lot_passed_in_is_not_read_again_for_the_search_or_the_wall(self):
+        """HOME2-5 / W13 R2: the lot's objects are read once per edit and passed to the search and the wall fact."""
+        reads = []
+        lot = [self.sim, self.item] + list(self.objects.values())
+
+        def counting():
+            reads.append(1)
+            return lot
+
+        with mock.patch.object(self.actuator, "lot_objects", counting):
+            self.actuator.find_spot(self.item, self.sim, {"rel": "wall", "room_id": "1"}, wall_item=True, lot=lot)
+            self.actuator.against_wall(self.item, lot=lot)
+        self.assertEqual(reads, [])
+
+
 class PortalNameTests(unittest.TestCase):
     """HOME-7: a portal is a door, gate or archway by the last word of its class name, never by a substring: an
     'IndoorPlant' or an 'OutdoorBench' is not a door."""
@@ -1723,6 +1774,16 @@ class NearObjectTests(unittest.TestCase):
         subject = self.Thing("1", 0.0, 0.0)
         self.things = [subject, self.Thing("2", 0.5, 0.0)]
         self.assertEqual(self.near(subject), ["2"])
+
+    def test_a_thing_too_far_away_is_not_asked_whether_it_is_on_the_lot(self):
+        """HOME2-5 / W13 R2: the distance is checked before the lot test, so a far thing costs one read."""
+        asked = []
+        far = self.Thing("6", 9.0, 0.0)
+        far.is_on_active_lot = lambda margin: asked.append("6") or True
+        subject = self.Thing("1", 0.0, 0.0)
+        self.things = [subject, far]
+        self.assertEqual(self.near(subject), [])
+        self.assertEqual(asked, [])
 
     def test_the_floor_above_a_Sim_an_inventory_item_and_off_lot_things_are_not_beside(self):
         subject = self.Thing("1", 0.0, 0.0)

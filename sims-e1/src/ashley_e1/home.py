@@ -75,6 +75,9 @@ class HomeState(object):
         self.pending_gone = {}
         self.subscribed = False
         self.callback = None
+        # 2.40.0 (W13 R2, HOME2-4): the zone and build mode the room grids were read in (see _watch_lot).
+        self.zone = None
+        self.building = None
 
 
 def state_of(control):
@@ -432,13 +435,14 @@ def _home_gate(control):
     return None, sim_info, sim
 
 
-def _route_reach(sim):
+def _route_reach(sim, lot):
     """Per route (door, bed, toilet, fridge): True when one lot object of the kind is reachable (the game's own check,
-    reachable), False when the check reads False for the ones it can read, else None. Read only."""
+    reachable), False when the check reads False for the ones it can read, else None. Read only. lot: the lot's objects
+    (read once per edit, 2.40.0 W13 R2, HOME2-5)."""
     reach = {}
     if e2_actuator is None:
         return reach
-    for obj in e2_actuator.lot_objects():
+    for obj in lot:
         kind = route_kind(e2_actuator.class_name(obj), e2_actuator.is_portal(obj))
         if kind is None:
             continue
@@ -475,11 +479,13 @@ def _guarded(read, default):
 
 def _facts(obj, sim, before, price=None, funds=None, facing_id=None):
     """The result facts of a placed object: room, wall (against a wall of its room), what is near, the facing it was
-    given, and the routes cut since `before`. Each read is guarded (HOME-13)."""
-    lost = _guarded(lambda: routes_lost(before, _route_reach(sim)), [])
+    given, and the routes cut since `before`. Each read is guarded (HOME-13). The lot is read once here (2.40.0 W13 R2,
+    HOME2-5): the routes and the wall use that read, and the sampled rooms of the search are kept for the wall."""
+    lot = _guarded(lambda: e2_actuator.lot_objects(), [])
+    lost = _guarded(lambda: routes_lost(before, _route_reach(sim, lot)), [])
     near = _guarded(lambda: e2_actuator.near_objects(obj, NEAR_M), [])
     room = _guarded(lambda: e2_actuator.room_of(obj), None)
-    wall = _guarded(lambda: e2_actuator.against_wall(obj), None)
+    wall = _guarded(lambda: e2_actuator.against_wall(obj, lot), None)
     return placement_facts(room, wall, near, facing_id=facing_id, lost=lost, price=price, funds=funds)
 
 
@@ -496,9 +502,9 @@ def _wall_item(flags):
     return placement_word(flags) == "wall"
 
 
-def _spot(control, obj, sim, place, wall_item=False):
+def _spot(control, obj, sim, place, wall_item=False, lot=None):
     """(spot, refusal). `instead` names the spot its target vacated, and is refused NOT_FREE while the target still
-    stands there; the other relations are the game's own search for a spot."""
+    stands there; the other relations are the game's own search for a spot. lot: the lot's objects, read once per edit."""
     if place["rel"] == "instead":
         target = str(place["target_id"])
         vacated = state_of(control).vacated.get(target)
@@ -512,7 +518,7 @@ def _spot(control, obj, sim, place, wall_item=False):
         if vacated is None:
             return None, "NO_SPOT"
         return vacated, None
-    return e2_actuator.find_spot(obj, sim, place, wall_item=wall_item), None
+    return e2_actuator.find_spot(obj, sim, place, wall_item=wall_item, lot=lot), None
 
 
 def _finish(control, act_id, connection, phase, code, result=None, **base):
@@ -619,6 +625,18 @@ def tick(control, now=None):
     now = time.time() if now is None else now
     _expire_save(control, now)
     _settle_removals(control, now)
+    _watch_lot(control)
+
+
+def _watch_lot(control):
+    """2.40.0 (W13 R2, HOME2-4): the room grids are read again after a zone change, and after build mode ends (the User
+    may have changed walls there). Runs last in the tick, so nothing above waits for it."""
+    state = state_of(control)
+    zone = e2_actuator.current_zone()
+    building = e2_actuator.build_mode()
+    if zone != state.zone or (state.building is True and building is False):
+        e2_actuator.forget_rooms()
+    state.zone, state.building = zone, building
 
 
 def _settle_removals(control, now):
@@ -703,13 +721,14 @@ def cmd_buy(control, args, connection):
     if e2_actuator.funds_money(funds) is None:
         return _reject(control, act_id, connection, "NO_FUNDS", detail="funds unreadable", **base)
     _row(control, act_id, "ACCEPTED", **base)
-    before = _route_reach(sim)
+    lot = e2_actuator.lot_objects()
+    before = _route_reach(sim, lot)
     obj = e2_actuator.create_unplaced(definition)
     if obj is None:
         return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", **base)
     try:
         spot, refused = _spot(control, obj, sim, args["place"],
-                              wall_item=_wall_item(e2_actuator.definition_placement_flags(definition)))
+                              wall_item=_wall_item(e2_actuator.definition_placement_flags(definition)), lot=lot)
     except Exception as error:
         # 2.40.0 (W13 R2, HOME2-2): a search that raises removes what it made; nothing has been charged.
         return _undo(control, act_id, connection, obj, "SPOT_FAILED", detail=type(error).__name__)
@@ -730,9 +749,9 @@ def cmd_buy(control, args, connection):
         e2_actuator.place(obj, spot)
     except Exception as error:
         return _undo(control, act_id, connection, obj, "PLACE_FAILED", detail=type(error).__name__, refund=refund)
-    e2_actuator.forget_rooms()
     facts = _facts(obj, sim, before, price=price, funds=e2_actuator.funds_money(funds),
                    facing_id=spot.get("facing_id"))
+    e2_actuator.forget_rooms()
     return _finish(control, act_id, connection, "FINISHED", "PLACED", result=_result(facts),
                    object_id=str(obj.id), guid64=None)
 
@@ -750,8 +769,10 @@ def cmd_place(control, args, connection):
     if obj is None or e2_actuator.in_inventory(obj) is not True:
         return _reject(control, act_id, connection, "NOT_IN_INVENTORY", **base)
     _row(control, act_id, "ACCEPTED", **base)
-    before = _route_reach(sim)
-    spot, refused = _spot(control, obj, sim, args["place"], wall_item=_wall_item(e2_actuator.object_placement_flags(obj)))
+    lot = e2_actuator.lot_objects()
+    before = _route_reach(sim, lot)
+    spot, refused = _spot(control, obj, sim, args["place"], wall_item=_wall_item(e2_actuator.object_placement_flags(obj)),
+                          lot=lot)
     if refused is not None or spot is None:
         return _finish(control, act_id, connection, "REJECTED", refused or "NO_SPOT", **base)
     try:
@@ -767,8 +788,8 @@ def cmd_place(control, args, connection):
             return _finish(control, act_id, connection, "REJECTED", "PLACE_FAILED", detail=type(error).__name__,
                            **base)
         return _finish(control, act_id, connection, "UNKNOWN", "PLACE_FAILED", detail="put back failed", **base)
-    e2_actuator.forget_rooms()
     facts = _facts(obj, sim, before, facing_id=spot.get("facing_id"))
+    e2_actuator.forget_rooms()
     return _finish(control, act_id, connection, "FINISHED", "PLACED", result=_result(facts), **base)
 
 
@@ -793,17 +814,19 @@ def cmd_move(control, args, connection):
     if not movable(obj):
         return _reject(control, act_id, connection, "NOT_MOVABLE", **base)
     _row(control, act_id, "ACCEPTED", **base)
-    before = _route_reach(sim)
+    lot = e2_actuator.lot_objects()
+    before = _route_reach(sim, lot)
     _vacate(control, obj)
-    spot, refused = _spot(control, obj, sim, args["place"], wall_item=_wall_item(e2_actuator.object_placement_flags(obj)))
+    spot, refused = _spot(control, obj, sim, args["place"], wall_item=_wall_item(e2_actuator.object_placement_flags(obj)),
+                          lot=lot)
     if refused is not None or spot is None:
         return _finish(control, act_id, connection, "REJECTED", refused or "NO_SPOT", **base)
     try:
         e2_actuator.place(obj, spot)
     except Exception as error:
         return _finish(control, act_id, connection, "REJECTED", "MOVE_FAILED", detail=type(error).__name__, **base)
-    e2_actuator.forget_rooms()
     facts = _facts(obj, sim, before, facing_id=spot.get("facing_id"))
+    e2_actuator.forget_rooms()
     return _finish(control, act_id, connection, "FINISHED", "MOVED", result=_result(facts), **base)
 
 
