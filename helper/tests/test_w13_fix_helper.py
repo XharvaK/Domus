@@ -788,3 +788,22 @@ def test_the_phone_lists_of_a_menu_in_parts_come_from_its_first_part_whichever_p
     assert parts.take("s", head) is None
     whole = parts.take("s", tail)
     assert whole["excluded_phone"] == [{"name": "phone_Call", "why": "travel"}]
+
+
+# Q-7 (the User, 2026-10-12): the lab drivers never run against HOME. The crawl refuses to start without --lab, before it
+# touches the game or the paths; its usage line says so.
+def test_the_lab_crawl_refuses_to_start_without_the_lab_flag_and_its_usage_says_so(capsys, monkeypatch):
+    from domus_helper import crawl
+
+    def touched(**kwargs):
+        raise AssertionError("the game was touched")
+    monkeypatch.setattr(crawl, "DomusTools", touched)
+    assert crawl.main(["--dry-run"]) == 2
+    assert "--lab" in capsys.readouterr().err
+    assert "--lab" in crawl.__doc__
+    try:
+        crawl.main(["--help"])
+    except SystemExit:
+        pass
+    usage = capsys.readouterr().out
+    assert usage.startswith("usage:") and "--lab" in usage.split(chr(10))[0]
