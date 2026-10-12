@@ -1574,6 +1574,17 @@ def funds_add(funds, amount, sim):
     return added
 
 
+def save_busy():
+    """Read (HOME-16): whether the game already has a save open (its save timeline is set): True, False, or None when
+    the persistence service cannot be read."""
+    try:
+        persistence = services.get_persistence_service()
+        timeline = persistence.save_timeline
+    except Exception:
+        return None
+    return timeline is not None
+
+
 def save_slot():
     """Read: (slot id, slot name, save locked, the lock's tooltip key). The name is passed on to the game's save and
     never written. None where unreadable."""

@@ -44,6 +44,7 @@ WALL_LIMIT = 2
 ROUTE_KINDS = ("door", "bed", "toilet", "fridge")
 THING_WHERE = ("room", "inventory", "outside")
 STATES_MAX = 4
+STATE_TEXT_MAX = 64
 TAGS_MAX = 8
 # S3 (the game's build_buy flags, read from its bytecode): the buy categories a store item may be in, by bit. UNUSED (1),
 # UNUSED_2 (16) and DEFAULT (2^31) are not categories, and are ignored.
@@ -194,16 +195,19 @@ def pack(items, per_part, budget):
 
 
 def shape_state(raw):
-    """A thing's state as {state, value} (a name and a plain value); None when either is unreadable."""
+    """A thing's state as {state, value} (a name and a plain value; a text is cut to STATE_TEXT_MAX characters, HOME-30);
+    None when the name or the value is unreadable."""
     if type(raw) is not dict:
         return None
     name = raw.get("state")
     value = raw.get("value")
-    if type(name) is not str or not 1 <= len(name) <= 64:
+    if type(name) is not str or not name:
         return None
     if type(value) is bool or type(value) not in (int, float, str, type(None)):
         return None
-    return {"state": name, "value": value}
+    if type(value) is str:
+        value = value[:STATE_TEXT_MAX]
+    return {"state": name[:STATE_TEXT_MAX], "value": value}
 
 
 def shape_thing(raw):
@@ -331,11 +335,15 @@ def sell_facts(value, funds):
 # ----------------------------------------------------------------------------------------------- the list writers
 
 def write_catalog(control, raw_rows, rev=None):
-    """2.40.0: the catalogue record in parts (catalog_dump). rev is the game's version string."""
+    """2.40.0: the catalogue record in parts (catalog_dump). rev is the game's version string. Returns (items, parts
+    written, parts): a part the probe did not write is not counted (HOME-19)."""
     items = catalog_items(raw_rows)
-    for payload in catalog_parts(rev or schema.SIMS_BUILD, items):
-        control._event("catalog", payload)
-    return len(items)
+    payloads = catalog_parts(rev or schema.SIMS_BUILD, items)
+    written = 0
+    for payload in payloads:
+        if control._event("catalog", payload):
+            written += 1
+    return len(items), written, len(payloads)
 
 
 # ------------------------------------------------------------------------------------------------- the commands
@@ -519,6 +527,11 @@ def cmd_save(control, args, connection):
         return _reject(control, act_id, connection, "SAVE_FAILED", detail="lock unreadable", **base)
     if locked:
         return _reject(control, act_id, connection, "SAVE_LOCKED", reason_key=lock_key, **base)
+    busy = e2_actuator.save_busy()
+    if busy is None:
+        return _reject(control, act_id, connection, "SAVE_FAILED", detail="timeline unreadable", **base)
+    if busy or state_of(control).pending_save is not None:
+        return _reject(control, act_id, connection, "SAVE_BUSY", **base)
     state = state_of(control)
     left = save_gate(state.saved_at, time.time())
     if left is not None:
@@ -552,14 +565,22 @@ def _subscribe_save(control, state):
 
 
 def _save_complete(control):
-    """The game's save-complete callback: FINISHED SAVED for the save waiting for it."""
+    """The game's save-complete callback: FINISHED SAVED for the save waiting for it. It never raises into the game:
+    a failure is the save's UNKNOWN row (CORE-9)."""
     state = state_of(control)
     pending = state.pending_save
     if pending is None:
         return
     state.pending_save = None
     act_id, _at, connection = pending
-    _finish(control, act_id, connection, "FINISHED", "SAVED", object_id=None, guid64=None)
+    try:
+        _finish(control, act_id, connection, "FINISHED", "SAVED", object_id=None, guid64=None)
+    except Exception as error:
+        try:
+            _row(control, act_id, "UNKNOWN", code=("E2_EXCEPTION:%s" % type(error).__name__)[:64],
+                 object_id=None, guid64=None)
+        except Exception:
+            pass
 
 
 def _expire_save(control, now=None):
@@ -802,9 +823,12 @@ def cmd_catalog_dump(control, args, connection):
     if raw is None:
         _say(control, connection, "CATALOG_UNREADABLE")
         return False
-    count = write_catalog(control, raw)
-    _say(control, connection, "CATALOG_WRITTEN %d" % count)
-    return True
+    items, written, parts = write_catalog(control, raw)
+    if written == parts:
+        _say(control, connection, "CATALOG_WRITTEN %d" % items)
+        return True
+    _say(control, connection, "CATALOG_PARTIAL %d/%d" % (written, parts))
+    return False
 
 
 HANDLERS = {

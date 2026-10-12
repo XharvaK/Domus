@@ -79,6 +79,9 @@ class FakeControl(object):
     """The controller's part the home commands use: the act records, the lines, the sample state and the events."""
 
     def __init__(self):
+        self.refuse_phases = ()
+        self.raise_phases = ()
+        self.refuse_catalog = False
         self.act_ids = set()
         self.events = []
         self.lines = []
@@ -97,16 +100,21 @@ class FakeControl(object):
         return {"sim_id": "7"}
 
     def _act_event(self, act_id, phase, **payload):
+        if phase in self.refuse_phases:
+            return False
+        if phase in self.raise_phases:
+            raise RuntimeError("row")
         row = dict(payload)
         row["act_id"], row["phase"] = act_id, phase
         self.events.append(row)
+        return True
 
     def _say(self, connection, text):
         self.lines.append(text)
 
     def _event(self, kind, payload):
         self.emitted.append((kind, payload))
-        return True
+        return not (kind == "catalog" and self.refuse_catalog)
 
     def phases(self):
         return [(row["phase"], row.get("code")) for row in self.events]
@@ -146,6 +154,8 @@ class FakeActuator(object):
         self.rooms_forgotten = 0
         self.removal_queued = False
         self.queued = []
+        self.near_raises = False
+        self.busy = False
         self.remove_refused = False
         self.charge_refused = False
         self.money_hidden = False
@@ -166,7 +176,12 @@ class FakeActuator(object):
         return obj.wall
 
     def near_objects(self, obj, radius):
+        if self.near_raises:
+            raise RuntimeError("near")
         return list(obj.near)
+
+    def save_busy(self):
+        return self.busy
 
     def lot_objects(self):
         return list(self.lot)
@@ -416,6 +431,29 @@ class SaveRuleTests(unittest.TestCase):
         self.assertEqual(self.home.SAVE_FLOOR_S, 900)
 
 
+class ThingStateTests(unittest.TestCase):
+    """HOME-22/30: a thing's states are read from the object (observers' reader, at most four), and a state's name and
+    value are cut to 64 characters."""
+
+    def setUp(self):
+        self.home, self.actuator = modules()[1], modules()[0].e2_actuator
+
+    def test_a_long_state_name_or_value_is_cut_to_sixty_four(self):
+        state = self.home.shape_state({"state": "s" * 80, "value": "v" * 80})
+        self.assertEqual((len(state["state"]), len(state["value"])), (64, 64))
+
+    def test_the_states_of_a_thing_are_at_most_four(self):
+        found = dict(("state%d" % index, "value%d" % index) for index in range(9))
+        with mock.patch.object(self.actuator.observers, "_object_states", lambda obj: found):
+            states = self.actuator._thing_states(object())
+        self.assertEqual(len(states), 4)
+        self.assertEqual(set(states[0]), {"state", "value"})
+
+    def test_an_unreadable_state_reader_gives_no_states(self):
+        with mock.patch.object(self.actuator.observers, "_object_states", lambda obj: None):
+            self.assertEqual(self.actuator._thing_states(object()), [])
+
+
 class ThingsListTests(HomeCase):
     def raw(self, **overrides):
         row = {"object_id": 41, "definition_id": 55, "name_key": 123, "class_name": "Chair", "where": "room",
@@ -581,11 +619,34 @@ class CatalogTests(HomeCase):
         self.assertEqual(self.control.emitted[0][1]["catalog_rev"], self.schema.SIMS_BUILD)
         self.assertEqual(self.control.lines[-1], "CATALOG_WRITTEN 2")
 
+    def test_a_catalogue_part_the_game_refuses_is_said_partial(self):
+        """HOME-19: CATALOG_PARTIAL written/parts when any part was not written, never a count of all the items."""
+        self.actuator.catalog = [self.raw(definition_id=1000 + index) for index in range(300)]
+        self.control.refuse_catalog = True
+        self.assertFalse(self.run_cmd("catalog_dump", {}))
+        self.assertEqual(self.control.lines[-1], "CATALOG_PARTIAL 0/2")
+
     def test_catalog_dump_says_when_the_definitions_cannot_be_read(self):
         self.actuator.catalog = None
         self.assertFalse(self.run_cmd("catalog_dump", {}))
         self.assertEqual(self.control.lines[-1], "CATALOG_UNREADABLE")
         self.assertEqual(self.control.emitted, [])
+
+
+class BuildNameTests(unittest.TestCase):
+    """HOME-27: the build classes by their last CamelCase word, checked against the game's class names (index: Door,
+    HalfWall, Terrain are the build classes; no decor class is named *Wall, *Window or *Floor)."""
+
+    def setUp(self):
+        self.home = modules()[1]
+
+    def test_the_game_build_classes_are_build_items(self):
+        for name in ("Door", "HalfWall", "Terrain"):
+            self.assertTrue(self.home.is_build_class(name), name)
+
+    def test_furniture_and_decor_are_not_build_items(self):
+        for name in ("GameObject", "Sofa", "WallLight", "Mirror", "Bed", "IndoorPlant"):
+            self.assertFalse(self.home.is_build_class(name), name)
 
 
 class ResultFactTests(HomeCase):
@@ -686,6 +747,38 @@ class CommandShapeTests(unittest.TestCase):
 
 
 class SaveTests(HomeCase):
+    def test_a_save_while_the_game_is_saving_is_busy(self):
+        """HOME-16: a save that starts while the game's save timeline is open would replace it: SAVE_BUSY, no save."""
+        self.actuator.busy = True
+        self.assertFalse(self.run_cmd("save", {}))
+        self.assertEqual(self.control.phases(), [("REJECTED", "SAVE_BUSY")])
+        self.assertEqual(self.actuator.calls, [])
+
+    def test_a_save_while_hers_is_still_waiting_for_its_callback_is_busy(self):
+        self.assertTrue(self.run_cmd("save", {}))
+        self.assertFalse(self.run_cmd("save", {}, act_id=ACT_TWO))
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "SAVE_BUSY"))
+
+    def test_a_save_timeline_that_cannot_be_read_is_a_failed_save(self):
+        self.actuator.busy = None
+        self.assertFalse(self.run_cmd("save", {}))
+        self.assertEqual(self.control.events[-1]["detail"], "timeline unreadable")
+        self.assertEqual(self.control.phases()[-1], ("REJECTED", "SAVE_FAILED"))
+
+    def test_a_finished_row_the_schema_refuses_becomes_an_unknown_row_without_the_result(self):
+        """CORE-9: the game's callback never raises into the game; a refused row is UNKNOWN ROW_INVALID."""
+        self.control.refuse_phases = ("FINISHED",)
+        self.assertTrue(self.run_cmd("save", {}))
+        self.actuator.callbacks[0]()
+        self.assertEqual(self.control.phases()[-1], ("UNKNOWN", "ROW_INVALID"))
+        self.assertIsNone(self.home.state_of(self.control).pending_save)
+
+    def test_a_save_callback_that_fails_is_unknown_and_does_not_raise_into_the_game(self):
+        self.control.raise_phases = ("FINISHED",)
+        self.assertTrue(self.run_cmd("save", {}))
+        self.actuator.callbacks[0]()
+        self.assertIsNone(self.home.state_of(self.control).pending_save)
+
     def test_a_save_is_accepted_and_finished_when_the_game_says_so(self):
         self.assertTrue(self.run_cmd("save", {}))
         self.assertEqual(self.control.phases(), [("ACCEPTED", None)])
@@ -838,6 +931,13 @@ class BuyTests(HomeCase):
         self.home.tick(self.control, 1001.0)
         self.assertEqual(self.control.phases()[-1], ("REJECTED", "PLACE_FAILED"))
         self.assertEqual(self.actuator.funds.money, 500)
+
+    def test_a_fact_that_cannot_be_read_still_finishes_the_placement(self):
+        """HOME-13: the object is placed and she was charged; a failed fact leaves the fact out, and FINISHED still goes."""
+        self.actuator.near_raises = True
+        self.assertTrue(self.run_cmd("buy", self.args))
+        self.assertEqual(self.control.phases()[-1], ("FINISHED", "PLACED"))
+        self.assertEqual(self.control.events[-1]["result"]["beside"], [])
 
     def test_a_removal_the_game_refuses_after_a_failed_placement_is_unknown_and_not_refunded(self):
         self.actuator.place_error = RuntimeError("refused")
@@ -1478,6 +1578,7 @@ class ProbeRouteTests(unittest.TestCase):
         persistence = self.base.services.get_persistence_service()
         persistence.is_save_locked = lambda: False
         persistence.get_save_slot_proto_buff = lambda: types.SimpleNamespace(slot_id=2)
+        persistence.save_timeline = None   # the game's persistence service always has one (None: no save open)
         self.base.services.get_persistence_service = lambda: persistence
         self.case.ready()
 
