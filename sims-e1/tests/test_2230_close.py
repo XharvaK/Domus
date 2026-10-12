@@ -137,16 +137,18 @@ class ClosePauseTests(unittest.TestCase):
         self.see()
         self.assertNotIn("555", self.observers._DIALOG_SPEED)
 
-    def test_a_missing_request_restores_the_speed_from_before_the_dialog(self):
+    def test_a_missing_request_leaves_the_clock_alone_because_the_pause_is_not_hers(self):
+        # 2.39.0 (W12 A6): with no UI_MODAL request of hers, the pause in place is the User's (or another
+        # mod's); restoring the speed from before the dialog would lift it.
         self.pop_result = None
         self.paused_after_normal()
         ok, connection = self.answer()
         self.assertTrue(ok, connection.lines)
         self.closes()
         self.assertEqual(len(self.pop_calls), 1)
-        self.assertEqual(self.set_calls, [("NORMAL", "GAMEPLAY", True)])
+        self.assertEqual(self.set_calls, [])
         event = self.finished()
-        self.assertEqual((event["closed"], event["resumed"]), (True, "restored"))
+        self.assertEqual((event["closed"], event["resumed"]), (True, "not_hers"))
 
     def test_a_pause_already_in_place_is_never_lifted(self):
         self.speed("PAUSED")

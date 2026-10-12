@@ -791,6 +791,29 @@ def zone_snapshot(sim):
             "room": _room(sim, position), "position": position}
 
 
+def _name_part(read):
+    """2.39.0 (W12 E5): one of the game's own name fields (read is a lambda over sim_info.first_name or
+    last_name) as the game holds it, at most 64 characters; None when unreadable, empty or not a string.
+    Never raises."""
+    try:
+        value = read()
+    except Exception:
+        return None
+    if not isinstance(value, str) or value == "":
+        return None
+    return value[:64]
+
+
+def _gender_code(sim_info):
+    """2.39.0 (W12 E4): the game's Gender enum by name, "F" or "M"; None for anything else or unreadable.
+    The enum members are MALE and FEMALE (sims.sim_info_types)."""
+    try:
+        name = sim_info.gender.name
+    except Exception:
+        return None
+    return {"FEMALE": "F", "MALE": "M"}.get(name)
+
+
 def _sim_name(sim_info):
     parts = []
     for read in (lambda: sim_info.first_name, lambda: sim_info.last_name):
@@ -1062,6 +1085,8 @@ def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_positi
             "is_body": lab_sim_id is not None and entry_id == str(lab_sim_id),
             "household_id": _plain_id(own_household),
             "name": _sim_name(sim_info),
+            "first_name": _name_part(lambda: sim_info.first_name),
+            "last_name": _name_part(lambda: sim_info.last_name),
             "position": position,
             "room": _room(sim, position),
             "posture": None if posture is None else posture.get("posture_name"),
@@ -1178,13 +1203,18 @@ def dialog_prior_speed(dialog_id):
 
 
 def _response_name(value):
-    """A known answer by name, another by its id; None past 16 characters (the schema
+    """A known answer by name; another, non-negative id as response_<N> (2.39.0, W12 A2: a bare number was
+    read as a picker row and refused as NO_ROW). None for a negative id or past 16 characters (the schema
     bound), so one odd id never costs the whole row."""
     try:
         number = int(value)
     except Exception:
         return None
-    name = DIALOG_RESPONSES.get(number, str(number))
+    name = DIALOG_RESPONSES.get(number)
+    if name is None:
+        if number < 0:
+            return None
+        name = "response_%d" % number
     return name if len(name) <= 16 else None
 
 
@@ -1382,7 +1412,17 @@ def _describe_dialog(dialog_id, dialog, auto):
     entry["held"] = facts.get("held") is True
     entry["cause"] = facts.get("cause")
     entry["text_inputs"] = facts.get("text_inputs") if entry["held"] else None
+    entry["hold_left_s"] = _hold_left_seconds(facts) if entry["held"] else None
     return entry
+
+
+def _hold_left_seconds(facts):
+    """2.39.0 (W12 A9): whole seconds until the fallback hands a held window to the User. held_until is the
+    monotonic time she was offered it; None when the hold did not say; never negative."""
+    until = facts.get("held_until")
+    if type(until) not in (int, float):
+        return None
+    return max(0, int(until - time.monotonic()))
 
 
 def _dialog_rows(dialog):
@@ -2025,7 +2065,9 @@ def read_self(sim_info):
     own = {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
            "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
            "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info),
-           "life": read_life(sim_info)}
+           "life": read_life(sim_info),
+           "gender": _gender_code(sim_info), "first_name": _name_part(lambda: sim_info.first_name),
+           "last_name": _name_part(lambda: sim_info.last_name)}
     # 2.36.0 (D6, P1): the three new senses are optional: a key is there only when the game could say.
     for key, value in (("aspiration", _own_aspiration(sim_info)), ("bills", _own_bills(sim_info)),
                        ("inventory", _own_inventory(sim_info))):

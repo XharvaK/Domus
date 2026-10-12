@@ -112,7 +112,9 @@ def presence_row(sim_id, active_household=False, level=None, is_body=False,
             "doing_target": doing_target, "distance_m": distance_m,
             "relationship": relationship, "situations": situations,
             # 2.32.0 (PR13): a Sim the fake does not describe as a pet, with no species or occult type read.
-            "is_pet": None, "species": None, "occult_kinds": None}
+            "is_pet": None, "species": None, "occult_kinds": None,
+            # 2.39.0 (W12 E5): the game's name fields, None where the fake does not carry them.
+            "first_name": None, "last_name": None}
 
 
 class PresenceTests(unittest.TestCase):

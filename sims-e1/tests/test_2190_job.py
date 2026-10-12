@@ -45,13 +45,13 @@ class JobTests(unittest.TestCase):
         response = types.SimpleNamespace(dialog_response_id=0, text=lambda *_, **__: display_name)
         dialog = types.SimpleNamespace(text_ok=None, ui_responses=(), _additional_responses=[response])
         self.assertEqual(self.probe.observers._dialog_responses(dialog),
-                         [{"response": "0", "text_key": str(0x8001)}])
+                         [{"response": "response_0", "text_key": str(0x8001)}])
 
     def test_a_button_with_no_readable_text_stays_none(self):
         response = types.SimpleNamespace(dialog_response_id=1, text=lambda *_: None)
         dialog = types.SimpleNamespace(text_ok=None, ui_responses=(), _additional_responses=[response])
         self.assertEqual(self.probe.observers._dialog_responses(dialog),
-                         [{"response": "1", "text_key": None}])
+                         [{"response": "response_1", "text_key": None}])
 
 
 if __name__ == "__main__":

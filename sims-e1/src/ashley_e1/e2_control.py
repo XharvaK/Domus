@@ -226,6 +226,36 @@ def _held_message(kind, send_args, send_kwargs):
     return message
 
 
+def _response_number(pick):
+    """2.39.0 (W12 A2): the ButtonType number of a numbered answer, from "response_<N>"; None for any other pick."""
+    prefix = "response_"
+    if type(pick) is not str or not pick.startswith(prefix):
+        return None
+    digits = pick[len(prefix):]
+    if not digits.isdigit() or len(digits) > 9:
+        return None
+    return int(digits)
+
+
+def _window_open(service, dialog_id):
+    """2.39.0 (W12 A5): whether a dialog with this id is still open on the dialog service. False when unreadable."""
+    try:
+        return any(int(key) == int(dialog_id) for key in service._active_dialogs)
+    except Exception:
+        return False
+
+
+def _open_window(row, held):
+    """2.39.0 (W12 A1): the newest window open now, by its dialog id: the sample's own pop-ups, else her held
+    window; None when no window is open (or it cannot be told)."""
+    dialogs = row.get("dialogs") if isinstance(row, dict) else None
+    opened = dialogs.get("open") if isinstance(dialogs, dict) else None
+    for entry in reversed(opened or []):
+        if isinstance(entry, dict) and entry.get("dialog_id") is not None:
+            return str(entry["dialog_id"])
+    return str(next(iter(held))) if held else None
+
+
 def _def_id_of(dialog, option):
     """2.31.0 (§4.3): the definition id of a purchase row (PurchasePickerRow.def_id), found by its option id."""
     for row in _read(lambda: list(dialog.picker_rows or ())) or []:
@@ -1282,14 +1312,21 @@ class E2Control:
             if not offered_rows[0]["enabled"]:
                 return ("ROW_DISABLED", None), None
             # 2.31.0 (W4, F2): a picker that needs more than one row is never answered with a single row.
+            # 2.39.0 (W12 A3): nor is a purchase picker with counts: its one row is checked and sent with its count.
             select = observers.select_of(dialog)
-            if select is not None and select["min"] > 1:
-                refusal, _found = self._check_rows(dialog, [{"option_id": pick, "count": 1}])
+            if observers.counts_of(dialog) is not None or (select is not None and select["min"] > 1):
+                refusal, found = self._check_rows(dialog, [{"option_id": pick, "count": 1}])
                 if refusal is not None:
                     return refusal, None
+                plan = {"rows": None, "counts": None, "text": None}
+                plan.update(found)
+                return None, (service, dialog, plan, observers.RESPONSE_IDS["ok"])
             return None, (service, dialog, {"rows": [int(pick)], "counts": None, "text": None},
                           observers.RESPONSE_IDS["ok"])
+        # 2.39.0 (W12 A2): a numbered button is answered by its number, named response_<N>.
         response = observers.RESPONSE_IDS.get(pick)
+        if response is None:
+            response = _response_number(pick)
         offered = [item["response"] for item in observers._dialog_responses(dialog)]
         if response is None or (pick not in offered and pick not in ("ok", "cancel")):
             return ("NO_RESPONSE", pick), None
@@ -1383,9 +1420,9 @@ class E2Control:
                 return False
             service, dialog, plan, response = bound
             kind = _tuning_name(dialog)
-            # 2.27.0: a held window was never on the User's screen; it is hers alone now.
-            held = self.held.pop(str(int(dialog_id)), None) is not None
-            _note_window(str(int(dialog_id)), held=False)
+            key = str(int(dialog_id))
+            # 2.39.0 (W12 A5): the hold leaves only once the answer is sent (below), never before.
+            held = key in self.held
             self._act_event(act_id, "ACCEPTED", tuning_name=kind, **base)
             accepted = True
             if plan is not None:
@@ -1399,6 +1436,10 @@ class E2Control:
                 elif plan["rows"]:
                     service.dialog_pick_result(int(dialog_id), plan["rows"])
             service.dialog_respond(int(dialog_id), response)
+            # 2.27.0: a held window was never on the User's screen; it is hers alone, and it leaves the hold now the
+            # answer went (2.39.0, W12 A5: a failed send keeps it held for the fallback).
+            self.held.pop(key, None)
+            _note_window(key, held=False)
             # 2.23.0: dialog_respond already accepted. Closing the window and lifting the
             # pause are separate; a failure of either never turns the answer into a rejection.
             # Reviewed path: ui/ui_dialog_service._dialog_cancel_internal builds
@@ -1436,27 +1477,18 @@ class E2Control:
                     if request is not None:
                         resumed = "released"
                     else:
-                        # No dialog request. clock_commands.set_speed uses set_clock_speed.
-                        mode = None
-                        if prior == "NORMAL":
-                            mode = ClockSpeedMode.NORMAL
-                        elif prior == "SPEED2":
-                            mode = ClockSpeedMode.SPEED2
-                        elif prior == "SPEED3":
-                            mode = ClockSpeedMode.SPEED3
-                        elif prior == "SUPER_SPEED3":
-                            mode = ClockSpeedMode.SUPER_SPEED3
-                        elif prior == "INTERACTION_STARTUP_SPEED":
-                            mode = ClockSpeedMode.INTERACTION_STARTUP_SPEED
-                        if mode is None:
-                            resumed = "failed"
-                        else:
-                            clock.set_clock_speed(
-                                mode, source=GameSpeedChangeSource.GAMEPLAY, immediate=True)
-                            resumed = "restored"
+                        # 2.39.0 (W12 A6): no UI_MODAL request is hers, so the pause in place is not her dialog's
+                        # (the User's, or another mod's). The clock is left as it is; restoring the speed from before
+                        # the dialog would lift the User's pause.
+                        resumed = "not_hers"
             except Exception:
                 resumed = "failed"
             _send_queued_events()
+            # 2.39.0 (W12 A5): ANSWERED only when the window has closed. One still open is the User's now.
+            still_open = _window_open(service, dialog_id)
+            if still_open:
+                _note_window(key, cause="user")
+            answered = "ANSWER_SENT_OPEN" if still_open else "ANSWERED"
             # 2.31.0: an answer in the new shapes says how many rows and text fields she gave (counts only, never
             # her text). A single row or a button keeps the detail it always had.
             tokens = ["held"] if held else []
@@ -1465,7 +1497,7 @@ class E2Control:
                 tokens += (["counts %d" % len(shape["counts"][0])] if shape.get("counts") is not None else
                            (["rows %d" % len(shape["rows"])] if shape.get("rows") else []))
                 tokens += ["text %d" % len(shape["text"])] if shape.get("text") else []
-            self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED",
+            self._act_event(act_id, "FINISHED", tuning_name=kind, finishing_type="ANSWERED", code=answered,
                             closed=closed, resumed=resumed,
                             detail=" ".join(tokens)[:schema.MAX_DETAIL_LENGTH] or None, **base)
             self._say(connection, "ACT_ANSWERED %s" % act_id)
@@ -1779,8 +1811,11 @@ class E2Control:
         """Route R1 (distribute_dialog, 2.27.0 for pickers, 2.31.0 for every window): True when the
         window is taken here, held for her or withheld. False: the original sends it, untouched."""
         self.pass_by()
-        self._note_cause(dialog)
+        who = self._note_cause(dialog)
         if not self._live():
+            # 2.39.0 (W12 A4): not sampling, so the window goes through to the User untouched; its cause says so.
+            if who == "hers":
+                _note_window(str(int(dialog.dialog_id)), cause="user", held=False)
             return False
         return self._window(original, dialog, (dialog,) + tuple(args), kwargs, "dialog")
 
@@ -1810,8 +1845,9 @@ class E2Control:
         try:
             who, _act = self._window_owner(dialog)
             _note_window(str(int(dialog.dialog_id)), cause=who, held=False)
+            return who
         except Exception:
-            pass
+            return None
 
     def _note_ring_cause(self, args, kwargs):
         """2.31.0 (W4, F5): the cause of her phone ring, noted before the live check. Never raises."""
@@ -1831,7 +1867,9 @@ class E2Control:
             self._speed_event("DIALOG_SHOWN", code="IDENTITY_USER", detail=_window_detail(kind, key, None))
             return False
         if who != "hers":
+            # 2.39.0 (W12 A10): a window that passes through to the User is recorded too.
             _note_window(key, cause="user", held=False)
+            self._speed_event("DIALOG_SHOWN", code="PASS_THROUGH", detail=_window_detail(kind, key, None))
             return False
         names = _class_names(dialog)
         if names & WITHHELD_DIALOG_CLASSES:
@@ -1840,7 +1878,7 @@ class E2Control:
             return True
         act_id = None if act is None else act["act_id"]
         if names & NOT_ANSWERABLE_CLASSES:
-            _note_window(key, cause="hers", held=False)
+            _note_window(key, cause="user", held=False)
             # 2.31.0 (W4, F1): shown to the User at once, so a late answer to it is refused as shown.
             self._remember_shown(key)
             self._speed_event("DIALOG_SHOWN", code=("NOT_ANSWERABLE:%s" % name)[:schema.MAX_DETAIL_LENGTH],
@@ -1849,7 +1887,8 @@ class E2Control:
         self.held[key] = {"act_id": act_id, "at": time.monotonic(), "kind": kind,
                           "send": (original, send_args, send_kwargs)}
         # 2.31.0 (§11): the held message's text fields are read now, while the message is in hand.
-        _note_window(key, cause="hers", held=True,
+        # 2.39.0 (W12 A9): held_until is when the fallback hands the window to the User (hold_left_s counts to it).
+        _note_window(key, cause="hers", held=True, held_until=self.held[key]["at"] + PICKER_HOLD_S,
                      text_inputs=_read_text_fields(_held_message(kind, send_args, send_kwargs)))
         self._speed_event("DIALOG_HELD", detail=_window_detail(kind, key, act_id))
         self._arm_watchdog()
@@ -1874,7 +1913,10 @@ class E2Control:
         """Her act records the window it opened and was not shown (UNKNOWN: the act's own finish
         still reports from the game's finish watch); a speed event names it."""
         if act is not None:
-            self._act_event(act["act_id"], "UNKNOWN", code=("SCREEN_WITHHELD:%s" % name)[:schema.MAX_ID_LENGTH],
+            # 2.39.0 (W12 B6): NOTED, not UNKNOWN: the act is not over (a screen cancelled, the act goes on). The
+            # screen's name goes in the detail.
+            self._act_event(act["act_id"], "NOTED", code="SCREEN_WITHHELD",
+                            detail=("screen %s" % name)[:schema.MAX_DETAIL_LENGTH],
                             interaction_id=act["interaction_id"], tuning_name=act["tuning_name"],
                             **act["base"])
         act_id = None if act is None else act["act_id"]
@@ -2085,7 +2127,8 @@ class E2Control:
                 if not everything and now - item["at"] < PICKER_HOLD_S:
                     continue
                 del self.held[key]
-                _note_window(key, held=False)
+                # 2.39.0 (W12 A4): a window handed to the User is the User's: its cause says so.
+                _note_window(key, held=False, cause="user")
                 function, args, kwargs = item["send"]
                 try:
                     function(*args, **kwargs)
@@ -2167,10 +2210,23 @@ class E2Control:
         for item in self._pushed_records():
             keys = self._pushed_keys(item)
             if any(key in present for key in keys):
-                item["seen"], item["misses"] = True, 0
+                item["seen"], item["misses"], item["waiting"] = True, 0, False
                 continue
             if not whole:
                 continue
+            # 2.39.0 (W12 A1): the game keeps a pushed act out of her queue while a window is open. Its record stays
+            # (so its finish is kept), no miss is counted, and WAITING is written once for the wait.
+            window = _open_window(row, self.held)
+            if window is not None:
+                item["misses"] = 0
+                if not item.get("waiting"):
+                    item["waiting"] = True
+                    self._act_event(item["act_id"], "WAITING", code="WINDOW_OPEN",
+                                    detail=("dialog %s" % window)[:schema.MAX_DETAIL_LENGTH],
+                                    interaction_id=item["interaction_id"], tuning_name=item["tuning_name"],
+                                    **item["base"])
+                continue
+            item["waiting"] = False
             item["misses"] += 1
             if item["misses"] < LEFT_QUEUE_SAMPLES:
                 continue
@@ -2225,7 +2281,7 @@ class E2Control:
         interactions the push put in her queue, {id: interaction}). They share one record, so the
         first finish of any of them is the act's FINISHED, and it names the one that finished."""
         item = {"act_id": act_id, "base": base, "tuning_name": tuning_name,
-                "interaction_id": interaction_id, "seen": False, "misses": 0}
+                "interaction_id": interaction_id, "seen": False, "misses": 0, "waiting": False}
         self.pushed[interaction_id] = item
         watched = [(interaction_id, interaction)]
         for alias_id, alias in (aliases or {}).items():

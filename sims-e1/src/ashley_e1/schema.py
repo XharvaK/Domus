@@ -91,11 +91,11 @@ E2_PAYLOAD_KEYS = {
     "act_menu": ("menu_rev", "room", "objects", "tested", "cached", "refused", "build_ms", "part", "parts",
                  "refused_phone", "excluded_phone"),
 }
-ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN")
+ACT_PHASES = ("ACCEPTED", "REJECTED", "PUSHED", "FINISHED", "UNKNOWN", "WAITING", "NOTED")
 # 2.28.0: the queue entries a pushed act was seen to add, recorded beside its interaction id.
 ACT_MAX_ALIASES = 4
 # 2.23.0: what her answer did to the pause the dialog made.
-RESUME_RESULTS = ("released", "restored", "not_paused", "player_paused",
+RESUME_RESULTS = ("released", "restored", "not_hers", "not_paused", "player_paused",
                   "other_dialog_open", "failed")
 # 2.19.0: 12 left the kitchen and the bedroom out of a nine-room house.
 # 2.34.0 (N8, F4): every object on the lot with acts for her (the probe keeps rows under the record limit in parts).
@@ -128,7 +128,7 @@ EXPERIMENT_PHASES = (
 COMMANDS = ("arm", "start", "stop", "disarm", "prepare", "sit", "pause",
             "release", "status", "sit_trial", "atlas_dump", "tuned_scan",
             "calibrate", "trial", "preflight", "food_scan", "situation_scan", "act", "camera", "talk",
-            "pace")
+            "pace", "answer", "cancel", "menu_near")
 
 
 def _command_id(value):
@@ -805,6 +805,15 @@ PRESENCE_V8 = PRESENCE_V7 | {"on_lot"}
 PRESENCE_V9 = PRESENCE_V8 | {"situations"}
 # 2.32.0 (PR13, schema 15): a pet flag, the species name and the occult types of the Sim (None when unreadable).
 PRESENCE_V15 = PRESENCE_V9 | {"is_pet", "species", "occult_kinds"}
+# 2.39.0 (W12 E4, E5): the game's own name fields, on each presence item and on her body (self). Optional: a key
+# is there when the game could read it, and a row without them is still valid. Gender is "F", "M" or None.
+PRESENCE_NAME_KEYS = frozenset(("first_name", "last_name"))
+SELF_PEOPLE_KEYS = frozenset(("gender", "first_name", "last_name"))
+GENDER_CODES = ("F", "M")
+MAX_NAME_PART_LENGTH = 64
+# 2.39.0 (W12 A9): the seconds left on a held window until the fallback hands it to the User (optional).
+DIALOG_HOLD_KEYS = frozenset(("hold_left_s",))
+MAX_HOLD_LEFT_SECONDS = 3600
 
 
 def _number_or_none(value, label):
@@ -880,7 +889,10 @@ def _validate_self(row):
             ({"life"} if row["schema_version"] >= 15 else set()))
     # 2.36.0 (D6): the aspiration, the bills and the inventory are optional: a key is there only when readable.
     optional = {"aspiration", "bills", "inventory"} if row["schema_version"] >= 18 else set()
+    # 2.39.0 (W12 E4, E5): her gender and name fields are optional, validated when present.
+    optional = optional | SELF_PEOPLE_KEYS
     _require(isinstance(value, dict) and keys <= set(value) <= keys | optional, "self shape")
+    _validate_self_people(value)
     if "life" in value:
         _validate_life(value["life"])
     if "aspiration" in value:
@@ -1036,9 +1048,26 @@ def _int_between(value, low, high, label):
     _require(type(value) is int and low <= value <= high, label)
 
 
+def _is_int_between(value, low, high):
+    return type(value) is int and low <= value <= high
+
+
+def _validate_self_people(value):
+    """2.39.0 (W12 E4, E5): her gender ("F", "M" or None) and name fields, when the row carries them."""
+    if "gender" in value:
+        _require(value["gender"] is None or value["gender"] in GENDER_CODES, "self.gender")
+    for key in ("first_name", "last_name"):
+        if value.get(key) is not None:
+            bounded_string(value[key], MAX_NAME_PART_LENGTH, "self.%s" % key, False)
+
+
 def _validate_window(item):
     """2.31.0 (schema 14): her window attribution and the answer shapes its dialog offers."""
     _require(type(item["held"]) is bool, "dialogs.held")
+    if "hold_left_s" in item:
+        _require(item["hold_left_s"] is None or (item["held"] is True and
+                                                 _is_int_between(item["hold_left_s"], 0, MAX_HOLD_LEFT_SECONDS)),
+                 "dialogs.hold_left_s")
     _require(item["cause"] is None or item["cause"] in WINDOW_CAUSES, "dialogs.cause")
     if item["select"] is not None:
         _require(isinstance(item["select"], dict) and set(item["select"]) == {"min", "max"},
@@ -1125,7 +1154,8 @@ def _validate_dialogs(row):
             keys.add("rows")
         if row["schema_version"] >= 14:
             keys = keys | WINDOW_KEYS
-        _require(isinstance(item, dict) and set(item) == keys, "dialogs.open entry")
+        # 2.39.0 (W12 A9): hold_left_s is optional (a held window only).
+        _require(isinstance(item, dict) and keys <= set(item) <= keys | DIALOG_HOLD_KEYS, "dialogs.open entry")
         if "rows" in keys:
             _require(isinstance(item["rows"], list) and len(item["rows"]) <= MAX_DIALOG_ROWS,
                      "dialogs.rows")
@@ -1283,13 +1313,17 @@ def _validate_presence(value, version=5):
     _require(isinstance(value, list) and len(value) <= MAX_PRESENCE, "presence")
     for item in value:
         _require(isinstance(item, dict), "presence entry must be an object")
-        _require(set(item) == (PRESENCE_V15 if version >= 15 else
-                               PRESENCE_V9 if version >= 9 else
-                               PRESENCE_V8 if version >= 8 else
-                               PRESENCE_V7 if version >= 7 else
-                               PRESENCE_V6 if version >= 6 else
-                               {"id", "active_household", "level"}),
-                 "presence shape")
+        expected = (PRESENCE_V15 if version >= 15 else
+                    PRESENCE_V9 if version >= 9 else
+                    PRESENCE_V8 if version >= 8 else
+                    PRESENCE_V7 if version >= 7 else
+                    PRESENCE_V6 if version >= 6 else
+                    {"id", "active_household", "level"})
+        # 2.39.0 (W12 E5): the game's first and last names are there only when readable.
+        _require(expected <= set(item) <= expected | PRESENCE_NAME_KEYS, "presence shape")
+        for key in PRESENCE_NAME_KEYS & set(item):
+            if item[key] is not None:
+                bounded_string(item[key], MAX_NAME_PART_LENGTH, "presence.%s" % key, False)
         if version >= 8 and item.get("on_lot") is not None:
             _require(type(item["on_lot"]) is bool, "presence.on_lot must be bool")
         if version >= 15:

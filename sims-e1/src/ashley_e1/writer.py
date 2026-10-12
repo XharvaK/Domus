@@ -25,6 +25,17 @@ MAX_LEDGER_BYTES = 2 * 1024 * 1024
 LEDGER_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY")
 
 
+# 2.39.0 (W12 B9): the detail of a drop that has no row error to name (queue and sampler drops).
+_REASON_DETAIL = {"QUEUE_SATURATION": "the writer queue was full", "SAMPLER_OVERRUN": "the sampler overran its budget",
+                  "SERIALIZE_FAILURE": "a row failed its own check"}
+
+
+def _queue_detail(row):
+    """2.39.0 (W12 B9): the detail of a queue drop: the row kind that could not be queued."""
+    kind = row.get("event_kind") if isinstance(row, dict) else None
+    return ("queue full, %s row not written" % (kind,))[:120]
+
+
 def _drop_detail(row, error):
     """2.32.0 (PR18): the row kind and the failing field (the validator's message names it), for a drop summary."""
     kind = row.get("event_kind") if isinstance(row, dict) else None
@@ -265,6 +276,8 @@ class TelemetryWriter:
     def note_drop(self, reason):
         if reason in ("QUEUE_SATURATION", "SAMPLER_OVERRUN", "SERIALIZE_FAILURE"):
             self._pending_drop_reason = reason
+            # 2.39.0 (W12 B9): every counted drop names itself; a summary never goes out with no detail.
+            self._pending_drop_detail = _REASON_DETAIL[reason]
 
     def queued_event_kinds(self):
         with self._queue.mutex:
@@ -298,6 +311,7 @@ class TelemetryWriter:
             if evicted is not None:
                 self.counters["dropped_queue"] += 1
                 self._pending_drop_reason = "QUEUE_SATURATION"
+                self._pending_drop_detail = _queue_detail(row)
                 try:
                     self._queue.put_nowait(row)
                     return True
@@ -305,6 +319,7 @@ class TelemetryWriter:
                     pass
             self.counters["dropped_queue"] += 1
             self._pending_drop_reason = "QUEUE_SATURATION"
+            self._pending_drop_detail = _queue_detail(row)
             self.capture_stopped = True
             self.failure_reason = "saturation_critical"
             return False
@@ -582,7 +597,7 @@ class TelemetryWriter:
                 wall_timestamp_ms=int(now * 1000), monotonic_ns=time.perf_counter_ns(),
                 reason=self._pending_drop_reason, counters=dict(self.counters),
                 writer={"state": self.state, "rotation_index": self.rotation_index},
-                drop_detail=self._pending_drop_detail,
+                drop_detail=(self._pending_drop_detail or self._pending_drop_reason)[:120],
             )
             summary_written = self._write_direct(summary)
             if summary_written:

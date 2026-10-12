@@ -200,7 +200,8 @@ class ShapeTests(unittest.TestCase):
         self.push()
         window = self.place(self.hold(UiMultiPicker(DIALOG, interaction=types.SimpleNamespace(id=OPENER))))
         item = self.report()
-        self.assertEqual(item["cause"], "hers")
+        # 2.39.0 (W12 A4): shown to the User at once, so its cause is the User's (it was "hers" before).
+        self.assertEqual(item["cause"], "user")
         self.assertFalse(item["held"])
         self.assertEqual(len(window.sent), 1)
         self.assertEqual(self.last_speed(), ("DIALOG_SHOWN", "NOT_ANSWERABLE:UiMultiPicker", "dialog 655 act %s" % windows.ACT_ID))

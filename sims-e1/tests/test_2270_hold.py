@@ -26,7 +26,11 @@ class HoldTests(unittest.TestCase):
         self.shown = []
         test = self
 
+        self.raise_on_send = False
+
         def original(dialog, dialog_type, dialog_msg, immediate=False):
+            if test.raise_on_send:
+                raise RuntimeError("send")
             test.shown.append((dialog.dialog_id, dialog_type, dialog_msg, immediate))
 
         self.hook = self.module._dialog_hook(original)
@@ -76,6 +80,39 @@ class HoldTests(unittest.TestCase):
         self.control._release_held()
         self.assertEqual(self.shown, [(555, "MSG_PICKER", "msg", True)])
         self.assertEqual(self.speed()[-1], ("DIALOG_SHOWN", "TIMEOUT", "dialog 555 act %s" % ACT))
+        self.assertEqual(self.control.held, {})
+
+    def dialog_entry(self):
+        opened = self.probe.observers.read_dialogs()["open"]
+        return [item for item in opened if item["dialog_id"] == "555"][0]
+
+    def test_a_held_window_says_how_long_is_left_until_the_fallback(self):
+        # 2.39.0 (W12 A9): hold_left_s is the whole seconds until the fallback hands the window to the User.
+        self.case.case.ready()
+        self.mine()
+        self.distribute()
+        entry = self.dialog_entry()
+        self.assertEqual((entry["held"], entry["cause"], entry["hold_left_s"]), (True, "hers", 180))
+        self.now[0] += 30.5
+        self.assertEqual(self.dialog_entry()["hold_left_s"], 149)
+
+    def test_a_window_handed_to_the_user_reads_cause_user_and_no_hold(self):
+        # 2.39.0 (W12 A4): released, it is the User's; the record never says hers after that.
+        self.case.case.ready()
+        self.mine()
+        self.distribute()
+        self.control._release_held(everything=True, code="STOP")
+        entry = self.dialog_entry()
+        self.assertEqual((entry["held"], entry["cause"], entry["hold_left_s"]), (False, "user", None))
+
+    def test_a_send_that_fails_at_the_fallback_is_recorded_as_failed(self):
+        # 2.39.0 (W12 A10): FAILED:<name> is a DIALOG_SHOWN code like the others.
+        self.case.case.ready()
+        self.mine()
+        self.distribute()
+        self.raise_on_send = True
+        self.control._release_held(everything=True, code="STOP")
+        self.assertEqual(self.speed()[-1], ("DIALOG_SHOWN", "FAILED:RuntimeError", "dialog 555 act %s" % ACT))
         self.assertEqual(self.control.held, {})
 
     def test_gone_dialogs_are_dropped_and_a_stop_shows_the_rest(self):

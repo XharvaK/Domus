@@ -178,7 +178,9 @@ class SelfTests(unittest.TestCase):
         own = self.probe.observers.read_self(CreatingTrackers())
         self.assertEqual(own, {"traits": None, "skills": None, "funds": None, "careers": None, "wants": None,
                                "life": {"age": None, "pregnant": None, "sick": None, "dead": None,
-                                        "ghost": None, "npc": None}})
+                                        "ghost": None, "npc": None},
+                               # 2.39.0 (W12 E4, E5): unreadable gender and names are None.
+                               "gender": None, "first_name": None, "last_name": None})
 
     def test_poll_row_carries_self_and_validates(self):
         ds3.PollOnceTests.setUp(self)

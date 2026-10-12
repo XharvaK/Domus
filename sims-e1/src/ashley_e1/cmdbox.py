@@ -4,7 +4,7 @@ import json
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
             'release', 'status', 'sit_trial', 'atlas_dump', 'tuned_scan',
             'calibrate', 'trial', 'preflight', 'food_scan', 'situation_scan', 'act', 'answer',
-            'cancel', 'camera', 'talk', 'pace')
+            'cancel', 'camera', 'talk', 'pace', 'menu_near')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
          'UNKNOWN_COMMAND', 'BAD_ARGS')

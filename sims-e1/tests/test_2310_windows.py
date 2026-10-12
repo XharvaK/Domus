@@ -187,8 +187,7 @@ class WindowTests(unittest.TestCase):
         self.push()
         HerAct().run(lambda: self.dist.add_event(SCREEN, "m"))
         self.assertEqual(self.dist.sent, [])
-        self.assertEqual(self.act_rows()[-1]["code"], "SCREEN_WITHHELD:MSG_SITUATION_PREPARE")
-        self.assertEqual(self.act_rows()[-1]["phase"], "UNKNOWN")
+        self.assertEqual((self.act_rows()[-1]["phase"], self.act_rows()[-1]["code"]), ("NOTED", "SCREEN_WITHHELD"))
         self.assertEqual(self.last_speed(), ("SCREEN_WITHHELD", "MSG_SITUATION_PREPARE", "screen act %s" % ACT_ID))
 
     def test_the_users_screen_passes_untouched(self):
@@ -325,6 +324,8 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(window.sent, [("T", "m")])
         self.assertEqual(self.last_speed(), ("DIALOG_SHOWN", "NOT_ANSWERABLE:UiDialogObjectColorPicker",
                                              "dialog 601 act %s" % ACT_ID))
+        # 2.39.0 (W12 A4): shown at once is the User's, so its cause says so.
+        self.assertEqual(self.module.observers._WINDOWS["601"]["cause"], "user")
 
     def test_a_composite_picker_of_hers_is_shown_at_once(self):
         self.push()
@@ -340,7 +341,7 @@ class WindowTests(unittest.TestCase):
         window.distribute_dialog("T", "m")
         self.assertEqual(window.sent, [])
         self.assertEqual(self.cancelled, [601])
-        self.assertEqual(self.act_rows()[-1]["code"], "SCREEN_WITHHELD:UiApartmentPicker")
+        self.assertEqual((self.act_rows()[-1]["phase"], self.act_rows()[-1]["code"]), ("NOTED", "SCREEN_WITHHELD"))
 
     def test_a_notification_is_never_held_or_wrapped(self):
         self.push()
@@ -528,7 +529,7 @@ class WindowTests(unittest.TestCase):
         window.distribute_dialog("T", "m")
         self.assertEqual(window.sent, [("T", "m", False)])
         self.assertEqual(self.control.held, {})
-        self.assertEqual(self.module.observers._WINDOWS["601"]["cause"], "hers")
+        self.assertEqual(self.module.observers._WINDOWS["601"]["cause"], "user")  # 2.39.0 (A4): passed through
 
     def test_a_zone_change_drops_held_windows_unsent(self):
         self.push()
@@ -546,6 +547,16 @@ class WindowTests(unittest.TestCase):
         self.control.on_stop("STOP")
         self.assertEqual(window.sent, [("T", "m", False)])
         self.assertEqual(self.last_speed(), ("DIALOG_SHOWN", "STOP", "dialog 601 act %s" % ACT_ID))
+        # 2.39.0 (W12 A4): a window handed to the User reads cause user, never hers.
+        self.assertEqual(self.module.observers._WINDOWS["601"]["cause"], "user")
+
+    def test_a_users_window_passes_through_with_its_cause_and_a_pass_through_event(self):
+        # 2.39.0 (W12 A10): a pass-through is recorded, so the window's end is never silent.
+        window = self.window(dialog_id=601, interaction=None, owner=OTHER)
+        window.distribute_dialog("T", "m")
+        self.assertEqual(window.sent, [("T", "m", False)])
+        self.assertEqual(self.module.observers._WINDOWS["601"]["cause"], "user")
+        self.assertEqual(self.last_speed(), ("DIALOG_SHOWN", "PASS_THROUGH", "dialog 601"))
 
     def test_a_held_window_that_vanishes_is_dropped_with_an_event_and_never_sent(self):
         self.push()
@@ -644,7 +655,7 @@ class WindowTests(unittest.TestCase):
         self.push_then(lambda: self.dist.add_event(SCREEN, "m"))
         self.assertEqual(self.dist.sent, [])
         withheld = [row for row in self.act_rows() if str(row.get("code", "")).startswith("SCREEN_WITHHELD")]
-        self.assertEqual([row["code"] for row in withheld], ["SCREEN_WITHHELD:MSG_SITUATION_PREPARE"])
+        self.assertEqual([(row["phase"], row["code"]) for row in withheld], [("NOTED", "SCREEN_WITHHELD")])
         self.assertEqual(withheld[0]["act_id"], ACT_ID)
         self.assertEqual(self.last_speed(), ("SCREEN_WITHHELD", "MSG_SITUATION_PREPARE", "screen act %s" % ACT_ID))
 

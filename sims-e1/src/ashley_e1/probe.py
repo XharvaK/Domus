@@ -687,6 +687,12 @@ def _pace_block(row):
         return None
 
 
+def request_menu_near():
+    """2.39.0 (W12 B9 stub, W12-PM): the near part of her act menu is written on a menu_near command. This is the
+    no-op hook until the menu worker fills it in; it answers OK and changes nothing."""
+    return True
+
+
 def _inbox_dispatch(cmd, connection):
     name, args = cmd['command'], cmd['args']
     if _CALIBRATE and name in _OBSERVE_REFUSED:
@@ -719,6 +725,8 @@ def _inbox_dispatch(cmd, connection):
         return _E2.cmd_talk(args['text'], args.get('sim_id'), connection)
     if name == 'pace':
         return _E2.cmd_pace(args['need_drain'], args['slow_time'], connection)
+    if name == 'menu_near':
+        return request_menu_near()
     if name == 'atlas_dump':
         return _dispatch_atlas_dump(connection)
     if name == 'tuned_scan':
