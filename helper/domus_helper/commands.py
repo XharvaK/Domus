@@ -14,6 +14,12 @@ class InboxNotAnswering(TimeoutError):
     pass
 
 
+class EnvelopeInvalid(ValueError):
+    """The envelope is not one the probe accepts (its cmdbox refusal, or a ttl out of range): HELPER2-8, the only
+    ValueError from publishing that is her act's ARGS_INVALID."""
+    pass
+
+
 @dataclass(frozen=True)
 class Reply:
     id: str
@@ -25,14 +31,14 @@ class Reply:
 
 def envelope(command, args, issuer, ttl_ms=30_000):
     if not 1_000 <= ttl_ms <= 60_000:
-        raise ValueError("ttl_ms must be from 1000 to 60000")
+        raise EnvelopeInvalid("ttl_ms must be from 1000 to 60000")
     now = time.time_ns() // 1_000_000
     row = dict(v=1, id=uuid.uuid4().hex, issued_at_ms=now,
                expires_at_ms=now + ttl_ms, issuer=issuer, command=command, args=args)
     raw = json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     _, error = cmdbox.parse(raw, now, ())
     if error:
-        raise ValueError(error)
+        raise EnvelopeInvalid(error)
     return row, raw
 
 

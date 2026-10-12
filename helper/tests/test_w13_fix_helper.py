@@ -150,8 +150,10 @@ def test_an_envelope_refusal_is_args_invalid_with_the_probes_code_in_its_detail(
     from domus_helper.acts import ActCourier
     from domus_helper.spool import Spool
 
+    from domus_helper.commands import EnvelopeInvalid
+
     def publish(command, args):
-        raise ValueError("BAD_ARGS")
+        raise EnvelopeInvalid("BAD_ARGS")
     courier = ActCourier(Spool(tmp_path / "spool.db"), publish)
     courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
     refused = [event for event in courier._events if event["phase"] == "rejected"]
@@ -604,3 +606,25 @@ def test_a_corrected_list_of_a_kind_is_sent_at_once_after_the_refusals_of_an_ear
     bridge.tick(WALL + mono["ms"])
     _settle(bridge)
     assert len(attempts) == 4 and attempts[3] != attempts[0]
+
+
+# HELPER2-8: only the probe's envelope refusal is her act's ARGS_INVALID; a fault of the helper's own (an inbox that is
+# not usable) keeps its own code and is never said to be her arguments.
+def test_a_helper_side_inbox_fault_is_not_her_args_invalid_and_an_envelope_refusal_still_is(tmp_path):
+    from domus_helper import commands
+    from domus_helper.acts import ActCourier
+    from domus_helper.spool import Spool
+
+    def inbox_redirected(command, args):
+        raise ValueError("inbox must not be redirected by a symlink")
+    courier = ActCourier(Spool(tmp_path / "spool.db"), inbox_redirected)
+    courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
+    refused = [event for event in courier._events if event["phase"] == "rejected"]
+    assert refused[0]["detail"]["code"] == "INBOX_ValueError"
+
+    def probe_refused(command, args):
+        raise commands.EnvelopeInvalid("BAD_ARGS")
+    courier = ActCourier(Spool(tmp_path / "spool2.db"), probe_refused)
+    courier.tick(_Mint(acts=[_verb("sell", {"object_id": "5"})]), "h", 1000, True, probe="2.40.0")
+    refused = [event for event in courier._events if event["phase"] == "rejected"]
+    assert refused[0]["detail"] == {"code": "ARGS_INVALID", "by": "helper", "detail": "BAD_ARGS"}

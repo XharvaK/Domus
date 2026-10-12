@@ -6,6 +6,7 @@ import re
 import threading
 
 from . import snapshot
+from .commands import EnvelopeInvalid
 from .transport import SyncRefused
 
 # N8 (F4): the options of one view: at most 160 objects and 32,768 bytes (contract.py takes the same).
@@ -1138,7 +1139,7 @@ class ActCourier(object):
         ARGS_INVALID, with the code in its detail. Any other error is not changed."""
         try:
             return self._publish(command, args)
-        except ValueError as error:
+        except EnvelopeInvalid as error:
             raise EnvelopeRefused(str(error)[:40]) from error
 
     def _send_alone(self, client, helper_session, now_ms, attached, probe):
