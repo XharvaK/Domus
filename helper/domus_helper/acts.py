@@ -166,6 +166,17 @@ def humanize(name):
     return " ".join(_CAMEL.sub(" ", word) for word in words if word).strip()[:80] or "unnamed"
 
 
+def game_name(text):
+    """W14 (D6): an object's game name she can be shown. Not empty, not a debug name (starting with "*" or containing
+    "DEBUG"). None otherwise, and the caller names the object by its class or definition instead."""
+    if not isinstance(text, str):
+        return None
+    name = text.strip()
+    if not name or name.startswith("*") or "DEBUG" in name:
+        return None
+    return name
+
+
 _TOKEN = re.compile(r"\{([^{}]*)\}")
 
 
@@ -267,7 +278,8 @@ def _object_name(item, resolve, catalog, people=None):
             entry = catalog(item["definition_id"])
         except Exception:
             entry = None
-        text = _text(resolve, (entry or {}).get("name_key")) if entry else None
+        # W14 (D6): an empty, starred or DEBUG game name is not shown; the class names the object instead.
+        text = game_name(_text(resolve, (entry or {}).get("name_key")) if entry else None)
         if text:
             return text
     return humanize(item.get("class") or "object")

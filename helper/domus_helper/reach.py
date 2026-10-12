@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-from .acts import EVENT_DAYS_MAX, RESULT_WORDS_MAX, clean_text, humanize
+from .acts import EVENT_DAYS_MAX, RESULT_WORDS_MAX, clean_text, game_name, humanize
 
 KINDS = ("people", "places", "things", "events")
 # The probe writes at most this many items per part, and at most this many parts (a list of 600 is 5 parts).
@@ -249,14 +249,15 @@ def _states(raw):
 
 
 def _thing_name(item, resolve=None, catalog=None):
-    """A thing's name in words: its own name key, else its catalogue entry's; None when neither reads."""
-    name = _text_key(resolve, item.get("name_key"))
+    """A thing's name in words: its own name key, else its catalogue entry's (the definition's name); None when neither
+    reads. W14 (D6): an empty, starred or DEBUG name is no name, so the definition's name is tried instead."""
+    name = game_name(_text_key(resolve, item.get("name_key")))
     if name is None and catalog is not None and item.get("definition_id") is not None:
         try:
             entry = catalog(item["definition_id"])
         except Exception:
             entry = None
-        name = _text_key(resolve, (entry or {}).get("name_key")) if entry else None
+        name = game_name(_text_key(resolve, (entry or {}).get("name_key")) if entry else None)
     return name
 
 

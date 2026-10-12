@@ -239,3 +239,26 @@ def test_a_label_that_fits_is_kept_whole():
     names = {"k1": "Test Bed", "k2": "Test Lamp"}
     labels = reach.room_labels([_room_thing(1, "3", "k1"), _room_thing(2, "3", "k2")], resolve=names.get)
     assert labels == {"3": "the room with the Test Bed and the Test Lamp"}
+
+
+# ----------------------------------------------------------------- D6: a debug or empty game name is not shown
+
+def test_a_menu_object_with_a_debug_or_empty_game_name_is_named_by_its_class():
+    from domus_helper import acts
+    item = {"object_id": "5", "definition_id": 77, "class": "object_test_bookshelf"}
+    catalog = lambda definition: {"name_key": "900"}
+    for text in ("** DEBUG **", "", "   ", "*Starred Test Name", "Test DEBUG Bookshelf"):
+        assert acts._object_name(item, {"900": text}.get, catalog) == "object test bookshelf", text
+    assert acts._object_name(item, {"900": "Test Bookshelf"}.get, catalog) == "Test Bookshelf"
+
+
+def test_a_thing_with_a_debug_name_takes_its_definition_name_and_one_with_neither_is_left_out():
+    from domus_helper import reach
+    from domus_helper.acts import RefBook
+    names = {"901": "** DEBUG **", "902": "Test Lamp", "903": "*Starred"}
+    catalog = lambda definition: {"name_key": "902"} if definition == 77 else None
+    assert reach._thing_name({"object_id": 9, "name_key": "901", "definition_id": 77}, names.get, catalog) == "Test Lamp"
+    assert reach._thing_name({"object_id": 9, "name_key": "903", "definition_id": 78}, names.get, catalog) is None
+    raw = [{"object_id": "9", "name_key": "901", "definition_id": 77, "where": "inventory"}]
+    things = reach.list_words("things", raw, refs=RefBook(), resolve=names.get, catalog=catalog)
+    assert [thing["name"] for thing in things] == ["Test Lamp"]
