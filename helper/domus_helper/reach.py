@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-from .acts import RESULT_WORDS_MAX, clean_text, humanize
+from .acts import EVENT_DAYS_MAX, RESULT_WORDS_MAX, clean_text, humanize
 
 KINDS = ("people", "places", "things", "events")
 # The probe writes at most this many items per part, and at most this many parts (a list of 600 is 5 parts).
@@ -389,13 +389,17 @@ def _names(ids, name_of, kinds=None):
 
 
 def _start_words(start):
-    """W13 (S7): an event's start in words, from the act's own start: "Starts now.", or the game time and today or
-    tomorrow (its day offset). Never a day count."""
+    """W13 (S7): an event's start in words, from the act's own start: "Starts now.", or the game time and its day: today,
+    tomorrow, or "in N days" (Q-d: up to EVENT_DAYS_MAX days ahead)."""
     if start == "now":
         return "Starts now."
     if not isinstance(start, dict) or not all(type(start.get(key)) is int for key in ("hour", "minute", "day_offset")):
         return None
-    return "Starts at %02d:%02d %s." % (start["hour"], start["minute"], "tomorrow" if start["day_offset"] == 1 else "today")
+    day = start["day_offset"]
+    if not 0 <= day <= EVENT_DAYS_MAX:
+        return None
+    when = "today" if day == 0 else "tomorrow" if day == 1 else "in %d days" % day
+    return "Starts at %02d:%02d %s." % (start["hour"], start["minute"], when)
 
 
 def result_words(result, *, name_of=None, room_of=None, place_of=None, start=None):

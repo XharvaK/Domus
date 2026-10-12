@@ -39,6 +39,8 @@ VERBS = ("go", "save", "event", "buy", "place", "move", "sell")
 # measured as the probe measures the envelope (ASCII JSON, HELPER2-13), with about 200 bytes left for the envelope's own
 # fields under the probe's 4096-byte limit.
 VERB_ARGS_BYTES = 3500
+# Q-d (the User, 2026-10-12): an event may start up to this many days ahead (the game's drama scheduler takes any time).
+EVENT_DAYS_MAX = 99
 # W13 (H): the most characters of a result's words the sync event carries (the contract's detail.result).
 RESULT_WORDS_MAX = 400
 # W13 (H): a sync event's whole detail is under this many bytes of JSON (Natalis's limit).
@@ -843,7 +845,7 @@ def _start_of(args):
     if start == "now":
         return "now"
     if (type(start) is dict and set(start) == {"day_offset", "hour", "minute"} and type(start["day_offset"]) is int
-            and start["day_offset"] in (0, 1) and type(start["hour"]) is int and 0 <= start["hour"] <= 23
+            and 0 <= start["day_offset"] <= EVENT_DAYS_MAX and type(start["hour"]) is int and 0 <= start["hour"] <= 23
             and type(start["minute"]) is int and 0 <= start["minute"] <= 59):
         return {"day_offset": start["day_offset"], "hour": start["hour"], "minute": start["minute"]}
     return None

@@ -809,3 +809,20 @@ def test_the_lab_crawl_refuses_to_start_without_the_lab_flag_and_its_usage_says_
         pass
     usage = capsys.readouterr().out
     assert usage.startswith("usage:") and "--lab" in usage.split(chr(10))[0]
+
+
+# Q-d (the User, 2026-10-12): an event may start up to 99 days ahead; its start words say the day, and the game's own
+# limits (the guests) are the probe's to check. The helper keeps a start within 0..99 days and says "in N days" past one.
+def test_an_event_start_up_to_ninety_nine_days_ahead_is_worded_and_one_past_it_is_not():
+    from domus_helper.acts import _start_of
+    nine_thirty = {"day_offset": 5, "hour": 9, "minute": 30}
+    assert reach.result_words({"price": 5}, start={"day_offset": 0, "hour": 9, "minute": 30}) == (
+        "Costs §5. Starts at 09:30 today.")
+    assert reach.result_words({"price": 5}, start={"day_offset": 1, "hour": 9, "minute": 30}) == (
+        "Costs §5. Starts at 09:30 tomorrow.")
+    assert reach.result_words({"price": 5}, start=nine_thirty) == "Costs §5. Starts at 09:30 in 5 days."
+    assert reach.result_words({"price": 5}, start={"day_offset": 99, "hour": 0, "minute": 5}) == (
+        "Costs §5. Starts at 00:05 in 99 days.")
+    assert reach.result_words({"price": 5}, start={"day_offset": 100, "hour": 0, "minute": 5}) == "Costs §5."
+    assert _start_of({"start": nine_thirty}) == nine_thirty
+    assert _start_of({"start": {"day_offset": 100, "hour": 9, "minute": 30}}) is None
