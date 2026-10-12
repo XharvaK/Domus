@@ -1,9 +1,10 @@
 """W13 fixes (helper, 2026-10-12): the probe's real shapes, checked against the helper. The probe is read here only as
 its wire shape (digit-string ids, one-word placements, names of buy categories); every name is invented and the game
-is a fake. The room id rule (cmdbox `_digits`) is copied, because the vendored cmdbox is still the 2.39.0 copy."""
+is a fake. Every command the helper sends is checked by the vendored probe module (domus_helper.vendor.cmdbox, 2.40.0), through
+commands.envelope, which parses the envelope the way the probe does (HELPER2-5)."""
 import json
 
-from domus_helper import catalog, catalog_ask, reach
+from domus_helper import catalog, catalog_ask, commands, reach
 from domus_helper.acts import RefBook
 from test_w13_helper import CATALOG_NAMES, VERB_ACT, _catalog_db, _courier, _flag, _Mint, _settle, _verb
 
@@ -62,24 +63,6 @@ def test_a_surface_such_as_a_table_or_counter_is_furniture_she_can_find_but_a_ve
     assert catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get) == (0, [])
 
 # W13 (H, S4/S5): a room is a digit string on every wire, and a room's label comes from the things in it.
-def _digits(value):
-    """cmdbox._digits (2.40.0): a copy of the probe's rule, for the vendored cmdbox is still 2.39.0."""
-    return type(value) is str and 1 <= len(value) <= 20 and all(ch in "0123456789" for ch in value)
-
-
-def _probe_place_ok(place):
-    """cmdbox._place_ok (2.40.0): a copy of the probe's rule for a wall or in place; facing is an id or 'room'."""
-    if type(place) is not dict or 'rel' not in place:
-        return False
-    if place['rel'] not in ('wall', 'in'):
-        return False
-    if set(place) - {'rel', 'room_id', 'facing'} or 'room_id' not in place:
-        return False
-    if not _digits(place['room_id']):
-        return False
-    return 'facing' not in place or place['facing'] == 'room' or _digits(place['facing'])
-
-
 def test_a_place_in_a_room_is_sent_with_its_room_id_as_digits_the_probe_accepts(tmp_path):
     courier, sent = _courier(tmp_path, rooms=lambda: {"3": "the room with the Test Bed"})
     place = {"rel": "wall", "room": "The Room With The Test Bed", "facing": "room"}
@@ -87,7 +70,7 @@ def test_a_place_in_a_room_is_sent_with_its_room_id_as_digits_the_probe_accepts(
     assert len(sent) == 1
     moved = sent[0][1]["place"]
     assert moved == {"rel": "wall", "room_id": "3", "facing": "room"}
-    assert _probe_place_ok(moved)
+    commands.envelope("buy", {"act_id": VERB_ACT, "definition_id": "7", "place": moved}, "helper")
 
 
 def test_room_labels_come_from_the_things_in_each_room_and_equal_labels_are_numbered_in_room_order():
@@ -115,6 +98,25 @@ def test_a_thing_is_placed_in_its_room_label_and_one_in_an_unlabelled_room_is_le
                              resolve=names.get, skipped=skipped)
     assert [item["where"] for item in words] == ["the room with the Test Bed"]
     assert skipped == ["where"]
+
+
+def test_every_verb_the_helper_sends_passes_the_vendored_probe_envelope(tmp_path):
+    rooms = {"3": "the room with the Test Bed"}
+    places = [{"rel": "wall", "room": "The Room With The Test Bed", "facing": "room"},
+              {"rel": "in", "room": "the room with the test bed"},
+              {"rel": "on", "target_id": "12"}, {"rel": "beside", "target_id": "13", "facing": "14"},
+              {"rel": "instead", "target_id": "15", "facing": "room"}]
+    acts = [_verb("buy", {"definition_id": "7", "place": place, "max_price": 90}) for place in places]
+    acts += [_verb("place", {"object_id": "9", "place": places[0]}), _verb("move", {"object_id": "9", "place": places[2]}),
+             _verb("sell", {"object_id": "9"}), _verb("save", {}), _verb("go", {"zone_id": "4"}),
+             _verb("event", {"situation_id": "5", "guests": ["6", "7"], "start": "now"}),
+             _verb("event", {"situation_id": "5", "guests": [], "start": {"day_offset": 1, "hour": 9, "minute": 30}})]
+    acts = [dict(act, act_id="%032x" % (number + 1)) for number, act in enumerate(acts)]
+    courier, sent = _courier(tmp_path, rooms=lambda: rooms)
+    courier.tick(_Mint(acts=acts), "h", 1000, True, probe="2.40.0")
+    assert len(sent) == len(acts)
+    for command, args in sent:
+        commands.envelope(command, args, "helper")  # raises ValueError when the probe would refuse the envelope
 
 
 def test_an_unknown_room_names_the_rooms_she_knows_and_no_more_than_eight(tmp_path):
