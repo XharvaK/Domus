@@ -701,3 +701,26 @@ def test_verb_args_are_bounded_as_the_probe_measures_its_envelope(tmp_path):
     assert len(sent) == 1 and sent[0][1]["note"] == "x" * 3400
     refused = [event for event in courier._events if event["phase"] == "rejected"]
     assert len(refused) == 1 and refused[0]["detail"]["code"] == "ARGS_INVALID"
+
+
+# HELPER2-14: a duplicate definition id keeps the last row and stores the rest (no failed transaction); a catalogue part
+# that cannot be stored because the game build is unknown is logged once, with its reason.
+def test_a_duplicate_definition_id_keeps_its_last_row_and_the_rest_are_stored(tmp_path, monkeypatch):
+    paths = _catalog_db(tmp_path, monkeypatch, [(301, 1301), (302, 1302)])
+    rows = [_probe_flag(301, ["COMFORT"], ["floor"], 80), _probe_flag(302, ["COMFORT"], ["floor"], 90),
+            _probe_flag(301, ["COMFORT"], ["floor"], 95)]
+    assert catalog.store_flags(paths, "1.128", rows) == 2
+    assert catalog.search(paths, "1.128", "test chair", resolve=CATALOG_NAMES.get)[1][0]["price"] == 95
+
+
+def test_a_catalogue_part_with_no_game_build_is_logged_once_with_its_reason(paths, tmp_path, monkeypatch):
+    from test_bridge_thalamus import WALL, _bridge, _data, _log_lines
+    data = _data(paths, tmp_path, monkeypatch)
+    bridge = _bridge(paths, {"ms": WALL}, client=_Mint())
+    bridge.detected_build = None
+    record = {"event_kind": "catalog", "telemetry_session_id": "sess-1", "wall_timestamp_ms": WALL,
+              "e2": {"catalog_rev": "r1", "part": 0, "parts": 1, "items": [_probe_flag(301, ["COMFORT"], ["floor"], 80)]}}
+    bridge._reach_row("catalog", record, WALL)
+    bridge._reach_row("catalog", dict(record), WALL + 1)
+    lines = [line for line in _log_lines(data) if line.get("trigger") == "catalog"]
+    assert len(lines) == 1 and lines[0]["error"] == "no_build"

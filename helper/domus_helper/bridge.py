@@ -155,6 +155,7 @@ class Bridge:
         self._lists_busy = False  # W13 (A4-9): one post pass at a time
         self._index = reach.index({})
         self._catalog_checked_ms = None
+        self._catalog_no_build_logged = False  # HELPER2-14
         self._lists_now_owed = False  # HELPER2-4: a verb act ended and the lists are not asked for yet
         self._lists_now_sent_ms = None
         self._acts = None if self.client is None else ActCourier(
@@ -737,6 +738,10 @@ class Bridge:
             if raw is not None and self.detected_build is not None:
                 catalog.store_flags(self.paths, self.detected_build, raw)
                 self._log.write({"wall_ms": clock_ms, "trigger": "catalog", "items": len(raw)})
+            elif raw is not None and not self._catalog_no_build_logged:
+                # HELPER2-14: the catalogue is not stored without the game's build; said once, not per part.
+                self._catalog_no_build_logged = True
+                self._log.write({"wall_ms": clock_ms, "trigger": "catalog", "error": "no_build", "items": len(raw)})
 
     def _store_list(self, kind, raw, total=None):
         """W13 (H): a whole list, in words, held as Natalis will hold it. Its digest is what the sync answer is checked

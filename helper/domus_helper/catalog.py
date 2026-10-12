@@ -223,17 +223,19 @@ def store_flags(paths, game_version, items):
     """W13 (H): the probe's catalogue flags for one game version, replacing that version's earlier ones. An item
     without a definition id is skipped. The rows are built first: a dump with no usable row keeps the earlier flags, and
     the replace is one transaction. Returns the number of items stored."""
-    rows = []
+    by_definition = {}
     for item in items if isinstance(items, list) else []:
         definition = _definition(item.get("definition_id")) if isinstance(item, dict) else None
         if definition is None:
             continue
         price = item.get("price") if type(item.get("price")) is int else None
-        rows.append((game_version, definition, price,
-                     json.dumps(_strings(item.get("buy_category"), 4)),
-                     json.dumps(_strings(item.get("placement"), 1)),
-                     json.dumps(_strings(item.get("tags"), 8)),
-                     1 if item.get("purchasable") is True else 0))
+        # HELPER2-14: one row per definition; a repeated id keeps its last row (no failed insert of the whole part).
+        by_definition[definition] = (game_version, definition, price,
+                                     json.dumps(_strings(item.get("buy_category"), 4)),
+                                     json.dumps(_strings(item.get("placement"), 1)),
+                                     json.dumps(_strings(item.get("tags"), 8)),
+                                     1 if item.get("purchasable") is True else 0)
+    rows = list(by_definition.values())
     if not rows:
         return 0
     target = index_path(paths)
