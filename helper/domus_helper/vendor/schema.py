@@ -101,7 +101,7 @@ E2_PAYLOAD_KEYS = {
 # result (the facts of a verb's FINISHED or REJECTED row; None on every other row and on older rows).
 E2_PAYLOAD_KEYS.update({
     "discovery": ("discovery_rev", "sections"),
-    "lists": ("kind", "list_rev", "part", "parts", "digest", "count", "items"),
+    "lists": ("kind", "list_rev", "part", "parts", "digest", "count", "items", "total"),
     "phone": ("kind", "from_sim_id", "notifies"),
 })
 E2_PAYLOAD_KEYS["act_event"] = E2_PAYLOAD_KEYS["act_event"] + ("result",)
@@ -680,6 +680,10 @@ def _validate_e2(row):
         # 2.40.0 (W13 P1): result is optional; rows before schema 21 omit it.
         if "result" not in payload:
             payload["result"] = None
+    elif kind == "lists" and isinstance(payload, dict):
+        # 2.40.0 (W13 R2, T1): total is optional; a list written before it omits it.
+        if "total" not in payload:
+            payload["total"] = None
     _require(isinstance(payload, dict) and
              set(payload) == set(E2_PAYLOAD_KEYS[kind]), "%s e2 shape" % kind)
     _require(row.get("telemetry_session_id") is not None, "%s session id" % kind)
@@ -832,6 +836,9 @@ def _validate_reach(kind, payload):
         _require(isinstance(payload["digest"], str) and len(payload["digest"]) == 64 and
                  all(ch in "0123456789abcdef" for ch in payload["digest"]), "list digest")
         _require(type(payload["count"]) is int and payload["count"] >= 0, "list count")
+        # 2.40.0 (W13 R2, T1): the things the game holds that the list keeps (a whole number), optional.
+        total = payload.get("total")
+        _require(total is None or (type(total) is int and total >= 0), "list total")
         items = payload["items"]
         _require(isinstance(items, list) and len(items) <= LIST_PART_MAX and
                  all(isinstance(item, dict) for item in items), "list items")
@@ -871,8 +878,9 @@ def _validate_person(item):
         _require(_is_flag_or_none(item[key]), "person %s" % key)
 
 
-def _validate_place(item):
-    """2.40.0 (W13 P1 fix): a place she can go, as reach.place_item writes it."""
+def _validate_place_item(item):
+    """2.40.0 (W13 P1 fix): a place she can go, as reach.place_item writes it. 2.40.0 (W13 R2): renamed from
+    _validate_place, which is the self-place row's name."""
     _require(set(item) == PLACE_KEYS, "place keys")
     _require(_is_digits(item["zone_id"]), "place zone_id")
     _require(item["kind"] in PLACE_KIND_NAMES, "place kind")
@@ -890,7 +898,7 @@ def _validate_event(item):
     _require(_is_flag_or_none(item["schedulable"]), "event schedulable")
 
 
-LIST_ITEM_VALIDATORS = {"people": _validate_person, "places": _validate_place, "events": _validate_event}
+LIST_ITEM_VALIDATORS = {"people": _validate_person, "places": _validate_place_item, "events": _validate_event}
 
 
 def _validate_menu(payload):
@@ -1962,7 +1970,8 @@ RESULT_MAX_IDS = 4
 
 
 def _is_digits(value):
-    return type(value) is str and 1 <= len(value) <= 20 and value.isdigit()
+    # 2.40.0 (W13 R2): ASCII digits only (str.isdigit also takes other scripts' digits).
+    return type(value) is str and 1 <= len(value) <= 20 and all(ch in "0123456789" for ch in value)
 
 
 def _is_int_or_none(value):
