@@ -105,6 +105,39 @@ def test_the_refs_are_kept_across_an_attach_flip_and_reset_with_a_new_game(paths
     assert bridge._attachment() == "%s:1" % bridge.helper_session
 
 
+# B2, SEAM3-21: at start the refs and the probe check follow the newest telemetry file. A previous session's rows in
+# the spool are not adopted, so no wrong installed line is printed and the running game's first record does not bump
+# the epoch.
+def test_the_refs_follow_the_newest_telemetry_file_and_not_the_previous_session_in_the_spool(
+        paths, tmp_path, monkeypatch, capsys):
+    from domus_helper.vendor import schema
+    _data(paths, tmp_path, monkeypatch)
+    old = paths.telemetry / "ashley_e1_11111111-1111-1111-1111-111111111111.jsonl"
+    new = paths.telemetry / "ashley_e1_22222222-2222-2222-2222-222222222222.jsonl"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    previous = dict(_lineage(1, WALL), telemetry_session_id="game-old", probe_version="2.20.1")
+    line = json.dumps(previous).encode("utf-8") + b"\n"
+    old.write_bytes(line)
+    mono = {"ms": WALL}
+    bridge = _bridge(paths, mono)
+    bridge.spool.ingest(old.name, 0, 0, previous, raw_len=len(line))  # what a previous helper run left in the spool
+    # the running game's file is the newest, but its first record has not come at start
+    new.write_bytes(b"")
+    os.utime(old, ns=(WALL * 1_000_000, WALL * 1_000_000))
+    os.utime(new, ns=((WALL + 1) * 1_000_000, (WALL + 1) * 1_000_000))
+    bridge.tick(WALL)
+    assert bridge._refs_session is None and bridge._refs_epoch == 0  # the previous session is not adopted at start
+    record = dict(_lineage(1, WALL + 1000), telemetry_session_id="game-new",
+                  probe_version=schema.PROBE_VERSION)
+    with new.open("ab") as handle:
+        handle.write(json.dumps(record).encode("utf-8") + b"\n")
+    mono["ms"] = WALL + 2000
+    bridge.tick(WALL + 2000)
+    assert "is installed" not in capsys.readouterr().out
+    assert bridge._refs_epoch == 0
+    assert bridge._refs_session == "game-new"
+
+
 # F3: a body row from before this run, older than two minutes, is no view of now; a fresh one is.
 def test_a_restored_body_row_older_than_two_minutes_is_no_view_of_now(paths, tmp_path, monkeypatch):
     _data(paths, tmp_path, monkeypatch)

@@ -234,13 +234,16 @@ class Bridge:
         self._maybe_rebuild_procedures(now)
         self.cursor.read_new()
         latest = self.spool.latest_record()
-        probe = self.spool.session_probe()  # SEAM3-21: the version of the current telemetry session, from its first row
+        # SEAM3-21: the probe check and the refs follow the newest telemetry file (the running game's), never an older
+        # session that is merely the last row in the spool.
+        newest = self.cursor.newest
+        probe = self.spool.session_probe(newest) if newest is not None else None
         if isinstance(probe, str) and probe != schema.PROBE_VERSION and probe != self._probe_warned:
             print("probe %s is installed; this helper expects %s" % (probe, schema.PROBE_VERSION))
             self._probe_warned = probe
         observed = self.monitor.observe(now, self._mono(), self._process(), latest)
         self._state = observed["state"]
-        self._follow_refs(latest)
+        self._follow_refs(self.spool.latest_record(newest) if newest is not None else None)
         self._telemetry_only = observed["telemetry_only"]
         self._advance_thalamus(now)
         # E1b: a flipped game-only switch goes out at once, not with the next minute's heartbeat.
@@ -635,7 +638,7 @@ class Bridge:
     def _send_look(self, wall_ms):
         """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;
         the changes waiting go with it. With no body row yet nothing is sent, and the log says so."""
-        if _probe_ok(self.spool.session_probe(), _NEAR_PROBE):
+        if _probe_ok(self.spool.session_probe(self.cursor.newest), _NEAR_PROBE):
             # W12 (C1): a look asks for the near part of the menu now (her room and what is near her, read at the write).
             try:
                 commands.publish("menu_near", {}, "helper", paths=self.paths)

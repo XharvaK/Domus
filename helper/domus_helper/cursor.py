@@ -38,13 +38,18 @@ class TelemetryCursor:
     def __init__(self, spool, paths):
         self.spool = spool
         self.paths = paths
+        # The newest telemetry file: its records are the running game's. The bridge follows this file's session, so a
+        # previous session's rows (the last ones in the spool) are not taken for it at start.
+        self.newest = None
 
     def read_new(self):
         """The new rows of the newest session, at most LINES_PER_TICK lines a tick; the batch is one commit (W12 F2)."""
         try:
             session = latest_session(paths=self.paths)
         except FileNotFoundError:
+            self.newest = None
             return []
+        self.newest = session.name
         found = []
         entries = []
         key = session.name
