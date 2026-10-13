@@ -2375,6 +2375,16 @@ def _menu_test(job):
 
 
 
+def _menu_zone_id(zone):
+    """2.41.2: the id a menu part says it was built in. The zone is an object, so its id is read the way other ids
+    are (_plain); an int (the tests' zone) is passed as it is; anything else is left out, as zone_text does today."""
+    if type(zone) is int:
+        return zone
+    found = tuned._plain(zone, "id", True)
+    return found if type(found) is int else None
+
+
+
 def _menu_tick(row):
     """8f: one small step of the menu each sampling tick. A finished build is written as an act_menu row when it
     differs from the last one; a new build starts when there is none, her room changed, or REBUILD_S passed.
@@ -2422,7 +2432,7 @@ def _menu_tick(row):
             # 2.35.0 (D3): the spots of the build that finished are the ones an act may name (the newest build).
             _E2.publish_spots(build_zone, build.spots)
             _E2.publish_variants(build_zone, build.variants)
-            payload = build.payload(_MENU_REV + 1, _MENU_ROOM, zone_id=build_zone)
+            payload = build.payload(_MENU_REV + 1, _MENU_ROOM, zone_id=_menu_zone_id(build_zone))
             _MENU_LAST_BUILD = (build_zone, build)
             # 2.37.0 (W10 P2): the first build in a zone is written whole even when it matches the last menu.
             if _MENU_FIRST or not act_menu.same_menu(payload, _MENU_LAST):
@@ -2460,7 +2470,8 @@ def _menu_near_part(build, zone):
     helper drops the old near set when nothing is near. R2: it carries the zone id."""
     if build.failed or zone != _current_zone():
         return
-    payload = build.payload(_MENU_REV + 1, _MENU_BODY[1], near=True, refresh=_near_refresh, zone_id=zone)
+    payload = build.payload(_MENU_REV + 1, _MENU_BODY[1], near=True, refresh=_near_refresh,
+                            zone_id=_menu_zone_id(zone))
     _E2.publish_variants(zone, build.variants)
     for part in act_menu.parts(payload):
         _E2._event("act_menu", part)
@@ -2523,7 +2534,7 @@ def _menu_partial_part(build):
     far, not only the near part). It has the menu_rev the whole menu will have.
     R1 (partial): marked "partial": true, so the helper shows it as the base of the next near part until the final
     whole arrives. R2: it carries the zone id."""
-    payload = build.payload(_MENU_REV + 1, _MENU_ROOM, zone_id=_MENU_ZONE)
+    payload = build.payload(_MENU_REV + 1, _MENU_ROOM, zone_id=_menu_zone_id(_MENU_ZONE))
     if not payload["objects"]:
         return  # no near object: an empty part would only stand in for the menu; the whole menu follows
     payload["partial"] = True

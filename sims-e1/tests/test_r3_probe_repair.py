@@ -362,6 +362,15 @@ class ZoneAndRoomMenuTests(unittest.TestCase):
             self.assertEqual(menu["zone_id"], "123")
             self.assertNotIn("partial", menu)
 
+    def test_a_zone_object_gives_its_id_to_the_whole_menu_and_the_near_part(self):
+        """R2 (2.41.2): the live zone is an object; its id is read the way other ids are read (_plain), so both parts
+        written by the build carry it."""
+        self.zone["current"] = types.SimpleNamespace(id=4567)
+        self.build_at(100.0)
+        menus = self.menus()
+        self.assertEqual([(menu.get("near"), menu["zone_id"]) for menu in menus],
+                         [(True, "4567"), (None, "4567")])
+
     def test_an_empty_near_part_is_written_when_nothing_is_near(self):
         """PROBE3-16: nothing near her (the one object is 30 m away): an empty near part is written."""
         self.things = [acts._Thing(12, 30.0, [acts.ReadBook])]
