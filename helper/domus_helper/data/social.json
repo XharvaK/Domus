@@ -5,6 +5,8 @@
     "path": "src/main/sentient-sims/descriptions/interactionDescriptions.ts",
     "commit": "c00cc332aa1e097f11544102c46a455cf794c8f9",
     "license": "MIT",
+    "author": "Gus Puffy",
+    "licenseFrom": "package.json; LICENSE is the Electron React Boilerplate MIT text",
     "fetched": "2026-10-07"
   },
   "entries": {

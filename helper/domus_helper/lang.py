@@ -2,9 +2,12 @@
 
 Domus already sees the same tuning names: the portrait's addressed list (domus_helper/thalamus/observation.py: {"by": actor_id, "interaction": _affordance_name(text)}), and her own running/queued interactions in the same portrait. This lane adds a sentence beside those names when the dictionary has one.
 
-The phrase data is Sentient Sims' (MIT, guspuffygit/sentient-sims-app). It ships with the helper in
-domus_helper/data/social.json beside its license (data/SENTIENT_SIMS_LICENSE); attribution also travels
-inside the data file. A re-import into the data dir (lang/social.json) takes precedence over the bundled copy.
+The phrase data is Sentient Sims' (MIT, guspuffygit/sentient-sims-app, by Gus Puffy). It ships with the
+helper in domus_helper/data/social.json beside its license (data/SENTIENT_SIMS_LICENSE); attribution also
+travels inside the data file. That license file is upstream's LICENSE as found: the MIT text the app kept
+from Electron React Boilerplate, whose copyright line it still carries. The grant for Gus Puffy's own work is
+the app's package.json ("license": "MIT"), so the data's source names both. Nothing comes from the older
+in-game script repo (guspuffygit/sentient-sims), which is GPL-3.0. A re-import into the data dir (lang/social.json) takes precedence over the bundled copy.
 """
 import argparse
 import json
@@ -217,7 +220,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.cmd == "import":
         source = {"repo": args.repo, "path": args.path, "commit": args.commit,
-                  "license": "MIT", "fetched": date.today().isoformat()}
+                  "license": "MIT", "author": "Gus Puffy",
+                  "licenseFrom": "package.json; LICENSE is the Electron React Boilerplate MIT text",
+                  "fetched": date.today().isoformat()}
         print(json.dumps(import_descriptions(args.ts_path, _social_path(), source)))
         return 0
     entry = phrases().entries.get(str(args.tuning_name).lower())

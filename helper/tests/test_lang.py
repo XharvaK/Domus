@@ -227,6 +227,7 @@ def test_the_bundled_phrases_ship_with_their_license():
     bundled = lang._BUNDLED
     data = json.loads(bundled.read_text(encoding="utf-8"))
     assert data["source"]["license"] == "MIT" and len(data["entries"]) > 1000
+    assert data["source"]["author"] == "Gus Puffy" and "package.json" in data["source"]["licenseFrom"]
     assert "MIT" in (bundled.parent / "SENTIENT_SIMS_LICENSE").read_text(encoding="utf-8")
 
 
