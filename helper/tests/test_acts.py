@@ -511,3 +511,25 @@ def test_an_answer_that_is_not_well_formed_is_rejected_without_its_text(tmp_path
     assert published == []
     sent = json.dumps(client.bodies)
     assert "ANSWER_INVALID" in sent and "secret words" not in sent
+
+
+def test_her_queue_never_offers_to_stop_standing_still():
+    # Live 2026-10-26 (session 033ef841): the first option was "Cancel (queued): stand Passive" and
+    # "Stop: sim stand"; she chose them four times, and the probe answered NO_INTERACTION and GAME_REFUSED.
+    # Standing still is posture, not an act (the portrait already leaves it out), so it is not hers to stop.
+    row = {"interactions": {"observed": [
+        {"interaction_id": "1", "affordance_text": "<class 'sims4.tuning.instances.sim-stand'>",
+         "source_raw": "InteractionSource.SCRIPT", "membership": "RUNNING"},
+        {"interaction_id": "2", "affordance_text": "<class 'sims4.tuning.instances.stand_Passive'>",
+         "source_raw": "InteractionSource.AUTONOMY", "membership": "QUEUED"}]}}
+    assert queue_options(row) == []
+    row["interactions"]["observed"].append(
+        {"interaction_id": "3", "affordance_text": "<class 'sims4.tuning.instances.bookshelf_ReadBook'>",
+         "source_raw": "InteractionSource.PIE_MENU", "membership": "RUNNING"})
+    assert [a["text"] for a in queue_options(row)[0]["acts"]] == ["Stop: bookshelf Read Book"]
+
+
+def test_the_queue_and_the_portrait_agree_on_what_is_idle():
+    from domus_helper.acts import IDLE_TUNINGS
+    from domus_helper.thalamus import observation
+    assert set(IDLE_TUNINGS) == set(observation._IDLE_NAMES)

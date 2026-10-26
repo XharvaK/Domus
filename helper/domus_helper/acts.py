@@ -329,6 +329,9 @@ QUEUE_SHOWN = 6
 # Posture plumbing is not something she chose or the client shows to stop.
 _NOT_HERS_TO_STOP = ("InteractionSource.POSTURE_GRAPH", "InteractionSource.BODY_CANCEL_AOP")
 _CLASS_REPR = re.compile(r"^<class '([^']+)'>$")
+# Live 2026-10-26: standing still is posture, not an act; the game refuses to stop it (NO_INTERACTION,
+# GAME_REFUSED). Same names the portrait leaves out of running/queued (thalamus.observation._IDLE_NAMES).
+IDLE_TUNINGS = ("sim-stand", "stand_Passive")
 
 
 def queue_options(row, refs=None, act_name=None):
@@ -348,6 +351,8 @@ def queue_options(row, refs=None, act_name=None):
         text = str(entry.get("affordance_text") or "")
         match = _CLASS_REPR.match(text)
         tuning = match.group(1).rsplit(".", 1)[-1] if match else text
+        if tuning in IDLE_TUNINGS:
+            continue
         name = (act_name or humanize)(tuning)
         acts.append({"ref": refs.ref(("queue", iid)), "guid64": iid,
                      "text": ("Cancel (queued): %s" if membership == "QUEUED" else "Stop: %s") % name})
