@@ -21,7 +21,7 @@ def test_atomic_envelope(paths, monkeypatch):
         assert len(raw) <= 4096
         row = json.loads(raw.decode("utf-8"))
         assert set(row) == cmdbox.KEYS
-        assert row["expires_at_ms"] - row["issued_at_ms"] == 30000
+        assert row["expires_at_ms"] - row["issued_at_ms"] == 15000
         assert cmdbox.parse(raw, row["issued_at_ms"], ())[1] is None
         published.append(row)
         original(source, target)
@@ -31,6 +31,20 @@ def test_atomic_envelope(paths, monkeypatch):
     assert reply.id == published[0]["id"]
     assert len(list(paths.inbox.glob("*.json"))) == 1
     assert not list(paths.inbox.glob("*.tmp"))
+
+
+def test_send_life_matches_the_wait_and_publish_keeps_thirty_seconds(paths):
+    with replier(paths):
+        commands.send("status", {}, "helper", timeout_s=5)
+    sent = json.loads(next(paths.inbox.glob("*.json")).read_bytes())
+    assert sent["expires_at_ms"] - sent["issued_at_ms"] == 5000
+    for path in paths.inbox.glob("*.json"):
+        path.unlink()
+    commands.publish("status", {}, "helper", paths=paths)
+    published = json.loads(next(paths.inbox.glob("*.json")).read_bytes())
+    assert published["expires_at_ms"] - published["issued_at_ms"] == 30_000
+    with pytest.raises(ValueError):
+        commands.envelope("status", {}, "helper", ttl_ms=61_000)
 
 
 def test_reply_id_match(paths):
@@ -73,7 +87,7 @@ def test_invalid_arguments(paths, command, args):
     assert not list(paths.inbox.iterdir())
 
 
-@pytest.mark.parametrize("module", ["cmdbox", "schema"])
+@pytest.mark.parametrize("module", ["cmdbox", "schema", "e2_cards", "e2_trial"])
 def test_ast_drift(module):
     root = Path(__file__).resolve().parents[2]
     source = root / "sims-e1" / "src" / "ashley_e1" / (module + ".py")

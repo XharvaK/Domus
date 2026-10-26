@@ -125,21 +125,29 @@ def _mark_truncated(row):
 
 
 def apply_size_budget(row):
-    """Trim a presence_snapshot in place-order until it fits 8 KiB.
+    """Trim a presence_snapshot until it fits the record cap.
 
-    Drop order: social, then presence beyond 4, then signals beyond 8.
-    When the record still exceeds the cap, game_text is cleared signal by
-    signal (moodlets keep their tuning ids). Sets the existing truncation
-    flags and returns the row.
+    DS3 drop order: signals beyond 8 (hidden and light ones sort last), then
+    presence beyond 4 (farthest sort last), then game_text, and social last:
+    someone addressing her is the most important fact in the row. Sets the
+    existing truncation flags and returns the row.
     """
     from . import schema
     if row.get("event_kind") != "presence_snapshot":
         return row
     if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
         return row
-    if row.get("social"):
-        row["social"] = []
+    if len(row.get("sim_signals", ())) > 8:
+        row["sim_signals"] = list(row["sim_signals"][:8])
         _mark_truncated(row)
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+    objects = row.get("objects")
+    if isinstance(objects, dict) and (objects.get("changed") or objects.get("created")
+                                      or objects.get("destroyed")):
+        # S5: object events go before company; a truncated list says so.
+        row["objects"] = dict(objects, changed=[], created=objects["created"][:2],
+                              destroyed=objects["destroyed"][:2], truncated=True)
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
     if len(row.get("presence", ())) > 4:
@@ -147,17 +155,79 @@ def apply_size_budget(row):
         _mark_truncated(row)
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
-    if len(row.get("sim_signals", ())) > 8:
-        row["sim_signals"] = list(row["sim_signals"][:8])
-        _mark_truncated(row)
+    # S5: relationship detail of the farthest Sims next: labels go, two tracks stay.
+    # 2.15.0: so do the traits and careers she knows and her sentiments (flags stay).
+    for item in reversed(row.get("presence", ())):
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
+        relationship = item.get("relationship") if isinstance(item, dict) else None
+        if not isinstance(relationship, dict):
+            continue
+        knows = relationship.get("knows")
+        if (relationship.get("labels") or len(relationship.get("tracks") or ()) > 2 or
+                relationship.get("sentiments") or
+                (isinstance(knows, dict) and (knows.get("traits") or knows.get("careers")))):
+            trimmed = dict(relationship, labels=[],
+                           tracks=list(relationship.get("tracks") or ())[:2])
+            if "sentiments" in relationship:
+                trimmed["sentiments"] = []
+            if isinstance(knows, dict):
+                trimmed["knows"] = dict(knows, traits=[],
+                                        careers=None if knows.get("careers") is None else [])
+            item["relationship"] = trimmed
+            _mark_truncated(row)
+    # 2.15.2: the situations of other Sims, farthest first, down to the first one each
+    # (her own stay whole).
+    for item in reversed(row.get("presence", ())):
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+        if isinstance(item, dict) and not item.get("is_body") and \
+                len(item.get("situations") or ()) > 1:
+            item["situations"] = item["situations"][:1]
+            _mark_truncated(row)
+    # 2.15.0: her own traits and skills, the first four of each (personality and
+    # highest skills sort first).
+    own = row.get("self")
+    if isinstance(own, dict) and _encoded_bytes(row) > schema.MAX_SERIALIZED_RECORD_BYTES:
+        row["self"] = dict(own, traits=None if own.get("traits") is None else own["traits"][:4],
+                           skills=None if own.get("skills") is None else own["skills"][:4])
+        _mark_truncated(row)
     for signal in row.get("sim_signals", ()):
         if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
             return row
         if isinstance(signal, dict) and signal.get("game_text") is not None:
             signal["game_text"] = None
             _mark_truncated(row)
+    # 2.15.2: other Sims' situations go before someone addressing her does.
+    for item in reversed(row.get("presence", ())):
+        if _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+            return row
+        if isinstance(item, dict) and not item.get("is_body") and item.get("situations"):
+            item["situations"] = []
+            _mark_truncated(row)
+    # 2.15.2: then the pop-ups, down to the newest two open and two closed (flagged).
+    dialogs = row.get("dialogs")
+    if isinstance(dialogs, dict) and _encoded_bytes(row) > schema.MAX_SERIALIZED_RECORD_BYTES \
+            and (len(dialogs.get("open") or ()) > 2 or len(dialogs.get("closed") or ()) > 2):
+        row["dialogs"] = dict(dialogs, open=list(dialogs.get("open") or ())[-2:],
+                              closed=list(dialogs.get("closed") or ())[-2:], truncated=True)
+    # 2.18.0: picker rows next: the older open dialog's rows first, then the newest one's
+    # down to 10, which is still enough to answer from (enabled rows sort first).
+    dialogs = row.get("dialogs")
+    if isinstance(dialogs, dict):
+        opened = list(dialogs.get("open") or ())
+        last = len(opened) - 1
+        for index, keep in [(i, 0) for i in range(last)] + [(last, 20), (last, 10), (last, 5), (last, 0)]:
+            if index < 0 or _encoded_bytes(row) <= schema.MAX_SERIALIZED_RECORD_BYTES:
+                break
+            entry = opened[index]
+            if isinstance(entry, dict) and len(entry.get("rows") or ()) > keep:
+                opened[index] = dict(entry, rows=list(entry["rows"])[:keep])
+                row["dialogs"] = dict(dialogs, open=opened, truncated=True)
+                dialogs = row["dialogs"]
+    if _encoded_bytes(row) > schema.MAX_SERIALIZED_RECORD_BYTES and row.get("social"):
+        row["social"] = []
+        _mark_truncated(row)
     return row
 
 

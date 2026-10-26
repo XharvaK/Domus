@@ -56,7 +56,7 @@ class FakeBuffs:
 class FakeCommodity:
     def __init__(self, guid, value, updated, minimum=0, maximum=100):
         self.guid64 = guid
-        self._modified_value = value
+        self._value = value
         self._last_update = updated
         self.min_value = minimum
         self.max_value = maximum
@@ -74,12 +74,54 @@ class FakeTracker:
         return list(self._commodities)
 
 
+class FakeComponent:
+    def __init__(self, tracker, statistic_tracker=None):
+        self._tracker = tracker
+        # D42: what the probe reads, the component's own fields.
+        self._commodity_tracker = tracker
+        self._statistic_tracker = statistic_tracker
+
+    def get_commodity_tracker(self, create=True):
+        if create:
+            raise AssertionError("get_commodity_tracker create")
+        return self._tracker
+
+
 class FakeSimInfo:
     def __init__(self, tracker=None, buffs=None):
-        self.commodity_tracker = tracker
+        self._component = None if tracker is None else FakeComponent(tracker)
         self.Buffs = buffs or FakeBuffs()
         for name in FORBIDDEN:
             setattr(self, name, hostile("sim_info.%s" % name))
+
+    def get_component(self, kind):
+        del kind
+        return self._component
+
+    @property
+    def commodity_tracker(self):
+        raise AssertionError("forbidden commodity_tracker")
+
+
+class CreatingTrackers(object):
+    """D42: the game's tracker properties add a statistic component and create trackers;
+    a probe read through them fails the test."""
+
+    @property
+    def commodity_tracker(self):
+        raise AssertionError("commodity_tracker adds a component (D42)")
+
+    @property
+    def statistic_tracker(self):
+        raise AssertionError("statistic_tracker adds a component (D42)")
+
+
+def stat_component_of(statistic=None, commodity=None):
+    component = FakeComponent(None if commodity is None else
+                              type("T", (object,), {"_statistics": commodity})(),
+                              None if statistic is None else
+                              type("T", (object,), {"_statistics": statistic})())
+    return lambda kind: component
 
 
 def make_row(context, sim_info):
@@ -154,13 +196,15 @@ class SensesTests(unittest.TestCase):
         entry.default_value = 42
         tracker = FakeTracker([entry])
         row = make_row({"ticks": 10}, FakeSimInfo(tracker))
-        self.assertEqual(row["motives"][0]["value"], 42)
+        self.assertEqual(row["motives"], [])
 
     def test_moodlets_capped_weighted_and_row_failures_skipped(self):
         entries = [FakeBuff(1000 + i, "Happy", i) for i in range(17)]
         row = make_row({"ticks": 10}, FakeSimInfo(FakeTracker(), FakeBuffs(entries)))
         self.assertEqual(len(row["sim_signals"]), 16)
-        self.assertEqual(row["sim_signals"][0]["magnitude"], "w:0")
+        # DS3: heavier moodlets first; the lightest (w:0) is the one cut.
+        self.assertEqual(row["sim_signals"][0]["magnitude"], "w:16")
+        self.assertNotIn("w:0", [signal["magnitude"] for signal in row["sim_signals"]])
         self.assertIsNone(row["sim_signals"][0]["game_text"])
 
         class Broken(object):
@@ -179,7 +223,9 @@ class SensesTests(unittest.TestCase):
     def test_mood_present_and_none(self):
         row = make_row({"ticks": 10},
                        FakeSimInfo(FakeTracker(), FakeBuffs(mood=FakeBuff(777), intensity=4)))
-        self.assertEqual(row["mood"], {"type": "777", "intensity": 4})
+        self.assertEqual(row["mood"]["type"], "777")
+        self.assertEqual(row["mood"]["intensity"], 4)
+        self.assertIn("name", row["mood"])
         row = make_row({"ticks": 10}, FakeSimInfo(FakeTracker(), FakeBuffs()))
         self.assertIsNone(row["mood"])
 

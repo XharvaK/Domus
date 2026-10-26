@@ -95,9 +95,16 @@ def install_stubs():
     date.TimeSpan = lambda value: value
     sys.modules["date_and_time"] = date
     objects = types.ModuleType("objects")
+    objects.__path__ = []
     objects.ALL_HIDDEN_REASONS = object()
     objects.HiddenReasonFlag = types.SimpleNamespace(ALL_HIDDEN_FLAGS="ALL")
     sys.modules["objects"] = objects
+    components = types.ModuleType("objects.components")
+    components.__path__ = []
+    component_types = types.ModuleType("objects.components.types")
+    component_types.STATISTIC_COMPONENT = "STATISTIC_COMPONENT"
+    sys.modules["objects.components"] = components
+    sys.modules["objects.components.types"] = component_types
     services = types.ModuleType("services")
     services.sim_info_manager = lambda: types.SimpleNamespace(get_all=lambda: [])
     services.client_manager = lambda: types.SimpleNamespace()
@@ -144,9 +151,10 @@ def install_stubs():
     sys.modules["interactions"] = interactions
     context = types.ModuleType("interactions.context")
     class InteractionContext:
-        def __init__(self, sim, source, priority, insert_strategy=None):
+        def __init__(self, sim, source, priority, insert_strategy=None, pick=None):
             self.sim, self.source, self.priority = sim, source, priority
             self.insert_strategy = insert_strategy
+            self.pick = pick  # 2.35.0 (D3): the game's pick, keyword only, as InteractionContext takes it
 
     context.InteractionContext = InteractionContext
     context.SOURCE_SCRIPT = "SCRIPT"
@@ -154,8 +162,11 @@ def install_stubs():
     context.QueueInsertStrategy = types.SimpleNamespace(NEXT="NEXT")
     sys.modules["interactions.context"] = context
     priority = types.ModuleType("interactions.priority")
-    priority.Priority = types.SimpleNamespace(High="High")
+    priority.Priority = types.SimpleNamespace(High="High", Critical="Critical")
     sys.modules["interactions.priority"] = priority
+    finisher = types.ModuleType("interactions.interaction_finisher")
+    finisher.FinishingType = types.SimpleNamespace(USER_CANCEL="FinishingType.USER_CANCEL")
+    sys.modules["interactions.interaction_finisher"] = finisher
     return calls
 
 
@@ -413,13 +424,16 @@ class BindingTests(unittest.TestCase):
         self.assertFalse(probe._cmd_arm("LAB_E1_FORK"))
         self.assertEqual(probe.get_status()["armed_name"], "LAB_E1")
 
-    def test_dead_alarm_handle_stops_sampling_for_explicit_rearm(self):
+    def test_a_stray_alarm_retires_itself_and_sampling_goes_on(self):
+        """D43 (live 2.15.0): real-time alarms outlive a lot change; the old lot's
+        timer used to stop the sampling that had just resumed."""
         _, probe, calls = load_probe()
         self.assertTrue(probe._cmd_arm("LAB_E1"))
         self.assertTrue(probe._cmd_start())
-        probe._poll_tick(FakeHandle())
-        self.assertEqual(probe.get_status()["state"], "ARMED")
-        self.assertEqual(len(calls["cancelled"]), 1)
+        stray = FakeHandle()
+        probe._poll_tick(stray)
+        self.assertEqual(probe.get_status()["state"], "SAMPLING")
+        self.assertEqual(calls["cancelled"], [stray])
 
     def test_first_successful_poll_populates_snapshot_before_session_open(self):
         _, probe, calls = load_probe()

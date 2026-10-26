@@ -544,9 +544,13 @@ class _Interaction:
         self.id = iid
         self.finishing_type = "FinishingType.NATURAL"
         self.callbacks = []
+        self.cancels = []
 
     def register_on_finishing_callback(self, callback):
         self.callbacks.append(callback)
+
+    def cancel(self, finishing_type, cancel_reason_msg=None):
+        self.cancels.append((finishing_type, cancel_reason_msg))
 
 
 class _EnqueueResult(tuple):
@@ -953,12 +957,13 @@ class E2GuardTests(unittest.TestCase):
     def test_actuator_calls_only_in_actuator(self):
         for call in ("sim.push_super_affordance(a, b, c)", "clock.push_speed(1)",
                      "clock.remove_request(r)", "i.register_on_finishing_callback(f)",
-                     "p.add_manual_save_complete_callback(f)"):
+                     "p.add_manual_save_complete_callback(f)", "i.cancel(t, cancel_reason_msg=m)",
+                     "choice.test_and_execute(c)"):
             with self.subTest(call=call):
                 self.assertTrue(guards.scan_text(call, "probe.py"))
                 self.assertTrue(guards.scan_text(call, "e2_control.py"))
                 self.assertEqual(guards.scan_text(call, "e2_actuator.py"), [])
-        for call in ("aop.test_and_execute(c)", "sim.reset()", "clock.set_clock_speed(0)"):
+        for call in ("sim.reset()", "clock.set_clock_speed(0)"):
             self.assertTrue(guards.scan_text(call, "e2_actuator.py"))
 
     def test_pure_modules_reject_game_imports(self):

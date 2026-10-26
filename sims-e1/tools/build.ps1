@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.3.1",
+    [string]$Version = "2.41.2",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$ImplementedCommit = "WORKTREE_UNCOMMITTED",
     [string]$BaselineCommit = ""
@@ -10,7 +10,7 @@ $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $sourceRoot = Join-Path $repo "sims-e1\src"
 $buildRoot = Join-Path $repo "sims-e1\build"
 $stageRoot = Join-Path $buildRoot (".stage_" + $Version)
-$artifact = Join-Path $buildRoot ("ashley_e1_" + $Version + ".ts4script")
+$artifact = Join-Path $buildRoot ("Domus_" + $Version + ".ts4script")
 $sidecar = $artifact + ".sha256"
 $manifestPath = Join-Path $buildRoot "manifest.json"
 
@@ -39,7 +39,8 @@ py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[3], doraise=Tr
                    invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
 '@
 $moduleNames = @("__init__", "probe", "observers", "snapshot", "schema", "writer",
-                 "e2_admission", "e2_lineage", "e2_registry", "e2_actuator", "e2_control", "cmdbox")
+                 "e2_admission", "e2_lineage", "e2_registry", "e2_cards", "e2_actuator", "e2_control", "cmdbox", "e2_trial",
+                 "atlas", "tuned", "preflight", "food", "situation", "act_menu", "reach", "home")
 foreach ($moduleName in $moduleNames) {
     $source = Join-Path $sourceRoot ("ashley_e1\" + $moduleName + ".py")
     $destination = Join-Path $stageRoot ("ashley_e1\" + $moduleName + ".pyc")

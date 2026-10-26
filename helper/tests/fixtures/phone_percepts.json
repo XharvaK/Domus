@@ -1,0 +1,16 @@
+{
+  "notice": {
+    "row": {"event_kind": "phone", "telemetry_session_id": "test-session", "written_sequence": 1,
+            "wall_timestamp_ms": 5000, "e2": {"kind": "notice", "from_sim_id": null, "notifies": "4242"}},
+    "act_words": {"4242": "Test Phone Act"},
+    "people_names": {},
+    "wire": {"what": "notice", "act": "Test Phone Act"}
+  },
+  "call": {
+    "row": {"event_kind": "phone", "telemetry_session_id": "test-session", "written_sequence": 2,
+            "wall_timestamp_ms": 5000, "e2": {"kind": "call", "from_sim_id": "501", "notifies": null}},
+    "act_words": {},
+    "people_names": {"501": "Test Person"},
+    "wire": {"what": "call", "from": "Test Person"}
+  }
+}

@@ -12,12 +12,35 @@ from . import schema
 
 QUEUE_CAPACITY = 1024
 MAX_ACTIVE_FILE_BYTES = 8 * 1024 * 1024
-MAX_ROTATED_SIBLINGS_PER_SESSION = 4
-MAX_TELEMETRY_DIR_BYTES = 200 * 1024 * 1024
+# D38 (2026-10-04): 4 rotations x 8 MiB stopped a session after about 2.6 h of play;
+# the directory cap is the real ceiling.
+# D48 (2026-10-05, the User's sizing): rows run about 36 MB per hour of play, so the
+# folder holds 1 GiB and one session may reach it (127 rotations + the active file).
+# The helper archives finished sessions daily and deletes archives after 7 days.
+MAX_ROTATED_SIBLINGS_PER_SESSION = 127
+MAX_TELEMETRY_DIR_BYTES = 1024 * 1024 * 1024
 MAX_SAMPLING_FLUSH_INTERVAL_SECONDS = 5.0
 LEDGER_FILENAME = "ashley_e2_lineage_ledger.jsonl"
 MAX_LEDGER_BYTES = 2 * 1024 * 1024
 LEDGER_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY")
+
+
+# 2.39.0 (W12 B9): the detail of a drop that has no row error to name (queue and sampler drops).
+_REASON_DETAIL = {"QUEUE_SATURATION": "the writer queue was full", "SAMPLER_OVERRUN": "the sampler overran its budget",
+                  "SERIALIZE_FAILURE": "a row failed its own check"}
+
+
+def _queue_detail(row):
+    """2.39.0 (W12 B9): the detail of a queue drop: the row kind that could not be queued."""
+    kind = row.get("event_kind") if isinstance(row, dict) else None
+    return ("queue full, %s row not written" % (kind,))[:120]
+
+
+def _drop_detail(row, error):
+    """2.32.0 (PR18): the row kind and the failing field (the validator's message names it), for a drop summary."""
+    kind = row.get("event_kind") if isinstance(row, dict) else None
+    text = str(error) or type(error).__name__
+    return ("%s: %s" % (kind, text))[:120]
 
 
 def derive_telemetry_root(module_path):
@@ -132,6 +155,7 @@ class TelemetryWriter:
         self._close_written = False
         self._pre_disarm_requested = False
         self._pending_drop_reason = None
+        self._pending_drop_detail = None  # 2.32.0 (PR18): the row kind and failing field of the latest serialize drop
         self._shutdown_deadline_drops = 0
         self._shutdown_flush_attempted = False
         self._last_drop_summary = 0.0
@@ -252,6 +276,8 @@ class TelemetryWriter:
     def note_drop(self, reason):
         if reason in ("QUEUE_SATURATION", "SAMPLER_OVERRUN", "SERIALIZE_FAILURE"):
             self._pending_drop_reason = reason
+            # 2.39.0 (W12 B9): every counted drop names itself; a summary never goes out with no detail.
+            self._pending_drop_detail = _REASON_DETAIL[reason]
 
     def queued_event_kinds(self):
         with self._queue.mutex:
@@ -272,9 +298,10 @@ class TelemetryWriter:
             return False
         try:
             schema.validate_record(row)
-        except (schema.SchemaError, TypeError, ValueError):
+        except (schema.SchemaError, TypeError, ValueError) as error:
             self.counters["dropped_serialize"] += 1
             self._pending_drop_reason = "SERIALIZE_FAILURE"
+            self._pending_drop_detail = _drop_detail(row, error)
             return False
         try:
             self._queue.put_nowait(row)
@@ -284,6 +311,7 @@ class TelemetryWriter:
             if evicted is not None:
                 self.counters["dropped_queue"] += 1
                 self._pending_drop_reason = "QUEUE_SATURATION"
+                self._pending_drop_detail = _queue_detail(row)
                 try:
                     self._queue.put_nowait(row)
                     return True
@@ -291,6 +319,7 @@ class TelemetryWriter:
                     pass
             self.counters["dropped_queue"] += 1
             self._pending_drop_reason = "QUEUE_SATURATION"
+            self._pending_drop_detail = _queue_detail(row)
             self.capture_stopped = True
             self.failure_reason = "saturation_critical"
             return False
@@ -359,7 +388,9 @@ class TelemetryWriter:
         return self.state == "OK"
 
     def _flush_if_due(self):
-        if not self._sampling or not self._dirty:
+        # D43 (live 2.15.0): rows written while sampling was stopped (a guard, a
+        # checkpoint, command events) stayed in memory, and the file looked cut off.
+        if not self._dirty:
             return True
         if (time.perf_counter() - self._last_flush_monotonic >=
                 MAX_SAMPLING_FLUSH_INTERVAL_SECONDS):
@@ -444,9 +475,10 @@ class TelemetryWriter:
     def _serialize_or_account(self, row):
         try:
             return schema.serialize_record(row)
-        except (schema.SchemaError, TypeError, ValueError):
+        except (schema.SchemaError, TypeError, ValueError) as error:
             self.counters["dropped_serialize"] += 1
             self._pending_drop_reason = "SERIALIZE_FAILURE"
+            self._pending_drop_detail = _drop_detail(row, error)
             return None
 
     def _write_diagnostic(self, kind, reason):
@@ -565,11 +597,13 @@ class TelemetryWriter:
                 wall_timestamp_ms=int(now * 1000), monotonic_ns=time.perf_counter_ns(),
                 reason=self._pending_drop_reason, counters=dict(self.counters),
                 writer={"state": self.state, "rotation_index": self.rotation_index},
+                drop_detail=(self._pending_drop_detail or self._pending_drop_reason)[:120],
             )
             summary_written = self._write_direct(summary)
             if summary_written:
                 self._last_drop_summary = now
                 self._pending_drop_reason = None
+                self._pending_drop_detail = None
             elif self.state != "OK":
                 return False
         row = dict(row)
@@ -635,7 +669,7 @@ class TelemetryWriter:
                     if self._stop_event.is_set() and deadline is None:
                         self._begin_shutdown()
                         deadline = time.time() + 2.0
-                    elif self._sampling:
+                    else:
                         self._flush_if_due()
                     if self._stop_event.is_set():
                         if not self._queue.unfinished_tasks or time.time() >= deadline:
@@ -670,6 +704,43 @@ def read_command_file(path):
     """Bound the game-thread inbox read, including oversized-input detection."""
     with open(path, 'rb') as handle:
         return handle.read(4097)
+
+
+def append_atlas_line(path, payload):
+    """Append one atlas JSON line. File IO stays in this module."""
+    if type(payload) is not bytes:
+        raise TypeError("atlas line")
+    with open(path, "ab") as handle:
+        handle.write(payload)
+        if not payload.endswith(b"\n"):
+            handle.write(b"\n")
+
+
+def write_small_json(path, payload):
+    """D47: the remembered start (autosample.json), written atomically. True on success."""
+    try:
+        with open(path + ".tmp", "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        os.replace(path + ".tmp", path)
+    except (OSError, IOError, ValueError, TypeError):
+        return False
+    return True
+
+
+def read_small_json(path):
+    """The parsed JSON at path, or None when missing or unreadable."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, IOError, ValueError, TypeError):
+        return None
+
+
+def remove_file(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def write_command_reply(path, payload):

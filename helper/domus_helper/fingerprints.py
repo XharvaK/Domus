@@ -8,6 +8,7 @@ import io
 import os
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .paths import Paths
@@ -82,22 +83,96 @@ def _exe_version(exe_path):
         return None
 
 
-def _process():
+_HELD = None  # (pid, handle, started)
+
+
+def _kernel32():
+    import ctypes
+    return ctypes.windll.kernel32
+
+
+def _release():
+    global _HELD
+    held = _HELD
+    _HELD = None
+    if held is None:
+        return
+    try:
+        _kernel32().CloseHandle(held[1])
+    except (OSError, AttributeError, ValueError):
+        pass
+
+
+def _filetime_iso(creation):
+    filetime_int = (int(creation.dwHighDateTime) << 32) | int(creation.dwLowDateTime)
+    started = datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=filetime_int // 10)
+    return started.isoformat(timespec="seconds")
+
+
+def _tasklist_pid():
     try:
         result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq TS4_x64.exe", "/FO", "CSV", "/NH", "/V"],
-            capture_output=True, text=True, timeout=10, check=True)
+            ["tasklist", "/FI", "IMAGENAME eq TS4_x64.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=5, check=True)
     except (OSError, subprocess.SubprocessError):
         return None
     for row in csv.reader(io.StringIO(result.stdout)):
         if len(row) >= 2 and row[0].casefold() == "ts4_x64.exe":
             try:
-                pid = int(row[1])
+                return int(row[1])
             except (TypeError, ValueError):
                 continue
-            started = row[8].strip() if len(row) >= 9 and row[8].strip() else None
-            return pid, started
     return None
+
+
+def _process():
+    global _HELD
+    if _HELD is not None:
+        pid, handle, started = _HELD
+        try:
+            waited = _kernel32().WaitForSingleObject(handle, 0)
+        except (OSError, AttributeError, ValueError):
+            return pid, started
+        if waited == 258:
+            return pid, started
+        try:
+            _kernel32().CloseHandle(handle)
+        except (OSError, AttributeError, ValueError):
+            pass
+        _HELD = None
+    pid = _tasklist_pid()
+    if pid is None:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel = _kernel32()
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        handle = kernel.OpenProcess(0x00100000 | 0x1000, False, pid)
+    except (OSError, AttributeError, ValueError):
+        return pid, None
+    if not handle:
+        return pid, None
+    started = None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        creation = wintypes.FILETIME()
+        exit_time = wintypes.FILETIME()
+        kernel_time = wintypes.FILETIME()
+        user_time = wintypes.FILETIME()
+        kernel = _kernel32()
+        if kernel.GetProcessTimes(handle, ctypes.byref(creation), ctypes.byref(exit_time),
+                                   ctypes.byref(kernel_time), ctypes.byref(user_time)):
+            started = _filetime_iso(creation)
+    except (OSError, AttributeError, ValueError):
+        try:
+            _kernel32().CloseHandle(handle)
+        except (OSError, AttributeError, ValueError):
+            pass
+        return pid, None
+    _HELD = (pid, handle, started)
+    return pid, started
 
 
 def detected_build(*, paths=None, root=None):

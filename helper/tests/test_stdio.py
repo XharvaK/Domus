@@ -18,7 +18,11 @@ def test_sdk_stdio_registration():
                     await session.initialize()
                     listing = await session.list_tools()
                     assert {tool.name for tool in listing.tools} == {
-                        "status", "arm", "start", "stop", "disarm", "prepare", "sit", "sit_trial",
+                        "status", "arm", "start", "stop", "disarm", "prepare", "sit", "sit_trial", "trial",
                         "pause", "release", "verdicts", "telemetry", "lineage",
-                        "detected_build", "fingerprints"}
+                        "detected_build", "fingerprints",
+                        "atlas_dump", "atlas_progress", "atlas_import", "atlas_query", "cards",
+                        "tuned_scan", "food_options", "bridge_status", "thalamus_status",
+                        "calibrate", "calibration_report",
+                        "trials", "qualification", "crawl_plan"}
     anyio.run(exercise)

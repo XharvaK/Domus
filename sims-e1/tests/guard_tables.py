@@ -19,6 +19,7 @@ APPROVED_GAME_IMPORTS = {
     "date_and_time",
     "interactions",
     "objects",
+    "placement",
     "scheduling",
     "server",
     "services",
@@ -29,6 +30,7 @@ APPROVED_GAME_IMPORTS = {
 FORBIDDEN_CALL_NAMES = {
     "__import__",
     "add_buff",
+    "clear_decay_rate_modifiers",
     "add_selectable_sim_info",
     "advance_current_time",
     "cancel",

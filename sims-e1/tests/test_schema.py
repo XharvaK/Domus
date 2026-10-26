@@ -21,8 +21,8 @@ class SchemaContractTests(unittest.TestCase):
         return {key: value for key in schema.REQUIRED_IMPORT_KEYS}
 
     def test_closed_vocabularies_are_exact(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 4)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v4")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 21)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v21")
         self.assertEqual(
             set(schema.EVENT_KINDS),
             {
@@ -38,10 +38,19 @@ class SchemaContractTests(unittest.TestCase):
                 "load_disabled",
                 "cap_reached",
                 "writer_failed",
+                "act_event",
+                "act_menu",
+                # 2.40.0 (W13 P1): the discovery record, the lists and a phone event.
+                "discovery",
+                "lists",
+                "phone",
                 "experiment_event",
                 "speed_event",
                 "lineage_event",
                 "command_event",
+                # 2.40.0 (W13 P2, home): the things list (lists) and the catalogue record (catalog).
+                "lists",
+                "catalog",
             },
         )
         self.assertEqual(
@@ -189,8 +198,10 @@ class SchemaContractTests(unittest.TestCase):
             interactions={"observed": [], "queue_truncated": False,
                           "running_truncated": False, "observation_complete": True},
             motives=[{"id": "m", "value": 1, "band": None, "age_ticks": None}],
-            sim_signals=[{"kind": "MOODLET", "tuning_id": "t", "game_text": None,
-                          "magnitude": None, "consequences": "UNKNOWN", "native_override": None}],
+            sim_signals=[{"kind": "MOODLET", "tuning_id": "t", "tuning_name": None,
+                          "game_text": None, "magnitude": None, "consequences": "UNKNOWN",
+                          "native_override": None, "text_key": None, "mood_type": None,
+                          "visible": None, "reason_key": None, "minutes_left": None}],
         )
         schema.validate_record(row)
         row["sim_signals"][0]["kind"] = "NOT_CLOSED"

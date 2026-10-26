@@ -1,0 +1,318 @@
+"""Durable telemetry spool and observation outbox."""
+import json
+import sqlite3
+import time
+
+from .contract import validate_observation
+
+ROW_CAP = 200_000
+DROP_KINDS = frozenset({"dropped_summary"})
+# A9-2: one flush posts for at most this long; the rest of the due rows wait for the next tick, so the acts never wait behind them.
+FLUSH_BUDGET_S = 3.0
+# A9-4: a refusal for these reasons is retried with backoff (a clock that drifts, a key a newer helper sends), not final.
+RETRY_REFUSALS = frozenset({"clock_skew", "invalid_body"})
+# W12 (F2): the rows one tick reads and ingests at most; the rest wait for the next tick.
+ROWS_PER_TICK = 500
+
+
+class OutboxConflict(ValueError):
+    pass
+
+
+def _canonical(payload):
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+class Spool:
+    def __init__(self, path, *, row_cap=ROW_CAP):
+        self.row_cap = row_cap
+        # W12 (F3, F6): what the last flush did that a log should say: failed posts (by kind) and expired views.
+        self.last_failures = []
+        self.last_expired = 0
+        # HELPER3-10: the error names of the rows the last ingest passed over (a row the store cannot take never stops a read).
+        self.last_refused = []
+        self._con = sqlite3.connect(str(path))
+        self._con.row_factory = sqlite3.Row
+        version = self._con.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (0, 1, 2):
+            raise RuntimeError("unsupported spool user_version %s" % version)
+        if version == 0:
+            self._con.executescript("""
+                CREATE TABLE rows (
+                    session TEXT NOT NULL,
+                    segment INTEGER NOT NULL,
+                    offset INTEGER NOT NULL,
+                    written_sequence INTEGER,
+                    event_kind TEXT,
+                    wall_ms INTEGER,
+                    json TEXT NOT NULL,
+                    PRIMARY KEY (session, segment, offset)
+                );
+                CREATE TABLE gaps (
+                    id INTEGER PRIMARY KEY,
+                    session TEXT,
+                    kind TEXT NOT NULL CHECK (kind IN ('gap', 'cap', 'drop')),
+                    detail_json TEXT,
+                    at_ms INTEGER
+                );
+                CREATE TABLE cursors (
+                    session TEXT NOT NULL,
+                    segment INTEGER NOT NULL,
+                    offset INTEGER NOT NULL,
+                    PRIMARY KEY (session, segment)
+                );
+                CREATE TABLE outbox (
+                    observation_id TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (state IN ('pending', 'acked', 'conflict', 'expired', 'rejected')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_ms INTEGER NOT NULL,
+                    last_status TEXT,
+                    expires_at_ms INTEGER NOT NULL,
+                    created_ms INTEGER NOT NULL
+                );
+            """)
+            self._con.execute("PRAGMA user_version = 1")
+            self._con.commit()
+            version = 1
+        if version < 2:
+            self._con.execute(
+                "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+            self._con.execute("PRAGMA user_version = 2")
+            self._con.commit()
+
+    def close(self):
+        self._con.close()
+
+    def cursor_offset(self, session, segment):
+        row = self._con.execute(
+            "SELECT offset FROM cursors WHERE session=? AND segment=?",
+            (session, segment)).fetchone()
+        return int(row["offset"]) if row else 0
+
+    def _put_cursor(self, session, segment, offset):
+        self._con.execute(
+            """INSERT INTO cursors (session, segment, offset) VALUES (?, ?, ?)
+               ON CONFLICT(session, segment) DO UPDATE SET offset=excluded.offset""",
+            (session, segment, offset))
+
+    def note_cursor(self, session, segment, offset):
+        self._put_cursor(session, segment, offset)
+        self._con.commit()
+
+    def ingest(self, session, segment, offset, record, *, raw_len, at_ms=None):
+        at_ms = int(time.time() * 1000) if at_ms is None else at_ms
+        with self._con:
+            self._ingest_row(session, segment, offset, record, raw_len, at_ms)
+
+    def ingest_batch(self, session, entries, at_ms=None):
+        """W12 (F2): one tick's rows in one commit. Each entry is (segment, offset, record, raw_len); a record of None
+        is a line that is not a row, which only moves the cursor past it."""
+        at_ms = int(time.time() * 1000) if at_ms is None else at_ms
+        self.last_refused = []
+        with self._con:
+            for segment, offset, record, raw_len in entries:
+                if record is None:
+                    self._put_cursor(session, segment, offset + raw_len)
+                    continue
+                try:
+                    self._ingest_row(session, segment, offset, record, raw_len, at_ms)
+                except Exception as error:  # HELPER3-10: a row the store cannot take is passed over, and the read goes on
+                    self.last_refused.append(type(error).__name__)
+                    self._put_cursor(session, segment, offset + raw_len)
+
+    def _ingest_row(self, session, segment, offset, record, raw_len, at_ms):
+        seq = record.get("written_sequence") if isinstance(record, dict) else None
+        if type(seq) is not int:
+            seq = None
+        kind = record.get("event_kind") if isinstance(record, dict) else None
+        wall = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
+        if type(wall) is not int:
+            wall = None
+        previous = self._con.execute(
+            "SELECT written_sequence FROM rows WHERE session=? AND written_sequence IS NOT NULL "
+            "ORDER BY rowid DESC LIMIT 1",
+            (session,)).fetchone()
+        if previous is not None and seq is not None and seq != previous["written_sequence"] + 1:
+            self._gap(session, "gap", {"from": previous["written_sequence"], "to": seq}, at_ms)
+        if kind in DROP_KINDS:
+            detail = {"event_kind": kind}
+            if isinstance(record, dict) and record.get("reason") is not None:
+                detail["reason"] = record.get("reason")
+            self._gap(session, "drop", detail, at_ms)
+        self._enforce_cap(session, at_ms)
+        self._con.execute(
+            """INSERT OR IGNORE INTO rows
+               (session, segment, offset, written_sequence, event_kind, wall_ms, json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (session, segment, offset, seq, kind, wall, json.dumps(record, ensure_ascii=False)))
+        self._put_cursor(session, segment, offset + raw_len)
+
+    def _gap(self, session, kind, detail, at_ms):
+        self._con.execute(
+            "INSERT INTO gaps (session, kind, detail_json, at_ms) VALUES (?, ?, ?, ?)",
+            (session, kind, json.dumps(detail, sort_keys=True), at_ms))
+
+    def _enforce_cap(self, session, at_ms):
+        count = self._con.execute("SELECT COUNT(*) AS n FROM rows").fetchone()["n"]
+        extra = count - self.row_cap + 1
+        if extra <= 0 or self.row_cap < 1:
+            return
+        self._con.execute(
+            "DELETE FROM rows WHERE rowid IN (SELECT rowid FROM rows ORDER BY rowid ASC LIMIT ?)",
+            (extra,))
+        self._gap(session, "cap", {"count": extra}, at_ms)
+
+    def gaps(self):
+        return [dict(row) for row in self._con.execute("SELECT * FROM gaps ORDER BY id")]
+
+    def row_count(self):
+        return self._con.execute("SELECT COUNT(*) AS n FROM rows").fetchone()["n"]
+
+    def session_probe(self, session=None):
+        """SEAM3-21: the probe version of the newest telemetry session, read from its first row (each session is one file,
+        so its first row is the first row of the session). None while no row has come. With a session given (the newest
+        file's), that session is read, never an older session that is merely the last row in the spool."""
+        if session is None:
+            newest = self._con.execute("SELECT session FROM rows ORDER BY rowid DESC LIMIT 1").fetchone()
+            if newest is None:
+                return None
+            session = newest["session"]
+        first = self._con.execute("SELECT json FROM rows WHERE session=? ORDER BY segment, offset LIMIT 1",
+                                  (session,)).fetchone()
+        record = json.loads(first["json"]) if first else None
+        value = record.get("probe_version") if isinstance(record, dict) else None
+        if value is None:  # a first row with no version (an older row): the session's newest row's version is the next best
+            newest_record = self.latest_record(session)
+            value = newest_record.get("probe_version") if isinstance(newest_record, dict) else None
+        return value
+
+    def latest_record(self, session=None):
+        """The newest row of the spool, or with a session given, that session's newest row (the newest telemetry file's)."""
+        if session is None:
+            row = self._con.execute("SELECT json FROM rows ORDER BY rowid DESC LIMIT 1").fetchone()
+        else:
+            row = self._con.execute("SELECT json FROM rows WHERE session=? ORDER BY rowid DESC LIMIT 1",
+                                    (session,)).fetchone()
+        return json.loads(row["json"]) if row else None
+
+    def rows_after(self, rowid, limit=500):
+        rows = self._con.execute(
+            "SELECT rowid AS rid, json FROM rows WHERE rowid > ? ORDER BY rowid LIMIT ?",
+            (int(rowid), int(limit))).fetchall()
+        for row in rows:
+            yield int(row["rid"]), json.loads(row["json"])
+
+    def get_kv(self, key):
+        row = self._con.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+        return None if row is None else row["v"]
+
+    def put_kv(self, key, value):
+        self.put_many_kv({key: value})
+
+    def put_many_kv(self, items):
+        with self._con:
+            for key, value in items.items():
+                # HE17: a value that is already stored is not rewritten.
+                stored = self._con.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+                if stored is not None and stored["v"] == value:
+                    continue
+                self._con.execute(
+                    """INSERT INTO kv (k, v) VALUES (?, ?)
+                       ON CONFLICT(k) DO UPDATE SET v=excluded.v""",
+                    (key, value))
+
+    def enqueue_observation(self, obs, now_ms):
+        normalized = validate_observation(obs, now_ms)
+        payload = _canonical(normalized)
+        existing = self._con.execute(
+            "SELECT payload_json FROM outbox WHERE observation_id=?",
+            (normalized["observation_id"],)).fetchone()
+        if existing is not None:
+            if existing["payload_json"] != payload:
+                raise OutboxConflict(normalized["observation_id"])
+            return
+        with self._con:
+            self._con.execute(
+                """INSERT INTO outbox
+                   (observation_id, payload_json, state, attempts, next_attempt_ms,
+                    last_status, expires_at_ms, created_ms)
+                   VALUES (?, ?, 'pending', 0, ?, NULL, ?, ?)""",
+                (normalized["observation_id"], payload, now_ms, normalized["expires_at_ms"], now_ms))
+
+    def set_expires(self, observation_id, expires_at_ms):
+        with self._con:
+            self._con.execute(
+                "UPDATE outbox SET expires_at_ms=? WHERE observation_id=?",
+                (expires_at_ms, observation_id))
+
+    def outbox_counts(self):
+        counts = {state: 0 for state in ("pending", "acked", "conflict", "expired", "rejected")}
+        for row in self._con.execute("SELECT state, COUNT(*) AS n FROM outbox GROUP BY state"):
+            counts[row["state"]] = row["n"]
+        return counts
+
+    def outbox_row(self, observation_id):
+        row = self._con.execute("SELECT * FROM outbox WHERE observation_id=?", (observation_id,)).fetchone()
+        return dict(row) if row else None
+
+    def flush(self, client, now_ms, batch=20, budget_s=FLUSH_BUDGET_S, clock=time.monotonic):
+        due = self._con.execute(
+            """SELECT * FROM outbox WHERE state='pending' AND next_attempt_ms<=?
+               ORDER BY created_ms, observation_id LIMIT ?""",
+            (now_ms, batch)).fetchall()
+        started = clock()
+        self.last_failures = []
+        self.last_expired = 0
+        for row in due:
+            if clock() - started >= budget_s:
+                break
+            if now_ms > row["expires_at_ms"]:
+                self.last_expired += 1
+                self._finish(row["observation_id"], "expired", row["attempts"], row["next_attempt_ms"], "expired")
+                continue
+            result = client.post_observation(json.loads(row["payload_json"]), now_ms=now_ms)
+            kind = result.kind
+            reason = getattr(result, "reason", None)
+            if kind == "expired":
+                self.last_expired += 1
+            elif kind not in ("admitted", "duplicate"):
+                self.last_failures.append(kind)
+            # A9-4: the server's reason is kept in last_status as refused:<reason>, so status can show it.
+            refused = f"refused:{reason}" if kind == "rejected" and reason else None
+            if kind in ("admitted", "duplicate"):
+                self._finish(row["observation_id"], "acked", row["attempts"] + 1, row["next_attempt_ms"], kind)
+            elif kind == "conflict":
+                self._finish(row["observation_id"], "conflict", row["attempts"] + 1, row["next_attempt_ms"], kind)
+            elif kind == "expired":
+                self._finish(row["observation_id"], "expired", row["attempts"] + 1, row["next_attempt_ms"], kind)
+            elif kind == "rejected" and reason in RETRY_REFUSALS:
+                self._retry(row, now_ms, refused)
+            elif kind in ("rejected", "too_large"):
+                self._finish(row["observation_id"], "rejected", row["attempts"] + 1, row["next_attempt_ms"], refused or kind)
+            elif kind == "unauthorized":
+                return "auth_failed"
+            else:
+                self._retry(row, now_ms, kind)
+        return None
+
+    def _retry(self, row, now_ms, last_status):
+        attempts = row["attempts"]
+        delay = 300_000 if attempts >= 9 else 1000 * (2 ** attempts)
+        self._finish(row["observation_id"], "pending", attempts + 1, now_ms + delay, last_status)
+
+    def refusal_counts(self):
+        """A9-4: how many due or refused observations Ashley refused, by her reason (for the helper status)."""
+        counts = {}
+        for row in self._con.execute(
+            """SELECT last_status, COUNT(*) AS n FROM outbox
+               WHERE state IN ('pending', 'rejected') AND last_status LIKE 'refused:%' GROUP BY last_status"""):
+            counts[row["last_status"][len("refused:"):]] = row["n"]
+        return counts
+
+    def _finish(self, observation_id, state, attempts, next_attempt_ms, last_status):
+        with self._con:
+            self._con.execute(
+                """UPDATE outbox SET state=?, attempts=?, next_attempt_ms=?, last_status=?
+                   WHERE observation_id=?""",
+                (state, attempts, next_attempt_ms, last_status, observation_id))

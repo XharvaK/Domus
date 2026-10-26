@@ -1,0 +1,1 @@
+﻿| A23 | 2026-10-04 | 2.9.1 | trial NEED_DISTRESS ignores non-bodily motives (social, fun); a motive without an id still counts | First DA6 crawl: the lone LAB Sim sits in social distress permanently and can never be relieved there, so every trial would be refused although no bodily need is at risk |

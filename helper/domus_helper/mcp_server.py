@@ -1,19 +1,19 @@
 """Domus tools, served exclusively over the SDK's stdio transport."""
-import csv
-import io
 import os
-import subprocess
 from dataclasses import asdict
 
 from mcp.server.mcpserver import MCPServer
 
+from . import atlas as atlas_store
+
+from . import calibration
 from . import commands, telemetry as telemetry_reader
 from . import fingerprints as fingerprint_reader
 from .paths import Paths
 from .vendor.cmdbox import valid_issuer
 
 LAB_NAMES = {"LAB_E1", "LAB_E1_FORK"}
-ACTUATING = {"arm", "start", "prepare", "sit", "sit_trial", "pause", "release"}
+ACTUATING = {"arm", "start", "prepare", "sit", "sit_trial", "pause", "release", "trial"}
 
 
 class SafetyError(RuntimeError):
@@ -23,18 +23,13 @@ class SafetyError(RuntimeError):
 class CommandFailed(RuntimeError):
     def __init__(self, reply):
         self.reply = reply
-        super().__init__(f"{reply.status}: {reply.code}")
+        lines = (reply.result or {}).get("lines") if isinstance(reply.result, dict) else None
+        detail = f" ({lines[0]})" if lines else ""
+        super().__init__(f"{reply.status}: {reply.code}{detail}")
 
 
 def game_running():
-    try:
-        result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq TS4_x64.exe", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, timeout=5, check=True)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return any(row and row[0].casefold() == "ts4_x64.exe"
-               for row in csv.reader(io.StringIO(result.stdout)))
+    return fingerprint_reader._process() is not None
 
 
 class DomusTools:
@@ -140,6 +135,11 @@ def sit_trial(object_id: str) -> dict:
 
 
 @server.tool()
+def trial(object_id: str, guid64: str) -> dict:
+    return asdict(tools().command("trial", {"object_id": object_id, "guid64": guid64}))
+
+
+@server.tool()
 def pause() -> dict:
     return asdict(tools().command("pause"))
 
@@ -185,6 +185,127 @@ def detected_build() -> dict:
 @server.tool()
 def fingerprints() -> dict:
     return tools().fingerprints_fn()
+
+
+@server.tool()
+def atlas_dump() -> dict:
+    return asdict(tools().command("atlas_dump"))
+
+
+@server.tool()
+def tuned_scan() -> dict:
+    return asdict(tools().command("tuned_scan"))
+
+
+@server.tool()
+def food_options() -> dict:
+    """Latest food-scan summary. Read only."""
+    from . import food as food_reader
+    folder = tools().paths.atlas_dir
+    path = food_reader.latest_food(folder)
+    rows = food_reader._rows(path)
+    return {"file": path.name, "rows": food_reader.summarize(rows),
+            "menus": food_reader.menus_of(rows), "errors": food_reader.errors_of(rows)[:5]}
+
+
+@server.tool()
+def atlas_progress() -> dict:
+    block = tools().checked_status().result.get("atlas")
+    if not isinstance(block, dict):
+        raise SafetyError("status has no atlas block")
+    return block
+
+
+@server.tool()
+def atlas_import() -> dict:
+    client = tools()
+    detected = fingerprint_reader.detected_build(paths=client.paths)["detected_build"]
+    source = client.paths.atlas_dir / ("tuning_%s.jsonl" % detected)
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    return atlas_store.import_tuning(client.paths.atlas_db, source)
+
+
+@server.tool()
+def atlas_query(build: str | None = None, name_contains: str | None = None,
+                is_super: bool | None = None, is_social: bool | None = None,
+                allow_autonomous: bool | None = None,
+                allow_user_directed: bool | None = None,
+                ladder: str | None = None, limit: int = 50) -> list[dict]:
+    client = tools()
+    chosen = build if build is not None else atlas_store.latest_build(client.paths.atlas_db)
+    return atlas_store.query(
+        client.paths.atlas_db, build=chosen, name_contains=name_contains,
+        is_super=is_super, is_social=is_social, allow_autonomous=allow_autonomous,
+        allow_user_directed=allow_user_directed, ladder=ladder, limit=limit)
+
+
+@server.tool()
+def cards(card_class: str | None = None) -> list[dict]:
+    """Read cards for the detected build. Nothing is written."""
+    client = tools()
+    detected = fingerprint_reader.detected_build(paths=client.paths)["detected_build"]
+    return atlas_store.list_cards(client.paths.atlas_db, detected, card_class)
+
+
+@server.tool()
+def bridge_status() -> dict:
+    from .bridge import Bridge
+    return Bridge(paths=Paths.from_env()).status()
+
+
+@server.tool()
+def thalamus_status() -> dict:
+    from .bridge import Bridge
+    return Bridge(paths=Paths.from_env()).thalamus_status()
+
+
+def _crawl_build(client):
+    try:
+        return fingerprint_reader.detected_build(paths=client.paths)["detected_build"]
+    except (OSError, FileNotFoundError, ValueError, UnicodeError):
+        return atlas_store.latest_build(client.paths.atlas_db)
+
+
+@server.tool()
+def trials(guid64: str | None = None) -> list[dict]:
+    """Recorded probe trials for the detected build. Nothing is sent."""
+    client = tools()
+    build = _crawl_build(client)
+    return atlas_store.trials_for(client.paths.atlas_db, build, guid64)
+
+
+@server.tool()
+def qualification() -> list[dict]:
+    """Per-affordance trial qualification for the detected build."""
+    client = tools()
+    build = _crawl_build(client)
+    return atlas_store.qualification(client.paths.atlas_db, build)
+
+
+@server.tool()
+def crawl_plan(limit: int = 20) -> list[dict]:
+    """Candidates the crawl would send. Nothing is sent."""
+    from . import crawl
+    client = tools()
+    build = _crawl_build(client)
+    path = crawl.latest_tuned(client.paths.atlas_dir)
+    file_build, rows = crawl.load_tuned(path)
+    chosen = file_build or build
+    preflight_rows = crawl.matching_preflight(path.parent, path)
+    return crawl.plan(chosen, rows, client.paths.atlas_db, limit,
+                      preflight_rows=preflight_rows)
+
+
+@server.tool()
+def calibrate() -> dict:
+    return asdict(tools().command("calibrate"))
+
+
+@server.tool()
+def calibration_report(session: str = "latest") -> dict:
+    client = tools()
+    return calibration.report_for(session, client.paths)["coverage"]
 
 
 if __name__ == "__main__":

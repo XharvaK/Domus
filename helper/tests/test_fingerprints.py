@@ -68,6 +68,76 @@ def test_detected_build_priority_and_missing_sources(tmp_path, monkeypatch):
         fp.detected_build(paths=paths)
 
 
+def test_process_waits_on_a_handle_and_reads_the_start_time(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from subprocess import CompletedProcess
+
+    fp._release()
+    calls = []
+    low, high = 1_000_000_000, 1
+    filetime_int = (high << 32) | low
+    expected = (datetime(1601, 1, 1, tzinfo=timezone.utc)
+                + timedelta(microseconds=filetime_int // 10)).isoformat(timespec="seconds")
+
+    def run(args, **kwargs):
+        calls.append(list(args))
+        assert "/V" not in args
+        text = '"TS4_x64.exe","4242"\n' if len(calls) == 1 else "INFO: No tasks\n"
+        return CompletedProcess(args, 0, text)
+
+    kernel = type("K", (), {})()
+    kernel.wait = 258
+    kernel.fail_open = False
+    kernel.opens = 0
+    kernel.closes = 0
+
+    def OpenProcess(access, inherit, pid):
+        kernel.opens += 1
+        assert access == 0x00100000 | 0x1000
+        return 0 if kernel.fail_open else 7
+
+    def WaitForSingleObject(handle, timeout):
+        assert timeout == 0 and handle == 7
+        return kernel.wait
+
+    def CloseHandle(handle):
+        kernel.closes += 1
+        return 1
+
+    def GetProcessTimes(handle, creation, exit_time, kernel_time, user_time):
+        creation._obj.dwLowDateTime = low
+        creation._obj.dwHighDateTime = high
+        return 1
+
+    kernel.OpenProcess = OpenProcess
+    kernel.WaitForSingleObject = WaitForSingleObject
+    kernel.CloseHandle = CloseHandle
+    kernel.GetProcessTimes = GetProcessTimes
+    monkeypatch.setattr(fp.subprocess, "run", run)
+    monkeypatch.setattr(fp, "_kernel32", lambda: kernel)
+    try:
+        assert fp._process() == (4242, expected)
+        assert kernel.opens == 1 and fp._HELD is not None
+        assert fp._process() == (4242, expected)
+        assert len(calls) == 1
+        kernel.wait = 0
+        assert fp._process() is None
+        assert kernel.closes == 1 and len(calls) == 2 and fp._HELD is None
+        calls.clear()
+        kernel.fail_open = True
+        monkeypatch.setattr(fp.subprocess, "run", lambda args, **kwargs: CompletedProcess(
+            args, 0, '"TS4_x64.exe","99"\n'))
+        assert fp._process() == (99, None)
+        assert fp._HELD is None
+        seen = []
+        monkeypatch.setattr(fp.subprocess, "run", lambda args, **kwargs: seen.append(list(args)) or CompletedProcess(
+            args, 0, "INFO: No tasks\n"))
+        assert fp._process() is None
+        assert seen and all("/V" not in args for args in seen)
+    finally:
+        fp._release()
+
+
 def test_process_absent_and_pid_change(tmp_path, monkeypatch):
     game, sims = make_tree(tmp_path)
     write_game(game, sims, monkeypatch)

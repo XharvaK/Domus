@@ -5,8 +5,28 @@ import time
 
 from objects import ALL_HIDDEN_REASONS  # PRIOR_ART|RUNTIME_UNVERIFIED: approved hidden-flag constant.
 
+try:
+    # DS3: the game's own room lookup (objects_in_target_room_gen uses it the same way).
+    # The guard allows this one name from build_buy and nothing else.
+    from build_buy import get_room_id
+except Exception:
+    get_room_id = None
+
+from . import reach
 from . import schema
 from . import snapshot
+from . import tuned
+
+# 2.40.0 (W13 P1): the game's user-facing situation creation option AVAILABLE (SituationCreationUIOption, read from the
+# game's bytecode: NOT_AVAILABLE 0, AVAILABLE 1, DEBUG_AVAILABLE 2, SPECIFIED_ONLY 3).
+CREATION_UI_AVAILABLE = 1
+# 2.40.0 (W13 P1): the game's Sim picker tunables the discovery record reads (names from the picker's own generator).
+PICKER_INCLUDE_FLAGS = ("include_actor_sim", "include_target_sim", "include_uninstantiated_sims",
+                        "include_instantiated_sims", "include_rabbithole_sims", "include_missing_pets")
+try:
+    from sims4.resources import Types as ResourceTypes
+except ImportError:
+    ResourceTypes = None
 
 
 class SelectabilityReadFailure(RuntimeError):
@@ -17,6 +37,36 @@ class LabIdentityAmbiguous(RuntimeError):
     def __init__(self, eligible_count):
         super().__init__("LAB_IDENTITY_AMBIGUOUS:%s" % eligible_count)
         self.eligible_count = eligible_count
+
+
+# 2.32.0 (PR6): the armed Sim, her body. When several household Sims are selectable, the body is the armed
+# one (set by prefer_body when she is armed; None before that, then the client's active Sim is used).
+_PREFERRED_BODY = {"sim_id": None}
+
+
+def prefer_body(sim_id):
+    _PREFERRED_BODY["sim_id"] = None if sim_id is None else str(sim_id)
+
+
+def active_sim_id():
+    """2.32.0 (PR6): the id of the Sim the User's client is playing, or None when it cannot be read."""
+    try:
+        info = services.active_sim_info()
+    except Exception:
+        return None
+    if info is None:
+        return None
+    try:
+        return _plain_id(info.id)
+    except Exception:
+        return None
+
+
+def _info_id(info):
+    try:
+        return _plain_id(info.id)
+    except Exception:
+        return None
 
 
 def select_lab_body(candidates, hidden_flags):
@@ -38,9 +88,18 @@ def select_lab_body(candidates, hidden_flags):
             raise SelectabilityReadFailure("SELECTABILITY_READ_FAILURE")
         if selectable is True:
             eligible.append((si, sim))
-    if len(eligible) != 1:
-        raise LabIdentityAmbiguous(len(eligible))
-    return eligible[0]
+    if len(eligible) == 1:
+        return eligible[0]
+    # 2.32.0 (PR6): several selectable Sims (the User plays another household member). Her body is the armed
+    # Sim; before she is armed, the one the client is playing. Anything else stays ambiguous.
+    wanted = _PREFERRED_BODY["sim_id"]
+    if wanted is None:
+        wanted = active_sim_id()
+    if wanted is not None:
+        for si, sim in eligible:
+            if _info_id(si) == wanted:
+                return si, sim
+    raise LabIdentityAmbiguous(len(eligible))
 
 
 def _monotonic_ns():
@@ -75,6 +134,25 @@ def _saved_world_ticks():
         return None
 
 
+def build_mode():
+    """2.32.0 (PR10): the zone is in build or buy mode (the game holds the clock paused then, and locks objects);
+    None when unreadable."""
+    try:
+        value = services.current_zone().is_in_build_buy
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
+def fire_active():
+    """2.32.0 (PR11): a fire is burning on the lot (FireService.fire_is_active); None when unreadable."""
+    try:
+        value = services.get_fire_service().fire_is_active()
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
 def _game_snapshot():
     time_service = services.time_service()
     sim_now = time_service.sim_now
@@ -86,7 +164,8 @@ def _game_snapshot():
     except AttributeError:
         pass
     return {"ticks": int(ticks), "calendar": str(sim_now),
-            "clock_speed": str(speed), "paused": speed == "PAUSED"}
+            "clock_speed": str(speed), "paused": speed == "PAUSED",
+            "build_mode": build_mode(), "fire": fire_active()}
 
 
 def _posture_snapshot(sim):
@@ -156,100 +235,349 @@ def _motive_band(value):
     return "ok"
 
 
-# Live-verified on 1.128.90.1030 (TARGET_BYTECODE): instance value comes from
-# ContinuousStatistic.get_value (stat path reads inst._modified_value (!= None)
-# else cls.default_value); _update_value is the mutating updater, so Domus
-# never calls get_value itself — it replays the verified read path: return
-# inst._modified_value when not None, else cls.default_value. Age comes from
-# inst._last_update (ticks; _update_value stamps it from sim_now).
-def _read_cached_motive(entry, now_ticks):
+# Live-verified on 1.128.90.1030 (TARGET_BYTECODE). Commodity defines no
+# get_value. An instance resolves ContinuousStatistic.get_value
+# (continuous_statistic.py offset 10: inst._update_value(), then offset 36:
+# super(ContinuousStatistic, inst).get_value()). ContinuousStatistic's base is
+# BaseStatistic, not Statistic. BaseStatistic.get_value offset 10 returns
+# inst._value when inst is not None; default_value at offset 16 runs only when
+# inst is None. _value is always stored in BaseStatistic.__init__ offset 10.
+# _modified_value is stored only by Statistic._update_modified_value offset 64.
+# Statistic subclasses BaseStatistic and is not on the Commodity chain
+# (Commodity's first base is TunedContinuousStatistic; ContinuousStatistic's
+# base is BaseStatistic). Domus does not call _update_value or get_value. It
+# reads inst._value. Age comes from inst._last_update
+# (ContinuousStatistic.__init__ offset 72).
+_MOTIVE_DIAG = {"stage": "ok", "seen_guids": [], "matched": 0}
+
+
+def motive_diag():
+    """Copy of the last motive-read outcome. Never raises."""
     try:
-        guid = int(entry.guid64)
+        return {
+            "stage": _MOTIVE_DIAG["stage"],
+            "seen_guids": list(_MOTIVE_DIAG["seen_guids"]),
+            "matched": _MOTIVE_DIAG["matched"],
+        }
+    except Exception:
+        return {"stage": "ok", "seen_guids": [], "matched": 0}
+
+
+def _store_motive_diag(stage, seen, matched):
+    global _MOTIVE_DIAG
+    try:
+        row = schema.validate_motive_diag(
+            {"stage": stage, "seen_guids": list(seen), "matched": matched})
+    except Exception:
+        return
+    _MOTIVE_DIAG = row
+
+
+def _motive_guid(entry):
+    try:
+        value = entry.guid64
     except Exception:
         return None
-    if guid not in MOTIVE_GUIDS:
+    if isinstance(value, bool):
         return None
     try:
-        raw = entry._modified_value
-    except Exception:
-        return None
-    if raw is None:
-        try:
-            raw = entry.default_value
-        except Exception:
-            return None
-    try:
-        updated = entry._last_update
-        minimum = entry.min_value
-        maximum = entry.max_value
-    except Exception:
-        return None
-    try:
-        value = float(raw)
-        low = float(minimum)
-        high = float(maximum)
-        stamp = int(updated)
-        now = int(now_ticks)
+        return int(value)
     except (TypeError, ValueError):
         return None
-    if isinstance(raw, bool) or isinstance(updated, bool):
+
+
+def _load_field(entry, field):
+    if field == "_value":
+        return entry._value
+    if field == "_last_update":
+        return entry._last_update
+    if field == "min_value":
+        return entry.min_value
+    if field == "max_value":
+        return entry.max_value
+    raise AttributeError(field)
+
+
+# Bytecode date_and_time: REAL_MILLISECONDS_PER_SIM_SECOND = 25, so a sim minute is
+# 1500 ticks.
+TICKS_PER_SIM_MINUTE = 1500.0
+
+
+def _current_value(entry, value, age):
+    """D25 (live: at speed 3 the cache of every need she was not refilling was up to
+    47554 ticks old). The game's own ContinuousStatistic._update_value, without its
+    write (bytecode statistics/continuous_statistic): change rate, or decay toward
+    convergence. Every call here was checked for stores across the game's statistic
+    classes; get_value and _update_value are never called. None if unreadable."""
+    try:
+        tracker = entry._tracker
+        if tracker is not None and tracker.should_suppress_calculations() is True:
+            return value
+        if age <= 0:
+            return value
+        minutes = age / TICKS_PER_SIM_MINUTE
+        change = float(entry._get_change_rate_without_decay())
+        decay = float(entry.get_decay_rate())
+        new = None
+        if change == 0 and decay != 0:
+            target = float(entry.convergence_value)
+            until = entry._calculate_minutes_until_value_is_reached_through_decay(target)
+            if until is not None and minutes > float(until):
+                new = target
+            rate = decay
+        else:
+            rate = change
+        if new is None:
+            new = value + minutes * rate
+        return float(new)
+    except Exception:
         return None
+
+
+def _read_cached_motive(entry, now_ticks):
+    """Return (row or None, fault or None). Fault is set only for a known motive."""
+    guid = _motive_guid(entry)
+    if guid is None or guid not in MOTIVE_GUIDS:
+        return None, None
+    try:
+        raw = _load_field(entry, "_value")
+    except Exception:
+        return None, "row_error:_value"
+    source = "_value"
+    loaded = {}
+    for field in ("_last_update", "min_value", "max_value"):
+        try:
+            loaded[field] = _load_field(entry, field)
+        except Exception:
+            return None, "row_error:" + field
+    if isinstance(raw, bool):
+        return None, "row_error:" + source
+    if isinstance(loaded["_last_update"], bool):
+        return None, "row_error:_last_update"
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None, "row_error:" + source
+    try:
+        low = float(loaded["min_value"])
+    except (TypeError, ValueError):
+        return None, "row_error:min_value"
+    try:
+        high = float(loaded["max_value"])
+    except (TypeError, ValueError):
+        return None, "row_error:max_value"
+    try:
+        stamp = int(loaded["_last_update"])
+        now = int(now_ticks)
+        age = now - stamp
+    except (TypeError, ValueError):
+        return None, "row_error:_last_update"
+    if age < 0:
+        age = 0
+    current = _current_value(entry, value, age)
+    if current is not None:
+        # age_ticks is the age of the reading: 0 when this is the game's current value.
+        value = max(low, min(high, current))
+        age = 0
     if high == low:
         normalized = None
     else:
         normalized = round((value - low) / (high - low) * 100)
         normalized = max(0, min(100, normalized))
-    try:
-        age = now - stamp
-    except (TypeError, ValueError):
-        return None
-    if age < 0:
-        age = 0
     band = None if normalized is None else _motive_band(normalized)
     try:
-        motive_id = str(schema.string_id(MOTIVE_GUIDS[guid], "motive.id"))
+        motive_id = schema.string_id(MOTIVE_GUIDS[guid], "motive.id")
+        if motive_id is None:
+            raise ValueError("motive.id")
+        motive_id = str(motive_id)
     except Exception:
-        return None
-    return {"id": motive_id, "value": normalized, "band": band, "age_ticks": age}
+        return None, "string_id_error"
+    return {"id": motive_id, "value": normalized, "band": band, "age_ticks": age}, None
 
 
 def read_motives(sim_info, now_ticks):
-    try:
-        tracker = sim_info.commodity_tracker
-    except Exception:
-        return []
-    if tracker is None:
-        return []
-    try:
-        commodities = tracker.get_all_commodities()
-    except Exception:
-        return []
+    """Pure tracker route: get_component → get_commodity_tracker(create=False)."""
+    stage = "ok"
+    seen = []
+    matched = 0
     motives = []
     try:
-        iterator = iter(commodities)
-    except TypeError:
-        return []
-    for entry in iterator:
-        if len(motives) >= schema.MAX_MOTIVES:
-            break
         try:
-            row = _read_cached_motive(entry, now_ticks)
+            from objects.components.types import STATISTIC_COMPONENT
+            component = sim_info.get_component(STATISTIC_COMPONENT)
+        except Exception:
+            stage = "component_error"
+            return []
+        if component is None:
+            stage = "no_component"
+            return []
+        try:
+            tracker = component.get_commodity_tracker(create=False)
+        except Exception:
+            stage = "no_tracker"
+            return []
+        if tracker is None:
+            stage = "no_tracker"
+            return []
+        try:
+            commodities = tracker.get_all_commodities()
+            iterator = iter(commodities)
+        except Exception:
+            stage = "commodities_error"
+            return []
+        seen_set = []
+        fault = None
+        for entry in iterator:
+            guid = _motive_guid(entry)
+            if guid is not None and guid not in seen_set and len(seen_set) < 40:
+                seen_set.append(guid)
+            if len(motives) >= schema.MAX_MOTIVES:
+                continue
+            try:
+                row, row_fault = _read_cached_motive(entry, now_ticks)
+            except Exception:
+                row, row_fault = None, "commodities_error"
+            if row_fault is not None and fault is None:
+                fault = row_fault
+            if row is not None:
+                motives.append(row)
+        seen = sorted(seen_set)
+        matched = len(motives)
+        if fault is not None and matched == 0:
+            stage = fault
+        elif matched:
+            stage = "ok"
+        else:
+            stage = "no_guid_match"
+        return motives
+    except Exception:
+        stage = "commodities_error"
+        return []
+    finally:
+        _store_motive_diag(stage, seen, matched)
+
+
+def _bounded_name(value, field):
+    try:
+        if not isinstance(value, str):
+            return None
+        return schema.bounded_string(value, 128, field, False)
+    except Exception:
+        return None
+
+
+def _tuning_name(entry):
+    """Class name only. No method calls on the buff."""
+    try:
+        raw = type(entry).__name__
+    except Exception:
+        try:
+            raw = entry.__class__.__name__
+        except Exception:
+            return None
+    return _bounded_name(raw, "signal.tuning_name")
+
+
+def _buff_blueprint(entry):
+    """DS3 (live: every moodlet read tuning_name "Buff" and weight 0): an active buff
+    is a Buff instance; its tuned data sits on its blueprint (Buff.buff_type returns
+    tuning_blueprint). Plain attribute reads only."""
+    try:
+        blueprint = entry.tuning_blueprint
+    except Exception:
+        blueprint = None
+    return entry if blueprint is None else blueprint
+
+
+def _string_key(value):
+    """The game string key of a tuned string factory (_string_id) or a built
+    LocalizedString (hash), as a decimal string. The helper resolves the text."""
+    if value is None:
+        return None
+    for read in (lambda: value._string_id, lambda: value.hash):
+        try:
+            key = read()
         except Exception:
             continue
-        if row is not None:
-            motives.append(row)
-    return motives
+        if type(key) is int and key > 0:
+            return str(key)
+    return None
 
 
-def _describe_buff(entry):
+def stat_trackers(owner):
+    """D42 (bytecode objects/components/statistic_component): the `statistic_tracker`
+    and `commodity_tracker` properties call _get_or_add_statistic_component, which adds
+    a component to an object that has none (add_dynamic_component), and the getters
+    create a tracker. Only the existing component's fields are read here:
+    (statistic tracker or None, commodity tracker or None)."""
+    try:
+        from objects.components.types import STATISTIC_COMPONENT
+        component = owner.get_component(STATISTIC_COMPONENT)
+    except Exception:
+        return None, None
+    if component is None:
+        return None, None
+    found = []
+    for read in (lambda: component._statistic_tracker,
+                 lambda: component._commodity_tracker):
+        try:
+            found.append(read())
+        except Exception:
+            found.append(None)
+    return found[0], found[1]
+
+
+def _commodity_tracker(sim_info):
+    """D42: her commodity tracker without the creating property."""
+    return stat_trackers(sim_info)[1]
+
+
+def _moodlet_minutes_left(entry, sim_info, now_ticks):
+    """S5: game minutes until a timed moodlet ends. Bytecode (buffs/buff): a timed buff
+    has `_temporary_commodity_info` and keeps `_owning_commodity`; the `commodity`
+    property can create one (a store), so the instance is read from the Sim's own
+    commodity tracker (D42: through the pure route). Minutes come from the D25-checked decay calls. None otherwise."""
+    try:
+        if entry._temporary_commodity_info is None:
+            return None
+        owning = entry._owning_commodity
+        if owning is None or sim_info is None:
+            return None
+        tracker = _commodity_tracker(sim_info)
+        if tracker is None:
+            return None
+        instance = tracker._statistics.get(owning)
+    except Exception:
+        return None
+    if instance is None:
+        return None
+    try:
+        until = instance._calculate_minutes_until_value_is_reached_through_decay(
+            float(instance.convergence_value))
+        updated = instance._last_update
+    except Exception:
+        return None
+    if until is None or isinstance(until, bool) or not isinstance(until, (int, float)):
+        return None
+    age = 0.0
+    if type(updated) is int and type(now_ticks) is int and now_ticks >= updated:
+        age = (now_ticks - updated) / TICKS_PER_SIM_MINUTE
+    return round(max(float(until) - age, 0.0), 1)
+
+
+def _describe_buff(entry, sim_info=None, now_ticks=None):
     try:
         tuning = str(entry.guid64)
     except Exception:
         return None
+    blueprint = _buff_blueprint(entry)
     try:
-        weight = entry.mood_weight
+        weight = blueprint.mood_weight
     except Exception:
-        return None
+        try:
+            weight = entry.mood_weight
+        except Exception:
+            return None
     if isinstance(weight, bool):
         return None
     try:
@@ -260,11 +588,48 @@ def _describe_buff(entry):
         tuning_id = str(schema.string_id(tuning, "signal.tuning_id"))
     except Exception:
         return None
-    return {"kind": "MOODLET", "tuning_id": tuning_id, "game_text": None,
-            "magnitude": magnitude, "consequences": None, "native_override": None}
+    try:
+        name = blueprint.__name__ if blueprint is not entry else None
+    except Exception:
+        name = None
+    name = _bounded_name(name, "signal.tuning_name") or _tuning_name(entry)
+    try:
+        mood = blueprint.mood_type
+        mood_name = None if mood is None else mood.__name__
+    except Exception:
+        mood_name = None
+    try:
+        visible = blueprint.visible
+    except Exception:
+        visible = None
+    try:
+        text_key = _string_key(blueprint.buff_name)
+    except Exception:
+        text_key = None
+    try:
+        reason_key = _string_key(entry.buff_reason)
+    except Exception:
+        reason_key = None
+    return {"kind": "MOODLET", "tuning_id": tuning_id, "tuning_name": name,
+            "game_text": None, "magnitude": magnitude, "consequences": None,
+            "native_override": None, "text_key": text_key,
+            "mood_type": _bounded_name(mood_name, "signal.mood_type"),
+            "visible": visible if type(visible) is bool else None,
+            "reason_key": reason_key,
+            "minutes_left": _moodlet_minutes_left(entry, sim_info, now_ticks)}
 
 
-def read_moodlets(sim_info):
+def _signal_order(signal):
+    """Visible moodlets first, heavier first, then by id: truncation drops hidden ones."""
+    weight = 0
+    try:
+        weight = int(signal["magnitude"][2:])
+    except Exception:
+        pass
+    return (0 if signal.get("visible") is True else 1, -abs(weight), signal["tuning_id"])
+
+
+def read_moodlets(sim_info, now_ticks=None):
     try:
         buffs = sim_info.Buffs
     except Exception:
@@ -276,16 +641,20 @@ def read_moodlets(sim_info):
     except TypeError:
         return []
     signals = []
+    seen = 0
     for entry in iterator:
-        if len(signals) >= schema.MAX_SIGNALS:
+        # Read a bounded number, then keep the visible and heavy ones (DS3).
+        seen += 1
+        if seen > schema.MAX_SIGNALS * 4:
             break
         try:
-            row = _describe_buff(entry)
+            row = _describe_buff(entry, sim_info, now_ticks)
         except Exception:
             continue
         if row is not None:
             signals.append(row)
-    return signals
+    signals.sort(key=_signal_order)
+    return signals[:schema.MAX_SIGNALS]
 
 
 def read_mood(sim_info):
@@ -316,13 +685,18 @@ def read_mood(sim_info):
         mood_id = str(schema.string_id(mood_type, "mood.type"))
     except Exception:
         return None
-    return {"type": mood_id, "intensity": intensity}
+    try:
+        mood_name = mood.__name__
+    except Exception:
+        mood_name = None
+    return {"type": mood_id, "intensity": intensity,
+            "name": _bounded_name(mood_name, "mood.name")}
 
 
 def read_senses(sim_info, now_ticks, game):
     del game
     return {"motives": read_motives(sim_info, now_ticks),
-            "sim_signals": read_moodlets(sim_info),
+            "sim_signals": read_moodlets(sim_info, now_ticks),
             "mood": read_mood(sim_info)}
 
 
@@ -337,7 +711,348 @@ def _active_household_id():
         return None
 
 
-def _describe_presence(sim_info, sim, household_id):
+def _number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _position(obj):
+    """DS3: {x, y, z, level} rounded to 0.01, or None. ClientObjectMixin.position is
+    transform.translation; level is a plain read."""
+    try:
+        translation = obj.position
+        coords = (_number(translation.x), _number(translation.y), _number(translation.z))
+    except Exception:
+        return None
+    if None in coords:
+        return None
+    try:
+        level = obj.level
+    except Exception:
+        level = None
+    if isinstance(level, bool) or not isinstance(level, int):
+        level = None
+    return {"x": round(float(coords[0]), 2), "y": round(float(coords[1]), 2),
+            "z": round(float(coords[2]), 2), "level": level}
+
+
+def _room(obj, position):
+    """DS3: the game's room id for this object, as a string id, or None."""
+    if get_room_id is None or position is None or position["level"] is None:
+        return None
+    try:
+        room = get_room_id(obj.zone_id, obj.position, position["level"])
+    except Exception:
+        return None
+    if isinstance(room, bool) or not isinstance(room, int):
+        return None
+    return str(room)
+
+
+# 2.32.0 (SS4-v2): outdoors, a Sim is seen within this many metres on her level (the helper's scene.seen_here).
+SEEN_METERS = 4.0
+
+
+def seen_here(room, level, distance, body_room, body_level):
+    """2.32.0 (SS4-v2): is this Sim one she can see? Indoors (her room real) the same room and level;
+    outdoors (her room None or "0") within SEEN_METERS on her level. Addressing does not make her seen."""
+    if type(level) is not int or level != body_level:
+        return False
+    if body_room is not None and body_room != "0":
+        return room is not None and room == body_room
+    return type(distance) in (int, float) and distance <= SEEN_METERS
+
+
+def _is_selected(sim_id):
+    """2.32.0 (PR6): whether her body is the Sim the User's client is playing; None when unreadable."""
+    active = active_sim_id()
+    if active is None or sim_id is None:
+        return None
+    return active == sim_id
+
+
+def _distance(a, b):
+    if a is None or b is None:
+        return None
+    dx = a["x"] - b["x"]
+    dz = a["z"] - b["z"]
+    return round((dx * dx + dz * dz) ** 0.5, 1)
+
+
+def _plain_id(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return str(schema.string_id(value, "id"))
+    except Exception:
+        return None
+
+
+def zone_snapshot(sim):
+    """DS3 (live rows carried zone, lot, room and position all null): where her body is."""
+    try:
+        zone_id = services.current_zone_id()
+    except Exception:
+        zone_id = None
+    try:
+        lot_id = services.active_lot_id()
+    except Exception:
+        lot_id = None
+    position = _position(sim)
+    return {"zone_id": _plain_id(zone_id), "lot_id": _plain_id(lot_id),
+            "room": _room(sim, position), "position": position}
+
+
+def _name_part(read):
+    """2.39.0 (W12 E5): one of the game's own name fields (read is a lambda over sim_info.first_name or
+    last_name) as the game holds it, at most 64 characters; None when unreadable, empty or not a string.
+    Never raises."""
+    try:
+        value = read()
+    except Exception:
+        return None
+    if not isinstance(value, str) or value == "":
+        return None
+    return value[:64]
+
+
+def _gender_code(sim_info):
+    """2.39.0 (W12 E4): the game's Gender enum by name, "F" or "M"; None for anything else or unreadable.
+    The enum members are MALE and FEMALE (sims.sim_info_types)."""
+    try:
+        name = sim_info.gender.name
+    except Exception:
+        return None
+    return {"FEMALE": "F", "MALE": "M"}.get(name)
+
+
+def _sim_name(sim_info):
+    parts = []
+    for read in (lambda: sim_info.first_name, lambda: sim_info.last_name):
+        try:
+            part = read()
+        except Exception:
+            part = None
+        if isinstance(part, str) and part:
+            parts.append(part)
+    return _bounded_name(" ".join(parts), "presence.name") if parts else None
+
+
+def _doing(sim):
+    """What a present Sim is doing: its first running super interaction that is not
+    posture plumbing, as (affordance text, target id)."""
+    try:
+        running = list(sim.si_state or ())
+    except Exception:
+        return None, None
+    fallback = (None, None)
+    for entry in running[:8]:
+        row = _describe_interaction(entry)
+        text = row.get("affordance_text")
+        if not isinstance(text, str):
+            continue
+        text = text[:schema.MAX_DISPLAY_TEXT_LENGTH]
+        target = _plain_id(row.get("target_id"))
+        if "POSTURE_GRAPH" in str(row.get("source_raw")):
+            if fallback == (None, None):
+                fallback = (text, target)
+            continue
+        return text, target
+    return fallback
+
+
+def _type_name(value):
+    """value.__name__ as a plain attribute read (no reflection), or None."""
+    try:
+        name = value.__name__
+    except Exception:
+        return None
+    return name if isinstance(name, str) else None
+
+
+def _trait_entry(trait):
+    name = _bounded_name(_type_name(trait), "trait")
+    if name is None:
+        return None
+    try:
+        text_key = _string_key(trait.display_name)
+    except Exception:
+        text_key = None
+    return {"trait": name, "text_key": text_key}
+
+
+def _careers_of(sim_info):
+    """Career type names from career_tracker._careers (a plain dict read)."""
+    try:
+        values = list(sim_info.career_tracker._careers.values())
+    except Exception:
+        return None
+    names = []
+    for career in values[:4]:
+        name = _bounded_name(_type_name(type(career)), "career")
+        if name is not None:
+            names.append(name)
+    return sorted(names)
+
+
+NOTHING_KNOWN = {"traits": [], "careers": None, "relationship_status": False,
+                 "romantic_preference": False, "net_worth": None}
+
+
+def _knowledge(data, other_info):
+    """2.15.0: what she has learned about the other Sim. Bytecode (relationships/
+    sim_knowledge, data/unidirectional_relationship_data): her side of the relationship
+    keeps `_knowledge`, None until she learns something; SimKnowledge keeps plain
+    fields. SimRelationship.get_knowledge was not used: it creates the record
+    (initialize_knowledge). None when unreadable."""
+    try:
+        knowledge = data._knowledge
+    except Exception:
+        return None
+    known = dict(NOTHING_KNOWN)
+    if knowledge is None:
+        return known
+    try:
+        traits = list(knowledge._known_traits)
+    except Exception:
+        traits = []
+    entries = [entry for entry in (_trait_entry(trait) for trait in traits) if entry]
+    known["traits"] = sorted(entries, key=lambda item: item["trait"])[:schema.MAX_KNOWN_TRAITS]
+    for key, read in (("relationship_status", lambda: knowledge._knows_rel_status),
+                      ("romantic_preference", lambda: knowledge._knows_romantic_preference)):
+        try:
+            known[key] = read() is True
+        except Exception:
+            known[key] = False
+    try:
+        knows_career = knowledge._knows_career is True
+    except Exception:
+        knows_career = False
+    if knows_career and other_info is not None:
+        known["careers"] = _careers_of(other_info)
+    try:
+        worth = knowledge._known_net_worth
+    except Exception:
+        worth = None
+    if type(worth) is int:
+        known["net_worth"] = worth
+    return known
+
+
+def _sentiments(data):
+    """2.15.0: her sentiments toward the other Sim (Close, Hurt, ...): the types held in
+    her side's `_sentiment_tracker._statistics` (plain read)."""
+    try:
+        tracker = data._sentiment_tracker
+    except Exception:
+        return []
+    if tracker is None:
+        return []
+    try:
+        types_ = list(tracker._statistics.keys())
+    except Exception:
+        return []
+    found = []
+    for track_type in types_:
+        name = _bounded_name(_type_name(track_type), "sentiment")
+        if name is None:
+            continue
+        try:
+            text_key = _string_key(track_type.display_name)
+        except Exception:
+            text_key = None
+        found.append({"sentiment": name, "text_key": text_key})
+    found.sort(key=lambda item: item["sentiment"])
+    return found[:schema.MAX_SENTIMENTS]
+
+
+def _her_side(relationship, body_id):
+    """Her uni-directional data (SimRelationship._get_uni_directional_rel_data, read
+    without the call): `_sim_a_relationship_data` when she is `_sim_id_a`."""
+    try:
+        if relationship._sim_id_a == body_id:
+            return relationship._sim_a_relationship_data
+        return relationship._sim_b_relationship_data
+    except Exception:
+        return None
+
+
+def relationship_between(body_id, other_id, now_ticks=None, other_info=None):
+    """S5: what the game holds between her and another Sim, from plain attributes.
+
+    Bytecode (relationships/*): RelationshipService keeps `_relationships` keyed by
+    (smaller id, larger id); a Relationship keeps `_bi_directional_relationship_data`
+    with `_track_tracker._statistics` (friendship, romance, ...) and `_bits` (labels,
+    with `display_name`, `visible`). get_relationship_score was not used: it goes
+    through _find_relationship (which can create one) and get_track_score (the value
+    getter). Track values are the D25 decay math on `_value`. known=False: no
+    relationship exists yet (they have not met)."""
+    try:
+        a, b = int(body_id), int(other_id)
+        key = (a, b) if a < b else (b, a)
+        relationship = services.relationship_service()._relationships.get(key)
+    except Exception:
+        return None
+    if relationship is None:
+        return {"known": False, "tracks": [], "labels": [],
+                "knows": dict(NOTHING_KNOWN), "sentiments": []}
+    try:
+        data = relationship._bi_directional_relationship_data
+    except Exception:
+        return None
+    tracks = []
+    try:
+        items = list(data._track_tracker._statistics.items())
+    except Exception:
+        items = []
+    for track_type, instance in items:
+        name = _bounded_name(_type_name(track_type), "relationship.track")
+        if name is None or instance is None:
+            continue
+        try:
+            value = instance._value
+            updated = instance._last_update
+        except Exception:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        current = float(value)
+        if type(updated) is int and type(now_ticks) is int and now_ticks >= updated:
+            computed = _current_value(instance, float(value), now_ticks - updated)
+            if computed is not None:
+                current = computed
+        tracks.append({"track": name, "value": round(current, 1)})
+    tracks.sort(key=lambda item: item["track"])
+    labels = []
+    try:
+        bits = list(data._bits.keys())
+    except Exception:
+        bits = []
+    for bit in bits:
+        try:
+            if bit.visible is not True:
+                continue
+        except Exception:
+            continue
+        name = _bounded_name(_type_name(bit), "relationship.label")
+        if name is None:
+            continue
+        try:
+            text_key = _string_key(bit.display_name)
+        except Exception:
+            text_key = None
+        labels.append({"label": name, "text_key": text_key})
+    labels.sort(key=lambda item: item["label"])
+    side = _her_side(relationship, a)  # a is her id (before the key sort)
+    return {"known": True, "tracks": tracks[:schema.MAX_REL_TRACKS],
+            "labels": labels[:schema.MAX_REL_LABELS],
+            "knows": None if side is None else _knowledge(side, other_info),
+            "sentiments": [] if side is None else _sentiments(side)}
+
+
+def _describe_presence(sim_info, sim, household_id, lab_sim_id=None, body_position=None,
+                       now_ticks=None, situations=None):
     try:
         raw_id = sim_info.id
     except Exception:
@@ -358,63 +1073,652 @@ def _describe_presence(sim_info, sim, household_id):
         entry_id = str(schema.string_id(raw_id, "presence.id"))
     except Exception:
         return None
+    position = _position(sim)
+    posture = _posture_snapshot(sim)
+    doing, doing_target = _doing(sim)
+    is_body = lab_sim_id is not None and entry_id == str(lab_sim_id)
+    relationship = None
+    if not is_body and lab_sim_id is not None:
+        try:
+            relationship = relationship_between(lab_sim_id, entry_id, now_ticks,
+                                                sim_info)
+        except Exception:
+            relationship = None
+    try:
+        on_lot = sim.is_on_active_lot()
+    except Exception:
+        on_lot = None
     return {"id": entry_id,
+            "is_pet": _flag(lambda: sim_info.is_pet),
+            "species": _species_name(sim_info),
+            "occult_kinds": _occult_kinds(sim_info),
+            "on_lot": on_lot if type(on_lot) is bool else None,
             "active_household": household_id is not None and own_household == household_id,
-            "level": level}
+            "level": level,
+            "is_body": lab_sim_id is not None and entry_id == str(lab_sim_id),
+            "household_id": _plain_id(own_household),
+            "name": _sim_name(sim_info),
+            "first_name": _name_part(lambda: sim_info.first_name),
+            "last_name": _name_part(lambda: sim_info.last_name),
+            "position": position,
+            "room": _room(sim, position),
+            "posture": None if posture is None else posture.get("posture_name"),
+            "doing": doing,
+            "doing_target": doing_target,
+            "distance_m": _distance(position, body_position),
+            "relationship": relationship,
+            "situations": None if situations is None else situations.get(entry_id, [])}
 
 
-def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS):
+def read_situations():
+    """2.15.2: Sim id -> the game situations that Sim is in (a visit, a party, a
+    greeting) and its role there, from the zone situation manager. Plain reads:
+    each situation's `_situation_sims` (Sim -> SituationSim) and the SituationSim's
+    `current_role_state_type` (bytecode situations/base_situation; the game's own
+    get_situations_sim_is_in only iterates and compares). None when unreadable."""
     try:
-        manager = services.sim_info_manager()
+        situations = list(services.get_zone_situation_manager().values())
     except Exception:
-        return [], False
-    try:
-        generator = manager.instanced_sims_on_active_lot_gen(
-            hidden_flags, include_spawn_point=False)
-    except Exception:
+        return None
+    found = {}
+    for situation in situations:
+        name = _bounded_name(_tuning_name(situation), "situation")
+        if name is None:
+            continue
         try:
-            generator = manager.instanced_sims_on_active_lot_gen(hidden_flags)
+            members = list(situation._situation_sims.items())
         except Exception:
-            return [], False
+            continue
+        for sim, member in members:
+            try:
+                sim_id = str(sim.id)
+            except Exception:
+                continue
+            try:
+                role = _bounded_name(_type_name(member.current_role_state_type), "role")
+            except Exception:
+                role = None
+            entries = found.setdefault(sim_id, [])
+            if len(entries) < schema.MAX_SITUATIONS:
+                # 2.40.0 (W13 P1): waiting is the visitor's waiting job (a visitor at her door), from the role's name.
+                # Written only when true (an optional key; older rows and other Sims carry none).
+                entry = {"situation": name, "role": role}
+                if waiting_role(role):
+                    entry["waiting"] = True
+                entries.append(entry)
+    return found
+
+
+def read_place(sim_info):
+    """2.15.2: whose lot she is on (the zone lot's `zone_owner_household_id`, as the
+    game's own owning_household_id_of_active_lot reads it), whether that is her home,
+    and the venue (the zone venue service's `_active_venue`, its class name).
+    Live 2026-10-05: cooking on a host's stove drew reaction_Inappropriate; she had no
+    way to know she was a visitor in someone else's home."""
     try:
-        iterator = iter(generator)
-    except TypeError:
-        return [], False
+        zone = services.current_zone()
+    except Exception:
+        return None
+    if zone is None:
+        return None
+    try:
+        owner = zone.lot.zone_owner_household_id
+    except Exception:
+        owner = None
+    owner = owner if type(owner) is int and owner > 0 else None
+    try:
+        own = sim_info.household_id
+    except Exception:
+        own = None
+    her_home = None if type(own) is not int else (owner is not None and owner == own)
+    try:
+        venue = _bounded_name(_tuning_name(zone.venue_service._active_venue), "venue")
+    except Exception:
+        venue = None
+    return {"owner_household_id": None if owner is None else str(owner),
+            "her_home": her_home, "venue": venue}
+
+
+# 2.15.2: the game's dialog answers (ButtonType, bytecode ui/ui_dialog).
+DIALOG_RESPONSES = {-1: "closed", 10000: "no_response", 10001: "ok", 10002: "cancel",
+                    10003: "ok_alt", 10004: "custom_1", 10005: "custom_2", 10006: "custom_3"}
+RESPONSE_IDS = {name: number for number, name in DIALOG_RESPONSES.items()}
+_DIALOGS_OPEN = {}
+# 2.23.0: speed before each dialog. The sample that first lists a dialog is already
+# inside the pause that dialog made, so the stored speed is the previous sample's
+# clock_speed (the same read as _game_snapshot). A session's first sample uses the
+# current read. Closed dialogs are dropped.
+_DIALOG_SPEED = {}
+_SPEED_SEEN = None
+
+
+def _remember_dialog_speeds(open_ids):
+    global _SPEED_SEEN
+    current = None
+    try:
+        current = _game_snapshot().get("clock_speed")
+    except Exception:
+        current = None
+    if not isinstance(current, str):
+        current = None
+    prior = _SPEED_SEEN if _SPEED_SEEN is not None else current
+    for key in open_ids:
+        if key not in _DIALOG_SPEED:
+            _DIALOG_SPEED[key] = prior
+    for key in list(_DIALOG_SPEED):
+        if key not in open_ids:
+            del _DIALOG_SPEED[key]
+    if current is not None:
+        _SPEED_SEEN = current
+
+
+def dialog_prior_speed(dialog_id):
+    """The speed recorded when this dialog was first seen, else the last sample's."""
+    key = str(dialog_id)
+    if key in _DIALOG_SPEED:
+        return _DIALOG_SPEED[key]
+    return _SPEED_SEEN
+
+
+def _response_name(value):
+    """A known answer by name; another, non-negative id as response_<N> (2.39.0, W12 A2: a bare number was
+    read as a picker row and refused as NO_ROW). None for a negative id or past 16 characters (the schema
+    bound), so one odd id never costs the whole row."""
+    try:
+        number = int(value)
+    except Exception:
+        return None
+    name = DIALOG_RESPONSES.get(number)
+    if name is None:
+        if number < 0:
+            return None
+        name = "response_%d" % number
+    return name if len(name) <= 16 else None
+
+
+def _closure_key(text):
+    """2.19.0 (live 2026-10-06, a work event at her culinary job: buttons 0 and 1 with no
+    text): AdventureMoment._get_dialog (bytecode interactions/utils/adventure) gives each
+    button `text=lambda *_, **__: display_name`, the LocalizedString it built from the
+    tuned choice. The key is read from the lambda's closure cells, fixed attribute reads
+    (`__closure__`, `cell_contents`), nothing called; the first cell holding a string key."""
+    try:
+        cells = tuple(text.__closure__ or ())
+    except Exception:
+        return None
+    for cell in cells[:4]:
+        try:
+            key = _string_key(cell.cell_contents)
+        except Exception:
+            key = None
+        if key is not None:
+            return key
+    return None
+
+
+def _dialog_responses(dialog):
+    """The choices the game offers: ok/cancel texts on an ok-cancel dialog, else the
+    tuned and added UiDialogResponse entries. The `responses` property is not used
+    (it builds new response objects)."""
+    found = []
+    try:
+        ok = dialog.text_ok
+    except Exception:
+        ok = None
+    if ok is not None:
+        found.append({"response": "ok", "text_key": _string_key(ok)})
+        try:
+            cancel = dialog.text_cancel
+        except Exception:
+            cancel = None
+        if cancel is not None:
+            found.append({"response": "cancel", "text_key": _string_key(cancel)})
+        return found
+    items = []
+    for read in (lambda: dialog.ui_responses, lambda: dialog._additional_responses):
+        try:
+            items.extend(read() or ())
+        except Exception:
+            continue
+    for item in items[:schema.MAX_DIALOG_RESPONSES]:
+        try:
+            name = _response_name(item.dialog_response_id)
+        except Exception:
+            name = None
+        if name is None:
+            continue
+        try:
+            text_key = _string_key(item.text)
+        except Exception:
+            text_key = None
+        if text_key is None:
+            text_key = _closure_key(item.text)
+        found.append({"response": name, "text_key": text_key})
+    return found
+
+
+# 2.31.0 (DOMUS_DEEP_DESIGN §11): how each window was attributed and sent, by dialog id key:
+# {"held", "cause", "text_inputs"}. e2_control writes it through note_window / forget_window (it imports
+# observers, never the reverse); read_dialogs only reads it, and drops the entries of dialogs that are gone.
+WINDOWS_KEPT = 32
+_WINDOWS = {}
+
+
+def note_window(key, **facts):
+    """2.31.0: facts about one window for the next sample. Bounded: the oldest entry goes first."""
+    entry = _WINDOWS.get(key)
+    if entry is None:
+        if len(_WINDOWS) >= WINDOWS_KEPT:
+            del _WINDOWS[next(iter(_WINDOWS))]
+        entry = _WINDOWS[key] = {}
+    entry.update(facts)
+
+
+def forget_window(key):
+    _WINDOWS.pop(key, None)
+
+
+def _value(read):
+    """2.31.0: one plain attribute read (a lambda, so no name-based lookup) that never raises; None when it
+    cannot be read."""
+    try:
+        return read()
+    except Exception:
+        return None
+
+
+def _clamp(value, high):
+    """2.31.0: a count the schema can carry (0 .. high); 0 keeps the game's no-limit meaning."""
+    return min(max(value, 0), high)
+
+
+def _optional_int(message, name, read):
+    """2.31.0: a set integer field of a protobuf message, else None. HasField(name) says whether it is set;
+    read is the plain attribute read of the same field."""
+    try:
+        if not message.HasField(name):
+            return None
+    except Exception:
+        # A field the message cannot say is set or not: a value above zero counts as set.
+        value = _value(read)
+        return value if type(value) is int and value > 0 else None
+    value = _value(read)
+    return value if type(value) is int else None
+
+
+def read_text_inputs(message):
+    """2.31.0 (DOMUS_DEEP_DESIGN §4.4, §11): the text fields of a held dialog message, one per field the
+    game built (UiDialogMessage.text_input; bytecode ui/ui_text_input.UiTextInput.build_msg): the field
+    name, its length and value limits, whether the game checks profanity, whether a restricted-character
+    set exists, and the string key of the default text. Numbers and flags only, never the text. None when
+    the message has no text field, a field name is one the probe cannot name, or there are more fields than
+    the schema carries (a partial report would let her answer leave a field empty)."""
+    try:
+        fields = list(message.text_input)
+    except Exception:
+        return None
+    if not fields or len(fields) > schema.MAX_TEXT_INPUTS:
+        return None
+    found = []
+    for field in fields:
+        name = _value(lambda: field.text_input_name)
+        if type(name) is not str or not 1 <= len(name) <= 32 or not set(name) <= schema.FIELD_NAME_CHARS:
+            return None
+        min_value = _optional_int(field, "min_value", lambda: field.min_value)
+        max_value = _optional_int(field, "max_value", lambda: field.max_value)
+        min_length = _optional_int(field, "min_length", lambda: field.min_length)
+        found.append({
+            "name": name, "min_length": 0 if min_length is None else min_length,
+            "max_length": _optional_int(field, "max_length", lambda: field.max_length),
+            "numeric": min_value is not None or max_value is not None,
+            "min_value": min_value, "max_value": max_value,
+            "profanity_checked": _value(lambda: field.check_profanity) is True,
+            "restricted": _string_key(_value(lambda: field.restricted_characters)) is not None,
+            "default_key": _string_key(_value(lambda: field.default_text))})
+    return found
+
+
+def select_of(dialog):
+    """2.31.0 (§11): a picker's selectable rows, from its own attributes (bytecode
+    ui/ui_dialog_picker.UiDialogObjectPicker.multi_select reads min_selectable and max_selectable_num).
+    None for a window that is not a picker. A max of 0 is the no-limit value multi_select tests for."""
+    low = _value(lambda: dialog.min_selectable)
+    high = _value(lambda: dialog.max_selectable_num)
+    if type(low) is not int or type(high) is not int:
+        return None
+    return {"min": _clamp(low, schema.MAX_DIALOG_ROWS), "max": _clamp(high, schema.MAX_DIALOG_ROWS)}
+
+
+def counts_of(dialog):
+    """2.31.0 (§11): a purchase picker's counted caps (bytecode ui/ui_dialog_picker.UiPurchasePicker.__init__
+    stores max_selectable_in_row and max_selectable_rows). None for a window without them."""
+    in_row = _value(lambda: dialog.max_selectable_in_row)
+    rows = _value(lambda: dialog.max_selectable_rows)
+    if type(in_row) is not int or type(rows) is not int:
+        return None
+    return {"max_in_row": _clamp(in_row, schema.MAX_WINDOW_COUNT),
+            "max_rows": _clamp(rows, schema.MAX_WINDOW_COUNT)}
+
+
+def _describe_dialog(dialog_id, dialog, auto):
+    try:
+        key = str(schema.string_id(int(dialog_id), "dialog_id"))
+    except Exception:
+        return None
+    kind = _bounded_name(_tuning_name(dialog), "dialog.kind")
+    if kind is None:
+        return None
+    try:
+        owner = dialog._owner()  # a weakref to the owner's SimInfo
+        owner_id = None if owner is None else str(owner.id)
+    except Exception:
+        owner_id = None
+    entry = {"dialog_id": key, "kind": kind, "owner_id": owner_id,
+             "title_key": None, "text_key": None, "auto_respond": bool(auto)}
+    for field, read in (("title_key", lambda: dialog.title),
+                        ("text_key", lambda: dialog.text)):
+        try:
+            entry[field] = _string_key(read())
+        except Exception:
+            entry[field] = None
+    entry["responses"] = _dialog_responses(dialog)
+    entry["rows"] = _dialog_rows(dialog)
+    entry["select"] = select_of(dialog)
+    entry["counts"] = counts_of(dialog)
+    # 2.31.0 (§11): who holds the window, and its text fields only while she holds it.
+    facts = _WINDOWS.get(key, {})
+    entry["held"] = facts.get("held") is True
+    entry["cause"] = facts.get("cause")
+    entry["text_inputs"] = facts.get("text_inputs") if entry["held"] else None
+    entry["hold_left_s"] = _hold_left_seconds(facts) if entry["held"] else None
+    return entry
+
+
+def _hold_left_seconds(facts):
+    """2.39.0 (W12 A9): whole seconds until the fallback hands a held window to the User. held_until is the
+    monotonic time she was offered it; None when the hold did not say; never negative."""
+    until = facts.get("held_until")
+    if type(until) not in (int, float):
+        return None
+    return max(0, int(until - time.monotonic()))
+
+
+def _dialog_rows(dialog):
+    """2.18.0: the rows a picker dialog offers (picker_rows, plain list on UiDialogObjectPicker;
+    bytecode ui/ui_dialog_picker): option id, name, whether it can be picked, and its price
+    (RecipePickerRow.price, ObjectPickerRow.cost). Enabled rows first; none for a plain pop-up."""
+    try:
+        rows = list(dialog.picker_rows or ())
+    except Exception:
+        return []
+    found = []
+    for row in rows:
+        try:
+            option_id = int(row.option_id)
+        except Exception:
+            continue
+        if option_id < 0:
+            continue
+        name_key = None
+        for read in (lambda: row.name, lambda: row.display_name):
+            try:
+                name_key = _string_key(read())
+            except Exception:
+                name_key = None
+            if name_key is not None:
+                break
+        try:
+            enabled = row.is_enable is True
+        except Exception:
+            enabled = False
+        price = None
+        for read in (lambda: row.price, lambda: row.cost):
+            try:
+                value = read()
+            except Exception:
+                continue
+            if type(value) is int and value >= 0:
+                price = value
+                break
+        found.append({"option_id": str(option_id), "name_key": name_key, "enabled": enabled, "price": price})
+    found.sort(key=lambda item: not item["enabled"])
+    return found[:schema.MAX_DIALOG_ROWS]
+
+
+def read_dialogs():
+    """2.15.2: the game's pop-ups (live 2026-10-05: a question about a new like was
+    answered for her and never sensed). Open ones come from the dialog
+    service's `_active_dialogs` (dialog id -> dialog; bytecode ui/ui_dialog_service),
+    newest last; a dialog gone since the last sample is reported closed with the
+    answer the game stored on it (`response`). A dialog waiting on the game's own
+    auto-response is marked. Read only: no dialog is answered or cancelled here."""
+    global _DIALOGS_OPEN
+    try:
+        service = services.ui_dialog_service()
+        active = list(service._active_dialogs.items())
+    except Exception:
+        return None
+    try:
+        auto = set(service._auto_respond_alarm_handles)
+    except Exception:
+        auto = set()
+    current = {}
+    for dialog_id, dialog in active:
+        entry = _describe_dialog(dialog_id, dialog, dialog_id in auto)
+        if entry is not None:
+            current[entry["dialog_id"]] = (dialog, entry)
+    closed = []
+    for key, (dialog, entry) in _DIALOGS_OPEN.items():
+        if key in current:
+            continue
+        try:
+            response = _response_name(dialog.response)
+        except Exception:
+            response = None
+        closed.append({"dialog_id": key, "kind": entry["kind"],
+                       "title_key": entry["title_key"], "text_key": entry["text_key"],
+                       "response": response})
+    _DIALOGS_OPEN = current
+    for stale in [key for key in _WINDOWS if key not in current]:
+        del _WINDOWS[stale]
+    _remember_dialog_speeds(set(current))
+    opened = [entry for _, entry in current.values()]
+    truncated = (len(opened) > schema.MAX_DIALOGS or len(closed) > schema.MAX_DIALOGS)
+    return {"open": opened[-schema.MAX_DIALOGS:], "closed": closed[-schema.MAX_DIALOGS:],
+            "truncated": truncated}
+
+
+# 2.36.0 (D6, P2): the game's notices about her. A notification is observed as it is shown: e2_control's notice
+# hook sits on UiDialogNotification.distribute_dialog, which every notification goes through. (dialog_show keeps
+# only dialogs WITH responses in _active_dialogs, and a notice normally has none, so sampling that dict would miss
+# nearly every notice.) Read only: never held, cancelled or answered. The probe's own lines are not notices about
+# her: note_own_notice marks them before they are shown.
+NOTICES_PENDING_KEPT = 16
+NOTICED_KEPT = 64
+OWN_NOTICES_KEPT = 64
+_SHOWN = []             # notices shown since the last row, newest last (bounded)
+_NOTICED = {}           # dialog id keys already handed over (bounded)
+_NOTICES_PENDING = []   # recorded, not yet sent in a row
+_OWN_NOTICES = {}       # dialog id keys of the probe's own lines (bounded)
+
+
+def _remember(table, key, kept):
+    """A bounded set in insertion order: the oldest key goes first."""
+    table[key] = True
+    while len(table) > kept:
+        del table[next(iter(table))]
+
+
+def _dialog_key(dialog):
+    return str(schema.string_id(int(dialog.dialog_id), "dialog_id"))
+
+
+def note_own_notice(dialog):
+    """2.36.0: the probe's own line, marked BEFORE it is shown: its dialog id is kept, so the notice hook never
+    records it. dialog_id is safe to read before the show: the game's unique_id descriptor assigns it on the first
+    read, and the show uses that same id. Never raises."""
+    try:
+        _remember(_OWN_NOTICES, _dialog_key(dialog), OWN_NOTICES_KEPT)
+    except Exception:
+        pass
+
+
+def notice_shown(dialog):
+    """2.36.0 (D6, P2): the notice hook's observer, called as a notification is distributed. A probe's own line
+    is dropped (its mark is used up). Any other notification is kept with its words and its owner, read now (the
+    owner's sim id and household id, or None when it has no owner). Never raises."""
+    try:
+        key = _dialog_key(dialog)
+        if key in _OWN_NOTICES:
+            del _OWN_NOTICES[key]
+            return
+        if not _is_notification(dialog):
+            return
+        owner = _notice_owner(dialog)
+        _SHOWN.append({"dialog_id": key, "title_key": _text_key(lambda: dialog.title),
+                       "text_key": _text_key(lambda: dialog.text), "owner": owner})
+        del _SHOWN[:-NOTICES_PENDING_KEPT]
+    except Exception:
+        pass
+
+
+def _text_key(read):
+    try:
+        return _string_key(read())
+    except Exception:
+        return None
+
+
+def _notice_owner(dialog):
+    """Who a notice belongs to, read when it is shown: None when it has no owner, else the owner's sim id and
+    household id (strings; household None when unknown). Raises when the owner cannot be read (the notice is
+    then skipped)."""
+    owner = dialog._owner()
+    if owner is None:
+        return None
+    household = _value(lambda: owner.household_id)
+    return {"sim_id": str(owner.id), "household_id": None if household is None else str(household)}
+
+
+def read_notices(sim_info=None):
+    """2.36.0: the notices shown since the last row that are hers (her Sim, a Sim of her household, or no owner),
+    each once, at most schema.MAX_NOTICES. Handed over once: the next row starts from what came after."""
+    shown = list(_SHOWN)
+    del _SHOWN[:]
+    for entry in shown:
+        if entry["dialog_id"] in _NOTICED or not _is_hers(entry["owner"], sim_info):
+            continue
+        _remember(_NOTICED, entry["dialog_id"], NOTICED_KEPT)
+        _NOTICES_PENDING.append({"title_key": entry["title_key"], "text_key": entry["text_key"]})
+    del _NOTICES_PENDING[:-NOTICES_PENDING_KEPT]
+    sent = _NOTICES_PENDING[:schema.MAX_NOTICES]
+    del _NOTICES_PENDING[:schema.MAX_NOTICES]
+    return sent
+
+
+def _is_notification(dialog):
+    """A UiDialogNotification or a class of it, by name (no import: the game class is not needed here)."""
+    try:
+        return any(cls.__name__ == "UiDialogNotification" for cls in type(dialog).__mro__)
+    except Exception:
+        return False
+
+
+def _is_hers(owner, sim_info):
+    """A notice's owner (from _owner_of) is her Sim, a Sim of her household, or nobody."""
+    if owner is None:
+        return True
+    if sim_info is None:
+        return False
+    try:
+        if owner["sim_id"] == str(sim_info.id):
+            return True
+        household = sim_info.household_id
+        return household is not None and owner["household_id"] == str(household)
+    except Exception:
+        return False
+
+
+def read_weather():
+    """2.36.0 (D6, P1): the weather now and the season, as the game names them. `types`: the current weather
+    types' names (sorted, at most schema.MAX_WEATHER_TYPES; services.weather_service().get_current_weather_types()
+    returns a copy of the set); `season`: the season's enum name (services.season_service().season, a property).
+    Each is None when its service is missing or unreadable; None (the whole) when neither can be read."""
+    types_now = season = None
+    try:
+        values = list(services.weather_service().get_current_weather_types())
+        types_now = sorted(set(name for name in (_bounded_name(_enum_name(value), "weather.type")
+                                                 for value in values) if name is not None))
+        types_now = types_now[:schema.MAX_WEATHER_TYPES]
+    except Exception:
+        types_now = None
+    try:
+        season = _bounded_name(services.season_service().season.name, "weather.season")
+    except Exception:
+        season = None
+    if types_now is None and season is None:
+        return None
+    return {"types": types_now, "season": season}
+
+
+def _enum_name(value):
+    try:
+        return value.name
+    except Exception:
+        return None
+
+
+def read_presence(lab_sim_id, hidden_flags=ALL_HIDDEN_REASONS, body_position=None,
+                  now_ticks=None):
+    """Every instanced Sim in the zone, her body first, then nearest first.
+    Returns (presence, dropped, skipped); dropped counts the Sims past the cap,
+    {"on_lot": n, "other": m}.
+
+    D37 (live: presence was empty in every row with 8 Sims on the lot): the reader
+    must not call get_sim_instance on a Sim object.
+    D40 (live, 2.14.0): the game's instanced_sims_on_active_lot_gen asks each Sim
+    is_on_active_lot() inside the generator. A Sim arriving for a group chat made that
+    raise, which ends a generator: for an hour of game time her presence was empty,
+    her own body included, and the rows still said complete. The lot test also hid
+    Sims on the sidewalk next to her. Now each SimInfo's instance is read on its own
+    (get_sim_instance reads `_sim_ref`, bytecode sims/sim_info), on_lot is asked per
+    Sim, and a Sim that cannot be read is counted in `skipped`.
+    """
+    try:
+        infos = list(services.sim_info_manager().get_all())
+    except Exception:
+        return [], False, None
     household_id = _active_household_id()
+    situations = read_situations()
     presence = []
-    truncated = False
-    while True:
+    skipped = 0
+    for sim_info in infos:
         try:
-            candidate = next(iterator)
-        except StopIteration:
-            break
+            sim = sim_info.get_sim_instance(allow_hidden_flags=hidden_flags)
         except Exception:
-            continue
-        if candidate is None:
-            continue
-        try:
-            sim = candidate.get_sim_instance(allow_hidden_flags=hidden_flags)
-        except Exception:
+            skipped += 1
             continue
         if sim is None:
             continue
         try:
-            on_lot = sim.is_on_active_lot()
+            row = _describe_presence(sim_info, sim, household_id, lab_sim_id, body_position,
+                                     now_ticks, situations)
         except Exception:
-            continue
-        if on_lot is not True:
-            continue
-        try:
-            row = _describe_presence(candidate, sim, household_id)
-        except Exception:
-            continue
+            row = None
         if row is None:
-            continue
-        if len(presence) >= schema.MAX_PRESENCE:
-            truncated = True
+            skipped += 1
             continue
         presence.append(row)
-    return presence, truncated
+    # D45 (live 2.15.0): passers-by on the street filled the cap by distance and could
+    # push a guest out. Her body first, then everyone on the lot, then the nearest.
+    presence.sort(key=lambda row: (0 if row["is_body"] else 1,
+                                   0 if row["on_lot"] is True else 1,
+                                   row["distance_m"] if row["distance_m"] is not None else 1e9,
+                                   row["id"]))
+    left_out = presence[schema.MAX_PRESENCE:]
+    dropped = {"on_lot": sum(1 for row in left_out if row["on_lot"] is True),
+               "other": sum(1 for row in left_out if row["on_lot"] is not True)}
+    return presence[:schema.MAX_PRESENCE], dropped, skipped
 
 
 def _target_matches(entry, lab_sim, lab_sim_id):
@@ -440,6 +1744,28 @@ def _target_matches(entry, lab_sim, lab_sim_id):
     return False
 
 
+def _targeted_entries(container, lab_sim, lab_sim_id):
+    found = []
+    if container is None:
+        return found
+    try:
+        iterator = iter(container)
+    except TypeError:
+        return found
+    while True:
+        try:
+            entry = next(iterator)
+        except StopIteration:
+            break
+        except Exception:
+            continue
+        if entry is None:
+            continue
+        if _target_matches(entry, lab_sim, lab_sim_id):
+            found.append(entry)
+    return found
+
+
 def read_social(lab_sim_id, lab_sim, candidates):
     social = []
     truncated = False
@@ -453,39 +1779,33 @@ def read_social(lab_sim_id, lab_sim, candidates):
         if raw_id is not None and str(raw_id) == str(lab_sim_id):
             continue
         try:
+            actor = schema.string_id(raw_id, "social.actor_id")
+            actor_id = None if actor is None else str(actor)
+        except Exception:
+            continue
+        if not actor_id:
+            continue
+        try:
             sim = candidate.get_sim_instance(allow_hidden_flags=ALL_HIDDEN_REASONS)
         except Exception:
             continue
         if sim is None:
             continue
-        for container in (sim.si_state, sim.queue):
-            if container is None:
+        try:
+            queued = _targeted_entries(sim.queue, lab_sim, lab_sim_id)
+            running = _targeted_entries(sim.si_state, lab_sim, lab_sim_id)
+            merged, queue_truncated, running_truncated = snapshot.merge_interactions(
+                queued, running, _describe_interaction)
+        except Exception:
+            continue
+        if queue_truncated or running_truncated:
+            truncated = True
+        for row in merged:
+            row["actor_id"] = actor_id
+            if len(social) >= schema.MAX_SOCIAL:
+                truncated = True
                 continue
-            try:
-                iterator = iter(container)
-            except TypeError:
-                continue
-            while True:
-                try:
-                    entry = next(iterator)
-                except StopIteration:
-                    break
-                except Exception:
-                    continue
-                if entry is None:
-                    continue
-                if not _target_matches(entry, lab_sim, lab_sim_id):
-                    continue
-                try:
-                    row = _describe_interaction(entry)
-                    row["entry_key"] = snapshot.entry_key(entry)
-                    row["membership"] = "QUEUED"
-                except Exception:
-                    continue
-                if len(social) >= schema.MAX_SOCIAL:
-                    truncated = True
-                    continue
-                social.append(row)
+            social.append(row)
     return social, truncated
 
 
@@ -502,7 +1822,8 @@ def poll_once(telemetry_session_id, armed_name,
     interactions, queue_truncated, running_truncated = snapshot.merge_interactions(
         queued, running, _describe_interaction
     )
-    senses = read_senses(sim_info, services.time_service().sim_now.absolute_ticks(), None)
+    now_ticks = services.time_service().sim_now.absolute_ticks()
+    senses = read_senses(sim_info, now_ticks, None)
     motives = senses["motives"]
     signals = senses["sim_signals"]
     mood = senses["mood"]
@@ -511,14 +1832,16 @@ def poll_once(telemetry_session_id, armed_name,
         lab_id = None if raw_lab_id is None else str(raw_lab_id)
     except Exception:
         lab_id = None
-    presence, presence_truncated = ([], False)
+    presence, dropped, skipped = ([], {"on_lot": 0, "other": 0}, None)
     social, social_truncated = ([], False)
+    zone = zone_snapshot(sim)
     if lab_id is not None:
         try:
-            presence, presence_truncated = read_presence(lab_id)
+            presence, dropped, skipped = read_presence(
+                lab_id, body_position=zone["position"], now_ticks=now_ticks)
         except Exception:
-            presence, presence_truncated = ([], False)
-        if presence and len(presence) <= schema.MAX_PRESENCE:
+            presence, dropped, skipped = ([], {"on_lot": 0, "other": 0}, None)
+        if any(not row["is_body"] for row in presence):
             try:
                 candidates = services.sim_info_manager().get_all()
             except Exception:
@@ -534,21 +1857,899 @@ def poll_once(telemetry_session_id, armed_name,
     raw_sim_id = sim_info.id
     sim_id = None if raw_sim_id is None else str(raw_sim_id)
     body = {"sim_id": sim_id, "instantiated": True, "is_selectable": True,
-            "is_selected": None, "posture": _posture_snapshot(sim)}
+            "is_selected": _is_selected(sim_id), "posture": _posture_snapshot(sim)}
     complete = snapshot.interactions_complete(
         queue_truncated, running_truncated, capture_complete)
-    if presence_truncated or social_truncated:
+    if social_truncated:
         complete = False
+    missingness = {}
+    missed = []
+    if skipped is None:
+        missed.append("unreadable")
+    elif skipped > 0:
+        missed.append("skipped %d Sims" % skipped)
+    if not any(item["is_body"] for item in presence):
+        missed.append("body absent")
+    if dropped["on_lot"]:
+        missed.append("%d on the lot not listed" % dropped["on_lot"])
+    if missed:
+        # D40: a presence read that missed anyone, her body included, says so.
+        complete = False
+        missingness["presence"] = {"status": "MISSING", "detail": ", ".join(missed)}
+    if dropped["other"]:
+        # D45: Sims off the lot past the cap are named as left out; the lot stays whole.
+        missingness["presence_nearby"] = {
+            "status": "MISSING", "detail": "%d off the lot not listed" % dropped["other"]}
     row = schema.make_record(
         "presence_snapshot", telemetry_session_id=telemetry_session_id,
         wall_timestamp_ms=wall, monotonic_ns=mono,
         game=game, attestation=schema.attestation(armed_name),
-        save=save, body=body,
+        save=save, zone=zone, body=body,
         interactions={"observed": interactions, "queue_truncated": queue_truncated,
                       "running_truncated": running_truncated,
                       "observation_complete": complete},
         observation_complete=complete,
         motives=motives, sim_signals=signals, mood=mood,
-        presence=presence, social=social,
+        presence=presence, social=social, missingness=missingness,
     )
+    try:
+        row["self"] = read_self(sim_info)
+    except Exception:
+        row["self"] = None
+    try:
+        row["place"] = read_place(sim_info)
+    except Exception:
+        row["place"] = None
+    try:
+        row["dialogs"] = read_dialogs()
+    except Exception:
+        row["dialogs"] = None
+    try:
+        row["notices"] = read_notices(sim_info)
+    except Exception:
+        row["notices"] = None
+    try:
+        weather = read_weather()
+    except Exception:
+        weather = None
+    if weather is not None:
+        row["weather"] = weather  # 2.36.0 (D6, P1): absent when neither service can say
+    try:
+        row["objects"] = read_object_events(zone.get("zone_id"), zone.get("position"),
+                                            int(time.time() * 1000))
+    except Exception:
+        row["objects"] = None
     return snapshot.apply_size_budget(row)
+
+
+def _skill_level(instance):
+    """Skill level without Skill.get_user_value, which caches into `_user_value` (a
+    store; bytecode statistics/skill): the cached `_user_value`, else the game's own
+    convert_to_user_value (reads the level list only) on the stored `_value`."""
+    try:
+        cached = instance._user_value
+    except Exception:
+        cached = None
+    if type(cached) is int:
+        return cached
+    try:
+        level = instance.convert_to_user_value(instance._value)
+    except Exception:
+        return None
+    return level if type(level) is int else None
+
+
+# D46 (live 2.15.0): the game's own settings (gender options, walk style, phone case,
+# hidden) took her 12 trait slots. TraitType values, bytecode traits/trait_type:
+# WALKSTYLE 2, HIDDEN 4, TAILSTYLE 7, GENDER_OPTIONS 8, SIM_PHONE 9,
+# ROBOT_MODULE_LOCKED 19, INFANT_CARRIER 32.
+MECHANICAL_TRAIT_TYPES = frozenset((2, 4, 7, 8, 9, 19, 32))
+
+
+def _mechanical_trait(trait):
+    """A trait that is a game setting, not part of who she is (a tuned class
+    attribute, plain read). Unreadable counts as not mechanical."""
+    try:
+        return int(trait.trait_type) in MECHANICAL_TRAIT_TYPES
+    except Exception:
+        return False
+
+
+def _flag(read):
+    try:
+        value = read()
+    except Exception:
+        return None
+    return value if type(value) is bool else None
+
+
+def _species_name(sim_info):
+    """2.32.0 (PR13): the name of her Sim info's species (SimInfoBaseWrapper.species), or None."""
+    try:
+        return _bounded_name(sim_info.species.name, "species")
+    except Exception:
+        return None
+
+
+def _occult_kinds(sim_info):
+    """2.32.0 (PR13): the occult types she is in now, by name (a werewolf or vampire form), sorted; None when
+    unreadable, [] for an ordinary Sim. Reads OccultTracker.get_current_occult_types only."""
+    try:
+        types = list(sim_info.occult_tracker.get_current_occult_types())
+    except Exception:
+        return None
+    names = []
+    for item in types:
+        try:
+            name = _bounded_name(item.name, "occult")
+        except Exception:
+            name = None
+        if name is not None:
+            names.append(name)
+    return sorted(names)[:schema.MAX_OCCULT_KINDS]
+
+
+def _is_pet_object(obj):
+    """2.32.0 (PR13): a pet on the lot is a person in her menu (named by the helper), not an object."""
+    try:
+        return obj.sim_info.is_pet is True
+    except Exception:
+        return False
+
+
+def read_life(sim_info):
+    """2.32.0 (PR12): her life state, plain reads: the age stage (the name of SimInfoBaseWrapper.age, an Age
+    enum), pregnant, sick, dead, ghost and npc (SimInfo.is_pregnant, is_sick, is_dead, is_ghost, is_npc). A value
+    that cannot be read is None. Never raises."""
+    try:
+        age = _bounded_name(sim_info.age.name, "age")
+    except Exception:
+        age = None
+    return {"age": age, "pregnant": _flag(lambda: sim_info.is_pregnant),
+            "sick": _flag(lambda: sim_info.is_sick), "dead": _flag(lambda: sim_info.is_dead),
+            "ghost": _flag(lambda: sim_info.is_ghost), "npc": _flag(lambda: sim_info.is_npc)}
+
+
+def death_type_name(sim_info):
+    """R3 (death): the game's DeathType name of a dead Sim (sim_info.death_tracker.death_type), at most 40 characters.
+    None when the game does not say, or the name cannot be read."""
+    try:
+        name = sim_info.death_tracker.death_type.name
+    except Exception:
+        return None
+    return name if isinstance(name, str) and 0 < len(name) <= 40 else None
+
+
+def body_life(sim_id):
+    """2.32.0 (PR5): her life state when her body is no longer selectable (a death removes her from the
+    selectable Sims, but her Sim info stays). None when no Sim info with that id can be read.
+    R3 (death): with the game's death type name ("death_type", None when the game does not say)."""
+    try:
+        infos = list(services.sim_info_manager().get_all())
+    except Exception:
+        return None
+    for info in infos:
+        if _info_id(info) == sim_id:
+            life = read_life(info)
+            life["death_type"] = death_type_name(info)
+            return life
+    return None
+
+
+def read_self(sim_info):
+    """2.15.0: what she is like and has: her traits (personality first), her skills
+    (highest first) and her household's money. Plain reads: trait_tracker
+    `_equipped_traits` and `_equipped_personality_traits`, the skills in the commodity
+    tracker's `_statistics` (D42 route; a Skill has `skill_level_type`), and
+    household `_funds._funds` (bytecode traits/trait_tracker, sims/funds)."""
+    traits = []
+    try:
+        equipped = list(sim_info.trait_tracker._equipped_traits)
+    except Exception:
+        equipped = None
+    try:
+        personality = set(sim_info.trait_tracker._equipped_personality_traits)
+    except Exception:
+        personality = set()
+    for trait in equipped or []:
+        if _mechanical_trait(trait):
+            continue
+        entry = _trait_entry(trait)
+        if entry is None or entry["text_key"] is None:
+            continue  # hidden gameplay traits carry no name of their own
+        entry["personality"] = trait in personality
+        traits.append(entry)
+    traits.sort(key=lambda item: (not item["personality"], item["trait"]))
+    skills = []
+    try:
+        items = list(_commodity_tracker(sim_info)._statistics.items())
+    except Exception:
+        items = None
+    for stat_type, instance in items or []:
+        try:
+            stat_type.skill_level_type
+        except Exception:
+            continue
+        name = _bounded_name(_type_name(stat_type), "skill")
+        if name is None or instance is None:
+            continue
+        level = _skill_level(instance)
+        if level is None:
+            continue
+        text_key = None
+        for read in (lambda: stat_type.stat_name, lambda: stat_type.display_name):
+            try:
+                text_key = _string_key(read())
+            except Exception:
+                text_key = None
+            if text_key is not None:
+                break
+        skills.append({"skill": name, "text_key": text_key, "level": level})
+    skills.sort(key=lambda item: (-item["level"], item["skill"]))
+    funds = None
+    try:
+        money = sim_info.household._funds._funds
+    except Exception:
+        money = None
+    if type(money) is int:
+        funds = money
+    own = {"traits": None if equipped is None else traits[:schema.MAX_SELF_TRAITS],
+           "skills": None if items is None else skills[:schema.MAX_SELF_SKILLS],
+           "funds": funds, "careers": _own_careers(sim_info), "wants": _own_wants(sim_info),
+           "life": read_life(sim_info),
+           "gender": _gender_code(sim_info), "first_name": _name_part(lambda: sim_info.first_name),
+           "last_name": _name_part(lambda: sim_info.last_name)}
+    # 2.36.0 (D6, P1): the three new senses are optional: a key is there only when the game could say.
+    for key, value in (("aspiration", _own_aspiration(sim_info)), ("bills", _own_bills(sim_info)),
+                       ("inventory", _own_inventory(sim_info))):
+        if value is not None:
+            own[key] = value
+    return own
+
+
+def _own_wants(sim_info):
+    """2.30.0 (the User: she should solve her own problems, so she sees the game's wants and fears):
+    plain reads (bytecode whims/whims_tracker, situations/situation_goal): sim_info `_whim_tracker`
+    (absent below full LOD), its `_whim_slots`, each slot's `whim`, `goal_instance` and `whim_type`
+    (CONFRONTATION is a fear), the goal's tuned `display_name` / `display_tooltip`, `_locked`, `_count`,
+    `_iterations` and `expiration_time`. Never `goal.score` (runs tests) nor any tracker method."""
+    try:
+        tracker = sim_info._whim_tracker
+    except Exception:
+        return None
+    if tracker is None:
+        return None
+    try:
+        slots = list(tracker._whim_slots)
+    except Exception:
+        return None
+    wants = []
+    for slot in slots:
+        try:
+            goal, whim = slot.goal_instance, slot.whim
+        except Exception:
+            continue
+        if goal is None or whim is None:
+            continue
+        name = _bounded_name(_type_name(whim), "want")
+        if name is None:
+            continue
+        try:
+            fear = slot.whim_type.name == "CONFRONTATION"
+        except Exception:
+            fear = False
+        keys = []
+        for read in (lambda: goal.display_name, lambda: goal.display_tooltip):
+            try:
+                keys.append(_string_key(read()))
+            except Exception:
+                keys.append(None)
+        try:
+            locked = goal._locked is True
+        except Exception:
+            locked = False
+        counts = []
+        for read in (lambda: goal._count, lambda: goal._iterations):
+            try:
+                value = read()
+            except Exception:
+                value = None
+            counts.append(value if type(value) is int else None)
+        until = None
+        try:
+            expiry = goal.expiration_time
+            if expiry is not None:
+                hour, minute = expiry.hour(), expiry.minute()
+                if type(hour) is int and type(minute) is int and 0 <= hour < 24 and 0 <= minute < 60:
+                    until = [hour, minute]
+        except Exception:
+            until = None
+        wants.append({"want": name, "text_key": keys[0], "tip_key": keys[1], "fear": fear,
+                      "locked": locked, "done": counts[0], "of": counts[1], "until": until})
+        if len(wants) >= schema.MAX_SELF_WANTS:
+            break
+    return sorted(wants, key=lambda item: (not item["fear"], item["want"]))
+
+
+def _own_careers(sim_info):
+    """2.19.0 (live 2026-10-06: the save gave her a culinary job she did not know she had):
+    her jobs. Plain reads (bytecode careers/career_base, career_tuning): career_tracker
+    `_careers`, each career's `_current_track.career_name` and the title of
+    `_current_track.career_levels[_level]` (string factories), `_user_level`, `_at_work`."""
+    try:
+        values = list(sim_info.career_tracker._careers.values())
+    except Exception:
+        return None
+    careers = []
+    for career in values[:schema.MAX_SELF_CAREERS]:
+        name = _bounded_name(_type_name(type(career)), "career")
+        if name is None:
+            continue
+        name_key = title_key = None
+        try:
+            track = career._current_track
+            name_key = _string_key(track.career_name)
+            title_key = _string_key(track.career_levels[career._level].title)
+        except Exception:
+            pass
+        try:
+            level = career._user_level
+        except Exception:
+            level = None
+        try:
+            at_work = career._at_work is True
+        except Exception:
+            at_work = False
+        # 2.40.0 (W13 P1): until_min, the game minute of the day her work session ends, while she is at work.
+        until_min = work_until_min(career) if at_work else None
+        entry = {"career": name, "text_key": name_key, "title_key": title_key,
+                 "level": level if type(level) is int else None, "at_work": at_work}
+        if until_min is not None:
+            entry["until_min"] = until_min
+        careers.append(entry)
+    return sorted(careers, key=lambda item: item["career"])
+
+
+def _own_aspiration(sim_info):
+    """2.36.0 (D6, P1): her primary aspiration (the track's display text) and the objectives of its current
+    milestone, the first six, each with whether the tracker has it done. Plain reads: sim_info.primary_aspiration
+    (a property of _primary_aspiration), sim_info.aspiration_tracker (_aspiration_tracker), its
+    _active_aspiration, the milestone's tuned `objectives` (each with display_text), and the tracker's
+    objective_completed (a set membership). None when she has no primary aspiration or it cannot be read."""
+    try:
+        track = sim_info.primary_aspiration
+    except Exception:
+        return None
+    if track is None:
+        return None
+    name_key = None
+    try:
+        name_key = _string_key(track.display_text)
+    except Exception:
+        name_key = None
+    tracker = None
+    try:
+        tracker = sim_info.aspiration_tracker
+        items = list(tracker._active_aspiration.objectives or ())
+    except Exception:
+        items = []
+    objectives = []
+    for objective in items[:schema.MAX_SELF_OBJECTIVES]:
+        try:
+            text_key = _string_key(objective.display_text)
+        except Exception:
+            text_key = None
+        try:
+            done = tracker.objective_completed(objective) is True
+        except Exception:
+            done = False
+        objectives.append({"text_key": text_key, "done": done})
+    return {"name_key": name_key, "objectives": objectives}
+
+
+def _own_bills(sim_info):
+    """2.36.0 (D6, P1): her household's bills, plain reads (sims/bills, sims/household): household.bills_manager,
+    its current_payment_owed (a property: the money owed now, an int), and mailman_has_delivered_bills() and
+    is_any_utility_delinquent() (methods that only read). None when the bills manager cannot be read."""
+    try:
+        bills = sim_info.household.bills_manager
+    except Exception:
+        return None
+    if bills is None:
+        return None
+    try:
+        owed = bills.current_payment_owed
+    except Exception:
+        owed = None
+    delivered = _is_true(lambda: bills.mailman_has_delivered_bills())
+    late = _is_true(lambda: bills.is_any_utility_delinquent())
+    return {"owed": owed if type(owed) is int else None, "delivered": delivered, "late": late}
+
+
+def _is_true(read):
+    try:
+        return read() is True
+    except Exception:
+        return False
+
+
+def _own_inventory(sim_info):
+    """2.36.0 (D6, P1): what her Sim carries. Her Sim's inventory_component is iterated as the game iterates
+    it (visible storage, then hidden); objects are grouped by their definition's name, with the count each
+    stack holds (stack_count()), most first; at most 24. None when she is not on the lot or cannot be read."""
+    try:
+        sim = sim_info.get_sim_instance(allow_hidden_flags=ALL_HIDDEN_REASONS)
+        items = list(sim.inventory_component)
+    except Exception:
+        return None
+    totals = {}
+    for item in items:
+        try:
+            name = _bounded_name(item.definition.name, "inventory.name")
+            count = item.stack_count()
+        except Exception:
+            continue
+        if name is None or type(count) is not int or count < 0:
+            continue
+        totals[name] = totals.get(name, 0) + count
+    entries = [{"name": name, "count": count} for name, count in totals.items()]
+    entries.sort(key=lambda entry: (-entry["count"], entry["name"]))
+    return entries[:schema.MAX_SELF_INVENTORY]
+
+
+# S5: object events. The previous sample's object ids (with class names) and the
+# states of the objects near her; a zone change, the first sample or a pause in
+# sampling longer than OBJECT_BASELINE_GAP_MS starts a new baseline (no events).
+NEAR_STATE_METERS = 4.0
+NEAR_STATE_MAX = 16
+OBJECT_BASELINE_GAP_MS = 5000
+_OBJECTS_PREV = {"zone": None, "wall_ms": None, "classes": None, "near": {}, "places": {}}
+# 2.32.0 (HE5): an object moved more than this far (metres) between two samples, or changed room.
+OBJECT_MOVED_METERS = 0.5
+
+
+def _object_class(obj):
+    return _bounded_name(_type_name(type(obj)), "objects.class")
+
+
+def _object_states(obj):
+    try:
+        items = list(obj.state_component._states.items())
+    except Exception:
+        return {}
+    found = {}
+    for state, value in items[:32]:
+        key = _type_name(state)
+        if key is not None:
+            found[key[:96]] = (_type_name(value) or "")[:96] or None
+    return found
+
+
+# 2.32.0 (HE7): the game's state values worth a line in her portrait (the last word of the value's name), and the
+# words that negate them ("FireState_..._Not_Burning" is not burning). The helper's scene.NOTABLE, read the same way.
+NOTABLE_STATE_WORDS = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed", "Flooded", "Smelly")
+NEGATION_WORDS = ("Not", "No", "Non")
+
+
+def _notable_state(value):
+    if not isinstance(value, str):
+        return False
+    words = [word for word in value.replace(" ", "_").split("_") if word]
+    if not words or words[-1] not in NOTABLE_STATE_WORDS:
+        return False
+    return not any(word in NEGATION_WORDS for word in words)
+
+
+def _near_conditions(current, near_order, states):
+    """2.32.0 (HE7): the notable states of the 16 nearest objects (any distance), each sample: compact, only the
+    objects with a notable state. states: object id -> {state: value}, read for these objects."""
+    found = []
+    for plain in near_order[:NEAR_STATE_MAX]:
+        notable = [{"state": state, "value": value} for state, value in sorted(states[plain].items())
+                   if _notable_state(value)]
+        if notable:
+            found.append({"object_id": plain, "class": _object_class(current[plain]),
+                          "states": notable[:schema.MAX_NEAR_STATES]})
+    return found
+
+
+def _owner_of(obj):
+    """2.32.0 (PR15): the household that owns an object (GameObject.household_owner_id), as a plain id, or None."""
+    try:
+        return _plain_id(obj.household_owner_id)
+    except Exception:
+        return None
+
+
+def _in_use_or_carried(obj):
+    """2.32.0 (HE5): an object someone holds (a reservation) or carries (its inventory item) is not moved by its own
+    place; True when either is readable and holds, else False."""
+    try:
+        if obj._reservation_handlers:
+            return True
+    except Exception:
+        pass
+    try:
+        return obj.inventory_item.is_in_inventory() is True
+    except Exception:
+        return False
+
+
+def read_object_events(zone_id, body_position, wall_ms):
+    """Objects created and destroyed on the lot since the previous sample, and state
+    changes of the objects within NEAR_STATE_METERS of her (nearest first). Plain
+    attribute reads (object manager `_objects`, `state_component._states`)."""
+    try:
+        items = list(services.object_manager()._objects.items())
+    except Exception:
+        return None
+    current = {}
+    for object_id, obj in items:
+        try:
+            if obj.is_sim is True:
+                continue
+        except Exception:
+            pass
+        plain = _plain_id(object_id)
+        if plain is not None:
+            current[plain] = obj
+    near = []
+    by_distance = []
+    for plain, obj in current.items():
+        distance = _distance(_position(obj), body_position)
+        if distance is not None and distance <= NEAR_STATE_METERS:
+            near.append((distance, plain))
+        if distance is not None:
+            by_distance.append((distance, plain))
+    near.sort()
+    by_distance.sort()
+    nearest_ids = [plain for _, plain in by_distance[:NEAR_STATE_MAX]]
+    # 2.32.0 (HE5): where each of the 16 nearest objects is now, and in which room.
+    places = {}
+    for plain in nearest_ids:
+        position = _position(current[plain])
+        places[plain] = {"position": position, "room": _room(current[plain], position),
+                         "owner": _owner_of(current[plain])}
+    near_rooms = [{"object_id": plain, "class": _object_class(current[plain]), "room": places[plain]["room"]}
+                  for plain in nearest_ids if places[plain]["room"] is not None]
+    near_states = {plain: _object_states(current[plain]) for _, plain in near[:NEAR_STATE_MAX]}
+    # 2.32.0 (HE7): the 16 nearest objects' states are read each sample, for the notable conditions.
+    condition_states = {plain: (near_states[plain] if plain in near_states else _object_states(current[plain]))
+                        for plain in nearest_ids}
+    conditions = _near_conditions(current, nearest_ids, condition_states)
+    classes = {plain: _object_class(obj) for plain, obj in current.items()}
+    previous = _OBJECTS_PREV
+    baseline = (previous["classes"] is None or previous["zone"] != zone_id or
+                previous["wall_ms"] is None or wall_ms - previous["wall_ms"] > OBJECT_BASELINE_GAP_MS)
+    events = {"baseline": baseline, "created": [], "destroyed": [], "changed": [],
+              "truncated": False, "near_conditions": conditions, "near_rooms": near_rooms, "moved": [],
+              "owner_changed": []}
+    if not baseline:
+        created = sorted(set(classes) - set(previous["classes"]))
+        destroyed = sorted(set(previous["classes"]) - set(classes))
+        for plain in created:
+            try:
+                definition = _plain_id(current[plain].definition.id)
+            except Exception:
+                definition = None
+            events["created"].append({"object_id": plain, "class": classes[plain],
+                                      "definition_id": definition})
+        for plain in destroyed:
+            events["destroyed"].append({"object_id": plain, "class": previous["classes"][plain]})
+        for _, plain in near[:NEAR_STATE_MAX]:
+            before = previous["near"].get(plain)
+            if before is None:
+                continue
+            after = near_states[plain]
+            for state in sorted(set(before) | set(after)):
+                if before.get(state) != after.get(state):
+                    events["changed"].append({"object_id": plain, "class": classes[plain],
+                                              "state": state, "from": before.get(state),
+                                              "to": after.get(state)})
+        before_places = previous.get("places") or {}
+        for plain in nearest_ids:
+            before = before_places.get(plain)
+            if before is None or before.get("position") is None or places[plain]["position"] is None:
+                continue
+            step = _distance(before["position"], places[plain]["position"])
+            from_room, to_room = before.get("room"), places[plain]["room"]
+            moved_far = step is not None and step > OBJECT_MOVED_METERS
+            changed_room = from_room is not None and to_room is not None and from_room != to_room
+            if (moved_far or changed_room) and not _in_use_or_carried(current[plain]):
+                events["moved"].append({"object_id": plain, "class": classes[plain],
+                                        "from_room": from_room, "to_room": to_room})
+        # 2.32.0 (PR15): an object of the 16 nearest changed hands (a visitor or an NPC taking it, say).
+        for plain in nearest_ids:
+            before = before_places.get(plain)
+            if before is None or before.get("owner") is None or places[plain]["owner"] is None:
+                continue
+            if before["owner"] != places[plain]["owner"]:
+                events["owner_changed"].append({"object_id": plain, "class": classes[plain],
+                                                "from_owner": before["owner"], "to_owner": places[plain]["owner"]})
+        for key in ("created", "destroyed", "changed", "moved", "owner_changed"):
+            if len(events[key]) > schema.MAX_OBJECT_EVENTS:
+                events[key] = events[key][:schema.MAX_OBJECT_EVENTS]
+                events["truncated"] = True
+    _OBJECTS_PREV.update(zone=zone_id, wall_ms=wall_ms, classes=classes, near=near_states, places=places)
+    return events
+
+
+# ------------------------------------------------------------------ 2.40.0 (W13 P1): her reach (reads)
+# Every read is guarded: an unreadable value is None (or its list is left out), never guessed. The names read are the
+# game's own (bytecode, cited in the comments); the discovery record answers what this code cannot confirm.
+
+def _safe(read):
+    """read() or None when it raises. The one guard every reach read uses."""
+    try:
+        return read()
+    except Exception:
+        return None
+
+
+def waiting_role(role):
+    """2.40.0 (W13 P1): whether a situation role is a visitor's waiting job (a visitor at her door): its name has the word
+    waiting (RoleState_WaitingToBeGreeted), not a word that only contains "wait" (a waiter). False when there is no name."""
+    if role is None:
+        return False
+    return "waiting" in [word.lower() for word in _name_words(role)]
+
+
+def _name_words(name):
+    """The words of a name: split at each non-letter and at a capital that follows a small letter (CamelCase)."""
+    words, current, previous = [], "", ""
+    for ch in name:
+        if not ch.isalpha():
+            if current:
+                words.append(current)
+            current = ""
+        else:
+            if current and ch.isupper() and previous.islower():
+                words.append(current)
+                current = ""
+            current += ch
+        previous = ch
+    if current:
+        words.append(current)
+    return words
+
+
+def work_until_min(career):
+    """2.40.0 (W13 P1): the game minute of the day a career's current work session ends: CareerBase._current_work_end,
+    a DateAndTime read with its hour() and minute(). None when unread."""
+    end = _safe(lambda: career._current_work_end)
+    if end is None:
+        return None
+    hour = _safe(lambda: end.hour())
+    minute = _safe(lambda: end.minute())
+    return reach.work_end_minute((hour, minute))
+
+
+def her_sim_info():
+    """2.40.0 (W13 P1): her own sim info (the body the probe samples), or None."""
+    try:
+        sim_info, _sim = select_lab_body(services.sim_info_manager().get_all(), ALL_HIDDEN_REASONS)
+    except Exception:
+        return None
+    return sim_info
+
+
+def _household(household_id):
+    """2.40.0 (W13 P1): a household from the household manager, or None when it is unknown or unreadable."""
+    if household_id is None:
+        return None
+    return _safe(lambda: services.household_manager().get(int(household_id)))
+
+
+def household_home_zone(household_id):
+    """2.40.0 (W13 P1): the home zone of a household (Household.home_zone_id, read from the household manager), as an
+    id; None when it has none or it cannot be read."""
+    zone = _safe(lambda: _household(household_id).home_zone_id)
+    if type(zone) is not int or zone <= 0:
+        return None
+    return zone
+
+
+def household_name(household_id):
+    """2.40.0 (W13 P1 fix): a household's name (Household.name), the name of the lot it owns; None when unread."""
+    name = _safe(lambda: _household(household_id).name)
+    return name if isinstance(name, str) else None
+
+
+def _bit_names(tracker, target_id):
+    """2.40.0 (W13 P1): the relationship bits between her and a Sim, by their names (RelationshipTracker.get_all_bits),
+    at most reach.LABELS_PER_PERSON."""
+    bits = _safe(lambda: list(tracker.get_all_bits(target_id) or ()))
+    names = []
+    for bit in (bits or [])[:reach.LABELS_PER_PERSON]:
+        name = _type_name(bit) or _type_name(type(bit))
+        if name is not None:
+            names.append(name)
+    return names
+
+
+def _visible_tracks(tracker, target_id):
+    """2.40.0 (W13 P1 fix): her visible relationship tracks with a Sim, as {track class name: value}, at most
+    reach.TRACKS_PER_PERSON. The game's RelationshipTracker.relationship_tracks_gen (all track types, a generator);
+    {} when unread."""
+    found = {}
+    try:
+        for track in tracker.relationship_tracks_gen(target_id):
+            if len(found) >= reach.TRACKS_PER_PERSON:
+                break
+            if track.is_visible is not True:
+                continue
+            value = track.get_value()
+            if type(value) is int:
+                found[type(track).__name__] = value
+    except Exception:
+        return {}
+    return found
+
+
+def _on_lot_of(target):
+    """2.40.0 (W13 P1): whether a Sim is on her active lot: False when she is not instanced (get_sim_instance is None),
+    else the Sim's is_on_active_lot(). None when unreadable."""
+    sim = _safe(lambda: target.get_sim_instance())
+    if sim is None:
+        return False
+    value = _safe(lambda: sim.is_on_active_lot())
+    return value if type(value) is bool else None
+
+
+def waiting_sim_ids():
+    """2.40.0 (W13 P1): the sim ids (digit strings) that hold a waiting job in a situation (read_situations)."""
+    found = read_situations() or {}
+    return set(sim_id for sim_id, entries in found.items()
+               if any(entry.get("waiting") is True for entry in entries))
+
+
+def read_people(sim_info, waiting=None):
+    """2.40.0 (W13 P1): the people she knows, in the game's own order: her relationship tracker's targets
+    (RelationshipTracker.get_target_sim_infos), with their names, relationship bits (get_all_bits), their visible
+    relationship tracks and their values, household, whether the household has a home, whether they are on her lot, and
+    whether they wait at her door. None when her relationships cannot be read."""
+    tracker = _safe(lambda: sim_info.relationship_tracker)
+    targets = _safe(lambda: list(tracker.get_target_sim_infos()))
+    if targets is None:
+        return None
+    waiting = waiting_sim_ids() if waiting is None else waiting
+    entries = []
+    for target in targets[:reach.PEOPLE_MAX]:
+        target_id = _safe(lambda: target.id)
+        household_id = _safe(lambda: target.household_id)
+        home = household_home_zone(household_id)
+        entries.append({
+            "sim_id": target_id,
+            "first_name": _name_part(lambda: target.first_name),
+            "last_name": _name_part(lambda: target.last_name),
+            "labels": _bit_names(tracker, target_id),
+            "tracks": {} if target_id is None else _visible_tracks(tracker, target_id),
+            "household_id": household_id,
+            "has_home": None if household_id is None else home is not None,
+            "on_lot": _on_lot_of(target),
+            "waiting": None if target_id is None else str(target_id) in waiting})
+    return entries
+
+
+def read_places(sim_info, people):
+    """2.40.0 (W13 P1): the places she can go: her home, and the homes of the households of the people she knows (each
+    household once), named by their household's name. Venues by type are not read (the discovery record says so).
+    None when her household cannot be read."""
+    household_id = _safe(lambda: sim_info.household_id)
+    if household_id is None:
+        return None
+    homes = [(household_id, "home")]
+    for person in people or ():
+        if person.get("household_id") is not None:
+            homes.append((person["household_id"], "household"))
+    found = []
+    seen = set()
+    for hid, kind in homes:
+        if hid in seen:
+            continue
+        seen.add(hid)
+        zone = household_home_zone(hid)
+        if zone is None:
+            continue
+        found.append({"zone_id": str(zone), "kind": kind, "lot_name": household_name(hid), "venue": None,
+                      "household_id": str(hid) if kind == "household" else None})
+    return found
+
+
+def read_events():
+    """2.40.0 (W13 P1): the user-facing situation types she can plan (party, date and the like): guid64, name key, cost
+    (the tuning's cost, int or None) and whether it can be scheduled (None: not read yet). Read from the game's situation
+    tuning: creation_ui_option AVAILABLE. None when the tuning cannot be read."""
+    if ResourceTypes is None:
+        return None
+    manager = _safe(lambda: services.get_instance_manager(ResourceTypes.SITUATION))
+    found = _safe(lambda: manager.types)
+    if callable(found):
+        found = _safe(found)
+    values = _safe(lambda: list(found.values()) if isinstance(found, dict) else list(found))
+    if values is None:
+        return None
+    events = []
+    for cls in values:
+        if tuned._class_plain(cls, "creation_ui_option") != CREATION_UI_AVAILABLE:
+            continue
+        cost = tuned._class_plain(cls, "cost")
+        events.append({"situation_id": tuned._class_plain(cls, "guid64"),
+                       "name_key": _string_key(tuned._class_plain(cls, "display_name")),
+                       "cost": cost if type(cost) is int else None, "schedulable": None})
+    return events
+
+
+def read_picker_steps(sim_info, sims):
+    """2.40.0 (W13 P1): for each Sim she knows, the first check of the phone picker's own generator it fails, or "ok".
+    The checks, in the generator's order: "unknown" (the relationship cannot be read), "hidden" (the relationship is
+    hidden), "ok". Approximate: a live session confirms the step names (discovery 'pickers')."""
+    tracker = _safe(lambda: sim_info.relationship_tracker)
+    steps = {}
+    for sim in sims or ():
+        target_id = _safe(lambda: sim.id)
+        if target_id is None:
+            continue
+        hidden = _safe(lambda: tracker.is_hidden(target_id))
+        if hidden is None:
+            steps[str(target_id)] = "unknown"
+        elif hidden is True:
+            steps[str(target_id)] = "hidden"
+        else:
+            steps[str(target_id)] = "ok"
+    return steps
+
+
+def read_save_discovery():
+    """2.40.0 (W13 P1): the save section of the discovery record: whether the loaded slot is a player slot (id above 1),
+    whether it has a name, and whether a save is locked. Never the slot id or its name."""
+    persistence = _safe(lambda: services.get_persistence_service())
+    slot = _safe(lambda: persistence.get_save_slot_proto_buff())
+    slot_id = _safe(lambda: slot.slot_id)
+    slot_name = _safe(lambda: slot.slot_name)
+    locked = _safe(lambda: persistence.is_save_locked())
+    return {"slot_ok": slot_id > 1 if type(slot_id) is int else None,
+            "slot_named": bool(slot_name) if isinstance(slot_name, str) else None,
+            "cooldown_s": None,
+            "locked": locked if type(locked) is bool else None}
+
+
+def read_career_discovery(sim_info):
+    """2.40.0 (W13 P1): her careers (name, level, at work, the minute the work session ends), as the portrait reads
+    them. can_work_early and available_for_work are not read here (LIVE: the discovery record names them)."""
+    careers = _own_careers(sim_info)
+    return None if careers is None else {"careers": careers}
+
+
+# 2.40.0 (W13 P1 fix): what the probe does not read yet, said plainly in the discovery record.
+UNREAD_NOW = ("venues", "event schedulable", "off-lot commodities", "career early and available flags", "population")
+
+
+def read_discovery(sim_info, phone_pickers=None, phone_tests=None):
+    """2.40.0 (W13 P1): the discovery record's sections, each read by its own guarded reader and left out when None.
+    phone_pickers and phone_tests come from the actuator (it holds the phone's affordances and the game's test). Read
+    only: nothing here changes the game."""
+    sections = {"save": read_save_discovery(), "career": read_career_discovery(sim_info),
+                "situations": read_events(), "pickers": phone_pickers, "phone_tests": phone_tests,
+                "unread": list(UNREAD_NOW)}
+    return reach.discovery_sections(sections)
+
+
+def household_money(sim_info):
+    """2.40.0 (W13 P1): her household's money (the household funds' amount, as the portrait reads it); None when unread."""
+    value = _safe(lambda: sim_info.household._funds._funds)
+    return value if type(value) is int else None
+
+
+def save_locked():
+    """2.40.0 (W13 P1): whether the game's save lock holds (PersistenceService.is_save_locked). False when unread."""
+    return _safe(lambda: services.get_persistence_service().is_save_locked()) is True
+
+
+def in_rabbit_hole(sim_info):
+    """2.40.0 (W13 P1 fix): whether her Sim is in a rabbit hole (RabbitHoleService.get_head_rabbit_hole_id is not None).
+    False when it is not, or when the read fails (a trip is then not refused for it: the game decides)."""
+    sim_id = _safe(lambda: sim_info.id)
+    if sim_id is None:
+        return False
+    return _safe(lambda: services.get_rabbit_hole_service().get_head_rabbit_hole_id(sim_id)) is not None

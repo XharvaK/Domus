@@ -1,0 +1,3 @@
+# Amendment A22
+
+| A22 | §4 harness inputs; §5 one generic actuation | Probe 2.9.0. `trial` pushes exactly one parameter-free super-affordance on one object for the lab Sim and judges it with an interaction card. LAB_E1_FORK only, idle body (a posture-graph super-interaction may already be running), no motive in distress, picker / social / deny-name floor, and a storm latch after five consecutive push failures until the next arm. No cancel or stop-action command. Sit, sit_trial, prepare, and E2 admission are unchanged. | DA5 showed native autonomy cannot teach the game: 41 actions in 155 game hours, never social, repair, or player-only. |

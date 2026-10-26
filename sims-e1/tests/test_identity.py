@@ -92,6 +92,68 @@ class InteractionIdentityTests(unittest.TestCase):
             snapshot.freeze_plain({"live": object()})
 
 
+class _HouseholdSimInfo:
+    def __init__(self, sim_id, selectable=True):
+        self.id = sim_id
+        self.is_selectable = selectable
+        self._instance = object()
+
+    def get_sim_instance(self, allow_hidden_flags=None):
+        return self._instance
+
+
+class ActiveBodyTests(unittest.TestCase):
+    """2.32.0 (PR6): several selectable household Sims. Her armed Sim is her body; before she is armed, the Sim the
+    client is playing. The User's other Sim never stops sampling, and it is reported as not her body."""
+
+    def setUp(self):
+        self.first = _HouseholdSimInfo(101)
+        self.other = _HouseholdSimInfo(202)
+        self.active = None
+        self._saved = observers.services.active_sim_info if hasattr(observers.services, "active_sim_info") else None
+        observers.services.active_sim_info = lambda: self.active
+        observers.prefer_body(None)
+
+    def tearDown(self):
+        observers.prefer_body(None)
+        if self._saved is None:
+            del observers.services.active_sim_info
+        else:
+            observers.services.active_sim_info = self._saved
+
+    def test_the_armed_sim_is_her_body_among_several(self):
+        observers.prefer_body("101")
+        self.active = self.other
+        chosen, _sim = observers.select_lab_body([self.first, self.other], object())
+        self.assertIs(chosen, self.first)
+
+    def test_before_she_is_armed_the_active_sim_is_the_body(self):
+        self.active = self.other
+        chosen, _sim = observers.select_lab_body([self.first, self.other], object())
+        self.assertIs(chosen, self.other)
+
+    def test_several_with_no_armed_or_active_match_stay_ambiguous(self):
+        observers.prefer_body("999")
+        self.active = self.other
+        with self.assertRaises(observers.LabIdentityAmbiguous) as error:
+            observers.select_lab_body([self.first, self.other], object())
+        self.assertEqual(error.exception.eligible_count, 2)
+
+    def test_is_selected_reports_whether_her_body_is_the_active_sim(self):
+        self.active = self.first
+        self.assertIs(observers._is_selected("101"), True)
+        self.active = self.other
+        self.assertIs(observers._is_selected("101"), False)
+        self.active = None
+        self.assertIsNone(observers._is_selected("101"))
+
+    def test_an_unreadable_active_sim_is_none_not_an_error(self):
+        def broken():
+            raise RuntimeError("unreadable")
+        observers.services.active_sim_info = broken
+        self.assertIsNone(observers.active_sim_id())
+
+
 class _SimInfo:
     def __init__(self, selectable=True, instance=None):
         self.is_selectable = selectable
@@ -148,7 +210,10 @@ class BodySelectionTests(unittest.TestCase):
         self.assertIn("selectable = si.is_selectable", source)
         self.assertIn("type(selectable) is not bool", source)
         self.assertNotIn("bool(selectable)", source)
-        self.assertNotIn("active_sim", source)
+        # 2.32.0 (PR6): the client's active Sim is read in one place, and only to choose among several
+        # selectable Sims (after her armed Sim). Nothing else falls back to it.
+        self.assertEqual(source.count("services.active_sim_info()"), 1)
+        self.assertIn("wanted = active_sim_id()", source)
         self.assertNotIn("getattr(", source)
 
 
@@ -209,8 +274,10 @@ class ObserverPollTests(unittest.TestCase):
 
     def test_poll_default_uses_approved_hidden_flags(self):
         _, seen_flags = self._poll_once([], [])
-        self.assertEqual(len(seen_flags), 1)
-        self.assertIs(seen_flags[0], observers.ALL_HIDDEN_REASONS)
+        # Her body, then presence (D40 reads each instance itself), same flags.
+        self.assertGreaterEqual(len(seen_flags), 1)
+        for flags in seen_flags:
+            self.assertIs(flags, observers.ALL_HIDDEN_REASONS)
 
     def test_none_queue_or_running_view_is_incomplete_not_an_exception(self):
         for queue, running in ((None, []), ([], None), (None, None)):

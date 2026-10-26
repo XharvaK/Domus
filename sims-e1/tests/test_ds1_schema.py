@@ -36,14 +36,50 @@ def presence_row(**overrides):
 
 def full_signal(index=0):
     return {"kind": "MOODLET", "tuning_id": "12345678901234567890",
-            "game_text": "x" * 160, "magnitude": "w:99",
-            "consequences": "UNKNOWN", "native_override": "UNKNOWN"}
+            "tuning_name": None, "game_text": "x" * 160, "magnitude": "w:99",
+            "consequences": "UNKNOWN", "native_override": "UNKNOWN",
+            "text_key": "4294967295", "mood_type": "Mood_" + "x" * 60, "visible": True,
+            "reason_key": "4294967295", "minutes_left": 1440.5}
+
+
+def full_presence(index=0):
+    return {"id": "%064d" % index, "on_lot": True, "active_household": True, "level": 2 ** 30,
+            "is_body": False, "household_id": "1" * 64, "name": "n" * 128,
+            "position": {"x": 1.25, "y": 0.0, "z": -3.5, "level": 2 ** 30},
+            "room": "2" * 64, "posture": "p" * 160, "doing": "d" * 160,
+            "doing_target": "3" * 64, "distance_m": 12.3,
+            "is_pet": True, "species": "s" * 64, "occult_kinds": ["k" * 64] * 4,
+            "relationship": {"known": True,
+                             "tracks": [{"track": "t" * 128, "value": -100.0}] * 4,
+                             "labels": [{"label": "l" * 128, "text_key": "4294967295"}] * 6,
+                             "knows": {"traits": [{"trait": "k" * 128,
+                                                   "text_key": "4294967295"}] * 6,
+                                       "careers": ["c" * 128] * 4,
+                                       "relationship_status": True,
+                                       "romantic_preference": True,
+                                       "net_worth": 2 ** 40},
+                             "sentiments": [{"sentiment": "s" * 128,
+                                             "text_key": "4294967295"}] * 3},
+            "situations": [{"situation": "v" * 128, "role": "r" * 128}] * 3}
+
+
+def full_self():
+    return {"traits": [{"trait": "t" * 128, "text_key": "4294967295",
+                        "personality": True}] * 12,
+            "skills": [{"skill": "s" * 128, "text_key": "4294967295", "level": 10}] * 12,
+            "funds": 2 ** 40,
+            "careers": [{"career": "c" * 64, "text_key": "4294967295", "title_key": "4294967295",
+                         "level": 10, "at_work": True}] * 4,
+            "wants": [{"want": "w" * 128, "text_key": "4294967295", "tip_key": "4294967295", "fear": True,
+                       "locked": True, "done": 2 ** 31, "of": 2 ** 31, "until": [23, 59]}] * 8,
+            "life": {"age": "a" * 40, "pregnant": True, "sick": False, "dead": False,
+                     "ghost": False, "npc": None}}
 
 
 class SchemaV4Tests(unittest.TestCase):
     def test_version_is_v4(self):
-        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 4)
-        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v4")
+        self.assertEqual(schema.OBSERVATION_SCHEMA_VERSION, 21)
+        self.assertEqual(schema.TELEMETRY_SCHEMA_ID, "e1.telemetry/v21")
 
     def test_caps(self):
         self.assertEqual(schema.MAX_PRESENCE, 8)
@@ -51,9 +87,10 @@ class SchemaV4Tests(unittest.TestCase):
 
     def test_presence_snapshot_carries_senses(self):
         row = presence_row(
-            presence=[{"id": "1", "active_household": True, "level": 2}],
+            presence=[{"id": "1", "active_household": True, "level": 2, "is_body": False, "household_id": None, "name": "Bella Goth", "position": {"x": 1.0, "y": 0.0, "z": 2.0, "level": 2}, "room": "5", "posture": "stand", "doing": "sim-chat", "doing_target": "9", "distance_m": 1.5, "relationship": None, "on_lot": True, "situations": None,
+                        "is_pet": False, "species": "HUMAN", "occult_kinds": []}],
             social=[],
-            mood={"type": "123", "intensity": 5},
+            mood={"type": "123", "intensity": 5, "name": None},
             motives=[{"id": "hunger", "value": 50, "band": "ok",
                        "age_ticks": 100}],
         )
@@ -123,17 +160,17 @@ class SchemaV4Tests(unittest.TestCase):
         with self.assertRaises(schema.SchemaError):
             schema.validate_record(row)
 
-    def test_budget_drop_order_social_then_presence_then_signals(self):
+    def test_budget_drops_signals_then_presence_and_keeps_social(self):
+        """DS3: someone addressing her is the most important fact in the row."""
         from ashley_e1 import snapshot
         entry = {"entry_key": "k", "interaction_id": "1", "affordance_id": "2",
                  "affordance_text": "t", "target_id": "3", "source_raw": "s",
                  "source_norm": "UNKNOWN", "source_confidence": "UNKNOWN",
                  "present": True, "membership": "QUEUED"}
         row = presence_row(
-            presence=[{"id": "1" * 64, "active_household": True,
-                       "level": 2 ** 30} for _ in range(8)],
-            social=[dict(entry, affordance_text="t" * 160) for _ in range(4)],
-            mood={"type": "1" * 64, "intensity": 1.5},
+            presence=[full_presence(i) for i in range(8)],
+            social=[dict(entry, affordance_text="t" * 160, actor_id="4") for _ in range(4)],
+            mood={"type": "1" * 64, "intensity": 1.5, "name": None},
             motives=[{"id": "m" * 64, "value": 50, "band": "ok",
                        "age_ticks": 2 ** 30} for _ in range(12)],
             sim_signals=[full_signal() for _ in range(16)],
@@ -142,13 +179,14 @@ class SchemaV4Tests(unittest.TestCase):
                           "queue_truncated": True, "running_truncated": True,
                           "observation_complete": False},
         )
+        self.assertGreater(len(json.dumps(row, separators=(",", ":"))), 16 * 1024)
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)
-        self.assertLessEqual(len(payload), 8 * 1024)
-        self.assertEqual(row["social"], [])
-        self.assertEqual(len(row["presence"]), 4)
+        self.assertLessEqual(len(payload), 48 * 1024)
+        self.assertEqual(len(row["social"]), 4)
         self.assertEqual(len(row["sim_signals"]), 8)
+        self.assertFalse(row["observation_complete"])
 
     def test_worst_case_fits_after_budget(self):
         from ashley_e1 import snapshot
@@ -157,10 +195,9 @@ class SchemaV4Tests(unittest.TestCase):
                  "source_norm": "UNKNOWN", "source_confidence": "UNKNOWN",
                  "present": True, "membership": "QUEUED"}
         row = presence_row(
-            presence=[{"id": "1" * 20, "active_household": True, "level": None}
-                      for _ in range(8)],
-            social=[dict(entry) for _ in range(4)],
-            mood={"type": "12345", "intensity": 7},
+            presence=[full_presence(i) for i in range(8)],
+            social=[dict(entry, actor_id="4") for _ in range(4)],
+            mood={"type": "12345", "intensity": 7, "name": None},
             motives=[{"id": "m%d" % i, "value": 50, "band": "ok",
                        "age_ticks": 100} for i in range(6)],
             sim_signals=[full_signal() for _ in range(16)],
@@ -168,12 +205,33 @@ class SchemaV4Tests(unittest.TestCase):
                           "queue_truncated": True, "running_truncated": True,
                           "observation_complete": False},
         )
+        row["self"] = full_self()
+        row["place"] = {"owner_household_id": "9" * 64, "her_home": False, "venue": "v" * 128}
+        key = "4294967295"
+        row["dialogs"] = {
+            "open": [{"dialog_id": "%064d" % i, "kind": "k" * 128, "owner_id": "8" * 64,
+                      "title_key": key, "text_key": key,
+                      "responses": [{"response": "r" * 16, "text_key": key}] * 6,
+                      "auto_respond": True,
+                      "rows": [{"option_id": "9" * 20, "name_key": key, "enabled": True, "price": 99999}] * 40,
+                      "held": True, "cause": "identity_user", "select": {"min": 0, "max": 40},
+                      "counts": {"max_in_row": 999, "max_rows": 999},
+                      "text_inputs": [{"name": "f" * 32, "min_length": 4096, "max_length": 4096,
+                                       "numeric": True, "min_value": -2 ** 53, "max_value": 2 ** 53,
+                                       "profanity_checked": True, "restricted": True,
+                                       "default_key": "4294967295"}] * 8}
+                     for i in range(4)],
+            "closed": [{"dialog_id": "%064d" % i, "kind": "k" * 128, "title_key": key,
+                        "text_key": key, "response": "r" * 16} for i in range(4)],
+            "truncated": True}
         row = snapshot.apply_size_budget(row)
         schema.validate_record(row)
         payload = schema.serialize_record(row)
-        self.assertLessEqual(len(payload), 8 * 1024)
-        self.assertEqual(row["social"], [])
-        self.assertEqual(len(row["presence"]), 4)
+        self.assertLessEqual(len(payload), 48 * 1024)
+        self.assertLessEqual(len(row["dialogs"]["open"]), 4)  # 2.18.0 (32 KiB): dialogs keep their rows
+        # Rows go before someone addressing her does; the worst case keeps a few.
+        self.assertGreaterEqual(len(row["dialogs"]["open"][-1]["rows"]), 5)
+        self.assertEqual(len(row["social"]), 4)
         self.assertLessEqual(len(row["sim_signals"]), 16)
         self.assertFalse(row["observation_complete"])
 

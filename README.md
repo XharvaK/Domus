@@ -69,6 +69,6 @@ From PowerShell on the dev PC, with the pinned CPython 3.7 toolchain:
 powershell -ExecutionPolicy Bypass -File sims-e1\tools\verify.ps1
 ```
 
-`build.ps1` produces the `.ts4script` into `sims-e1/build/` (not tracked);
+`build.ps1` produces `Domus_<version>.ts4script` into `sims-e1/build/` (not tracked);
 `install.ps1 -SimsRoot <The Sims 4 user folder>` installs it with the game
 closed.
