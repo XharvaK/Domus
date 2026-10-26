@@ -647,6 +647,7 @@ def _read_moodlets(sim_info, now_ticks=None):
     signals = []
     seen = 0
     failed = 0
+    stopped = False
     try:
         for entry in iterator:
             # Read a bounded number, then keep the visible and heavy ones (DS3).
@@ -661,9 +662,18 @@ def _read_moodlets(sim_info, now_ticks=None):
             if row is not None:
                 signals.append(row)
     except Exception:
-        return [], "iter_error"
+        # 2.41.4 (N2): what was read before the error is kept; the fault is still named.
+        stopped = True
     signals.sort(key=_signal_order)
-    fault = "entry_error" if failed and not signals else None
+    if not signals and (failed or stopped):
+        fault = "entry_error" if failed and not stopped else "iter_error"
+    elif stopped:
+        fault = "partial:iteration stopped"
+    elif failed:
+        # 2.41.4 (N1): some moodlets could not be read; the rest are shown and the gap is named.
+        fault = "partial:%d unreadable" % failed
+    else:
+        fault = None
     return signals[:schema.MAX_SIGNALS], fault
 
 
@@ -719,9 +729,22 @@ def read_senses(sim_info, now_ticks, game):
 
 
 def senses_missingness(faults):
-    """2.41.3 (C2): the row's missingness entries for failed sense reads; the helper reads the detail prefix."""
-    return {field: {"status": "UNKNOWN", "detail": "senses unavailable: %s" % stage}
-            for field, stage in sorted((faults or {}).items())}
+    """2.41.3 (C2): the row's missingness entries for failed sense reads; the helper reads the detail prefix.
+    2.41.4 (N1, N2): a partial read is MISSING with "senses partial: ..." (some were read); a failed one is UNKNOWN."""
+    out = {}
+    for field, stage in sorted((faults or {}).items()):
+        if stage.startswith("partial:"):
+            out[field] = {"status": "MISSING", "detail": "senses partial: %s" % stage[len("partial:"):]}
+        else:
+            out[field] = {"status": "UNKNOWN", "detail": "senses unavailable: %s" % stage}
+    return out
+
+
+def merge_senses_missingness(missingness, faults):
+    """2.41.4 (N3): adds the senses entries without overwriting an entry another reader already wrote."""
+    for field, item in senses_missingness(faults).items():
+        missingness.setdefault(field, item)
+    return missingness
 
 
 def _active_household_id():
@@ -1901,7 +1924,7 @@ def poll_once(telemetry_session_id, armed_name,
         complete = False
         missingness["presence"] = {"status": "MISSING", "detail": ", ".join(missed)}
     # 2.41.3 (C2): a failed needs or moodlets read is said in the row, never left as a silent [].
-    missingness.update(senses_missingness(senses.get("faults")))
+    merge_senses_missingness(missingness, senses.get("faults"))
     if dropped["other"]:
         # D45: Sims off the lot past the cap are named as left out; the lot stays whole.
         missingness["presence_nearby"] = {

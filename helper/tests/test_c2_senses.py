@@ -26,3 +26,9 @@ def test_probe_2_41_3_read_faults_in_missingness_reach_her_view():
     row = {"event_kind": "presence_snapshot", "motives": [{"id": "1"}], "missingness": {
         "presence": {"status": "MISSING", "detail": "unreadable"}}}
     assert "senses_unavailable" not in observation._portrait(row)
+
+
+def test_probe_2_41_4_a_partial_moodlets_read_is_not_senses_unavailable():
+    row = {"event_kind": "presence_snapshot", "motives": [{"id": "1"}], "missingness": {
+        "sim_signals": {"status": "MISSING", "detail": "senses partial: 1 unreadable"}}}
+    assert "senses_unavailable" not in observation._portrait(row)
