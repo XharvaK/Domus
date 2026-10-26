@@ -543,6 +543,10 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
              "states": [humanize(state.get("value")) for state in item.get("states") or []
                         if isinstance(state, dict)]}
             for item in objects["near_conditions"][:8] if isinstance(item, dict)]
+    if row.get("event_kind") == "presence_snapshot" and row.get("motives") == []:
+        # C2 (Owner 2026-10-26): a living Sim always has needs; none read means the read failed. She is told her
+        # senses are unavailable instead of being shown a body with no needs.
+        portrait["senses_unavailable"] = ["needs"]
     if game.get("build_mode") is True:
         portrait["building"] = True
     if game.get("fire") is True:
