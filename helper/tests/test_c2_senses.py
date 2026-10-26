@@ -32,3 +32,12 @@ def test_probe_2_41_4_a_partial_moodlets_read_is_not_senses_unavailable():
     row = {"event_kind": "presence_snapshot", "motives": [{"id": "1"}], "missingness": {
         "sim_signals": {"status": "MISSING", "detail": "senses partial: 1 unreadable"}}}
     assert "senses_unavailable" not in observation._portrait(row)
+
+
+def test_nit_a_partial_read_is_surfaced_as_senses_partial():
+    row = {"event_kind": "presence_snapshot", "motives": [{"id": "1"}], "missingness": {
+        "sim_signals": {"status": "MISSING", "detail": "senses partial: 2 unreadable"}}}
+    portrait = observation._portrait(row)
+    assert portrait["senses_partial"] == ["moodlets"]
+    assert "senses_unavailable" not in portrait
+    assert "senses_partial" not in observation._portrait({"event_kind": "presence_snapshot", "motives": [{"id": "1"}]})
