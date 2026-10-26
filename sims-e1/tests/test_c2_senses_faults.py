@@ -79,8 +79,34 @@ class SensesFaultTests(unittest.TestCase):
         row = validate_senses(self.probe, senses)
         self.assertIsNotNone(row)
 
-    def test_the_probe_version_is_2_41_3(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.41.3")
+    def test_n1_some_unreadable_moodlets_are_a_named_partial_read(self):
+        sim = FakeSimInfo(FakeTracker([FakeCommodity(16656, 60, 1)]),
+                          FakeBuffs([FakeBuff(111, "Happy", 2), FakeBuff(112, "Happy", 1), BadBuff()]))
+        senses = self.observers.read_senses(sim, 10, None)
+        self.assertEqual(len(senses["sim_signals"]), 2)
+        self.assertEqual(senses["faults"], {"sim_signals": "partial:1 unreadable"})
+        missing = self.observers.senses_missingness(senses["faults"])
+        self.assertEqual(missing["sim_signals"], {"status": "MISSING", "detail": "senses partial: 1 unreadable"})
+
+    def test_n2_an_error_mid_iteration_keeps_what_was_read(self):
+        class Breaking(FakeBuffs):
+            def __iter__(self):
+                yield FakeBuff(111, "Happy", 2)
+                yield FakeBuff(112, "Happy", 1)
+                raise RuntimeError("iteration broke")
+        sim = FakeSimInfo(FakeTracker([FakeCommodity(16656, 60, 1)]), Breaking())
+        senses = self.observers.read_senses(sim, 10, None)
+        self.assertEqual(len(senses["sim_signals"]), 2)
+        self.assertEqual(senses["faults"], {"sim_signals": "partial:iteration stopped"})
+
+    def test_n3_senses_missingness_never_overwrites_an_existing_entry(self):
+        existing = {"motives": {"status": "MISSING", "detail": "written by someone else"}}
+        merged = self.observers.merge_senses_missingness(existing, {"motives": "no_tracker", "sim_signals": "buffs_error"})
+        self.assertEqual(merged["motives"], {"status": "MISSING", "detail": "written by someone else"})
+        self.assertEqual(merged["sim_signals"]["detail"], "senses unavailable: buffs_error")
+
+    def test_the_probe_version_is_2_41_4(self):
+        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.41.4")
 
 
 if __name__ == "__main__":
