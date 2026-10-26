@@ -559,6 +559,10 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
             unavailable.append("moodlets")
         if unavailable:
             portrait["senses_unavailable"] = unavailable
+        # 2.41.4 NIT: some moodlets were read and some were not; she is told the list may be incomplete.
+        sim_signals = missing.get("sim_signals")
+        if isinstance(sim_signals, dict) and str(sim_signals.get("detail") or "").startswith("senses partial"):
+            portrait["senses_partial"] = ["moodlets"]
     if game.get("build_mode") is True:
         portrait["building"] = True
     if game.get("fire") is True:
