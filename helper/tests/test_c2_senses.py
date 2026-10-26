@@ -12,3 +12,17 @@ def test_read_needs_and_rows_without_a_body_carry_no_flag():
     read = observation._portrait({"event_kind": "presence_snapshot", "motives": [{"id": "1", "value": 40, "band": "ok"}]})
     assert "senses_unavailable" not in read
     assert "senses_unavailable" not in observation._portrait({"event_kind": "speed_event"})
+
+
+def test_probe_2_41_3_read_faults_in_missingness_reach_her_view():
+    row = {"event_kind": "presence_snapshot", "motives": [{"id": "1", "value": 40, "band": "ok"}], "missingness": {
+        "sim_signals": {"status": "UNKNOWN", "detail": "senses unavailable: buffs_error"}}}
+    assert observation._portrait(row)["senses_unavailable"] == ["moodlets"]
+    row = {"event_kind": "presence_snapshot", "motives": [], "missingness": {
+        "motives": {"status": "UNKNOWN", "detail": "senses unavailable: no_tracker"},
+        "sim_signals": {"status": "UNKNOWN", "detail": "senses unavailable: entry_error"}}}
+    assert observation._portrait(row)["senses_unavailable"] == ["needs", "moodlets"]
+    # Other missingness (a company list that missed someone) is not a senses fault.
+    row = {"event_kind": "presence_snapshot", "motives": [{"id": "1"}], "missingness": {
+        "presence": {"status": "MISSING", "detail": "unreadable"}}}
+    assert "senses_unavailable" not in observation._portrait(row)
