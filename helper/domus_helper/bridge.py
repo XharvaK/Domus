@@ -9,6 +9,7 @@ import time
 import uuid
 from types import SimpleNamespace
 
+from .attachment import STALE_AFTER_MS
 from . import catalog
 from . import catalog_ask
 from . import commands
@@ -238,7 +239,12 @@ class Bridge:
         # session that is merely the last row in the spool.
         newest = self.cursor.newest
         probe = self.spool.session_probe(newest) if newest is not None else None
-        if isinstance(probe, str) and probe != schema.PROBE_VERSION and probe != self._probe_warned:
+        # Live 2026-10-26: at start the newest file can still be the previous game's (the running game has not written
+        # its own yet). Its version says nothing about what is installed now, so it warns only while that file is fresh.
+        newest_row = self.spool.latest_record(newest) if newest is not None else None
+        written = newest_row.get("wall_timestamp_ms") if isinstance(newest_row, dict) else None
+        fresh = type(written) is int and now - written <= STALE_AFTER_MS
+        if fresh and isinstance(probe, str) and probe != schema.PROBE_VERSION and probe != self._probe_warned:
             print("probe %s is installed; this helper expects %s" % (probe, schema.PROBE_VERSION))
             self._probe_warned = probe
         observed = self.monitor.observe(now, self._mono(), self._process(), latest)

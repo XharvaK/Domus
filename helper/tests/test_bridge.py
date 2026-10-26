@@ -454,3 +454,26 @@ def test_bridge_heartbeat_goes_at_once_when_the_game_attaches(paths, tmp_path, m
     mono_at["ms"] = 6_000
     bridge.tick(NOW + 6_000)
     assert len(sent) == 2
+
+
+def test_no_probe_warning_from_the_previous_sessions_file(paths, tmp_path, monkeypatch, capsys):
+    # Live 2026-10-26 (bridge.log 04:57:49Z): at start the newest file was still the 10-13 session (probe 2.41.1), the
+    # running game had not written its own yet, and the bridge said "probe 2.41.1 is installed" while 2.41.2 was.
+    from domus_helper.attachment import STALE_AFTER_MS
+    from domus_helper.vendor import schema as probe_schema
+
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(commands, "publish", lambda *args, **kwargs: "stub")
+    old = paths.telemetry / "ashley_e1_01234567-89ab-cdef-0123-000000000001.jsonl"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    _append(old, _row(1, wall=NOW - 13 * 86_400_000, probe_version="2.0.0"))
+    bridge = Bridge(paths, client=None, process=(1, "t"), detected_build="1.128.90.1030", mono=lambda: 0)
+    bridge.overlay.publish = lambda now, attached: None
+    if bridge.director is not None:
+        bridge.director.tick = lambda now, live: None
+    bridge.tick(NOW)
+    assert "is installed; this helper expects" not in capsys.readouterr().out
+    new = paths.telemetry / "ashley_e1_01234567-89ab-cdef-0123-000000000002.jsonl"
+    _append(new, _row(1, wall=NOW + STALE_AFTER_MS // 2, probe_version=probe_schema.PROBE_VERSION))
+    bridge.tick(NOW + STALE_AFTER_MS // 2 + 1)
+    assert "is installed; this helper expects" not in capsys.readouterr().out
