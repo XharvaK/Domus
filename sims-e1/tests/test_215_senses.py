@@ -234,7 +234,10 @@ class PresenceMissTests(unittest.TestCase):
     def test_a_clean_read_stays_complete(self):
         row = ds3.PollOnceTests.row(self)
         self.assertTrue(row["observation_complete"])
-        self.assertEqual(row["missingness"], {})
+        # 2.41.3 (C2): this fixture's Sim has no motive the probe knows, so the needs read is named as a fault; the
+        # presence read is clean.
+        self.assertEqual(row["missingness"], {
+            "motives": {"status": "UNKNOWN", "detail": "senses unavailable: no_guid_match"}})
 
 
 class TravelTests(unittest.TestCase):

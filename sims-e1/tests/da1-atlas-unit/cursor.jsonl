@@ -1,0 +1,5 @@
+{"kind":"atlas_header","probe_version":"2.41.3","sims_build":"1.128.90.1030","total":3,"started_ms":1793025799461}
+{"kind":"affordance","guid64":1,"name":"Sit","is_super":true,"is_social":false,"target_type":"OBJECT","allow_autonomous":true,"allow_user_directed":false,"require_current_posture":true,"posture_preferences":"object","static_commodities":[2,4],"autonomy_ads":null}
+{"kind":"affordance","guid64":2,"name":"Sit","is_super":true,"is_social":false,"target_type":"OBJECT","allow_autonomous":true,"allow_user_directed":false,"require_current_posture":true,"posture_preferences":"object","static_commodities":[2,4],"autonomy_ads":null}
+{"kind":"affordance","guid64":3,"name":"Sit","is_super":true,"is_social":false,"target_type":"OBJECT","allow_autonomous":true,"allow_user_directed":false,"require_current_posture":true,"posture_preferences":"object","static_commodities":[2,4],"autonomy_ads":null}
+{"kind":"atlas_footer","count":3,"errors":0,"chunks":2,"max_chunk_ms":0.0,"p50_chunk_ms":0.0}

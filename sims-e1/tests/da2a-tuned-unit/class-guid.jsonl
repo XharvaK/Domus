@@ -1,0 +1,5 @@
+{"kind":"tuned_header","probe_version":"2.41.3","sims_build":"1.128.90.1030","total":3,"started_ms":1793025799513}
+{"kind":"tuned_on_class","object_id":"30","definition_id":null,"class_name":"_Pair","is_sim":null,"affordance_guid64s":[9,45,123],"truncated":false}
+{"kind":"tuned_on_class","object_id":"31","definition_id":null,"class_name":"_Frozen","is_sim":null,"affordance_guid64s":[45,123],"truncated":false}
+{"kind":"tuned_on_class","object_id":"32","definition_id":null,"class_name":"_AsSet","is_sim":null,"affordance_guid64s":[123],"truncated":false}
+{"kind":"tuned_footer","count":3,"errors":0,"chunks":1,"max_chunk_ms":0.0,"p50_chunk_ms":0.0}

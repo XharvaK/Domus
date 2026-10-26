@@ -1,0 +1,5 @@
+{"kind":"tuned_header","probe_version":"2.41.3","sims_build":"1.128.90.1030","total":3,"started_ms":1793025799513}
+{"kind":"tuned_on_class","object_id":"1","definition_id":22,"class_name":"_Child","is_sim":false,"affordance_guid64s":[1,2],"truncated":false}
+{"kind":"tuned_on_class","object_id":"2","definition_id":22,"class_name":"_Child","is_sim":false,"affordance_guid64s":[1,2],"truncated":false}
+{"kind":"tuned_on_class","object_id":"3","definition_id":22,"class_name":"_Child","is_sim":false,"affordance_guid64s":[1,2],"truncated":false}
+{"kind":"tuned_footer","count":3,"errors":0,"chunks":2,"max_chunk_ms":0.0,"p50_chunk_ms":0.0}

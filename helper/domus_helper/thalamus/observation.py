@@ -543,10 +543,22 @@ def _portrait(row, resolve=None, notebook=None, windows=None, pace=None, act_nam
              "states": [humanize(state.get("value")) for state in item.get("states") or []
                         if isinstance(state, dict)]}
             for item in objects["near_conditions"][:8] if isinstance(item, dict)]
-    if row.get("event_kind") == "presence_snapshot" and row.get("motives") == []:
-        # C2 (Owner 2026-10-26): a living Sim always has needs; none read means the read failed. She is told her
-        # senses are unavailable instead of being shown a body with no needs.
-        portrait["senses_unavailable"] = ["needs"]
+    if row.get("event_kind") == "presence_snapshot":
+        # C2 (Owner 2026-10-26): a living Sim always has needs; none read means the read failed. Probe 2.41.3 also
+        # names a failed needs or moodlets read in missingness. The view says senses are unavailable instead.
+        missing = row.get("missingness") if isinstance(row.get("missingness"), dict) else {}
+
+        def _fault(field):
+            item = missing.get(field)
+            return isinstance(item, dict) and str(item.get("detail") or "").startswith("senses unavailable")
+
+        unavailable = []
+        if row.get("motives") == [] or _fault("motives"):
+            unavailable.append("needs")
+        if _fault("sim_signals"):
+            unavailable.append("moodlets")
+        if unavailable:
+            portrait["senses_unavailable"] = unavailable
     if game.get("build_mode") is True:
         portrait["building"] = True
     if game.get("fire") is True:
