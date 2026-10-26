@@ -1,3 +1,0 @@
-{"kind":"atlas_header","probe_version":"2.41.3","sims_build":"1.128.90.1030","total":1,"started_ms":1793025799512}
-{"kind":"affordance","guid64":5,"name":"shower_TakeShower","is_super":true,"is_social":false,"target_type":"OBJECT","allow_autonomous":true,"allow_user_directed":false,"require_current_posture":true,"posture_preferences":"object","static_commodities":[2,4],"autonomy_ads":[{"stat":16655,"name":"motive_Fun","ops":[{"op":"StatisticChangeOp","amount":null,"advertise":null}]},{"stat":16654,"name":"motive_Hygiene","ops":[{"op":"StatisticChangeOp","amount":2.5,"advertise":true}]}]}
-{"kind":"atlas_footer","count":1,"errors":0,"chunks":1,"max_chunk_ms":0.0,"p50_chunk_ms":0.0}
