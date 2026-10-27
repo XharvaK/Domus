@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.41.4",
+    [string]$Version = "2.41.5",
     [string]$PythonPath = "C:\Users\Xharv\AppData\Local\Programs\Python\Python370-AshleyE1\python.exe",
     [string]$ImplementedCommit = "WORKTREE_UNCOMMITTED",
     [string]$BaselineCommit = ""
@@ -106,7 +106,7 @@ $simsPythonDll = "E:\SteamLibrary\steamapps\common\The Sims 4\Game\Bin\python37_
 $manifest = [ordered]@{
     manifest_version = 1
     probe_version = $Version
-    target_sims_build = "1.128.90.1030"
+    target_sims_build = "1.129.39.1030"
     baseline_commit = $baselineCommit
     implemented_commit = $ImplementedCommit
     governing_documents = [ordered]@{

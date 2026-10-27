@@ -7,11 +7,11 @@ import json
 # 2.39.0 (schema 20, W12): optional keys only (variants, refusals, names, hold_left_s, dropped); rows of 19 validate.
 OBSERVATION_SCHEMA_VERSION = 21
 TELEMETRY_SCHEMA_ID = "e1.telemetry/v21"
-PROBE_VERSION = "2.41.4"
+PROBE_VERSION = "2.41.5"
 # 2.15.3: HOME is Ashley's own save; only LAB_E1 and LAB_E1_FORK allow the lab-only tools.
 ARM_NAMES = ("LAB_E1", "LAB_E1_FORK", "HOME")
 ACCEPTED_SCHEMA_VERSIONS = (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
-SIMS_BUILD = "1.128.90.1030"
+SIMS_BUILD = "1.129.39.1030"
 # DS3: rows grew with place, company and moodlet blueprints (p50 4.4 KB before);
 # 1024 queued x 16 KiB = 16 MiB worst-case writer queue.
 # 2.18.0: 32 KiB (was 16): picker rows of an open dialog fit beside everything else.
