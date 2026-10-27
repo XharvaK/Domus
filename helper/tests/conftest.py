@@ -10,6 +10,18 @@ from domus_helper.paths import Paths
 from domus_helper.vendor import schema
 
 
+@pytest.fixture(autouse=True)
+def fake_game_root(tmp_path, monkeypatch):
+    """Keep the session away from any real Sims install (R1)."""
+    root = tmp_path / "fake-game-root"
+    bin_dir = root / "Game" / "Bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "Default.ini").write_text(
+        "[Version]\ngameversion = 1.129.39.1030\n", encoding="utf-8")
+    monkeypatch.setenv("DOMUS_GAME_ROOT", str(root))
+    return root
+
+
 @pytest.fixture
 def paths(tmp_path, monkeypatch):
     root = tmp_path / "Sims"
