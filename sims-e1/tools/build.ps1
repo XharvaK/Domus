@@ -139,7 +139,7 @@ $manifest = [ordered]@{
         file_version_raw = "3.7.150.1013"
         product_version = "3.7.0"
         description = "Python Core"
-        sha256 = "3BD2257D1A7C3D405D25F989CC0E3C847213700397C3F86D7B64AFB910069AEC"
+        sha256 = "C6D05CA679D51B38BF9A7FB27B0C2FF2FF6F17BF072A47F2A63D013DA3D708D5"
         verdict = "COMPATIBLE"
     }
     s4cl_source_consulted = "db1ca99"
