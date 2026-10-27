@@ -748,10 +748,14 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
+            unmapped = False
             if is_spot:
                 text = SPOT_ACT_TEXT
             else:
-                text = _text(resolve, act.get("text_key"), _person_name(item, people)) or humanize(act.get("name"))
+                text = _text(resolve, act.get("text_key"), _person_name(item, people))
+                if not text:
+                    text = humanize(act.get("name"))
+                    unmapped = True
             if text in texts:
                 continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
             texts.add(text)
@@ -765,6 +769,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             else:
                 ref_key = ("act", str(item.get("object_id")), guid)
             listed = {"ref": refs.ref(ref_key), "guid64": guid, "text": text}
+            if unmapped:
+                listed["unmapped"] = True
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
                 listed["opens"] = OPENS_SCREEN
             if act.get("needs_sim") is True:

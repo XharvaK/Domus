@@ -122,16 +122,18 @@ def test_each_object_carries_its_room_when_known_and_whether_it_is_near():
 def test_a_lot_of_150_objects_in_8_rooms_is_all_listed_with_stable_refs():
     book = RefBook()
     menu = lot(acts=1)
+    # 2.41.7: real acts carry the game's label; an act without one is marked unmapped and costs bytes.
+    labels = {"k0": "Act zero", "k1": "Act one"}.get
     cut = {}
-    result = options(menu, room="1", room_labels=ROOM_LABELS, refs=book, cut=cut)
+    result = options(menu, labels, room="1", room_labels=ROOM_LABELS, refs=book, cut=cut)
     assert len(result) == 150 and cut == {}
     assert sorted({item["room"] for item in result}) == sorted(ROOM_LABELS.values())
     refs = refs_of(result)
     assert len(set(refs.values())) == len(refs) == 150
-    again = refs_of(options(menu, room="1", room_labels=ROOM_LABELS, refs=book))
+    again = refs_of(options(menu, labels, room="1", room_labels=ROOM_LABELS, refs=book))
     assert again == refs
     assert len(json.dumps(result, separators=(",", ":")).encode("utf-8")) <= 32768
-    two = options(lot(acts=2), room="1", room_labels=ROOM_LABELS, cut={})
+    two = options(lot(acts=2), labels, room="1", room_labels=ROOM_LABELS, cut={})
     assert len(two) == 150 and len(json.dumps(two, separators=(",", ":")).encode("utf-8")) <= 32768
 
 

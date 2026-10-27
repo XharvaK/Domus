@@ -43,9 +43,9 @@ def test_options_name_each_act_in_the_games_words_with_short_refs():
     assert result == [
         {"object": "Wooden Bookshelf", "object_id": "11", "where": "here, 2.0 m", "near": True, "acts": [
             {"ref": "a1", "guid64": "4242", "text": "Read a Book"},
-            {"ref": "a2", "guid64": "4243", "text": "bookshelf Browse Books"}]},
+            {"ref": "a2", "guid64": "4243", "text": "bookshelf Browse Books", "unmapped": True}]},
         {"object": "object guitar", "object_id": "12", "where": "elsewhere, 6.5 m", "near": False, "acts": [
-            {"ref": "a3", "guid64": "5000", "text": "guitar Practice"}]},
+            {"ref": "a3", "guid64": "5000", "text": "guitar Practice", "unmapped": True}]},
     ]
 
 
@@ -98,7 +98,7 @@ def test_her_own_phone_is_an_option_named_your_phone():
     result = options(PHONE_MENU, lambda key: None, people={"900": "Dennis Kim"})
     phone = [entry for entry in result if entry["object_id"] == "900"][0]
     assert phone == {"object": "your phone", "object_id": "900", "where": "with you", "near": True, "acts": [
-        {"ref": "a2", "guid64": "6001", "text": "phone Sample Message"}]}
+        {"ref": "a2", "guid64": "6001", "text": "phone Sample Message", "unmapped": True}]}
     assert [entry["object"] for entry in result] == ["object bookshelf", "your phone"]
 
 
