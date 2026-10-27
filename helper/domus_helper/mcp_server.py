@@ -6,10 +6,11 @@ from mcp.server.mcpserver import MCPServer
 
 from . import atlas as atlas_store
 
-from . import calibration
+from . import acts, calibration
 from . import commands, telemetry as telemetry_reader
 from . import fingerprints as fingerprint_reader
 from .paths import Paths
+from .spool import Spool
 from .vendor.cmdbox import valid_issuer
 
 LAB_NAMES = {"LAB_E1", "LAB_E1_FORK"}
@@ -111,7 +112,24 @@ def start() -> dict:
 
 @server.tool()
 def stop() -> dict:
-    return asdict(tools().command("stop"))
+    client = tools()
+    reply = client.command("stop")
+    _drain_stop_queues(client.paths)
+    return asdict(reply)
+
+
+def _drain_stop_queues(paths, now_ms=None):
+    """R4/L4: after the probe's own stop, cancel what the helper still holds: every command file the probe has not
+    taken, and every act still waiting for it (here the persisted queue; a live courier on its next tick)."""
+    commands.expire_pending(paths, now_ms)
+    path = paths.data_dir / "spool.db"
+    if not path.is_file():
+        return
+    spool = Spool(path)
+    try:
+        acts.stop_pending_acts(spool)
+    finally:
+        spool.close()
 
 
 @server.tool()

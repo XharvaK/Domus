@@ -4,6 +4,7 @@ probe recorded about them (act_event rows) goes back to Mint. Nothing here choos
 import json
 import re
 import threading
+import uuid
 
 from . import snapshot
 from .commands import EnvelopeInvalid
@@ -46,6 +47,8 @@ RESULT_WORDS_MAX = 400
 # W13 (H): a sync event's whole detail is under this many bytes of JSON (Natalis's limit).
 DETAIL_BYTES = 1024
 _TERMINAL = ("finished", "rejected", "unknown")
+# R4/L4: the code an act still waiting for the probe gets when a stop ends it.
+STOPPED = "STOPPED"
 KNOWN_LIMIT = 64
 EVENTS_LIMIT = 64
 ASKED_LIMIT = 8
@@ -1010,6 +1013,31 @@ def _variant_of(value):
     return _split_guid(value)[1] if value is not None else None
 
 
+def _waiting(known):
+    """R4/L4: an act the probe has not ended yet."""
+    return isinstance(known, dict) and not known.get("terminal") and not known.get("timed_out")
+
+
+def stop_pending_acts(spool):
+    """R4/L4: a stop ends every act still waiting for the probe, in the persisted queue. Each is marked terminal
+    STOPPED, so a restart never sends it again. Nothing is appended to acts_events: those are history already told
+    to Natalis and stay byte for byte (R4). A live courier learns of the stop from the acts_stopped marker on its
+    next tick and records the STOPPED event through its own terminal path."""
+    raw = spool.get_kv("acts_known")
+    known = json.loads(raw) if raw else {}
+    stopped = []
+    for act_id, entry in known.items():
+        if not _waiting(entry):
+            continue
+        entry["answered"] = True
+        entry["terminal"] = True
+        entry["code"] = STOPPED
+        stopped.append(act_id)
+    spool.put_many_kv({"acts_known": json.dumps(known, sort_keys=True),
+                       "acts_stopped": uuid.uuid4().hex})
+    return stopped
+
+
 class ActCourier(object):
     """Carries her requested acts to the probe and the probe's record of them back.
 
@@ -1047,6 +1075,8 @@ class ActCourier(object):
         self._events = json.loads(raw) if raw else []
         raw = spool.get_kv("acts_quarantined")
         self.quarantined = json.loads(raw) if raw else []
+        # R4/L4: the stop marker this courier has already acted on.
+        self._stopped = spool.get_kv("acts_stopped")
         # Live 2026-10-06: Cook opens the recipe question instead of entering her queue, so the
         # probe called it gone (LEFT_QUEUE) and she cooked again and again. Dialogs seen open, per telemetry session.
         raw = spool.get_kv("acts_asked")
@@ -1228,9 +1258,26 @@ class ActCourier(object):
                 known["terminal"] = True
                 self._verb_ended(known)
 
+    def _notice_stop(self, now_ms):
+        """R4/L4: a stop written to the spool by any helper process ends this courier's waiting acts on its next tick."""
+        marker = self._spool.get_kv("acts_stopped")
+        if marker is None or marker == self._stopped:
+            return
+        self._stopped = marker
+        for act_id, known in self._known.items():
+            if not _waiting(known):
+                continue
+            known["answered"] = True
+            known["terminal"] = True
+            known["code"] = STOPPED
+            self._event(act_id, "unknown", now_ms, {"code": STOPPED})
+            self._verb_ended(known)
+        self._save()
+
     def tick(self, client, helper_session, now_ms, attached, probe=None):
         """One round trip: send what happened, receive what to do. Returns the acts written.
         probe: the installed probe's version, when the helper knows it (A9-9 gates what it is sent)."""
+        self._notice_stop(now_ms)
         for act_id, known in self._known.items():
             if known.get("timed_out") or known.get("terminal"):
                 continue

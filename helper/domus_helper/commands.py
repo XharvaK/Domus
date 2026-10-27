@@ -102,6 +102,38 @@ def prune_done(paths, now_ms):
     return removed
 
 
+def expire_pending(paths, now_ms=None):
+    """R4/L4: cancel every command the probe has not taken yet, through cmdbox's own expiry path, so a probe that
+    reads the file later refuses it EXPIRED (an act is then refused to her as EXPIRED too). Returns the ids cancelled."""
+    now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    cancelled = []
+    for entry in sorted(paths.inbox.glob("*.json")):
+        try:
+            raw = entry.read_bytes()
+        except OSError:
+            continue
+        try:
+            row, _error = cmdbox.parse(raw, now_ms, ())
+        except (ValueError, UnicodeError, RecursionError):
+            continue
+        if row is None:
+            continue
+        row["expires_at_ms"] = min(row["issued_at_ms"], now_ms) - 1
+        raw = json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        temporary = entry.with_name(entry.name + ".tmp")
+        try:
+            temporary.write_bytes(raw)
+            os.replace(temporary, entry)
+        except OSError:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            continue
+        cancelled.append(row["id"])
+    return cancelled
+
+
 def read_reply(command_id, *, paths=None):
     """W12 (B3): the probe's reply to one command of ours, or None while it has not answered. Id-matched and checked
     for shape; a reply the probe is still writing reads as not yet."""
