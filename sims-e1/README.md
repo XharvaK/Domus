@@ -224,8 +224,14 @@ Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.41.6
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.41.6
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.41.6 -HostPythonPath helper\.venv\Scripts\python.exe
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/install.ps1 -SimsRoot "<Documents>\Electronic Arts\The Sims 4"
 ```
+
+- `verify.ps1` also runs the tests under a host Python 3. On Windows a bare `python` may be the Microsoft Store alias,
+  which fails the host lane ("Python was not found"); pass `-HostPythonPath` (the helper's `.venv` Python works).
+- `install.ps1` has a mandatory `-SimsRoot`: the Sims user-data folder that holds `Mods`, `saves` and `Tray`
+  (on the Owner's PC `C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4`). The game must be closed.
 
 E1 evidence (acceptance, adjudication and repairs) is under
 `sims-e1/evidence/`; it moves to the Domus repository when that repository
