@@ -64,8 +64,9 @@ REJECTED with code EXPIRED for its id, so Ashley hears it, as well as the comman
 some entries fail or the read stops part way, and names that as `senses partial: ...` (status MISSING).
 
 2.41.5 targets game build 1.129.39.1030: the game API diff against 1.128.90.1030 (2026-10-27) found no change to any module, name, enum value or callback the probe uses.
+2.41.6 fixes the household autostart hook: it registers on CallbackEvent.EXIT_CONTENT_SET_GEN_OR_PROCESS_HOUSEHOLD_EVENTS (HOUSEHOLD_EXIT never existed, so that hook always failed).
 
-The source is version `2.41.5` (`src/ashley_e1/__init__.py`,
+The source is version `2.41.6` (`src/ashley_e1/__init__.py`,
 `src/ashley_e1/schema.py`; observation schema 21; the helper accepts schema 4 to 21). It is no longer read-only:
 it carries the E2 actuation experiment described by
 `docs/Domus/PROJECT_ASHLEY_SIMS4_EMBODIMENT_E2_IMPLEMENTATION_READY_PLAN_V1.md`.
@@ -222,8 +223,8 @@ its alarm ends at the zone boundary.
 Build and verification (pinned official CPython 3.7.0 x64):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.41.5
-powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.41.5
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/build.ps1 -Version 2.41.6
+powershell -ExecutionPolicy Bypass -File sims-e1/tools/verify.ps1 -Version 2.41.6
 ```
 
 E1 evidence (acceptance, adjudication and repairs) is under

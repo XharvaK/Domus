@@ -413,7 +413,8 @@ def _register_autostart_hooks():
             if source == 'posture':
                 event = callbacks.CallbackEvent.POSTURE_GRAPH_BUILD_EXIT
             elif source == 'household':
-                event = callbacks.CallbackEvent.HOUSEHOLD_EXIT
+                # 2.41.6: HOUSEHOLD_EXIT never existed; the game fires this from EventManagerService.process_events_for_household (1.128 and 1.129).
+                event = callbacks.CallbackEvent.EXIT_CONTENT_SET_GEN_OR_PROCESS_HOUSEHOLD_EVENTS
             else:
                 event = callbacks.CallbackEvent.TRANSITION_SEQUENCE_EXIT
             callbacks.add_callbacks((event,),
