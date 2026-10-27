@@ -234,9 +234,10 @@ powershell -ExecutionPolicy Bypass -File sims-e1/tools/install.ps1 -SimsRoot "<D
 - `install.ps1` has a mandatory `-SimsRoot`: the Sims user-data folder that holds `Mods`, `saves` and `Tray`
   (on the Owner's PC `C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4`). The game must be closed.
 
-E1 evidence (acceptance, adjudication and repairs) is under
-`sims-e1/evidence/`; it moves to the Domus repository when that repository
-exists.
+E1/E2 install and acceptance evidence (acceptance, adjudication and repairs) moved out of the repository on
+2026-10-27: archived at `/workspace/archive/domus-evidence/` (box) and
+`C:\Users\Xharv\Projects\_archive\domus-evidence\` (Owner PC), each with `SHA256SUMS.txt`; git history keeps it.
+The three telemetry files the replay tests read are under `sims-e1/tests/fixtures/evidence/`.
 
 ## History: E1 read-only builds (1.0.x)
 
@@ -288,4 +289,4 @@ explicit Owner-confirmed Sims user-data root and a closed game. This repair
 pass does not perform installation or runtime witnessing.
 
 Raw telemetry and witness material stay outside Git. Historical diagnostic
-evidence remains preserved under `sims-e1/evidence`.
+evidence is preserved in the archive above and in git history.

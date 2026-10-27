@@ -1,5 +1,0 @@
-BACKUP_FOLDER=AshleyE1E1Backup_20260930092345
-BACKUP_BYTES=14649830
-Mods bytes=936 files=2
-saves bytes=14457642 files=15
-Tray bytes=191252 files=10

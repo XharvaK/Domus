@@ -1,3 +1,0 @@
-Mods files=3 bytes=45975
-saves files=15 bytes=14457642
-Tray files=10 bytes=191252

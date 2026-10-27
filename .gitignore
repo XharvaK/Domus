@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Install/acceptance evidence lives outside the repo (archive: box /workspace/archive/domus-evidence, XQX C:\Users\Xharv\Projects\_archive\domus-evidence; history keeps it)
+/sims-e1/evidence/

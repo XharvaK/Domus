@@ -9,7 +9,7 @@ from test_e2 import _entry, _load_pure
 
 
 EVIDENCE = os.path.join(
-    os.path.dirname(__file__), "..", "evidence", "DA5_CALIBRATION_2026-10-04",
+    os.path.dirname(__file__), "fixtures", "evidence", "DA5_CALIBRATION_2026-10-04",
     "ashley_e1_c964da78-8841-41c4-ab87-3895fb228b2d.jsonl")
 
 

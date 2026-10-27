@@ -1,1 +1,0 @@
-﻿SAVES_IDENTICAL=yes; relative paths, lengths, LastWriteTime and SHA256 identical for all 17 files.

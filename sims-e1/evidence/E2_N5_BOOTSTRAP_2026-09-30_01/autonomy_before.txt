@@ -1,2 +1,0 @@
-autonomydisabledforactivesim = 0
-autonomyhousehold = 1

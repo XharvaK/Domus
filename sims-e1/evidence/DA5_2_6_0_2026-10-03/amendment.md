@@ -1,3 +1,0 @@
-# Amendment A19
-
-| A19 | §6 observe-only calibration | Probe 2.6.0: `calibrate` (no args) is accepted only while armed. It sets `_CALIBRATE` and writes `experiment_event` phase `CALIBRATE_START` with the current `game.clock_speed` and the armed name. A later change of `game.clock_speed` between presence snapshots writes phase `CALIBRATE_SPEED`. While the flag is set, `prepare`, `sit`, `sit_trial`, `pause`, and `release` return `CALIBRATE_OBSERVE_ONLY` and do not call the game. The flag clears wherever `_ARMED_NAME` clears. `status` includes `calibrate`. Schema v4 gains those two phases only. Autonomy rows still do not teach a sit signature. | DA5: the Owner runs native autonomy at speed; the probe only observes. |

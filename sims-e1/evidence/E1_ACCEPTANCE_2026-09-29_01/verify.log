@@ -1,6 +1,0 @@
-VERIFY_PASS compiler=3.7.0
-VERIFY_PASS system=Python 3.14.3
-VERIFY_PASS AST guards
-VERIFY_PASS focused tests under system Python
-VERIFY_PASS focused tests under CPython 3.7.0
-VERIFY_PASS artifact layout, magic, hashes, manifest, source digest

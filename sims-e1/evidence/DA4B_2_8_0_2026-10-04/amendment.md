@@ -1,3 +1,0 @@
-# Amendment A21
-
-| A21 | §8 trial judgement; observation schema | Probe 2.8.0, observation schema 5 (schema 4 rows still validate). Social rows name the other Sim (`actor_id`) and report `RUNNING`, `QUEUED`, or `QUEUED_AND_RUNNING`. Moodlet rows carry `tuning_name` and mood carries `name` (class `__name__` only). Need cards use game ticks: fresh gate 30000, control window 45000, grace 15000 after the interaction leaves. Wall time remains the gap check. No new command actuates. | DA5 calibration: social rows hid the partner, moodlets were bare guids, and wall-time need math rejected lazy motive caches and changed with game speed. |

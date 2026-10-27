@@ -1,3 +1,0 @@
-# Amendment A20
-
-| A20 | §8 trial judgement | Probe 2.7.0: a trial may carry a class card (posture, need, interaction, or social). With no card, the experiment builds a posture card from the learned signature and keeps the 2.6.0 claim ladder and verdicts. Need, interaction, and social effects are pure and conservative: an ambiguity is recorded and blocks PASS. `close()` still returns only PASS or OUTCOME_UNKNOWN. Social entries cannot show the target Sim inside the interaction, so that class stays `social_target_unobserved`. No new command actuates. | DA4: judge a trial by what the interaction is for, not only by whether she is seated. |

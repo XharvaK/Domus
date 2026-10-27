@@ -1,2 +1,0 @@
-INSTALL_PASS destination=C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4\Mods\AshleyE1\ashley_e1_2.1.0.ts4script
-Owner must enable Script Mods and CC in game options, restart, and verify the load_disabled witness.

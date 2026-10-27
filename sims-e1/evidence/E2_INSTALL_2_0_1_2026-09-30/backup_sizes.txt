@@ -1,5 +1,0 @@
-BACKUP_FOLDER=C:\Users\Xharv\OneDrive\Belgeler\Electronic Arts\The Sims 4\AshleyE1E1Backup_20260930165256
-Mods files=2 bytes=935
-saves files=15 bytes=14457642
-Tray files=10 bytes=191252
-BACKUP_BYTES=14649829

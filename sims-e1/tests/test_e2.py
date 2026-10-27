@@ -453,7 +453,7 @@ class RegistryTests(unittest.TestCase):
     def test_t1_evidence_replay_continuation_and_empty_set(self):
         path = os.path.join(
             os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
-            "sims-e1", "evidence", "E2_T1_T3_2026-09-30_01",
+            "sims-e1", "tests", "fixtures", "evidence", "E2_T1_T3_2026-09-30_01",
             "ashley_e1_863ffab5-edd0-44c2-b74b-5ce9b2d352a3.jsonl")
         if not os.path.isfile(path):
             self.skipTest("missing T1 evidence file: %s" % path)
@@ -503,7 +503,7 @@ class RegistryTests(unittest.TestCase):
     def test_n5_evidence_learns_sit_and_continuation(self):
         path = os.path.join(
             os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
-            "sims-e1", "evidence", "E2_N5_BOOTSTRAP_2026-09-30_02",
+            "sims-e1", "tests", "fixtures", "evidence", "E2_N5_BOOTSTRAP_2026-09-30_02",
             "ashley_e1_863ffab5-edd0-44c2-b74b-5ce9b2d352a3.jsonl")
         if not os.path.isfile(path):
             self.skipTest("missing N5 evidence file: %s" % path)

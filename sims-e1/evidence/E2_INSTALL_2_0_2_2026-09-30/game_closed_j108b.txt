@@ -1,1 +1,0 @@
-﻿GAME_CLOSED=yes; Get-Process TS4_x64 returned no process before build, before removal, and after install.

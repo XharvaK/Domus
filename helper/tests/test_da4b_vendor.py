@@ -16,7 +16,7 @@ def test_revendored_files_match_probe():
 
 
 def test_da5_calibration_coverage_unchanged():
-    evidence = (Path(__file__).resolve().parents[2] / "sims-e1" / "evidence"
+    evidence = (Path(__file__).resolve().parents[2] / "sims-e1" / "tests" / "fixtures" / "evidence"
                 / "DA5_CALIBRATION_2026-10-04"
                 / "ashley_e1_c964da78-8841-41c4-ab87-3895fb228b2d.jsonl")
     rows = []

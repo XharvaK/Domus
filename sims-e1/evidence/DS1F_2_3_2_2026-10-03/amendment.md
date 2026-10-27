@@ -1,3 +1,0 @@
-# Amendment A14
-
-| A14 | §5 motive read (schema unchanged, still v4) | Probe 2.3.2: motives are read only through `sim_info.get_component(STATISTIC_COMPONENT)` then `get_commodity_tracker(create=False)` then `get_all_commodities()`. `sim_info.commodity_tracker` and `get_statistic` are not called. A failed read is recorded as `motive_diag` on the existing status reply (`stage`, at most 40 sorted `seen_guids`, `matched`). The presence snapshot row is unchanged. | R-L0b: `commodity_tracker` is not pure; `get_component` and `get_commodity_tracker(create=False)` and `get_all_commodities` are. L0 re-check: probe 2.3.1 still returned `motives: []` with no failed step. |

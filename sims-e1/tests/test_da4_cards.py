@@ -13,7 +13,7 @@ AUTO = "InteractionSource.AUTONOMY"
 
 def _evidence(folder):
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    directory = os.path.join(root, "sims-e1", "evidence", folder)
+    directory = os.path.join(root, "sims-e1", "tests", "fixtures", "evidence", folder)
     name = "ashley_e1_863ffab5-edd0-44c2-b74b-5ce9b2d352a3.jsonl"
     return os.path.join(directory, name)
 
