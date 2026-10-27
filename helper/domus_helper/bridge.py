@@ -251,6 +251,8 @@ class Bridge:
         self._state = observed["state"]
         self._follow_refs(self.spool.latest_record(newest) if newest is not None else None)
         self._telemetry_only = observed["telemetry_only"]
+        if observed.get("build_override_new"):
+            self._note_build_override(observed["build_override"], now)
         self._advance_thalamus(now)
         # E1b: a flipped game-only switch goes out at once, not with the next minute's heartbeat.
         # Live 2026-10-08: so does attaching; the first heartbeat goes before the save loads, and
@@ -363,6 +365,30 @@ class Bridge:
                              objects_limit=max(0, OPTIONS_OBJECTS_LIMIT - len(asked)),
                              states=self._index["states"])  # W13 (D9.6): what is broken or dirty, from the things list
         return asked + listed
+
+    def _note_build_override(self, override, now):
+        """C1b (Owner 2026-10-26): the game build differs from the one the probe was made for, and the read probe
+        passed, so her acts go on. Said loudly on the console and in the log, and left as a notice file for Manager."""
+        line = ("BUILD MISMATCH: probe made for %s, game is %s; the read probe passed, so acts continue on the new build. "
+                "Notice written for Manager." % (override.get("declared"), override.get("detected")))
+        print(line, flush=True)
+        try:
+            self._log.write({"wall_ms": now, "trigger": "build_override", "declared": override.get("declared"),
+                             "detected": override.get("detected")})
+        except Exception:
+            pass
+        try:
+            folder = self.paths.data_dir / "notices"
+            folder.mkdir(parents=True, exist_ok=True)
+            name = "build_override_%s.json" % "".join(ch for ch in str(override.get("detected")) if ch.isalnum() or ch in ".-_")
+            (folder / name).write_text(json.dumps({
+                "for": "Manager", "wall_ms": now, "declared": override.get("declared"),
+                "detected": override.get("detected"),
+                "what": "Build mismatch; read probe passed (fresh body sample with needs); actuation continues. "
+                        "Update SIMS_BUILD in the probe and check a full play session.",
+            }, indent=2), encoding="utf-8")
+        except OSError as err:
+            print("BUILD MISMATCH notice could not be written: %s" % err, flush=True)
 
     def status(self):
         if self.client is None and self._disabled:
@@ -640,6 +666,17 @@ class Bridge:
         last = body.get("last_name", last)
         self._resolve_text.her = tokens.names_from(first, last, display)
         self._resolve_text.gender = body.get("gender") if body.get("gender") in ("F", "M") else None
+        # C2 (Owner 2026-10-26): needs that could not be read are said loudly, once per change, not passed as an empty body.
+        unread = isinstance(row, dict) and row.get("event_kind") == "presence_snapshot" and row.get("motives") == []
+        if unread != getattr(self, "_senses_unread", False):
+            self._senses_unread = unread
+            if unread:
+                print("SENSES UNAVAILABLE: the needs of the body could not be read from the game; the view says so.", flush=True)
+            try:
+                self._log.write({"wall_ms": row.get("wall_timestamp_ms"), "trigger": "senses",
+                                 "error": "needs_unread" if unread else "needs_read_again"})
+            except Exception:
+                pass
 
     def _send_look(self, wall_ms):
         """D2 (H3): Ashley asked for a look at her body now. One view, from the newest body row, with a look percept;

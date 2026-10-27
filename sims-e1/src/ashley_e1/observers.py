@@ -566,10 +566,8 @@ def _moodlet_minutes_left(entry, sim_info, now_ticks):
 
 
 def _describe_buff(entry, sim_info=None, now_ticks=None):
-    try:
-        tuning = str(entry.guid64)
-    except Exception:
-        return None
+    # 2.41.3 (C2): a buff without a readable guid64 is a read error, counted by _read_moodlets, not a skipped entry.
+    tuning = str(entry.guid64)
     blueprint = _buff_blueprint(entry)
     try:
         weight = blueprint.mood_weight
@@ -630,31 +628,53 @@ def _signal_order(signal):
 
 
 def read_moodlets(sim_info, now_ticks=None):
+    return _read_moodlets(sim_info, now_ticks)[0]
+
+
+def _read_moodlets(sim_info, now_ticks=None):
+    """The moodlets and the read's fault: None when the read worked, else buffs_error, no_buffs, iter_error or
+    entry_error (every entry read failed). 2.41.3 (C2): a failed read is named, never a silent []."""
     try:
         buffs = sim_info.Buffs
     except Exception:
-        return []
+        return [], "buffs_error"
     if buffs is None:
-        return []
+        return [], "no_buffs"
     try:
         iterator = iter(buffs)
     except TypeError:
-        return []
+        return [], "iter_error"
     signals = []
     seen = 0
-    for entry in iterator:
-        # Read a bounded number, then keep the visible and heavy ones (DS3).
-        seen += 1
-        if seen > schema.MAX_SIGNALS * 4:
-            break
-        try:
-            row = _describe_buff(entry, sim_info, now_ticks)
-        except Exception:
-            continue
-        if row is not None:
-            signals.append(row)
+    failed = 0
+    stopped = False
+    try:
+        for entry in iterator:
+            # Read a bounded number, then keep the visible and heavy ones (DS3).
+            seen += 1
+            if seen > schema.MAX_SIGNALS * 4:
+                break
+            try:
+                row = _describe_buff(entry, sim_info, now_ticks)
+            except Exception:
+                failed += 1
+                continue
+            if row is not None:
+                signals.append(row)
+    except Exception:
+        # 2.41.4 (N2): what was read before the error is kept; the fault is still named.
+        stopped = True
     signals.sort(key=_signal_order)
-    return signals[:schema.MAX_SIGNALS]
+    if not signals and (failed or stopped):
+        fault = "entry_error" if failed and not stopped else "iter_error"
+    elif stopped:
+        fault = "partial:iteration stopped"
+    elif failed:
+        # 2.41.4 (N1): some moodlets could not be read; the rest are shown and the gap is named.
+        fault = "partial:%d unreadable" % failed
+    else:
+        fault = None
+    return signals[:schema.MAX_SIGNALS], fault
 
 
 def read_mood(sim_info):
@@ -694,10 +714,37 @@ def read_mood(sim_info):
 
 
 def read_senses(sim_info, now_ticks, game):
+    """2.41.3 (C2): `faults` names each sense whose read failed (motives: the motive diag stage; sim_signals: the
+    moodlets fault). A Sim always has needs, so no needs read is a fault too. Empty when every read worked."""
     del game
-    return {"motives": read_motives(sim_info, now_ticks),
-            "sim_signals": read_moodlets(sim_info, now_ticks),
-            "mood": read_mood(sim_info)}
+    motives = read_motives(sim_info, now_ticks)
+    signals, moodlet_fault = _read_moodlets(sim_info, now_ticks)
+    faults = {}
+    stage = motive_diag()["stage"]
+    if not motives:
+        faults["motives"] = stage if stage != "ok" else "no_guid_match"
+    if moodlet_fault is not None:
+        faults["sim_signals"] = moodlet_fault
+    return {"motives": motives, "sim_signals": signals, "mood": read_mood(sim_info), "faults": faults}
+
+
+def senses_missingness(faults):
+    """2.41.3 (C2): the row's missingness entries for failed sense reads; the helper reads the detail prefix.
+    2.41.4 (N1, N2): a partial read is MISSING with "senses partial: ..." (some were read); a failed one is UNKNOWN."""
+    out = {}
+    for field, stage in sorted((faults or {}).items()):
+        if stage.startswith("partial:"):
+            out[field] = {"status": "MISSING", "detail": "senses partial: %s" % stage[len("partial:"):]}
+        else:
+            out[field] = {"status": "UNKNOWN", "detail": "senses unavailable: %s" % stage}
+    return out
+
+
+def merge_senses_missingness(missingness, faults):
+    """2.41.4 (N3): adds the senses entries without overwriting an entry another reader already wrote."""
+    for field, item in senses_missingness(faults).items():
+        missingness.setdefault(field, item)
+    return missingness
 
 
 def _active_household_id():
@@ -1876,6 +1923,8 @@ def poll_once(telemetry_session_id, armed_name,
         # D40: a presence read that missed anyone, her body included, says so.
         complete = False
         missingness["presence"] = {"status": "MISSING", "detail": ", ".join(missed)}
+    # 2.41.3 (C2): a failed needs or moodlets read is said in the row, never left as a silent [].
+    merge_senses_missingness(missingness, senses.get("faults"))
     if dropped["other"]:
         # D45: Sims off the lot past the cap are named as left out; the lot stays whole.
         missingness["presence_nearby"] = {

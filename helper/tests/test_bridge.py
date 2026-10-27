@@ -477,3 +477,46 @@ def test_no_probe_warning_from_the_previous_sessions_file(paths, tmp_path, monke
     _append(new, _row(1, wall=NOW + STALE_AFTER_MS // 2, probe_version=probe_schema.PROBE_VERSION))
     bridge.tick(NOW + STALE_AFTER_MS // 2 + 1)
     assert "is installed; this helper expects" not in capsys.readouterr().out
+
+
+def _snapshot(seq, wall, motives, sims_build="9.9.9.9"):
+    return _row(seq, kind="presence_snapshot", wall=wall, sims_build=sims_build, event_kind="presence_snapshot",
+                motives=motives)
+
+
+def test_c1b_build_mismatch_runs_the_read_probe_and_continues_on_the_new_build_when_it_passes():
+    monitor = AttachmentMonitor(detected_build="1.128.90.1030")
+    # A new game build: blocked until a fresh body sample proves the reads work.
+    got = monitor.observe(NOW, 0, (1, "t"), _row(1, wall=NOW, sims_build="9.9.9.9"))
+    assert got["state"] == "version_mismatch" and got["telemetry_only"] is True
+    assert got.get("build_override_new") is not True
+    passed = monitor.observe(NOW + 1000, 1000, (1, "t"), _snapshot(2, NOW + 1000, [{"id": "1", "value": 50}]))
+    assert passed["state"] == "attached" and passed["telemetry_only"] is False
+    assert passed["build_override"] == {"declared": "9.9.9.9", "detected": "1.128.90.1030"}
+    assert passed["build_override_new"] is True
+    # It stays on, and says new only once.
+    later = monitor.observe(NOW + 2000, 2000, (1, "t"), _row(3, wall=NOW + 2000, sims_build="9.9.9.9"))
+    assert later["state"] == "attached" and later["telemetry_only"] is False and later.get("build_override_new") is not True
+
+
+def test_c1b_build_mismatch_keeps_blocking_when_the_read_probe_fails():
+    monitor = AttachmentMonitor(detected_build="1.128.90.1030")
+    failed = monitor.observe(NOW, 0, (1, "t"), _snapshot(1, NOW, []))
+    assert failed["state"] == "version_mismatch" and failed["telemetry_only"] is True
+    # A pass, then a body sample whose needs cannot be read again: blocked again.
+    monitor.observe(NOW + 1000, 1000, (1, "t"), _snapshot(2, NOW + 1000, [{"id": "1", "value": 50}]))
+    again = monitor.observe(NOW + 2000, 2000, (1, "t"), _snapshot(3, NOW + 2000, []))
+    assert again["state"] == "version_mismatch" and again["telemetry_only"] is True
+
+
+def test_c1b_bridge_writes_a_notice_and_logs_loudly_on_the_override(paths, tmp_path, monkeypatch, capsys):
+    import domus_helper.bridge as bridge_module
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+    bridge = Bridge(paths=paths, client=None, process=lambda: (1, "t"), detected_build="1.128.90.1030")
+    bridge._note_build_override({"declared": "9.9.9.9", "detected": "1.128.90.1030"}, NOW)
+    notice = tmp_path / "notices" / "build_override_1.128.90.1030.json"
+    assert notice.is_file()
+    body = json.loads(notice.read_text(encoding="utf-8"))
+    assert body["declared"] == "9.9.9.9" and body["detected"] == "1.128.90.1030" and body["for"] == "Manager"
+    assert "BUILD MISMATCH" in capsys.readouterr().out
+    assert bridge_module is not None

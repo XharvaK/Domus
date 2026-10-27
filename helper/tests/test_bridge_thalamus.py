@@ -260,16 +260,19 @@ def test_a_change_is_sent_once_nothing_new_has_come_for_a_second_and_a_half_then
 
 
 def test_telemetry_only_logs_the_view_without_enqueue(paths, tmp_path, monkeypatch):
+    # C1b (Owner 2026-10-26): a build mismatch stays telemetry only while the read probe fails (no needs read).
     data = _data(paths, tmp_path, monkeypatch)
     _append(paths, [
-        _lineage(1, WALL), _snap(2, "ok", WALL, 10), _snap(3, "low", WALL, 20),
+        _lineage(1, WALL), {**_snap(2, "ok", WALL, 10), "motives": []}, {**_snap(3, "low", WALL, 20), "motives": []},
     ])
     mono = {"ms": WALL}
     bridge = _bridge(paths, mono, detected_build="other-build")
     bridge.tick(WALL)
     bridge.tick(WALL + 1500)
     assert _payloads(bridge) == []
-    lines = _log_lines(data)
+    # C2: the unread needs are logged too, as their own line.
+    assert any(line.get("trigger") == "senses" and line.get("error") == "needs_unread" for line in _log_lines(data))
+    lines = [line for line in _log_lines(data) if "enqueued" in line]
     assert lines and lines[0]["enqueued"] is False and lines[0]["observation_id"] is None
 
 

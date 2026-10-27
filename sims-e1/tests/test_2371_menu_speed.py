@@ -226,7 +226,7 @@ class FarCacheUnitTests(unittest.TestCase):
         self.assertEqual((len(first["refused_phone"]), len(first["excluded_phone"])), (64, 64))
 
     def test_the_probe_version_is_2_37_1_and_the_schema_is_19(self):
-        self.assertEqual(self.schema.PROBE_VERSION, "2.41.2")
+        self.assertEqual(self.schema.PROBE_VERSION, "2.41.4")
         self.assertEqual(self.schema.OBSERVATION_SCHEMA_VERSION, 21)
         self.assertIn(18, self.schema.ACCEPTED_SCHEMA_VERSIONS)
         self.assertIn(19, self.schema.ACCEPTED_SCHEMA_VERSIONS)
