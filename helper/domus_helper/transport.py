@@ -12,6 +12,8 @@ from .contract import ContractError, validate_heartbeat, validate_observation
 _log = logging.getLogger("domus.transport")
 # SNAPSHOT: a picture of up to 6 MiB, base64-encoded, can take longer than an act round trip.
 SNAPSHOT_TIMEOUT_S = 30
+# A normal request round trip.
+REQUEST_TIMEOUT_S = 10
 
 
 @dataclass(frozen=True)
@@ -41,7 +43,7 @@ class Credentials:
 
 
 class AshleyClient:
-    def __init__(self, url, token, timeout_s=10):
+    def __init__(self, url, token, timeout_s=REQUEST_TIMEOUT_S):
         self._url = url.rstrip("/")
         self._token = token
         self._timeout_s = timeout_s

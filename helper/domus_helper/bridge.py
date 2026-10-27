@@ -70,6 +70,8 @@ ROW_WRITE_EVERY_MS = 30_000
 LOOK_HOLD_MS = 3_000
 # SEAM3-13: a view's JSON is queued only under this size (the wire takes 64 KiB; the spool is checked before the post).
 OBSERVATION_BYTES = 60 * 1024
+# E4: the git rev-parse for the proof trace.
+GIT_TIMEOUT_S = 5
 
 
 def _view(payload):
@@ -1167,7 +1169,7 @@ def _helper_build():
     from pathlib import Path
     try:
         result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError):
         return None
     sha = result.stdout.strip()

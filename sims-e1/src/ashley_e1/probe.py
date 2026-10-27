@@ -167,6 +167,8 @@ _STATE = "UNARMED"
 _RESUME_SAMPLING = False
 _ALARM_ZONE = None
 _ZERO_BODY_TICKS = 0
+ZONE_STATE_RUNNING = 6  # zone_types.ZoneState.RUNNING (gameapi 1.128 and 1.129)
+CALLBACK_ON_OBJECT_ADD = 0  # indexed_manager.CallbackTypes.ON_OBJECT_ADD
 ZONE_SETTLE_TICKS = 60
 # D43: the inbox tick watches sampling. A resume that could not start is retried; a
 # sampler that has not ticked for SAMPLER_STALL_SECONDS is restarted, at most once per
@@ -359,8 +361,8 @@ def _arm_inbox_zone(z, source):
         _INBOX_ARM_SOURCE = source
         _INBOX_ARMED_ZONES.append(z)
         try:
-            # 6 is zone_types.ZoneState.RUNNING (no new import root).
-            z.register_callback(6, _start_inbox_pump)
+            # 6 is zone_types.ZoneState.RUNNING (named ZONE_STATE_RUNNING; no new import root).
+            z.register_callback(ZONE_STATE_RUNNING, _start_inbox_pump)
         except Exception:
             _INBOX_ARMED_ZONES.remove(z)
             raise
@@ -383,8 +385,8 @@ def _try_arm_zone(source):
         elif not any(armed is m for armed in _INBOX_ARMED_MANAGERS):
             _INBOX_ARMED_MANAGERS.append(m)
             try:
-                # 0 is indexed_manager.CallbackTypes.ON_OBJECT_ADD (no new import root).
-                m.register_callback(0, _on_zone_added)
+                # 0 is indexed_manager.CallbackTypes.ON_OBJECT_ADD (named CALLBACK_ON_OBJECT_ADD; no new import root).
+                m.register_callback(CALLBACK_ON_OBJECT_ADD, _on_zone_added)
             except Exception:
                 _INBOX_ARMED_MANAGERS.remove(m)
                 return

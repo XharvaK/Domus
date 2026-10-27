@@ -11,7 +11,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .paths import Paths
+from .paths import DEFAULT_GAME_ROOT, Paths
 
 ARCHIVE_NAMES = ("base.zip", "core.zip", "simulation.zip")
 GAMEPLAY_REL = Path("Data/Simulation/Gameplay")
@@ -21,8 +21,6 @@ DEFAULT_INI_REL = BIN_REL / "Default.ini"
 GAME_VERSION_TXT = "GameVersion.txt"
 DELTA_REL = Path("Delta")
 VERSION_INI = "Version.ini"
-
-DEFAULT_GAME_ROOT = r"E:\SteamLibrary\steamapps\common\The Sims 4"
 
 
 def game_root(paths=None):
