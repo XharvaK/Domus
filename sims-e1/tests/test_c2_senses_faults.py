@@ -106,7 +106,7 @@ class SensesFaultTests(unittest.TestCase):
         self.assertEqual(merged["sim_signals"]["detail"], "senses unavailable: buffs_error")
 
     def test_the_probe_version_is_2_41_4(self):
-        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.41.4")
+        self.assertEqual(self.probe.schema.PROBE_VERSION, "2.41.5")
 
 
 if __name__ == "__main__":
