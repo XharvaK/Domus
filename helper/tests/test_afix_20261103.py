@@ -89,3 +89,51 @@ def test_expire_pending_still_expires_a_command_nobody_took(tmp_path):
     assert commands.expire_pending(paths) == [command.stem]
     assert sorted(entry.name for entry in inbox.iterdir()) == [command.name]
     assert cmdbox.parse(command.read_bytes(), 10 ** 15, ())[1] == "EXPIRED"
+
+
+# N-3: a black PrintWindow fails the picture; the screen is never copied (it can hold other windows above the game).
+def _fake_win(calls, hwnd, w, h):
+    import ctypes
+    import types
+    from ctypes import wintypes
+
+    class Header(ctypes.Structure):
+        _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                    ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD),
+                    ("biCompression", wintypes.DWORD), ("biSizeImage", wintypes.DWORD),
+                    ("biXPelsPerMeter", wintypes.LONG), ("biYPelsPerMeter", wintypes.LONG),
+                    ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+    class Info(ctypes.Structure):
+        _fields_ = [("bmiHeader", Header)]
+    buffer = ctypes.create_string_buffer(w * h * 4)  # all zero: a black frame
+
+    def record(name, result):
+        def call(*args):
+            calls.append(name)
+            return result
+        return call
+
+    def dib(memdc, info, usage, bits, section, offset):
+        calls.append("CreateDIBSection")
+        bits._obj.value = ctypes.addressof(buffer)
+        return 7
+    user32 = types.SimpleNamespace(PrintWindow=record("PrintWindow", 1), GetForegroundWindow=record("GetForegroundWindow", hwnd),
+                                   GetDC=record("GetDC", 9), ReleaseDC=record("ReleaseDC", 1),
+                                   ClientToScreen=record("ClientToScreen", 1))
+    gdi32 = types.SimpleNamespace(CreateCompatibleDC=record("CreateCompatibleDC", 5), CreateDIBSection=dib,
+                                  SelectObject=record("SelectObject", 3), DeleteObject=record("DeleteObject", 1),
+                                  DeleteDC=record("DeleteDC", 1), BitBlt=record("BitBlt", 1))
+    return types.SimpleNamespace(user32=user32, gdi32=gdi32, bitmap_info=Info, bitmap_header=Header), buffer
+
+
+def test_an_all_black_print_window_fails_without_copying_the_screen():
+    import pytest
+    from domus_helper import snapshot
+    calls = []
+    win, _buffer = _fake_win(calls, 42, 4, 3)
+    with pytest.raises(snapshot.SnapshotFailed):
+        snapshot._frame(win, 42, 4, 3)
+    assert "PrintWindow" in calls
+    assert not {"GetDC", "BitBlt", "ClientToScreen"} & set(calls)
+    assert calls.count("DeleteDC") == 1  # the memory DC is still freed
