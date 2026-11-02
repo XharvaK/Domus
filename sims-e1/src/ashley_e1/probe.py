@@ -1416,7 +1416,10 @@ def _expired_act_event(identity):
     not only a command reply (the helper never hears the reply)."""
     args = identity.get('args')
     act_id = args.get('act_id') if type(args) is dict else None
-    if not isinstance(act_id, str) or not act_id or len(act_id) > 64 or _WRITER is None or _WRITER_IDLE:
+    # Audit NOTE-3: only a command a real issuer wrote, naming a real act id, is told as an act.
+    if not cmdbox.valid_issuer(identity.get('issuer')) or not cmdbox.valid_hex(act_id, 32):
+        return False
+    if _WRITER is None or _WRITER_IDLE:
         return False
     body = dict((key, None) for key in schema.E2_PAYLOAD_KEYS['act_event'])
     body.update(act_id=act_id, phase='REJECTED', code='EXPIRED')
