@@ -137,3 +137,54 @@ def test_an_all_black_print_window_fails_without_copying_the_screen():
     assert "PrintWindow" in calls
     assert not {"GetDC", "BitBlt", "ClientToScreen"} & set(calls)
     assert calls.count("DeleteDC") == 1  # the memory DC is still freed
+
+
+# N-4: the proof chain survives a crash mid-append, a torn last line, and a torn .ots.
+def test_the_chain_still_verifies_after_a_crash_between_the_line_and_the_kv(tmp_path):
+    from domus_helper import proof
+    spool = Spool(tmp_path / "spool.db")
+    chain = proof.Chain(spool, tmp_path / "proof", "k")
+    path = tmp_path / "proof" / "t.jsonl"
+    chain.append(path, {"n": 1})
+    real = spool.put_kv
+
+    def crash(*args):
+        raise OSError("crash")
+    spool.put_kv = crash
+    try:
+        chain.append(path, {"n": 2})
+    except OSError:
+        pass
+    spool.put_kv = real
+    chain.append(path, {"n": 3})
+    assert proof.verify_lines(path.read_text(encoding="utf-8").splitlines())[:2] == (True, 3)
+
+
+def test_the_chain_drops_a_torn_last_line_and_still_verifies(tmp_path):
+    from domus_helper import proof
+    chain = proof.Chain(Spool(tmp_path / "spool.db"), tmp_path / "proof", "k")
+    path = tmp_path / "proof" / "t.jsonl"
+    chain.append(path, {"n": 1})
+    chain.append(path, {"n": 2})
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write('{"n":3,"prev_ha')  # power lost mid-write
+    chain.append(path, {"n": 4})
+    assert proof.verify_lines(path.read_text(encoding="utf-8").splitlines())[:2] == (True, 3)
+
+
+def test_a_torn_ots_is_stamped_again(tmp_path):
+    import hashlib
+    from domus_helper import proof
+    folder = tmp_path / "proof"
+    folder.mkdir()
+    trace = folder / "trace-20261101.jsonl"
+    trace.write_text("x\n", encoding="utf-8")
+    digest = hashlib.sha256(b"x\n").digest()
+    (folder / "trace-20261101.jsonl.ots").write_bytes(proof.OTS_MAGIC[:10])  # torn
+    result = proof.stamp_finished_days(tmp_path, "20261102", submit=lambda calendar, d: b"PENDING")
+    whole = proof.OTS_MAGIC + proof.OTS_VERSION + proof.OTS_SHA256 + digest + b"PENDING"
+    assert (folder / "trace-20261101.jsonl.ots").read_bytes() == whole
+    assert (folder / "trace-20261101.jsonl.ots2").read_bytes() == whole
+    assert result[0]["stamped"] == ["trace-20261101.jsonl.ots", "trace-20261101.jsonl.ots2"]
+    assert sorted(path.name for path in folder.iterdir()) == [
+        "trace-20261101.jsonl", "trace-20261101.jsonl.ots", "trace-20261101.jsonl.ots2"]  # no temp left behind
