@@ -188,3 +188,61 @@ def test_a_torn_ots_is_stamped_again(tmp_path):
     assert result[0]["stamped"] == ["trace-20261101.jsonl.ots", "trace-20261101.jsonl.ots2"]
     assert sorted(path.name for path in folder.iterdir()) == [
         "trace-20261101.jsonl", "trace-20261101.jsonl.ots", "trace-20261101.jsonl.ots2"]  # no temp left behind
+
+
+# NOTE-1: the client never follows a redirect (the token would go with it), and only https or loopback is trusted.
+def test_a_302_is_not_followed_and_the_token_is_sent_once(tmp_path):
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from domus_helper.transport import AshleyClient
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def _answer(self):
+            seen.append((self.command, self.path, self.headers.get("X-Domus-Token")))
+            if self.path.startswith("/domus/"):
+                self.send_response(302)
+                self.send_header("Location", "/elsewhere")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                body = b'{"status":"ok"}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self._answer()
+
+        do_GET = _answer
+
+        def log_message(self, *args):
+            pass
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = AshleyClient("http://127.0.0.1:%d" % server.server_port, "t" * 40, timeout_s=5)
+        assert client.sync_acts({"v": 1, "helper_session": "s", "events": []}) is None
+        assert client.post_snapshot({"v": 1, "helper_session": "s", "snapshot_id": "s-1", "failed": "x"}).kind == \
+            "unavailable"
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert [path for _method, path, _token in seen] == ["/domus/acts/sync", "/domus/snapshot"]
+
+
+def test_load_credentials_requires_https_or_loopback(tmp_path, monkeypatch):
+    from domus_helper.paths import Paths
+    from domus_helper.transport import load_credentials
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DOMUS_ASHLEY_TOKEN", "k" * 32)
+    paths = Paths(tmp_path)
+    for url in ("http://ashley.example.org", "ftp://ashley.example.org", "http://127.0.0.1.example.org"):
+        monkeypatch.setenv("DOMUS_ASHLEY_URL", url)
+        assert load_credentials(paths).disabled == "insecure_url", url
+    for url in ("https://ashley.example.org", "http://127.0.0.1:9", "http://localhost:8", "http://[::1]:7"):
+        monkeypatch.setenv("DOMUS_ASHLEY_URL", url)
+        assert load_credentials(paths).disabled is None, url
