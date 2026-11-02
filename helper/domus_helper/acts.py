@@ -1409,10 +1409,11 @@ class ActCourier(object):
                     # A9-9: a probe older than the command needs would ignore it (or refuse it as unknown): say so, never send it.
                     if _too_old(probe, PROBE_NEEDS[need]):
                         raise ProbeTooOld(need)
+                # W13 (A4-19), audit N-2: every act is recorded before its command goes out, so a restart never sends
+                # it twice (a verb, an act, a cancel or an answer alike).
+                self._known[act_id] = {"written_ms": now_ms, "answered": True, "object": None}
+                self._save()
                 if verb is not None:
-                    # W13 (A4-19): the act is recorded before its command goes out, so a restart never sends it twice.
-                    self._known[act_id] = {"written_ms": now_ms, "answered": True, "object": None}
-                    self._save()
                     command = self._push(verb, dict(verb_args, act_id=act_id))
                 elif object_id == QUEUE_OBJECT_ID:
                     # 2.20.0: she stops one of her own actions.
