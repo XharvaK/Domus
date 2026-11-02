@@ -6,7 +6,7 @@ import urllib.request
 
 import pytest
 
-from domus_helper import memory
+from domus_helper import memory, transport
 from domus_helper.acts import ActCourier
 from domus_helper.spool import Spool
 from domus_helper.transport import AshleyClient
@@ -228,7 +228,7 @@ def test_post_memory_posts_the_body_to_its_route_with_the_token(monkeypatch):
                      json.loads(request.data.decode("utf-8")), timeout))
         return _Reply({"status": "ok", "applied": True})
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(transport, "_urlopen", fake_urlopen)
     client = AshleyClient("https://example.invalid/", "t" * 40)
     assert client.post_memory({"v": 1, "ask_id": "a1"}) == {"status": "ok", "applied": True}
     assert seen == [("https://example.invalid/domus/memory", "t" * 40, {"v": 1, "ask_id": "a1"}, 10)]

@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
@@ -14,6 +15,22 @@ _log = logging.getLogger("domus.transport")
 SNAPSHOT_TIMEOUT_S = 30
 # A normal request round trip.
 REQUEST_TIMEOUT_S = 10
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Audit NOTE-1: a redirect is never followed (urllib would carry X-Domus-Token to any Location); the 3xx comes
+    back as an HTTPError and reads as unavailable."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _urlopen(request, timeout):
+    return _OPENER.open(request, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -98,7 +115,7 @@ class AshleyClient:
             self._url + "/domus/snapshot", data=raw, method="POST",
             headers={"Content-Type": "application/json", "X-Domus-Token": self._token})
         try:
-            with urllib.request.urlopen(request, timeout=SNAPSHOT_TIMEOUT_S) as response:
+            with _urlopen(request, timeout=SNAPSHOT_TIMEOUT_S) as response:
                 status = response.status
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
@@ -116,7 +133,7 @@ class AshleyClient:
             headers={"Content-Type": "application/json", "X-Domus-Token": self._token})
         timeout = self._timeout_s if timeout_s is None else timeout_s
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _urlopen(request, timeout=timeout) as response:
                 if response.status != 200:
                     return None
                 payload = json.loads(response.read().decode("utf-8"))
@@ -141,7 +158,7 @@ class AshleyClient:
         )
         reason = None
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_s) as response:
+            with _urlopen(request, timeout=self._timeout_s) as response:
                 status = response.status
                 response.read()
         except urllib.error.HTTPError as error:
@@ -199,4 +216,18 @@ def load_credentials(paths):
         return Credentials(None, None, "missing_token")
     if len(token.encode("utf-8")) < 32:
         return Credentials(None, None, "short_token")
+    if not _trusted_url(url):
+        return Credentials(None, None, "insecure_url")
     return Credentials(url, token, None)
+
+
+def _trusted_url(url):
+    """Audit NOTE-1: the token goes only over https, or plain http to this machine."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    return parts.scheme == "https" or (parts.scheme == "http" and host in LOOPBACK_HOSTS)

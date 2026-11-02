@@ -10,7 +10,7 @@ import zlib
 
 import pytest
 
-from domus_helper import snapshot
+from domus_helper import snapshot, transport
 from domus_helper.snapshot import SnapshotFailed, downscale_bgra, encode_png_rgb, handle_requests
 from domus_helper.transport import SNAPSHOT_TIMEOUT_S, AshleyClient, TransportResult
 
@@ -283,7 +283,7 @@ def test_post_snapshot_uses_its_path_the_token_and_a_30_second_timeout(monkeypat
                      json.loads(request.data), timeout))
         return FakeResponse(b'{"status":"ok"}')
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(transport, "_urlopen", fake_urlopen)
     client = AshleyClient("http://ashley.invalid/", token, timeout_s=10)
     body = {"v": 1, "helper_session": "sess", "snapshot_id": "s-1", "failed": "no_game_window"}
     assert client.post_snapshot(body) == TransportResult("sent", 200)
@@ -298,7 +298,7 @@ def test_post_snapshot_returns_the_kind_when_it_fails(monkeypatch):
     def down(request, timeout):
         raise urllib.error.URLError("unreachable")
 
-    monkeypatch.setattr(urllib.request, "urlopen", down)
+    monkeypatch.setattr(transport, "_urlopen", down)
     client = AshleyClient("http://ashley.invalid", "t" * 40, timeout_s=10)
     body = {"v": 1, "helper_session": "s", "snapshot_id": "s-1", "failed": "x"}
     assert client.post_snapshot(body) == TransportResult("unavailable", None)
@@ -306,7 +306,7 @@ def test_post_snapshot_returns_the_kind_when_it_fails(monkeypatch):
     def gone(request, timeout):
         raise urllib.error.HTTPError(request.full_url, 410, "gone", None, None)
 
-    monkeypatch.setattr(urllib.request, "urlopen", gone)
+    monkeypatch.setattr(transport, "_urlopen", gone)
     assert client.post_snapshot(body) == TransportResult("expired", 410)
 
 
