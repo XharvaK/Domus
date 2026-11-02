@@ -57,6 +57,10 @@ def _exactly(sock, count):
     return data
 
 
+# Audit NOTE-2: OBS's own messages are small; a longer frame is refused before any of it is read.
+FRAME_LIMIT = 1 << 20
+
+
 def _read(sock):
     while True:
         first, second = _exactly(sock, 2)
@@ -65,6 +69,8 @@ def _read(sock):
             length = struct.unpack(">H", _exactly(sock, 2))[0]
         elif length == 127:
             length = struct.unpack(">Q", _exactly(sock, 8))[0]
+        if length > FRAME_LIMIT:
+            raise ConnectionError("frame too long")
         mask = _exactly(sock, 4) if second & 0x80 else None
         payload = _exactly(sock, length)
         if mask:
