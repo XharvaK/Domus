@@ -246,3 +246,23 @@ def test_load_credentials_requires_https_or_loopback(tmp_path, monkeypatch):
     for url in ("https://ashley.example.org", "http://127.0.0.1:9", "http://localhost:8", "http://[::1]:7"):
         monkeypatch.setenv("DOMUS_ASHLEY_URL", url)
         assert load_credentials(paths).disabled is None, url
+
+
+# NOTE-2: a frame from the local OBS socket longer than the cap is refused before any of it is read.
+def test_an_oversized_obs_frame_is_refused_before_it_is_read():
+    import struct
+    import pytest
+    from domus_helper import obs
+
+    class Sock:
+        def __init__(self, data):
+            self.data, self.asked = data, 0
+
+        def recv(self, count):
+            self.asked += count
+            chunk, self.data = self.data[:count], self.data[count:]
+            return chunk
+    sock = Sock(bytes([0x81, 127]) + struct.pack(">Q", 1 << 40))
+    with pytest.raises(ConnectionError):
+        obs._read(sock)
+    assert sock.asked == 10
