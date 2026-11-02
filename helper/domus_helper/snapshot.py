@@ -26,7 +26,6 @@ MAX_WIDTH = 1600
 PNG_LIMIT_BYTES = 6 * 1024 * 1024  # Mint refuses a decoded picture above this
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PW_RENDERFULLCONTENT = 2
-SRCCOPY = 0x00CC0020
 DPI_AWARENESS_PER_MONITOR_V2 = -4
 DIB_RGB_COLORS = 0
 BI_RGB = 0
@@ -209,10 +208,8 @@ def _window_png(win, hwnd):
 
 
 def _frame(win, hwnd, w, h):
-    """The client area as top-down BGRA bytes. PrintWindow first; the screen only when the game
-    is the foreground window and PrintWindow gave nothing but black."""
+    """The client area as top-down BGRA bytes, from PrintWindow only (never the screen)."""
     import ctypes
-    from ctypes import wintypes
 
     user32, gdi32 = win.user32, win.gdi32
     size = w * h * 4
@@ -236,22 +233,9 @@ def _frame(win, hwnd, w, h):
         old = gdi32.SelectObject(memdc, bitmap)
         printed = user32.PrintWindow(hwnd, memdc, PW_RENDERFULLCONTENT)
         frame = ctypes.string_at(bits.value, size)
-        if printed and not _all_black(frame):
-            return frame
-        if user32.GetForegroundWindow() != hwnd:
-            raise SnapshotFailed("capture_failed")
-        screen = user32.GetDC(None)
-        if not screen:
-            raise SnapshotFailed("capture_failed")
-        try:
-            origin = wintypes.POINT()
-            user32.ClientToScreen(hwnd, ctypes.byref(origin))
-            if not gdi32.BitBlt(memdc, 0, 0, w, h, screen, origin.x, origin.y, SRCCOPY):
-                raise SnapshotFailed("capture_failed")
-        finally:
-            user32.ReleaseDC(None, screen)
-        frame = ctypes.string_at(bits.value, size)
-        if _all_black(frame):
+        # Audit N-3: no screen copy when PrintWindow gives black. The screen can hold other windows above the game
+        # (a toast, a call overlay), and a picture shows only the game, so a black frame simply fails.
+        if not printed or _all_black(frame):
             raise SnapshotFailed("capture_failed")
         return frame
     finally:
@@ -324,11 +308,7 @@ def _win32():
     user32.IsIconic.argtypes = [wintypes.HWND]
     user32.GetWindowRect.argtypes = [wintypes.HWND, pointer(wintypes.RECT)]
     user32.GetClientRect.argtypes = [wintypes.HWND, pointer(wintypes.RECT)]
-    user32.ClientToScreen.argtypes = [wintypes.HWND, pointer(wintypes.POINT)]
     user32.GetForegroundWindow.restype = handle
-    user32.GetDC.argtypes = [handle]
-    user32.GetDC.restype = handle
-    user32.ReleaseDC.argtypes = [handle, handle]
     user32.PrintWindow.argtypes = [wintypes.HWND, handle, wintypes.UINT]
     user32.SetThreadDpiAwarenessContext.argtypes = [handle]
     user32.SetThreadDpiAwarenessContext.restype = handle
@@ -341,8 +321,6 @@ def _win32():
     gdi32.SelectObject.argtypes = [handle, handle]
     gdi32.SelectObject.restype = handle
     gdi32.DeleteObject.argtypes = [handle]
-    gdi32.BitBlt.argtypes = [handle, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                             handle, ctypes.c_int, ctypes.c_int, wintypes.DWORD]
     _WIN = types.SimpleNamespace(user32=user32, gdi32=gdi32, enum_proc=enum_proc,
                                  bitmap_info=BITMAPINFO, bitmap_header=BITMAPINFOHEADER)
     return _WIN
