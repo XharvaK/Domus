@@ -108,27 +108,37 @@ def expire_pending(paths, now_ms=None):
     now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     cancelled = []
     for entry in sorted(paths.inbox.glob("*.json")):
+        # Audit N-1: claim the file by an atomic rename first. The probe takes a command the same way, so exactly one
+        # side owns it; if the probe got there first the claim fails and the command is left alone.
+        claimed = entry.with_name(entry.name + ".cancel")
         try:
-            raw = entry.read_bytes()
+            os.replace(entry, claimed)
         except OSError:
             continue
+        row = None
         try:
+            raw = claimed.read_bytes()
             row, _error = cmdbox.parse(raw, now_ms, ())
-        except (ValueError, UnicodeError, RecursionError):
+        except (OSError, ValueError, UnicodeError, RecursionError):
+            row = None
+        if row is not None:
+            row["expires_at_ms"] = min(row["issued_at_ms"], now_ms) - 1
+            expired = json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            temporary = entry.with_name(entry.name + ".tmp")
+            try:
+                temporary.write_bytes(expired)
+                os.replace(temporary, claimed)
+            except OSError:
+                row = None
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
+        try:
+            os.replace(claimed, entry)  # back in the inbox: expired, or untouched when it could not be rewritten
+        except OSError:
             continue
         if row is None:
-            continue
-        row["expires_at_ms"] = min(row["issued_at_ms"], now_ms) - 1
-        raw = json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-        temporary = entry.with_name(entry.name + ".tmp")
-        try:
-            temporary.write_bytes(raw)
-            os.replace(temporary, entry)
-        except OSError:
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
             continue
         cancelled.append(row["id"])
     return cancelled
