@@ -17,6 +17,7 @@ Run: python -m domus_helper.proof root [YYYYMMDD] | verify FILE | ledger KIND NO
 import argparse
 import hashlib
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -68,12 +69,41 @@ class Chain:
         self._spool, self._folder, self._key = spool, folder, key
 
     def append(self, path, record):
+        """Audit N-4: the previous hash is the file's own last whole line when it has one (the kv only links a new
+        file to the last one), a torn last line is dropped first, and the line is fsynced before the kv moves."""
         self._folder.mkdir(parents=True, exist_ok=True)
-        line = seal(record, self._spool.get_kv(self._key) or GENESIS)
+        line = seal(record, _last_hash(path) or self._spool.get_kv(self._key) or GENESIS)
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(_canonical(line) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         self._spool.put_kv(self._key, line["sha256"])
         return line
+
+
+def _last_hash(path):
+    """The sha256 of the last whole, valid line of a chained file, or None when it has none. A torn tail (a last
+    line with no newline, from a crash mid-write) is cut off so the next line starts clean."""
+    try:
+        raw = Path(path).read_bytes()
+    except FileNotFoundError:
+        return None
+    if raw and not raw.endswith(b"\n"):
+        whole = raw[:raw.rfind(b"\n") + 1]
+        with open(path, "r+b") as handle:
+            handle.truncate(len(whole))
+            handle.flush()
+            os.fsync(handle.fileno())
+        raw = whole
+    for line in reversed(raw.splitlines()):
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        claimed = item.get("sha256") if isinstance(item, dict) else None
+        if isinstance(claimed, str) and len(claimed) == 64:
+            return claimed
+    return None
 
 
 class Trace:
@@ -116,6 +146,33 @@ def _submit(calendar, digest):
     return body if 0 < len(body) <= _CALENDAR_LIMIT else None
 
 
+def _ots_whole(target, digest):
+    """Audit N-4: a proof counts only when it is whole for this file (its header and digest, then a pending
+    timestamp); a torn or foreign one is stamped again."""
+    head = OTS_MAGIC + OTS_VERSION + OTS_SHA256 + digest
+    try:
+        raw = target.read_bytes()
+    except OSError:
+        return False
+    return raw.startswith(head) and len(raw) > len(head)
+
+
+def _write_atomic(target, data):
+    temporary = target.with_name(target.name + ".tmp")
+    try:
+        with open(temporary, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def stamp(data_dir, day, submit=None):
     """Timestamp a finished day's trace: one `.ots` proof per answering calendar, written beside it
     (`trace-DAY.jsonl.ots`, then `.ots2` for the second calendar). Returns what was written."""
@@ -127,13 +184,13 @@ def stamp(data_dir, day, submit=None):
     written = []
     for index, calendar in enumerate(CALENDARS):
         target = path.with_name(path.name + (".ots" if index == 0 else ".ots%d" % (index + 1)))
-        if target.exists():
+        if _ots_whole(target, digest):
             written.append(target.name)
             continue
         pending = (submit or _submit)(calendar, digest)
         if pending is None:
             continue
-        target.write_bytes(OTS_MAGIC + OTS_VERSION + OTS_SHA256 + digest + pending)
+        _write_atomic(target, OTS_MAGIC + OTS_VERSION + OTS_SHA256 + digest + pending)
         written.append(target.name)
     return {"day": day, "sha256": digest.hex(), "stamped": written}
 
@@ -144,7 +201,8 @@ def stamp_finished_days(data_dir, today, submit=None):
     results = []
     for path in sorted(folder.glob("trace-*.jsonl")) if folder.is_dir() else []:
         day = path.stem.split("-", 1)[1]
-        if day < today and not path.with_name(path.name + ".ots").exists():
+        digest = hashlib.sha256(path.read_bytes()).digest()
+        if day < today and not _ots_whole(path.with_name(path.name + ".ots"), digest):
             results.append(stamp(data_dir, day, submit))
     return results
 
