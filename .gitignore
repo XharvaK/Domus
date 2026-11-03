@@ -9,3 +9,7 @@ __pycache__/
 
 # AU note: the default Windows data folder, made by a test run on Linux, never lands in the tree.
 /helper/E:*
+
+# sims-e1 test output
+/sims-e1/da1-atlas-unit/
+/sims-e1/da2a-tuned-unit/

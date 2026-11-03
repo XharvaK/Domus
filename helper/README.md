@@ -216,3 +216,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\install_tasks.ps1
 
 - "Domus bridge": `tools\bridge.ps1` starts at logon and again every 5 minutes. The watcher runs one bridge while the game is open; a named mutex keeps a second watcher from starting. Without the venv (`.venv\Scripts\python.exe`) it writes a line to `domus_bridge_watcher.log` in the temp folder and exits.
 - "Domus telemetry archive": `tools\daily_archive.ps1` runs daily at 12:00, and as soon as possible after a missed run.
+
+## Command key threat model (AU NB-3, 2026-11-03)
+
+Commands between the helper and the probe are signed with the key in `AshleyE1Telemetry/cmd/key`. The helper
+pins that key for the life of its process and keeps its SHA-256 in its own data folder (`cmd_key.sha256` in
+`DOMUS_DATA_DIR`, outside `cmd/`). At each helper start a `cmd/key` that does not match is refused with the error
+code `DOMUS_KEY_MISMATCH`, replaced by a fresh key, and the fingerprint is updated. The probe pins whatever key is in
+the file when the game starts, so a key swapped between sessions is never silent: the helper refuses it and the
+probe's replies stop checking until the next launch.
+
+This rests on one assumption: everyone who can write `cmd/` is Ashley's own Windows account or code running inside
+the game, and both can read the key anyway. Under that assumption the key only proves that a command came through
+the helper, not that it came from someone else.
+
+The finding becomes BLOCKING if anything else can write `cmd/`, for example a Mods or Documents folder that is
+cloud synced or shared, a folder with looser ACLs than the user profile, or another local account with write access.
+Recheck this before any such change.
