@@ -3,6 +3,7 @@ import json
 import math
 import os
 import secrets
+import stat
 import time
 import uuid
 from dataclasses import dataclass
@@ -188,10 +189,13 @@ REPLY_MAX_BYTES = 8 * 1024 * 1024
 def _reply_bytes(path):
     """The reply file's bytes, or None while there is no reply to read: missing, or larger than REPLY_MAX_BYTES (read
     no further than the cap, so a planted huge file never fills memory)."""
+    # OPENVULN F5: anything but a readable regular file (a folder, a device, no access) is no reply yet, never a crash.
     try:
         with open(path, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return None
             raw = handle.read(REPLY_MAX_BYTES + 1)
-    except FileNotFoundError:
+    except OSError:
         return None
     return None if len(raw) > REPLY_MAX_BYTES else raw
 
