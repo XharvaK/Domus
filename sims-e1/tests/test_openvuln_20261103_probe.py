@@ -68,6 +68,27 @@ class OpenVulnInboxTests(InboxOrderTests):
         self.assertTrue(self.probe.cmdbox.mac_ok(KEY, reply), reply)
 
 
+    # F3: a second envelope naming a used id never overwrites that id's reply slot, signed or not.
+    def test_f3_an_unsigned_same_id_envelope_leaves_the_real_reply_alone(self):
+        self.drop("real", self.signed(self.fresh("6" * 32)))
+        self.probe._inbox_tick_body()
+        first = self.reply_of("6" * 32)
+        self.assertEqual(first["status"], "OK")
+        self.drop("dup", self.fresh("6" * 32), sign=False)
+        self.probe._inbox_tick_body()
+        self.assertEqual(self.reply_of("6" * 32), first)
+
+    def test_f3_a_replayed_signed_envelope_leaves_the_real_reply_alone(self):
+        body = self.signed(self.fresh("7" * 32))
+        self.drop("real", body)
+        self.probe._inbox_tick_body()
+        first = self.reply_of("7" * 32)
+        self.drop("again", body)
+        self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["7" * 32])
+        self.assertEqual(self.reply_of("7" * 32), first)
+
+
 del InboxOrderTests
 
 if __name__ == "__main__":
