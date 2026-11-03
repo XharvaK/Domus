@@ -201,3 +201,38 @@ def test_f10_the_lineage_reader_returns_only_well_formed_probe_records(paths):
     lines = [json.dumps(item) for item in bad] + ["", "{not json", json.dumps(good)]
     paths.ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
     assert telemetry.lineage(paths=paths) == [good]
+
+
+# F11: the Mods walk is bounded in files and hashed bytes, and says when it stopped short.
+def _mods_paths(tmp_path, count, size=4):
+    from domus_helper.paths import Paths
+    sims = tmp_path / "SimsMods"
+    mods = sims / "Mods"
+    for index in range(count):
+        folder = mods / ("f%02d" % (index % 3))
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / ("m%03d.package" % index)).write_bytes(b"x" * size)
+    return Paths(sims)
+
+
+def test_f11_the_mods_walk_stops_at_its_file_cap_and_says_so(tmp_path, monkeypatch):
+    from domus_helper import fingerprints as fp
+    monkeypatch.setattr(fp, "MODS_MAX_FILES", 5)
+    result = fp.fingerprint(paths=_mods_paths(tmp_path, 20))
+    assert len(result["mods"]) == 5
+    assert result["mods_complete"] is False
+
+
+def test_f11_the_mods_walk_stops_at_its_hashed_byte_cap(tmp_path, monkeypatch):
+    from domus_helper import fingerprints as fp
+    monkeypatch.setattr(fp, "MODS_MAX_HASH_BYTES", 10)
+    result = fp.fingerprint(paths=_mods_paths(tmp_path, 6, size=4))
+    assert sum(mod["bytes"] for mod in result["mods"]) <= 10
+    assert result["mods_complete"] is False
+
+
+def test_f11_a_small_mods_folder_is_complete(tmp_path):
+    from domus_helper import fingerprints as fp
+    result = fp.fingerprint(paths=_mods_paths(tmp_path, 4))
+    assert len(result["mods"]) == 4
+    assert result["mods_complete"] is True
