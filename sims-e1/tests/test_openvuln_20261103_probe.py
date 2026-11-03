@@ -122,6 +122,68 @@ class OpenVulnInboxTests(InboxOrderTests):
         self.probe._inbox_tick_body()
         self.assertEqual(self.dispatched, ["9" * 32])
 
+    # AU NB-3: the probe pins cmd/key at its first good read; a later swap of the file (a cmd/ writer) is not believed.
+    def swap_key(self, new):
+        path = os.path.join(self.root, "cmd", "key")
+        os.replace(path, path + ".old")
+        with open(path, "w", encoding="ascii") as handle:
+            handle.write(new.hex())
+
+    def test_au_nb3_a_swapped_key_does_not_let_a_cmd_writer_forge(self):
+        self.drop("good", self.signed(self.fresh("c" * 32)), sign=False)
+        self.probe._inbox_tick_body()
+        evil = bytes([7]) * 32
+        self.swap_key(evil)
+        self.drop("forged", self.signed(self.fresh("b" * 32, issuer="console"), key=evil), sign=False)
+        self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["c" * 32])
+        self.assertEqual([event["issuer"] for event in self.events()], ["helper"])
+
+    def test_au_nb3_the_pinned_key_still_works_after_a_swap(self):
+        self.drop("good", self.signed(self.fresh("c" * 32)), sign=False)
+        self.probe._inbox_tick_body()
+        self.swap_key(bytes([7]) * 32)
+        self.drop("good2", self.signed(self.fresh("d" * 32)), sign=False)
+        self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["c" * 32, "d" * 32])
+
+    def test_au_nb3_a_key_made_after_start_is_pinned_when_first_read(self):
+        os.remove(os.path.join(self.root, "cmd", "key"))
+        self.probe._inbox_tick_body()
+        with open(os.path.join(self.root, "cmd", "key"), "w", encoding="ascii") as handle:
+            handle.write(KEY.hex())
+        self.drop("good", self.signed(self.fresh("e" * 32)), sign=False)
+        self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["e" * 32])
+
+    def test_au_nb3_a_linked_key_is_not_read(self):
+        path = os.path.join(self.root, "cmd", "key")
+        os.replace(path, path + ".real")
+        try:
+            os.symlink(path + ".real", path)
+        except (OSError, NotImplementedError):
+            self.skipTest("no symlinks here")
+        self.drop("good", self.signed(self.fresh("f" * 32)), sign=False)
+        self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, [])
+
+    # AU NB-4: many untakeable entries (more than a scan) must not hold the pump.
+    def test_au_nb4_256_untakeable_entries_do_not_wedge_the_pump(self):
+        self.plant_untakeable(count=256)
+        self.drop("good", self.signed(self.fresh("a" * 32)), sign=False)
+        for _ in range(2):
+            self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["a" * 32])
+
+    def test_au_nb4_still_dispatched_after_the_stuck_wait_expires(self):
+        self.plant_untakeable(count=256)
+        for _ in range(61):
+            self.probe._inbox_tick_body()
+        self.drop("good", self.signed(self.fresh("a" * 32)), sign=False)
+        for _ in range(2):
+            self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["a" * 32])
+
 
 del InboxOrderTests
 
