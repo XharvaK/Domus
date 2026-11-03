@@ -27,6 +27,13 @@ class OpenVulnInboxTests(InboxOrderTests):
         body["issuer"] = issuer
         return body
 
+    def only_reply(self):
+        folder = os.path.join(self.root, "cmd", "outbox")
+        names = os.listdir(folder)
+        self.assertEqual(len(names), 1, names)
+        with open(os.path.join(folder, names[0]), "rb") as handle:
+            return json.loads(handle.read())
+
     def reply_of(self, command_id):
         with open(os.path.join(self.root, "cmd", "outbox", command_id + ".json"), "rb") as handle:
             return json.loads(handle.read())
@@ -36,7 +43,7 @@ class OpenVulnInboxTests(InboxOrderTests):
         self.drop("forged", self.fresh("1" * 32, issuer="console"), sign=False)
         self.probe._inbox_tick_body()
         self.assertEqual(self.dispatched, [])
-        reply = self.reply_of("1" * 32)
+        reply = self.only_reply()
         self.assertEqual((reply["status"], reply["code"], reply["issuer"]), ("REJECTED", "BAD_MAC", None))
         self.assertEqual(self.events(), [])
 
@@ -44,7 +51,7 @@ class OpenVulnInboxTests(InboxOrderTests):
         self.drop("forged", self.signed(self.fresh("2" * 32), key=bytes(32)))
         self.probe._inbox_tick_body()
         self.assertEqual(self.dispatched, [])
-        self.assertEqual(self.reply_of("2" * 32)["code"], "BAD_MAC")
+        self.assertEqual(self.only_reply()["code"], "BAD_MAC")
 
     def test_f1_a_signed_command_runs_and_is_attributed(self):
         self.drop("good", self.signed(self.fresh("3" * 32)))
@@ -57,7 +64,7 @@ class OpenVulnInboxTests(InboxOrderTests):
         self.drop("good", self.signed(self.fresh("4" * 32)))
         self.probe._inbox_tick_body()
         self.assertEqual(self.dispatched, [])
-        self.assertEqual(self.reply_of("4" * 32)["code"], "BAD_MAC")
+        self.assertEqual(self.only_reply()["code"], "BAD_MAC")
 
 
     # F8: the probe signs its reply under the same key, so the helper can tell it from a forged one.

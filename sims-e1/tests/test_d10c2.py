@@ -203,7 +203,8 @@ class RejectionTests(unittest.TestCase):
         _, p, calls = load_probe()
         self.assertTrue(p._dispatch_inbox())
         root = Path(p._TELEMETRY_ROOT)/'cmd'
-        (root/'inbox/001.json').write_text(json.dumps(command('start', expires_at_ms=999)), encoding='utf-8')
+        install_key(root)
+        (root/'inbox/001.json').write_bytes(signed_bytes(command('start', expires_at_ms=999)))
         with mock.patch.object(p.time, 'time', return_value=1), \
                 mock.patch.object(p, '_dispatch_start') as start:
             p._inbox_tick()

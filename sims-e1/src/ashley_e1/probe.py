@@ -1476,7 +1476,9 @@ def _inbox_tick_body():
             verified = type(identity) is dict and cmdbox.mac_ok(key, identity)
             if cmd is not None and not verified:
                 cmd, code = None, 'BAD_MAC'
-            if type(identity) is dict and cmdbox.valid_hex(identity.get('id'), 32):
+            # OPENVULN F3: only a signed command answers under its own id, and only the first time: a replay, or an
+            # envelope that is not ours, answers under a fresh id, so it never overwrites a real command's reply.
+            if verified and cmdbox.valid_hex(identity.get('id'), 32) and code != 'REPLAYED':
                 command_id = identity['id']
             else:
                 command_id = uuid.uuid4().hex
@@ -1486,6 +1488,7 @@ def _inbox_tick_body():
             persistent_replay = os.path.exists(done)
             if persistent_replay:
                 cmd, code = None, 'REPLAYED'
+                command_id = uuid.uuid4().hex  # OPENVULN F3: the first reply under the real id stays
             status, result = 'REJECTED', {'ok': False, 'lines': []}
             if cmd is not None:
                 _INBOX_USED_IDS.add(command_id)

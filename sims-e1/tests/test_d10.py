@@ -158,7 +158,10 @@ class InboxTests(unittest.TestCase):
         self.assertIs(self.p._INBOX_HANDLE,handle)
         self.p._INBOX_USED_IDS.clear()
         self.put(command(),'002.json'); self.tick()
-        self.assertEqual(self.reply()['code'],'REPLAYED')
+        # OPENVULN F3: the replay is refused under a fresh id; the first reply keeps its slot.
+        self.assertEqual(self.reply()['result'],{'ok':True,'lines':[]})
+        codes=[json.loads(path.read_bytes())['code'] for path in (self.root/'outbox').glob('*.json')]
+        self.assertIn('REPLAYED',codes)
 
     def test_four_files_and_malformed_no_dispatch(self):
         for i in range(5): self.put(command(id='%032x'%i), '%03d.json'%i)
