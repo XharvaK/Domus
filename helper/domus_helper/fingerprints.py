@@ -208,6 +208,40 @@ def _sha256(path):
     return digest.hexdigest()
 
 
+# OPENVULN F11: the Mods walk stops at this many files or this many hashed bytes, and says it stopped (mods_complete
+# false) rather than run without end on a planted tree. A real Mods folder is far below both.
+MODS_MAX_FILES = 10_000
+MODS_MAX_HASH_BYTES = 8 * 1024 ** 3
+
+
+def _mods(mods_root):
+    """The Mods files (path, bytes, sha256) in path order, and whether the walk saw them all within its caps."""
+    files = []
+    complete = True
+    try:
+        for path in mods_root.rglob("*"):
+            if path.is_file():
+                if len(files) >= MODS_MAX_FILES:
+                    complete = False
+                    break
+                files.append(path)
+    except OSError:
+        files = []
+    mods = []
+    hashed = 0
+    for path in sorted(files):
+        try:
+            size = path.stat().st_size
+            if hashed + size > MODS_MAX_HASH_BYTES:
+                complete = False
+                break
+            hashed += size
+            mods.append({"path": path.relative_to(mods_root).as_posix(), "bytes": size, "sha256": _sha256(path)})
+        except OSError:
+            continue
+    return mods, complete
+
+
 def fingerprint(*, paths=None, root=None):
     paths = paths or Paths.from_env()
     root = Path(root) if root is not None else game_root(paths)
@@ -228,23 +262,12 @@ def fingerprint(*, paths=None, root=None):
         if version is None and not (delta / name / VERSION_INI).is_file():
             continue
         packs.append({"name": name, "packversion": version})
-    mods = []
-    mods_root = paths.sims_root / "Mods"
-    try:
-        files = sorted(p for p in mods_root.rglob("*") if p.is_file())
-    except OSError:
-        files = []
-    for path in files:
-        try:
-            mods.append({"path": path.relative_to(mods_root).as_posix(),
-                         "bytes": path.stat().st_size, "sha256": _sha256(path)})
-        except OSError:
-            continue
+    mods, mods_complete = _mods(paths.sims_root / "Mods")
     ini_text = _read_text(root / DEFAULT_INI_REL)
     return {"detected_build": detected["detected_build"],
             "game_root": str(root),
             "pid": detected["pid"], "pid_start_time": detected["pid_start_time"],
-            "archives": archives, "packs": packs, "mods": mods,
+            "archives": archives, "packs": packs, "mods": mods, "mods_complete": mods_complete,
             "code": {"codeversion": _ini_value(ini_text, "codeversion"),
                      "codechangelist": _ini_value(ini_text, "codechangelist"),
                      "codedatetime": _ini_value(ini_text, "codedatetime")}}
