@@ -497,7 +497,8 @@ def _validate_load_disabled_runtime(runtime):
                  ("STARTED",  # legacy: written by probe 2.2.0
                   "MANAGER_UNAVAILABLE", "NOT_STARTED", "CONSOLE",
                   "ZONE:import", "ZONE:tuning", "ZONE:posture",
-                  "ZONE:household", "ZONE:transition", "ZONE:manager"),
+                  "ZONE:household", "ZONE:transition", "ZONE:manager",
+                  "CMD_PATH_BLOCKED"),  # OPENVULN F7: a cmd folder is not a folder and could not be moved aside
                  "runtime.inbox_autostart")
     required_imports = runtime.get("required_imports")
     _require(isinstance(required_imports, dict),

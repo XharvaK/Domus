@@ -432,6 +432,19 @@ def _register_autostart_hooks():
         _AUTOSTART_HOOKS['import'] = 'failed'
 
 
+def _cmd_folders_ready(cmd):
+    """OPENVULN F7: cmd and its inbox, outbox and done are real folders. A file or a link in one's place is moved aside
+    (renamed, never followed or deleted) and the folder made. False when that cannot be done."""
+    try:
+        for path in (cmd, os.path.join(cmd, 'inbox'), os.path.join(cmd, 'outbox'), os.path.join(cmd, 'done')):
+            if os.path.islink(path) or (os.path.lexists(path) and not os.path.isdir(path)):
+                os.replace(path, '%s.misplaced-%d' % (path, int(time.time() * 1000)))
+            os.makedirs(path, exist_ok=True)
+        return True
+    except OSError:
+        return False
+
+
 def _start_inbox_pump(source=None):
     global _INBOX_HANDLE, _INBOX_STARTED_ZONE, _INBOX_AUTOSTART
     try:
@@ -443,8 +456,9 @@ def _start_inbox_pump(source=None):
             _INBOX_AUTOSTART = "NOT_STARTED"
         if _TELEMETRY_ROOT is None:
             return False
-        for directory in ('inbox', 'outbox', 'done'):
-            os.makedirs(os.path.join(_TELEMETRY_ROOT, 'cmd', directory), exist_ok=True)
+        if not _cmd_folders_ready(os.path.join(_TELEMETRY_ROOT, 'cmd')):
+            _INBOX_AUTOSTART = "CMD_PATH_BLOCKED"
+            return False
         _INBOX_HANDLE = alarms.add_alarm_real_time(
             owner=_INBOX_ALARM_OWNER, time_span=interval_in_real_seconds(1),
             callback=_inbox_tick, repeating=True, use_sleep_time=False,
