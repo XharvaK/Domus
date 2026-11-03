@@ -96,6 +96,33 @@ class OpenVulnInboxTests(InboxOrderTests):
         self.assertEqual(self.reply_of("7" * 32), first)
 
 
+    # F2: entries the pump cannot take never hold the four places of a tick forever.
+    def plant_untakeable(self, count=6):
+        inbox = os.path.join(self.root, "cmd", "inbox")
+        for index in range(count):
+            name = "wedge%d.json" % index
+            with open(os.path.join(inbox, name), "w", encoding="utf-8") as handle:
+                json.dump({"issued_at_ms": 0}, handle)
+            blocker = os.path.join(inbox, name + ".taken")
+            os.makedirs(os.path.join(blocker, "full"))
+
+    def test_f2_untakeable_files_do_not_wedge_the_pump(self):
+        self.plant_untakeable()
+        self.drop("good", self.signed(self.fresh("8" * 32)))
+        for _ in range(3):
+            self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["8" * 32])
+
+    def test_f2_folders_named_like_commands_are_not_taken(self):
+        inbox = os.path.join(self.root, "cmd", "inbox")
+        for index in range(6):
+            os.makedirs(os.path.join(inbox, "dir%d.json" % index, "x"))
+            os.makedirs(os.path.join(inbox, "dir%d.json.taken" % index, "x"))
+        self.drop("good", self.signed(self.fresh("9" * 32)))
+        self.probe._inbox_tick_body()
+        self.assertEqual(self.dispatched, ["9" * 32])
+
+
 del InboxOrderTests
 
 if __name__ == "__main__":
