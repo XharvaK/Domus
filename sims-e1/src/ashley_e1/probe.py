@@ -62,7 +62,7 @@ from . import home  # 2.40.0 (W13 P2, home): her save, home edits and the catalo
 from . import observers
 from . import reach
 from . import schema
-from .writer import TelemetryWriter, bootstrap_from_module_path, derive_telemetry_root, read_command_file, write_command_reply
+from .writer import TelemetryWriter, bootstrap_from_module_path, derive_telemetry_root, read_command_file, read_command_key, write_command_reply
 from .writer import read_small_json, remove_file, write_small_json
 
 
@@ -1431,6 +1431,14 @@ def _expired_act_event(identity):
     return _emit(row)
 
 
+def _command_key(root):
+    """OPENVULN F1: the shared command key in cmd/key, or None when it is missing or not a key."""
+    try:
+        return cmdbox.parse_key(read_command_key(os.path.join(root, 'key')))
+    except OSError:
+        return None
+
+
 def _inbox_tick_body():
     global _INBOX_ERRORS
     root = os.path.join(_TELEMETRY_ROOT, 'cmd')
@@ -1446,6 +1454,7 @@ def _inbox_tick_body():
         taken = path + '.taken'
         command_id = uuid.uuid4().hex
         identity = None
+        verified = False
         error_reply_written = False
         try:
             try:
@@ -1462,11 +1471,15 @@ def _inbox_tick_body():
                     identity = cmdbox.decode(raw)
                 except (ValueError, UnicodeError, RecursionError):
                     identity = None
+            # OPENVULN F1: only a command whose MAC checks under cmd/key runs, or is attributed to its issuer.
+            verified = type(identity) is dict and cmdbox.mac_ok(_command_key(root), identity)
+            if cmd is not None and not verified:
+                cmd, code = None, 'BAD_MAC'
             if type(identity) is dict and cmdbox.valid_hex(identity.get('id'), 32):
                 command_id = identity['id']
             else:
                 command_id = uuid.uuid4().hex
-            if cmd is None and code == 'EXPIRED' and type(identity) is dict and identity.get('command') == 'act':
+            if cmd is None and code == 'EXPIRED' and verified and identity.get('command') == 'act':
                 _expired_act_event(identity)
             done = os.path.join(root, 'done', command_id + '.json')
             persistent_replay = os.path.exists(done)
@@ -1493,7 +1506,7 @@ def _inbox_tick_body():
                     result = {'ok': False, 'lines': connection.lines}
             else:
                 _INBOX_USED_IDS.add(command_id)
-            issuer = identity.get('issuer') if type(identity) is dict else None
+            issuer = identity.get('issuer') if verified else None
             payload = cmdbox.attribute_reply(
                 cmdbox.reply(command_id, status, code, result), issuer)
             write_command_reply(os.path.join(root, 'outbox', command_id + '.json'), payload)
@@ -1504,7 +1517,7 @@ def _inbox_tick_body():
             else:
                 os.replace(taken, done)
             if (_WRITER is not None and not _WRITER_IDLE and
-                    type(identity) is dict and cmdbox.valid_issuer(identity.get('issuer')) and
+                    verified and cmdbox.valid_issuer(identity.get('issuer')) and
                     identity.get('command') in cmdbox.COMMANDS):
                 _emit(schema.make_record('command_event',
                     telemetry_session_id=_TELEMETRY_SESSION_ID,
@@ -1515,7 +1528,7 @@ def _inbox_tick_body():
             _INBOX_ERRORS += 1
             if not error_reply_written:
                 try:
-                    issuer = identity.get('issuer') if type(identity) is dict else None
+                    issuer = identity.get('issuer') if verified else None
                     payload = cmdbox.attribute_reply(
                         cmdbox.reply(command_id, 'ERROR', type(error).__name__[:64],
                                      {'ok': False, 'lines': []}), issuer)

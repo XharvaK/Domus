@@ -24,6 +24,10 @@ class InboxOrderTests(unittest.TestCase):
         self.probe._WRITER = FakeWriter(self.root, "a" * 32, self.probe.schema.PROBE_VERSION, "1.0")
         self.probe._WRITER_IDLE = False
         self.probe._INBOX_USED_IDS.clear()
+        # OPENVULN F1: the shared key the helper makes; drop() signs with it, as the helper does.
+        self.key = bytes(range(32))
+        with open(os.path.join(self.root, "cmd", "key"), "w", encoding="ascii") as handle:
+            handle.write(self.key.hex())
         self.dispatched = []
 
         def dispatch(cmd, connection):
@@ -32,7 +36,9 @@ class InboxOrderTests(unittest.TestCase):
 
         self.probe._inbox_dispatch = dispatch
 
-    def drop(self, name, body):
+    def drop(self, name, body, sign=True):
+        if sign and "mac" not in body:
+            body = dict(body, mac=self.probe.cmdbox.mac(self.key, body))
         with open(os.path.join(self.root, "cmd", "inbox", name + ".json"), "w", encoding="utf-8") as handle:
             json.dump(body, handle)
 

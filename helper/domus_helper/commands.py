@@ -2,6 +2,7 @@
 import json
 import math
 import os
+import secrets
 import time
 import uuid
 from dataclasses import dataclass
@@ -42,6 +43,32 @@ def envelope(command, args, issuer, ttl_ms=30_000):
     return row, raw
 
 
+def command_key(paths):
+    """OPENVULN F1/F8: the shared command key in cmd/key. Made once, owner-only (0600), by an exclusive create, so two
+    helpers starting together agree on one key. The probe only reads it."""
+    key_file = paths.telemetry / "cmd" / "key"
+    try:
+        descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    except FileExistsError:
+        pass
+    else:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(secrets.token_hex(cmdbox.MAC_KEY_BYTES).encode("ascii"))
+            handle.flush()
+            os.fsync(handle.fileno())
+    with open(key_file, "rb") as handle:
+        key = cmdbox.parse_key(handle.read(cmdbox.MAC_KEY_FILE_MAX + 1))
+    if key is None:
+        raise ValueError("cmd/key is not a command key")
+    return key
+
+
+def signed(row, key):
+    """The envelope as published: the row with its MAC, serialized."""
+    row = dict(row, mac=cmdbox.mac(key, row))
+    return row, json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+
+
 def publish(command, args, issuer, *, paths=None):
     """Write one command to the probe's inbox and return its id without waiting (8f: the
     bridge reads what happened from the telemetry, never blocks its tick on a reply)."""
@@ -52,6 +79,7 @@ def publish(command, args, issuer, *, paths=None):
 
 def _write(row, raw, paths):
     paths.check_inbox()
+    row, raw = signed(row, command_key(paths))
     # Do not bootstrap cmd directories: the probe/Owner owns their creation.
     temporary = paths.inbox / (row["id"] + ".json.tmp")
     destination = paths.inbox / (row["id"] + ".json")
@@ -122,8 +150,17 @@ def expire_pending(paths, now_ms=None):
         except (OSError, ValueError, UnicodeError, RecursionError):
             row = None
         if row is not None:
-            row["expires_at_ms"] = min(row["issued_at_ms"], now_ms) - 1
-            expired = json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            try:
+                key = command_key(paths)
+            except (OSError, ValueError):
+                key = None
+            # Only a command we signed is re-signed: one another writer left is never laundered into a signed one.
+            if key is None or not cmdbox.mac_ok(key, row):
+                row = None  # back untouched; the probe refuses it BAD_MAC
+            else:
+                row["expires_at_ms"] = min(row["issued_at_ms"], now_ms) - 1
+                row, expired = signed(row, key)
+        if row is not None:
             temporary = entry.with_name(entry.name + ".tmp")
             try:
                 temporary.write_bytes(expired)

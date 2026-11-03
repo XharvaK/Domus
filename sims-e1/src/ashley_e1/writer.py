@@ -706,6 +706,12 @@ def read_command_file(path):
         return handle.read(4097)
 
 
+def read_command_key(path):
+    """OPENVULN F1: the bytes of cmd/key, bounded (a key file is 64 hex characters)."""
+    with open(path, 'rb') as handle:
+        return handle.read(257)
+
+
 def append_atlas_line(path, payload):
     """Append one atlas JSON line. File IO stays in this module."""
     if type(payload) is not bytes:

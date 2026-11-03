@@ -1,4 +1,6 @@
 """Pure, closed command-inbox wire protocol."""
+import hashlib
+import hmac
 import json
 
 COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
@@ -9,7 +11,7 @@ COMMANDS = ('arm', 'start', 'stop', 'disarm', 'prepare', 'sit', 'pause',
 COMMANDS = COMMANDS + ('go', 'event', 'lists_now')
 CODES = ('TOO_LARGE', 'BAD_JSON', 'BAD_SHAPE', 'BAD_VERSION', 'BAD_ID',
          'REPLAYED', 'EXPIRED', 'NOT_YET_VALID', 'TTL_TOO_LONG', 'BAD_ISSUER',
-         'UNKNOWN_COMMAND', 'BAD_ARGS')
+         'UNKNOWN_COMMAND', 'BAD_ARGS', 'BAD_MAC')
 KEYS = {'v', 'id', 'issued_at_ms', 'expires_at_ms', 'issuer', 'command', 'args'}
 # 2.31.0 (DOMUS_DEEP_DESIGN §11): the answer's arguments; rows and text are optional extras.
 ANSWER_KEYS = {'act_id', 'dialog_id', 'pick', 'rows', 'text'}
@@ -99,6 +101,40 @@ def _home_args(name, args):
     return False
 
 
+# OPENVULN F1/F8 (2026-11-03): a command and its reply carry a MAC (HMAC-SHA256, hex) under the shared key in
+# cmd/key, which the helper makes once. Only a command whose MAC checks is run or attributed to its issuer. The MAC is
+# over the canonical JSON (sorted keys, ASCII, no spaces) of every field but the MAC itself.
+MAC_KEY_BYTES = 32
+MAC_KEY_FILE_MAX = 256
+
+
+def canonical(row):
+    return json.dumps(row, ensure_ascii=True, separators=(',', ':'), sort_keys=True).encode('utf-8')
+
+
+def mac(key, row):
+    body = dict((name, value) for name, value in row.items() if name != 'mac')
+    return hmac.new(key, canonical(body), hashlib.sha256).hexdigest()
+
+
+def mac_ok(key, row):
+    return (type(key) is bytes and len(key) == MAC_KEY_BYTES and type(row) is dict and
+            valid_hex(row.get('mac'), 64) and hmac.compare_digest(row['mac'], mac(key, row)))
+
+
+def parse_key(raw):
+    """The key in a cmd/key file's bytes (64 lowercase hex), or None."""
+    if type(raw) is not bytes or len(raw) > MAC_KEY_FILE_MAX:
+        return None
+    try:
+        text = raw.decode('ascii').strip()
+    except UnicodeError:
+        return None
+    if not valid_hex(text, MAC_KEY_BYTES * 2):
+        return None
+    return bytes.fromhex(text)
+
+
 def valid_issuer(value):
     if type(value) is not str:
         return False
@@ -128,7 +164,7 @@ def parse(raw_bytes, now_ms, used_ids):
         cmd = decode(raw_bytes)
     except (ValueError, UnicodeError, RecursionError):
         return None, 'BAD_JSON'
-    if type(cmd) is not dict or set(cmd) != KEYS:
+    if type(cmd) is not dict or (set(cmd) != KEYS and set(cmd) != KEYS | {'mac'}):
         return None, 'BAD_SHAPE'
     if type(cmd['v']) is not int or cmd['v'] != 1:
         return None, 'BAD_VERSION'

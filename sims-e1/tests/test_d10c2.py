@@ -4,6 +4,8 @@ from pathlib import Path
 import tempfile
 import types
 import unittest
+
+from signing import install_key, signed_bytes
 from unittest import mock
 
 from test_binding import load_probe
@@ -117,7 +119,8 @@ class AutostartTests(unittest.TestCase):
     def test_started_status_reply_and_bootstrap_summary(self):
         self.start_zone()
         root = Path(self.p._TELEMETRY_ROOT)
-        (root/'cmd/inbox/001.json').write_text(json.dumps(command()), encoding='utf-8')
+        install_key(root/'cmd')
+        (root/'cmd/inbox/001.json').write_bytes(signed_bytes(command()))
         with mock.patch.object(self.p.time, 'time', return_value=1):
             self.p._inbox_tick()
         reply = json.loads((root/'cmd/outbox'/('a'*32+'.json')).read_bytes())

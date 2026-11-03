@@ -2,6 +2,7 @@
 
 APPROVED_STDLIB_IMPORTS = {
     "hashlib",
+    "hmac",
     "json",
     "os",
     "pathlib",

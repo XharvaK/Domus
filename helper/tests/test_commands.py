@@ -20,7 +20,7 @@ def test_atomic_envelope(paths, monkeypatch):
         raw = source.read_bytes()
         assert len(raw) <= 4096
         row = json.loads(raw.decode("utf-8"))
-        assert set(row) == cmdbox.KEYS
+        assert set(row) == cmdbox.KEYS | {"mac"}
         assert row["expires_at_ms"] - row["issued_at_ms"] == 15000
         assert cmdbox.parse(raw, row["issued_at_ms"], ())[1] is None
         published.append(row)

@@ -33,7 +33,7 @@ class OpenVulnInboxTests(InboxOrderTests):
 
     # F1: issuer attribution is only believed for a command carrying a valid MAC under the shared key.
     def test_f1_an_unsigned_command_is_refused_and_its_issuer_is_not_attributed(self):
-        self.drop("forged", self.fresh("1" * 32, issuer="console"))
+        self.drop("forged", self.fresh("1" * 32, issuer="console"), sign=False)
         self.probe._inbox_tick_body()
         self.assertEqual(self.dispatched, [])
         reply = self.reply_of("1" * 32)

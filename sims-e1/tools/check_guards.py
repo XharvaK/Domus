@@ -8,7 +8,8 @@ import zipfile
 
 APPROVED_STDLIB_IMPORTS = {
     # "math": 2.40.0 (W13 P2 fix, HOME-5): the yaw angle of a facing (e2_actuator's search); pure arithmetic.
-    "hashlib", "json", "math", "os", "pathlib", "queue", "struct", "sys",
+    # "hmac": OPENVULN F1/F8 (2026-11-03), the command and reply MAC in cmdbox; in the game's base.zip lib/hmac.pyc (1.129).
+    "hashlib", "hmac", "json", "math", "os", "pathlib", "queue", "struct", "sys",
     "threading", "time", "uuid",
 }
 APPROVED_GAME_ROOTS = {

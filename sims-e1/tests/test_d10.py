@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import sys
 import unittest
+
+from signing import install_key, signed_bytes
 from unittest import mock
 from test_binding import load_probe, install_stubs
 
@@ -116,7 +118,8 @@ class InboxTests(unittest.TestCase):
         self.assertTrue(self.p._dispatch_inbox(_session_id=9))
 
     def put(self, row, name='001.json'):
-        (self.root/'inbox'/name).write_bytes(json.dumps(row).encode())
+        install_key(self.root)
+        (self.root/'inbox'/name).write_bytes(signed_bytes(row))
 
     def tick(self):
         with mock.patch.object(self.p.time,'time',return_value=1): self.p._inbox_tick()
@@ -285,7 +288,8 @@ class RemainingContractsTests(unittest.TestCase):
         p._dispatch_inbox()
         row=command('sit_trial',{'object_id':CHAIR})
         inbox=Path(p._TELEMETRY_ROOT)/'cmd/inbox'
-        (inbox/'trial.json').write_bytes(json.dumps(row).encode())
+        install_key(inbox.parent)
+        (inbox/'trial.json').write_bytes(signed_bytes(row))
         with mock.patch.object(p.time,'time',return_value=1): p._inbox_tick()
         reply=json.loads((inbox.parent/'outbox'/('a'*32+'.json')).read_bytes())
         self.assertEqual(reply['status'],'OK')

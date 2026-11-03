@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import types
 import unittest
+
+from signing import install_key, signed_bytes
 from unittest import mock
 
 from test_binding import load_probe
@@ -123,7 +125,8 @@ class InboxTickErrorTests(unittest.TestCase):
 
     def queue(self, command_id='a' * 32):
         path = self.root / 'inbox' / (command_id + '.json')
-        path.write_text(json.dumps(command(id=command_id)), encoding='utf-8')
+        install_key(self.root)
+        path.write_bytes(signed_bytes(command(id=command_id)))
         return path
 
     def tick(self):
