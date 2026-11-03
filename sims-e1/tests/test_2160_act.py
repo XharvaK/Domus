@@ -558,6 +558,29 @@ class MenuSenseTests(unittest.TestCase):
         self.assertIsNone(self.probe._menu_jobs(self.row)[0])
 
     def test_the_menu_is_written_when_it_changes_and_rebuilt_on_a_room_change(self):
+        self._menu_written_and_rebuilt()
+
+    def test_the_menu_is_written_and_rebuilt_on_a_slow_machine(self):
+        # A build step is wall-clock budgeted, so on a loaded machine a build takes more than one tick. Force that:
+        # every clock read costs half the step's budget, so each step tests one object.
+        real = self.probe.act_menu.MenuBuild
+
+        class SlowBuild(real):
+            def __init__(build, *args, **kwargs):
+                real.__init__(build, *args, **kwargs)
+                ticks = {"s": 0.0}
+
+                def clock():
+                    ticks["s"] += build.budget_ms / 2000.0
+                    return ticks["s"]
+                build.clock = clock
+        self.probe.act_menu.MenuBuild = SlowBuild
+        try:
+            self._menu_written_and_rebuilt()
+        finally:
+            self.probe.act_menu.MenuBuild = real
+
+    def _menu_written_and_rebuilt(self):
         self.base.LedgerWriter.records = [self.base.continuing()[0]]
         self.assertTrue(self.probe._cmd_arm("HOME"))
         self.assertTrue(self.probe._cmd_start())
