@@ -181,6 +181,21 @@ def expire_pending(paths, now_ms=None):
     return cancelled
 
 
+# OPENVULN F4: the largest reply file the poll reads. A probe reply is a few kilobytes; a larger file is not one.
+REPLY_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _reply_bytes(path):
+    """The reply file's bytes, or None while there is no reply to read: missing, or larger than REPLY_MAX_BYTES (read
+    no further than the cap, so a planted huge file never fills memory)."""
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(REPLY_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return None
+    return None if len(raw) > REPLY_MAX_BYTES else raw
+
+
 def _authentic(payload, paths):
     """OPENVULN F8: a reply is the probe's only when its MAC checks under cmd/key; anything else reads as no reply."""
     try:
@@ -194,8 +209,9 @@ def read_reply(command_id, *, paths=None):
     for shape; a reply the probe is still writing reads as not yet."""
     paths = paths or Paths.from_env()
     try:
-        payload = cmdbox.decode((paths.outbox / (command_id + ".json")).read_bytes())
-    except (FileNotFoundError, ValueError, UnicodeError, RecursionError):
+        raw = _reply_bytes(paths.outbox / (command_id + ".json"))
+        payload = None if raw is None else cmdbox.decode(raw)
+    except (ValueError, UnicodeError, RecursionError):
         return None
     if not isinstance(payload, dict) or payload.get("id") != command_id:
         return None
@@ -217,9 +233,10 @@ def send(command, args, issuer, timeout_s=15, *, paths=None):
     deadline = time.monotonic() + timeout_s
     reply_path = paths.outbox / (row["id"] + ".json")
     while True:
+        raw = _reply_bytes(reply_path)
         try:
-            payload = cmdbox.decode(reply_path.read_bytes())
-        except FileNotFoundError:
+            payload = None if raw is None else cmdbox.decode(raw)
+        except (ValueError, UnicodeError, RecursionError):
             payload = None
         if isinstance(payload, dict) and payload.get("id") == row["id"] and _authentic(payload, paths):
             payload = dict((name, value) for name, value in payload.items() if name != "mac")
