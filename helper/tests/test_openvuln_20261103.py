@@ -133,3 +133,37 @@ def test_f5_read_reply_reads_a_folder_as_no_reply(paths):
     command_id = commands.publish("status", {}, "helper", paths=paths)
     (paths.outbox / (command_id + ".json")).mkdir()
     assert commands.read_reply(command_id, paths=paths) is None
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes")
+def test_f6_a_named_pipe_at_the_reply_path_cannot_hang_send_past_its_deadline(paths):
+    outcome = []
+
+    def plant(target):
+        os.mkfifo(target)
+        return None
+
+    stop, planter = _planting_replier(paths, plant, delay=30)
+
+    def call():
+        try:
+            commands.send("status", {}, "helper", timeout_s=0.5, paths=paths)
+            outcome.append("returned")
+        except commands.InboxNotAnswering:
+            outcome.append("timeout")
+        except BaseException as error:  # noqa: BLE001 - reported below
+            outcome.append(repr(error))
+    caller = threading.Thread(target=call, daemon=True)
+    started = time.monotonic()
+    caller.start()
+    caller.join(3)
+    hung = caller.is_alive()
+    if hung:  # unblock the reader so the test run is not left hanging
+        for fifo in paths.outbox.glob("*.json"):
+            descriptor = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            os.close(descriptor)
+        caller.join(2)
+    stop.set()
+    assert not hung, "send blocked on a named pipe past its deadline"
+    assert outcome == ["timeout"]
+    assert time.monotonic() - started < 3
