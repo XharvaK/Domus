@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import pytest
 
 from domus_helper.paths import Paths
-from domus_helper.vendor import schema
+from domus_helper.vendor import cmdbox, schema
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +45,9 @@ def opened(seq=0):
 
 
 @contextmanager
-def replier(paths, handler=None):
+def replier(paths, handler=None, key=None):
+    """A stand-in probe: answers each command. OPENVULN F8: signs its reply under cmd/key as the probe does, or under
+    `key` when given (b"" leaves it unsigned)."""
     stop = threading.Event()
     failures = []
     seen = []
@@ -59,6 +61,11 @@ def replier(paths, handler=None):
                     row = json.loads(path.read_bytes())
                     result = handler(row) if handler else dict(status="OK", code=None, result={})
                     reply = dict(id=row["id"], issuer=row["issuer"], **result)
+                    signing = key
+                    if signing is None and (paths.telemetry / "cmd" / "key").exists():
+                        signing = bytes.fromhex((paths.telemetry / "cmd" / "key").read_text(encoding="ascii"))
+                    if signing and hasattr(cmdbox, "mac"):
+                        reply["mac"] = cmdbox.mac(signing, reply)
                     temporary = paths.outbox / (path.name + ".tmp")
                     temporary.write_text(json.dumps(reply))
                     temporary.replace(paths.outbox / path.name)

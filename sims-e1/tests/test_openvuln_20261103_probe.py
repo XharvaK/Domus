@@ -60,6 +60,14 @@ class OpenVulnInboxTests(InboxOrderTests):
         self.assertEqual(self.reply_of("4" * 32)["code"], "BAD_MAC")
 
 
+    # F8: the probe signs its reply under the same key, so the helper can tell it from a forged one.
+    def test_f8_the_reply_carries_a_valid_mac(self):
+        self.drop("good", self.signed(self.fresh("5" * 32)))
+        self.probe._inbox_tick_body()
+        reply = self.reply_of("5" * 32)
+        self.assertTrue(self.probe.cmdbox.mac_ok(KEY, reply), reply)
+
+
 del InboxOrderTests
 
 if __name__ == "__main__":
