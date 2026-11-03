@@ -84,8 +84,39 @@ def _ledger_bytes(path):
     return raw
 
 
+# OPENVULN F10: what the probe's writer puts in a ledger record (writer.LEDGER_RECORDS, the lineage_event fields, and
+# the two the writer adds). Anything else did not come from the probe and never reaches the agent.
+LEDGER_RECORDS = ("LOAD_OBSERVED", "SAVE_OBSERVED", "DESIGNATED_BODY")
+LEDGER_KEYS = frozenset(("record", "guid", "slot_id", "sim_id", "ticks", "loaded_from_slot_id", "lineage_class",
+                         "session_uuid", "reason", "death_type", "wall_timestamp_ms", "session_id"))
+LEDGER_LINE_MAX_BYTES = 8 * 1024
+LEDGER_TEXT_MAX = 256
+
+
+def _ledger_record_ok(record):
+    if not isinstance(record, dict) or record.get("record") not in LEDGER_RECORDS or not set(record) <= LEDGER_KEYS:
+        return False
+    for value in record.values():
+        if value is None or isinstance(value, bool) or (isinstance(value, int) and abs(value) < 2 ** 63):
+            continue
+        if isinstance(value, str) and len(value) <= LEDGER_TEXT_MAX:
+            continue
+        return False
+    return True
+
+
 def lineage(*, paths=None):
     paths = paths or Paths.from_env()
     raw = _ledger_bytes(paths.ledger)
     lines = raw.split(b"\n")[:-1]  # a partial trailing line is ignored, as before
-    return [json.loads(line) for line in lines]
+    records = []
+    for line in lines:
+        if not line.strip() or len(line) > LEDGER_LINE_MAX_BYTES:
+            continue
+        try:
+            record = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if _ledger_record_ok(record):
+            records.append(record)
+    return records
