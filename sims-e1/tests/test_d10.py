@@ -207,7 +207,7 @@ class InboxTests(unittest.TestCase):
             (self.root/'inbox/001.json', self.root/'inbox/001.json.taken'),
             (self.root/'outbox'/('a'*32+'.json.tmp'), self.root/'outbox'/('a'*32+'.json')),
             (self.root/'inbox/001.json.taken', self.root/'done'/('a'*32+'.json'))])
-        self.assertEqual(set(self.reply()), {'id','status','code','result','issuer'})
+        self.assertEqual(set(self.reply()), {'id','status','code','result','issuer','mac'})
 
     def test_a12_reply_issuer_attribution(self):
         self.put(command())

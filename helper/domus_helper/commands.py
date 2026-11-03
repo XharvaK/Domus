@@ -181,6 +181,14 @@ def expire_pending(paths, now_ms=None):
     return cancelled
 
 
+def _authentic(payload, paths):
+    """OPENVULN F8: a reply is the probe's only when its MAC checks under cmd/key; anything else reads as no reply."""
+    try:
+        return cmdbox.mac_ok(command_key(paths), payload)
+    except (OSError, ValueError):
+        return False
+
+
 def read_reply(command_id, *, paths=None):
     """W12 (B3): the probe's reply to one command of ours, or None while it has not answered. Id-matched and checked
     for shape; a reply the probe is still writing reads as not yet."""
@@ -191,6 +199,9 @@ def read_reply(command_id, *, paths=None):
         return None
     if not isinstance(payload, dict) or payload.get("id") != command_id:
         return None
+    if not _authentic(payload, paths):
+        return None
+    payload = dict((name, value) for name, value in payload.items() if name != "mac")
     if payload.get("status") not in ("OK", "REJECTED", "ERROR") or not isinstance(payload.get("result"), dict):
         return None
     return payload
@@ -210,7 +221,8 @@ def send(command, args, issuer, timeout_s=15, *, paths=None):
             payload = cmdbox.decode(reply_path.read_bytes())
         except FileNotFoundError:
             payload = None
-        if isinstance(payload, dict) and payload.get("id") == row["id"]:
+        if isinstance(payload, dict) and payload.get("id") == row["id"] and _authentic(payload, paths):
+            payload = dict((name, value) for name, value in payload.items() if name != "mac")
             if (set(payload) != {"id", "status", "code", "result", "issuer"}
                     or payload["status"] not in ("OK", "REJECTED", "ERROR")
                     or not isinstance(payload["result"], dict)

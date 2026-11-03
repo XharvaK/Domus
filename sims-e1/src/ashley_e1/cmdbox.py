@@ -135,6 +135,15 @@ def parse_key(raw):
     return bytes.fromhex(text)
 
 
+def sign_reply(payload, key):
+    """OPENVULN F8: the reply bytes with their MAC, or unchanged when there is no key (the helper then ignores it)."""
+    if type(key) is not bytes or len(key) != MAC_KEY_BYTES:
+        return payload
+    row = json.loads(payload.decode('utf-8'))
+    row['mac'] = mac(key, row)
+    return json.dumps(row, ensure_ascii=True, separators=(',', ':')).encode('utf-8')
+
+
 def valid_issuer(value):
     if type(value) is not str:
         return False

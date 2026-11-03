@@ -65,6 +65,9 @@ def _probe(paths):
                     answered.append(row)
                     reply = {"id": row["id"], "issuer": row["issuer"],
                              "status": "OK", "code": None, "result": {}}
+                    # OPENVULN F8: signed under cmd/key, as the probe signs its replies.
+                    key = bytes.fromhex((paths.telemetry / "cmd" / "key").read_text(encoding="ascii"))
+                    reply["mac"] = cmdbox.mac(key, reply)
                     temporary = paths.outbox / (path.name + ".tmp")
                     temporary.write_text(json.dumps(reply))
                     temporary.replace(paths.outbox / path.name)

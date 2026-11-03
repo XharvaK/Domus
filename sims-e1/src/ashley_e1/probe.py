@@ -1449,6 +1449,7 @@ def _inbox_tick_body():
         return
     # 2.33.0 (A9-11): the oldest command goes first, by when it was issued, not by its random file name.
     names = sorted(names, key=lambda name: _issued_key(os.path.join(inbox, name), name))[:4]
+    key = _command_key(root)
     for name in names:
         path = os.path.join(inbox, name)
         taken = path + '.taken'
@@ -1472,7 +1473,7 @@ def _inbox_tick_body():
                 except (ValueError, UnicodeError, RecursionError):
                     identity = None
             # OPENVULN F1: only a command whose MAC checks under cmd/key runs, or is attributed to its issuer.
-            verified = type(identity) is dict and cmdbox.mac_ok(_command_key(root), identity)
+            verified = type(identity) is dict and cmdbox.mac_ok(key, identity)
             if cmd is not None and not verified:
                 cmd, code = None, 'BAD_MAC'
             if type(identity) is dict and cmdbox.valid_hex(identity.get('id'), 32):
@@ -1507,8 +1508,8 @@ def _inbox_tick_body():
             else:
                 _INBOX_USED_IDS.add(command_id)
             issuer = identity.get('issuer') if verified else None
-            payload = cmdbox.attribute_reply(
-                cmdbox.reply(command_id, status, code, result), issuer)
+            payload = cmdbox.sign_reply(cmdbox.attribute_reply(
+                cmdbox.reply(command_id, status, code, result), issuer), key)
             write_command_reply(os.path.join(root, 'outbox', command_id + '.json'), payload)
             error_reply_written = status == 'ERROR'
             # Retain the original completion marker on a persistent replay.
@@ -1529,9 +1530,9 @@ def _inbox_tick_body():
             if not error_reply_written:
                 try:
                     issuer = identity.get('issuer') if verified else None
-                    payload = cmdbox.attribute_reply(
+                    payload = cmdbox.sign_reply(cmdbox.attribute_reply(
                         cmdbox.reply(command_id, 'ERROR', type(error).__name__[:64],
-                                     {'ok': False, 'lines': []}), issuer)
+                                     {'ok': False, 'lines': []}), issuer), key)
                     write_command_reply(
                         os.path.join(root, 'outbox', command_id + '.json'), payload)
                 except Exception:
