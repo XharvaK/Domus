@@ -398,7 +398,13 @@ class SpotActTests(unittest.TestCase):
             _FakePoint(_FakeLocation(_FakeTransform(spot["position"], spot["orientation"]), spot["routing_surface"])),
             "context")
         self.probe._menu_tick(row)  # starts the build
-        self.probe._menu_tick(row)  # finishes it: its spots are the ones an act may name
+        # A build step stops when its wall-clock budget is used, so the build may take several ticks on a loaded
+        # machine; tick until it is done (bounded). Its spots are the ones an act may name.
+        for _ in range(50):
+            self.probe._menu_tick(row)
+            if self.probe._MENU is None:
+                break
+        self.assertIsNone(self.probe._MENU)
         self.assertEqual(sorted(self.probe._E2.spots), ["1"])
         self.assertEqual(self.probe._E2.spots["1"]["room"], "4")
         ok, connection = self.act(object_id="1")
