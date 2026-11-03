@@ -1,9 +1,11 @@
 """Atomic command publication and id-matched replies over local files."""
+import hashlib
 import json
 import math
 import os
 import secrets
 import stat
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -45,31 +47,76 @@ def envelope(command, args, issuer, ttl_ms=30_000):
 
 
 _PINNED_KEYS = {}
+KEY_FINGERPRINT_NAME = "cmd_key.sha256"
 
 
-def command_key(paths):
-    """OPENVULN F1/F8: the shared command key in cmd/key. Made once, owner-only (0600), by an exclusive create, so two
-    helpers starting together agree on one key. The probe only reads it. AU NB-3: the first key read is pinned for the
-    life of this process, so a later swap of the file by a cmd/ writer is not believed; a key file that is a link or
-    not a regular file is refused."""
-    key_file = paths.telemetry / "cmd" / "key"
-    pinned = _PINNED_KEYS.get(str(key_file))
-    if pinned is not None:
-        return pinned
+def _fingerprint(key):
+    return hashlib.sha256(key.hex().encode("ascii")).hexdigest()
+
+
+def _create_key(key_file):
+    """A fresh key by an exclusive create, owner-only; False when the file is already there."""
     try:
         descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
     except FileExistsError:
-        pass
-    else:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(secrets.token_hex(cmdbox.MAC_KEY_BYTES).encode("ascii"))
-            handle.flush()
-            os.fsync(handle.fileno())
+        return False
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(secrets.token_hex(cmdbox.MAC_KEY_BYTES).encode("ascii"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    return True
+
+
+def _read_key(key_file):
     if not stat.S_ISREG(os.lstat(key_file).st_mode):
         raise ValueError("cmd/key is not a regular file")
     key = cmdbox.parse_key(_reply_bytes(key_file, cmdbox.MAC_KEY_FILE_MAX))  # bounded, never blocks (F6)
     if key is None:
         raise ValueError("cmd/key is not a command key")
+    return key
+
+
+def _write_fingerprint(path, key):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(_fingerprint(key).encode("ascii") + b"\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def command_key(paths):
+    """OPENVULN F1/F8: the shared command key in cmd/key. Made once, owner-only (0600), by an exclusive create, so two
+    helpers starting together agree on one key. The probe only reads it.
+    AU NB-3: the first key read is pinned for the life of this process, so a later swap of the file by a cmd/ writer
+    is not believed; a key file that is a link or not a regular file is refused.
+    AU recheck NB-3: the helper keeps the SHA-256 of the key it made in its own data folder, outside cmd/. At the first
+    read of each helper process, a cmd/key that does not match (swapped between sessions) is refused with the error
+    code DOMUS_KEY_MISMATCH, replaced by a fresh key, and the fingerprint updated. With no fingerprint yet (a helper
+    from before this change), the key found is adopted and its fingerprint recorded."""
+    key_file = paths.telemetry / "cmd" / "key"
+    pinned = _PINNED_KEYS.get(str(key_file))
+    if pinned is not None:
+        return pinned
+    fingerprint_file = paths.data_dir / KEY_FINGERPRINT_NAME
+    created = _create_key(key_file)
+    key = _read_key(key_file)
+    try:
+        recorded = fingerprint_file.read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        recorded = None
+    if not created and recorded is not None and recorded != _fingerprint(key):
+        print("DOMUS_KEY_MISMATCH: cmd/key is not the key this helper made (changed between sessions); refusing it "
+              "and writing a fresh key", file=sys.stderr, flush=True)
+        os.remove(key_file)
+        if not _create_key(key_file):
+            raise ValueError("cmd/key could not be replaced")
+        key = _read_key(key_file)
+        recorded = None
+    if recorded != _fingerprint(key):
+        _write_fingerprint(fingerprint_file, key)
     _PINNED_KEYS[str(key_file)] = key
     return key
 
