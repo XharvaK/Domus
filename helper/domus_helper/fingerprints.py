@@ -214,19 +214,50 @@ MODS_MAX_FILES = 10_000
 MODS_MAX_HASH_BYTES = 8 * 1024 ** 3
 
 
+def _linked(entry):
+    """A symlink, an NTFS junction, or another reparse point: the walk never enters or hashes one."""
+    if entry.is_symlink():
+        return True
+    is_junction = getattr(entry, "is_junction", None)
+    if is_junction is not None and is_junction():
+        return True
+    attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    return bool(attributes & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
 def _mods(mods_root):
     """The Mods files (path, bytes, sha256) in path order, and whether the walk saw them all within its caps."""
     files = []
     complete = True
-    try:
-        for path in mods_root.rglob("*"):
-            if path.is_file():
-                if len(files) >= MODS_MAX_FILES:
-                    complete = False
-                    break
-                files.append(path)
-    except OSError:
-        files = []
+    # OPENVULN F12: an explicit walk that enters no link or junction and each folder once (by device and inode), so
+    # a planted cycle ends and a link to a file outside Mods is never hashed.
+    pending = [mods_root]
+    seen = set()
+    while pending and complete:
+        folder = pending.pop()
+        try:
+            identity = os.stat(folder, follow_symlinks=False)
+            key = (identity.st_dev, identity.st_ino)
+            if key in seen:
+                continue
+            seen.add(key)
+            with os.scandir(folder) as listing:
+                entries = sorted(listing, key=lambda entry: entry.name)
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if _linked(entry):
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    if len(files) >= MODS_MAX_FILES:
+                        complete = False
+                        break
+                    files.append(Path(entry.path))
+            except OSError:
+                continue
     mods = []
     hashed = 0
     for path in sorted(files):
