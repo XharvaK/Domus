@@ -19,6 +19,8 @@ def fake_game_root(tmp_path, monkeypatch):
     (bin_dir / "Default.ini").write_text(
         "[Version]\ngameversion = 1.129.39.1030\n", encoding="utf-8")
     monkeypatch.setenv("DOMUS_GAME_ROOT", str(root))
+    # AU note: a test that falls back to the default data folder (E:\\Domus) writes in tmp_path, not in the checkout.
+    monkeypatch.setenv("DOMUS_DATA_DIR", str(tmp_path / "domus-data"))
     return root
 
 
