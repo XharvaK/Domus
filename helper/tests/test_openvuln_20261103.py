@@ -115,3 +115,21 @@ def test_f4_an_oversized_reply_file_is_not_read_into_memory(paths):
         thread.join(2)
     assert reply.status == "OK"
     assert peak < 32 * 1024 * 1024
+
+
+def test_f5_a_folder_at_the_reply_path_reads_as_no_reply_yet(paths):
+    def plant(target):
+        target.mkdir()
+        return target.rmdir
+    stop, thread = _planting_replier(paths, plant)
+    try:
+        assert commands.send("status", {}, "helper", timeout_s=5, paths=paths).status == "OK"
+    finally:
+        stop.set()
+        thread.join(2)
+
+
+def test_f5_read_reply_reads_a_folder_as_no_reply(paths):
+    command_id = commands.publish("status", {}, "helper", paths=paths)
+    (paths.outbox / (command_id + ".json")).mkdir()
+    assert commands.read_reply(command_id, paths=paths) is None
