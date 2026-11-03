@@ -63,3 +63,55 @@ def test_f8_a_signed_reply_is_accepted(paths):
     from conftest import replier
     with replier(paths):
         assert commands.send("status", {}, "helper", timeout_s=2, paths=paths).status == "OK"
+
+
+# F4, F5, F6: the reply poll reads a bounded, regular file without blocking, and keeps its deadline.
+import threading
+import time
+import tracemalloc
+
+
+def _planting_replier(paths, plant, delay=0.3):
+    """For the first command: plant something at its reply path, then after `delay` write the real signed reply."""
+    stop = threading.Event()
+
+    def worker():
+        while not stop.is_set():
+            found = list(paths.inbox.glob("*.json"))
+            if found:
+                row = json.loads(found[0].read_bytes())
+                target = paths.outbox / (row["id"] + ".json")
+                cleanup = plant(target)
+                if stop.wait(delay):
+                    return
+                if cleanup:
+                    cleanup()
+                key = bytes.fromhex((paths.telemetry / "cmd" / "key").read_text(encoding="ascii"))
+                reply = dict(id=row["id"], issuer=row["issuer"], status="OK", code=None, result={})
+                reply["mac"] = cmdbox.mac(key, reply)
+                temporary = paths.outbox / "real.tmp"
+                temporary.write_text(json.dumps(reply))
+                os.replace(temporary, target)
+                return
+            stop.wait(0.002)
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    return stop, thread
+
+
+def test_f4_an_oversized_reply_file_is_not_read_into_memory(paths):
+    def plant(target):
+        with open(target, "wb") as handle:
+            handle.truncate(256 * 1024 * 1024)  # sparse: no disk, but read_bytes would allocate it all
+        return None
+    stop, thread = _planting_replier(paths, plant)
+    tracemalloc.start()
+    try:
+        reply = commands.send("status", {}, "helper", timeout_s=5, paths=paths)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+        stop.set()
+        thread.join(2)
+    assert reply.status == "OK"
+    assert peak < 32 * 1024 * 1024
