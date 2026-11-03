@@ -1449,12 +1449,26 @@ def _expired_act_event(identity):
     return _emit(row)
 
 
+_COMMAND_KEY = None
+
+
 def _command_key(root):
-    """OPENVULN F1: the shared command key in cmd/key, or None when it is missing or not a key."""
+    """OPENVULN F1, AU NB-3: the shared command key in cmd/key, or None when it is missing or not a key. The first
+    good key is pinned for the life of the probe, so whoever can write cmd/ cannot swap the file for a key of their
+    own later. A key file that is a link or not a regular file is not read."""
+    global _COMMAND_KEY
+    if _COMMAND_KEY is not None:
+        return _COMMAND_KEY
+    path = os.path.join(root, 'key')
     try:
-        return cmdbox.parse_key(read_command_key(os.path.join(root, 'key')))
+        if os.path.islink(path) or not os.path.isfile(path):
+            return None
+        key = cmdbox.parse_key(read_command_key(path))
     except OSError:
         return None
+    if key is not None:
+        _COMMAND_KEY = key
+    return key
 
 
 def _inbox_tick_body():
@@ -1463,9 +1477,13 @@ def _inbox_tick_body():
     inbox = os.path.join(root, 'inbox')
     _INBOX_TICKS += 1
     try:
-        listed = [name for name in os.listdir(inbox) if name.endswith('.json')]
+        entries = set(os.listdir(inbox))
     except OSError:
         return
+    # AU NB-4: a name whose .taken place is a folder can never be taken; it is left out before the scan, so any
+    # number of them cannot fill the scan or the places of a tick.
+    listed = [name for name in entries if name.endswith('.json')
+              and not (name + '.taken' in entries and os.path.isdir(os.path.join(inbox, name + '.taken')))]
     # OPENVULN F2: a name the pump could not take sits out _INBOX_STUCK_TICKS ticks, so entries that cannot be taken
     # never hold every place of a tick; it is tried again after, in case the failure was passing (a file lock).
     for name in list(_INBOX_STUCK):
@@ -1473,9 +1491,13 @@ def _inbox_tick_body():
             del _INBOX_STUCK[name]
     names = sorted(name for name in listed if name not in _INBOX_STUCK)[:_INBOX_SCAN]
     # 2.33.0 (A9-11): the oldest command goes first, by when it was issued, not by its random file name.
-    names = sorted(names, key=lambda name: _issued_key(os.path.join(inbox, name), name))[:4]
+    names = sorted(names, key=lambda name: _issued_key(os.path.join(inbox, name), name))
     key = _command_key(root)
+    places = 4
     for name in names:
+        # AU NB-4: a take that fails does not use one of the four places of the tick.
+        if places <= 0:
+            break
         path = os.path.join(inbox, name)
         taken = path + '.taken'
         command_id = uuid.uuid4().hex
@@ -1488,6 +1510,7 @@ def _inbox_tick_body():
             except OSError:
                 _INBOX_STUCK[name] = _INBOX_TICKS
                 continue
+            places -= 1
             raw = read_command_file(taken)
             cmd, code = cmdbox.parse(raw, int(time.time() * 1000), _INBOX_USED_IDS)
             # A rejected JSON still needs a safe reply name. An invalid/missing id
@@ -1649,6 +1672,8 @@ def initialize_probe():
         return
     _INITIALIZED = True
     _TELEMETRY_ROOT = derive_telemetry_root(__file__)
+    if _TELEMETRY_ROOT is not None:
+        _command_key(os.path.join(_TELEMETRY_ROOT, 'cmd'))  # AU NB-3: pin the key at start when it is there
     _register_autostart_hooks()
     print('ashley_e1 bootstrap autostart hooks: %s' % dict(_AUTOSTART_HOOKS),
           flush=True)

@@ -44,10 +44,18 @@ def envelope(command, args, issuer, ttl_ms=30_000):
     return row, raw
 
 
+_PINNED_KEYS = {}
+
+
 def command_key(paths):
     """OPENVULN F1/F8: the shared command key in cmd/key. Made once, owner-only (0600), by an exclusive create, so two
-    helpers starting together agree on one key. The probe only reads it."""
+    helpers starting together agree on one key. The probe only reads it. AU NB-3: the first key read is pinned for the
+    life of this process, so a later swap of the file by a cmd/ writer is not believed; a key file that is a link or
+    not a regular file is refused."""
     key_file = paths.telemetry / "cmd" / "key"
+    pinned = _PINNED_KEYS.get(str(key_file))
+    if pinned is not None:
+        return pinned
     try:
         descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
     except FileExistsError:
@@ -57,9 +65,12 @@ def command_key(paths):
             handle.write(secrets.token_hex(cmdbox.MAC_KEY_BYTES).encode("ascii"))
             handle.flush()
             os.fsync(handle.fileno())
+    if not stat.S_ISREG(os.lstat(key_file).st_mode):
+        raise ValueError("cmd/key is not a regular file")
     key = cmdbox.parse_key(_reply_bytes(key_file, cmdbox.MAC_KEY_FILE_MAX))  # bounded, never blocks (F6)
     if key is None:
         raise ValueError("cmd/key is not a command key")
+    _PINNED_KEYS[str(key_file)] = key
     return key
 
 
