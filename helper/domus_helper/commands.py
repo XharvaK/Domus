@@ -57,8 +57,7 @@ def command_key(paths):
             handle.write(secrets.token_hex(cmdbox.MAC_KEY_BYTES).encode("ascii"))
             handle.flush()
             os.fsync(handle.fileno())
-    with open(key_file, "rb") as handle:
-        key = cmdbox.parse_key(handle.read(cmdbox.MAC_KEY_FILE_MAX + 1))
+    key = cmdbox.parse_key(_reply_bytes(key_file, cmdbox.MAC_KEY_FILE_MAX))  # bounded, never blocks (F6)
     if key is None:
         raise ValueError("cmd/key is not a command key")
     return key
@@ -186,18 +185,25 @@ def expire_pending(paths, now_ms=None):
 REPLY_MAX_BYTES = 8 * 1024 * 1024
 
 
-def _reply_bytes(path):
-    """The reply file's bytes, or None while there is no reply to read: missing, or larger than REPLY_MAX_BYTES (read
-    no further than the cap, so a planted huge file never fills memory)."""
+def _reply_bytes(path, limit=REPLY_MAX_BYTES):
+    """The reply file's bytes, or None while there is no reply to read: missing, or larger than `limit` (read no
+    further than the cap, so a planted huge file never fills memory)."""
     # OPENVULN F5: anything but a readable regular file (a folder, a device, no access) is no reply yet, never a crash.
+    # OPENVULN F6: opened without blocking, so a named pipe (or other special file) planted there returns at once
+    # instead of holding the poll past its deadline.
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        with open(path, "rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                return None
-            raw = handle.read(REPLY_MAX_BYTES + 1)
+        descriptor = os.open(path, flags)
     except OSError:
         return None
-    return None if len(raw) > REPLY_MAX_BYTES else raw
+    try:
+        with os.fdopen(descriptor, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return None
+            raw = handle.read(limit + 1)
+    except OSError:
+        return None
+    return None if len(raw) > limit else raw
 
 
 def _authentic(payload, paths):
