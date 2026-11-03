@@ -1397,6 +1397,10 @@ def _inbox_tick(alarm_handle=None):
 
 
 _INBOX_SCAN = 64
+# OPENVULN F2: names the pump could not take, with the tick it last tried; they sit out this many ticks (about a minute).
+_INBOX_STUCK = {}
+_INBOX_STUCK_TICKS = 60
+_INBOX_TICKS = 0
 
 
 def _issued_key(path, name):
@@ -1440,13 +1444,20 @@ def _command_key(root):
 
 
 def _inbox_tick_body():
-    global _INBOX_ERRORS
+    global _INBOX_ERRORS, _INBOX_TICKS
     root = os.path.join(_TELEMETRY_ROOT, 'cmd')
     inbox = os.path.join(root, 'inbox')
+    _INBOX_TICKS += 1
     try:
-        names = sorted(name for name in os.listdir(inbox) if name.endswith('.json'))[:_INBOX_SCAN]
+        listed = [name for name in os.listdir(inbox) if name.endswith('.json')]
     except OSError:
         return
+    # OPENVULN F2: a name the pump could not take sits out _INBOX_STUCK_TICKS ticks, so entries that cannot be taken
+    # never hold every place of a tick; it is tried again after, in case the failure was passing (a file lock).
+    for name in list(_INBOX_STUCK):
+        if name not in listed or _INBOX_TICKS - _INBOX_STUCK[name] >= _INBOX_STUCK_TICKS:
+            del _INBOX_STUCK[name]
+    names = sorted(name for name in listed if name not in _INBOX_STUCK)[:_INBOX_SCAN]
     # 2.33.0 (A9-11): the oldest command goes first, by when it was issued, not by its random file name.
     names = sorted(names, key=lambda name: _issued_key(os.path.join(inbox, name), name))[:4]
     key = _command_key(root)
@@ -1461,6 +1472,7 @@ def _inbox_tick_body():
             try:
                 os.replace(path, taken)
             except OSError:
+                _INBOX_STUCK[name] = _INBOX_TICKS
                 continue
             raw = read_command_file(taken)
             cmd, code = cmdbox.parse(raw, int(time.time() * 1000), _INBOX_USED_IDS)
