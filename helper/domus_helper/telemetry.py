@@ -1,6 +1,8 @@
 """Read-only schema-v3 telemetry access."""
 import json
+import os
 import re
+import stat
 from pathlib import Path
 
 from .paths import Paths
@@ -64,7 +66,26 @@ def tail(kinds, n, *, paths=None, session=None):
                        if not kinds or r["event_kind"] in kinds), maxlen=n))
 
 
+# OPENVULN F9: the probe's writer never lets the ledger pass 2 MiB (writer.MAX_LEDGER_BYTES); a larger file is not its.
+LEDGER_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _ledger_bytes(path):
+    """The ledger's bytes, read no further than LEDGER_MAX_BYTES, from a regular file opened without blocking.
+    Raises ValueError for a ledger larger than the cap (fail closed: nothing is returned from it)."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("the lineage ledger is not a regular file")
+        raw = handle.read(LEDGER_MAX_BYTES + 1)
+    if len(raw) > LEDGER_MAX_BYTES:
+        raise ValueError("the lineage ledger is larger than 2 MiB, so it is not read")
+    return raw
+
+
 def lineage(*, paths=None):
     paths = paths or Paths.from_env()
-    with paths.ledger.open("rb") as handle:
-        return [json.loads(raw) for raw in handle if raw.endswith(b"\n")]
+    raw = _ledger_bytes(paths.ledger)
+    lines = raw.split(b"\n")[:-1]  # a partial trailing line is ignored, as before
+    return [json.loads(line) for line in lines]
