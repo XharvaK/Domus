@@ -580,6 +580,15 @@ class MenuSenseTests(unittest.TestCase):
         finally:
             self.probe.act_menu.MenuBuild = real
 
+    def _finish_build(self, row):
+        # A build step stops when its wall-clock budget is used, so a build may take several ticks on a loaded
+        # machine; tick until it is done (bounded), not a fixed number of times.
+        for _ in range(200):
+            self.probe._menu_tick(row)
+            if self.probe._MENU is None:
+                return
+        self.fail("the menu build did not finish in 200 ticks")
+
     def _menu_written_and_rebuilt(self):
         self.base.LedgerWriter.records = [self.base.continuing()[0]]
         self.assertTrue(self.probe._cmd_arm("HOME"))
@@ -589,7 +598,7 @@ class MenuSenseTests(unittest.TestCase):
         self.probe._now_s = lambda: now["s"]
         self.probe._menu_reset()
         self.probe._menu_tick(self.row)   # starts a build
-        self.probe._menu_tick(self.row)   # finishes it and writes the menu
+        self._finish_build(self.row)      # finishes it and writes the menu
         menus = self.base.e2("act_menu")
         # R3 (PROBE3-3): the build's near part (the object 2 m away) is written first, then the whole menu.
         self.assertEqual([("near" in menu, len(menu["objects"])) for menu in menus], [(True, 1), (False, 2)])
@@ -602,7 +611,7 @@ class MenuSenseTests(unittest.TestCase):
             self.probe.schema.validate_record(row)
         now["s"] += 25.0
         self.probe._menu_tick(self.row)   # a rebuild after REBUILD_S ...
-        self.probe._menu_tick(self.row)   # ... that changes nothing writes nothing (the empty near part is written again)
+        self._finish_build(self.row)      # ... that changes nothing writes nothing (the empty near part is written again)
         self.assertEqual(len(self.base.e2("act_menu")), 3)
         self.allowed = set()
         # 2.37.0 (W10 P2): a far object's outcome is kept for FAR_CACHE_S (120 s); the time runs out before the room change.
