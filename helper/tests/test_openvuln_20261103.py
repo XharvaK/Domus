@@ -167,3 +167,18 @@ def test_f6_a_named_pipe_at_the_reply_path_cannot_hang_send_past_its_deadline(pa
     assert not hung, "send blocked on a named pipe past its deadline"
     assert outcome == ["timeout"]
     assert time.monotonic() - started < 3
+
+
+# F9: the lineage ledger is read only up to the writer's own 2 MiB cap; a larger one is refused, not loaded.
+def test_f9_an_oversized_lineage_ledger_is_refused_without_loading_it(paths):
+    from domus_helper import telemetry
+    with open(paths.ledger, "wb") as handle:
+        handle.truncate(512 * 1024 * 1024)
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValueError, match="2 MiB"):
+            telemetry.lineage(paths=paths)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 16 * 1024 * 1024
