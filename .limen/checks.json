@@ -1,0 +1,5 @@
+{
+  "test_cmd": "cd helper && python -m pytest -q && cd ../sims-e1 && python -m unittest discover -s tests",
+  "test_timeout_seconds": 1800,
+  "reuse_test_for": ["*.md"]
+}
