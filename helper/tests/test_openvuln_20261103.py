@@ -236,3 +236,54 @@ def test_f11_a_small_mods_folder_is_complete(tmp_path):
     result = fp.fingerprint(paths=_mods_paths(tmp_path, 4))
     assert len(result["mods"]) == 4
     assert result["mods_complete"] is True
+
+
+# F12: the Mods walk follows no link or junction, and sees each folder once, so a cycle cannot run it without end.
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks")
+def test_f12_the_mods_walk_follows_no_links(tmp_path):
+    from domus_helper import fingerprints as fp
+    paths = _mods_paths(tmp_path, 3)
+    mods = paths.sims_root / "Mods"
+    outside = tmp_path / "outside.secret"
+    outside.write_bytes(b"not a mod")
+    os.symlink(outside, mods / "f00" / "linked.package")
+    os.symlink(mods, mods / "f01" / "loop", target_is_directory=True)
+    result = fp.fingerprint(paths=paths)
+    names = sorted(mod["path"] for mod in result["mods"])
+    assert names == ["f00/m000.package", "f01/m001.package", "f02/m002.package"]
+    assert result["mods_complete"] is True
+
+
+def test_f12_a_junction_is_never_entered(tmp_path, monkeypatch):
+    from domus_helper import fingerprints as fp
+    paths = _mods_paths(tmp_path, 3)
+    real_scandir = os.scandir
+
+    class Junction:
+        """A DirEntry the way Windows reports an NTFS junction: a folder, not a symlink, is_junction true."""
+        def __init__(self, entry):
+            self._entry = entry
+            self.name, self.path = entry.name, entry.path
+
+        def is_junction(self):
+            return self.name == "f01"
+
+        def __getattr__(self, name):
+            return getattr(self._entry, name)
+
+    class Listing:
+        def __init__(self, path):
+            self._inner = real_scandir(path)
+
+        def __enter__(self):
+            return (Junction(entry) for entry in self._inner)
+
+        def __exit__(self, *exc):
+            self._inner.close()
+
+        def __iter__(self):
+            return (Junction(entry) for entry in self._inner)
+    monkeypatch.setattr(fp.os, "scandir", Listing)
+    names = sorted(mod["path"] for mod in fp.fingerprint(paths=paths)["mods"])
+    assert "f01/m001.package" not in names
+    assert "f00/m000.package" in names
