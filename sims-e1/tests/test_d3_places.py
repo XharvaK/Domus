@@ -1,6 +1,7 @@
 """2.35.0 (D3): going places on the lot. The menu lists a standable spot per room (and level) with objects,
 and the front door outside; its act is the game's Go Here. Fakes only: the game's own search, terrain and pick
 are stubbed here, and the names the probe reads from the game are checked where they are used."""
+import time
 import types
 import unittest
 
@@ -361,6 +362,14 @@ class SpotActTests(unittest.TestCase):
         self.assertEqual(self.base.pushes, [])
 
     def test_the_spot_the_newest_menu_build_found_is_the_one_the_act_names(self):
+        self._the_spot_the_newest_menu_build_found_is_the_one_the_act_names(slow=False)
+
+    def test_the_spot_is_named_even_when_the_menu_build_runs_over_its_tick_budget(self):
+        # Flake root cause: a build step stops when its wall-clock budget is used, so on a loaded machine the build
+        # takes more than one step. A slow lot read forces that here.
+        self._the_spot_the_newest_menu_build_found_is_the_one_the_act_names(slow=True)
+
+    def _the_spot_the_newest_menu_build_found_is_the_one_the_act_names(self, slow):
         bed = types.SimpleNamespace(id=11, zone_id=1, routing_surface="S0", level=0, is_sim=False,
                                     position=types.SimpleNamespace(x=2.0, y=0.0, z=0.0, room="4"),
                                     definition=types.SimpleNamespace(id=511),
@@ -372,8 +381,16 @@ class SpotActTests(unittest.TestCase):
         self.probe._E2.publish_spots(self.zone, {})  # only the menu's own build may supply the spot
         self.probe._lot_snapshot = lambda: ([bed], None)
         self.probe.observers._room = lambda obj, position: obj.position.room
+        if slow:
+            spot_start = self.actuator.spot_start
+            budget_s = self.probe.act_menu.FIRST_BUDGET_MS / 1000.0
+            def slow_start(obj, kind, side=1.0):
+                time.sleep(budget_s * 1.5)
+                return obj.position
         self.actuator.front_door = lambda: None
         self.actuator.spot_start = lambda obj, kind, side=1.0: obj.position
+        if slow:
+            self.actuator.spot_start = slow_start
         self.actuator.standable_spot = lambda sim, start, surface: (
             types.SimpleNamespace(x=start.x, y=0.0, z=start.z, room=start.room), "facing")
         self.actuator.room_at = lambda obj, position, level: position.room
