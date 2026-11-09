@@ -17,7 +17,7 @@ from . import fingerprints as fingerprint_reader
 from . import pace
 from . import reach
 from .vendor import schema
-from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, merge_near, options as act_options, people_heard, people_names, queue_options, zones_differ
+from .acts import OPTIONS_LIMIT, OPTIONS_OBJECTS_LIMIT, ActCourier, MenuParts, RefBook, act_names, act_words_by_guid, dialog_options, felt_needs, merge_near, options as act_options, people_heard, people_names, queue_options, zones_differ
 from .attachment import AttachmentMonitor
 from . import inputs as game_inputs
 from . import overlay as overlay_pages
@@ -370,7 +370,8 @@ class Bridge:
                              withheld=self._withheld_names(), room=(row.get("zone") or {}).get("room"),
                              room_labels=self._room_labels(), cut=cut,
                              objects_limit=max(0, OPTIONS_OBJECTS_LIMIT - len(asked)),
-                             states=self._index["states"])  # W13 (D9.6): what is broken or dirty, from the things list
+                             states=self._index["states"],  # W13 (D9.6): what is broken or dirty, from the things list
+                             needs=felt_needs(row))  # D2 (2026-11-09): the felt needs, worst first, keep the cap
         return asked + listed
 
     def _note_build_override(self, override, now):

@@ -13,6 +13,10 @@ from .transport import SyncRefused
 # N8 (F4): the options of one view: at most 160 objects and 32,768 bytes (contract.py takes the same).
 OPTIONS_LIMIT = 32768
 OPTIONS_OBJECTS_LIMIT = 160
+# D2 (2026-11-09): an option object says which needs its acts relieve (serves), by the portrait's need ids: at most
+# this many ids of at most this many characters (the same bound the probe's schema checks).
+SERVES_MAX = 8
+SERVE_MAX_CHARS = 32
 # N8 (F4): an object within this many metres of her is near, as one in her room is.
 NEAR_M = 4.0
 # Mint expires an act its helper never picked up after 90 s; a written act the probe never
@@ -800,19 +804,70 @@ def _phone_left_out(menu, resolve):
     return lines
 
 
+def felt_needs(row):
+    """D2 (2026-11-09): the needs her body feels now, worst first: her motive rows with a numeric value, ordered by
+    value (the lowest first) and then by the row's own order, keyed as the portrait's needs are. At most SERVES_MAX."""
+    rows = []
+    for index, item in enumerate((row if isinstance(row, dict) else {}).get("motives") or ()):
+        if not isinstance(item, dict):
+            continue
+        need = item.get("id")
+        value = item.get("value")
+        if not isinstance(need, str) or not 1 <= len(need) <= SERVE_MAX_CHARS:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        rows.append((value, index, need))
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return tuple(need for _value, _index, need in rows[:SERVES_MAX])
+
+
+def _serves_of(item):
+    """D2 (2026-11-09): the needs one option object's acts advertise, from the probe's per-act and per-object serves:
+    deduplicated, at most SERVES_MAX ids of at most SERVE_MAX_CHARS characters, in the order they were met."""
+    found = []
+    groups = [act.get("serves") for act in item.get("acts") or [] if isinstance(act, dict)]
+    groups.append(item.get("serves"))
+    for group in groups:
+        if not isinstance(group, (list, tuple)):
+            continue
+        for need in group:
+            if (isinstance(need, str) and 1 <= len(need) <= SERVE_MAX_CHARS
+                    and need not in found and len(found) < SERVES_MAX):
+                found.append(need)
+    return found
+
+
+def _need_rank(entry, needs):
+    """D2 (2026-11-09): the index of the entry's worst felt need in needs (0 is worst), or len(needs) when it serves
+    none. 0 for every entry when nothing is felt."""
+    rank = len(needs)
+    for need in entry.get("serves") or ():
+        try:
+            index = needs.index(need)
+        except ValueError:
+            continue
+        if index < rank:
+            rank = index
+    return rank
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
-            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None):
+            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None, needs=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
     (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
     of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
-    each object names its room (room_labels gives the label, when known) and whether it is near. Farthest
-    objects are left out until it fits the byte budget and the object limit; cut (a dict, filled in) names
-    how many were left out and in which rooms. W2h: an act whose interaction the notebook has seen end on a
+    each object names its room (room_labels gives the label, when known) and whether it is near. D2 (2026-11-09):
+    an object whose acts relieve a need says so (serves, the portrait's ids), and needs (felt needs, worst first)
+    keeps such objects ahead of the rest, so the cut takes them last. Farthest objects are left out until it fits
+    the byte budget and the object limit; cut (a dict, filled in) names how many were left out and in which rooms.
+    W2h: an act whose interaction the notebook has seen end on a
     screen only the User's hands can use stays listed, marked with what it opens. HE12: room is the room she
     is in now (the zone's), and the menu's own room comes with the menu."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
     refs = RefBook() if refs is None else refs
+    needs = tuple(needs or ())
     result = []
     left_out = []
     phone_left_out = _phone_left_out(menu, resolve)
@@ -892,6 +947,9 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             near = _near(item, room)
             entry = {"object": name, "object_id": str(item.get("object_id")), "where": where, "acts": acts,
                      "near": near}
+            serves = _serves_of(item)
+            if serves:
+                entry["serves"] = serves
             if label:
                 entry["room"] = label[:64]
             if item.get("reach") is False:
@@ -925,12 +983,14 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             # D1: an object with no printed act is not folded into one that has acts.
             foldable = bool(acts) and not is_spot and item.get("phone") is not True and item.get("class") != "sim"
             result.append((entry, where_named, room_id, is_spot, foldable))
-    # Near first; then the rooms in the menu's order, and a spot before the objects of its own room, so a cut takes
-    # a spot only once its room's objects are gone (2.35.0, D3). Within a room the menu's order is kept.
+    # D2 (2026-11-09): what the felt needs require first (the worst need's objects, then the next), so a cut takes
+    # them last. Then near first; then the rooms in the menu's order, and a spot before the objects of its own room,
+    # so a cut takes a spot only once its room's objects are gone (2.35.0, D3). Within a rank the menu's order is kept.
     heads = {}
     for index, row in enumerate(result):
         heads.setdefault(row[2], index)
-    result.sort(key=lambda row: (row[0]["near"] is not True, heads[row[2]], not row[3]))
+    result.sort(key=lambda row: (_need_rank(row[0], needs), row[0]["near"] is not True,
+                                 heads[row[2]], not row[3]))
     # 2.38.0 (W11 H1): folded before the budget, so the budget counts what she is shown, not the same thing many times.
     result = _fold(result)
     while result and (len(result) > objects_limit or _bytes(_budget_objects(result, refs)) > limit):

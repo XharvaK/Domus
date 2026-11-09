@@ -148,9 +148,12 @@ MENU_ACT_KEYS = ("guid64", "name", "text_key")
 # an object's on_lot (bool or None), acts_cut (passing acts the per-object cap left out, after folding texts) and
 # refusals (near objects only: at most 8 {text_key, reason_key} of the acts the game refused).
 # D1 (2026-11-09): an act that advertises a need carries relief; an object carries excluded (its left-out acts).
-MENU_ACT_OPTIONAL_KEYS = ("variant", "needs_sim", "relief")
+# D2 (2026-11-09): an act (or its object) says which needs it relieves, by the portrait's need ids (serves).
+MENU_ACT_OPTIONAL_KEYS = ("variant", "needs_sim", "relief", "serves")
 MENU_MAX_VARIANT = 999
-MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals", "excluded")
+MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals", "excluded", "serves")
+MENU_MAX_SERVES = 8
+MENU_MAX_SERVE_CHARS = 32
 MENU_MAX_REFUSALS = 8
 MENU_REFUSAL_KEYS = ("text_key", "reason_key")
 # 2.39.0 (W12 C8, C11): part 0's dropped {objects, rooms} and spot_stages counters.
@@ -989,6 +992,8 @@ def _validate_menu(payload):
         excluded = item.get("excluded")
         if excluded is not None:
             _menu_excluded(excluded)
+        if item.get("serves") is not None:
+            _menu_serves(item["serves"])
         _require(isinstance(acts, list) and len(acts) <= cap + sum(
             1 for act in acts if isinstance(act, dict) and act.get("relief") is True)
             and (acts or item.get("refusals") or excluded), "menu acts")
@@ -1003,6 +1008,9 @@ def _validate_menu(payload):
             # D1 (2026-11-09): a need-relief act is marked so the cap can let it through.
             if "relief" in act:
                 _require(act["relief"] is True, "menu relief")
+            # D2 (2026-11-09): the needs this act advertises it relieves.
+            if "serves" in act:
+                _menu_serves(act["serves"])
             _require(isinstance(act["guid64"], str), "menu guid64")
             string_id(act["guid64"], "menu guid64")
             bounded_string(act["name"], 128, "menu act name", False)
@@ -1019,6 +1027,14 @@ def _menu_excluded(excluded):
         _require(isinstance(item, dict) and set(item) == set(MENU_EXCLUDED_KEYS), "menu excluded shape")
         bounded_string(item["name"], 128, "menu excluded name", False)
         _require(item["why"] in MENU_ACT_EXCLUDED_WHY, "menu excluded why")
+
+
+def _menu_serves(serves):
+    """D2 (2026-11-09): the needs an act (or an object's acts) relieves, as the portrait's need ids: at most
+    MENU_MAX_SERVES ids of at most MENU_MAX_SERVE_CHARS characters each."""
+    _require(type(serves) is list and len(serves) <= MENU_MAX_SERVES, "menu serves")
+    for need in serves:
+        _require(isinstance(need, str) and 1 <= len(need) <= MENU_MAX_SERVE_CHARS, "menu serves need")
 
 
 def _menu_dropped(dropped):

@@ -198,6 +198,51 @@ def ordered(objects):
     return sorted(kept, key=order)
 
 
+def felt_needs(motives):
+    """D2 (2026-11-09): the needs she feels now, worst first: her motive rows with a numeric value, ordered by value
+    (the lowest first) and then by the row's own order, as the portrait's need ids name them. At most MENU_MAX_SERVES.
+    Unread values are skipped: a need the body does not report is not a need the cap can rank."""
+    rows = []
+    for index, item in enumerate(motives if isinstance(motives, (list, tuple)) else ()):
+        if not isinstance(item, dict):
+            continue
+        need = item.get("id")
+        value = item.get("value")
+        if not isinstance(need, str) or not 1 <= len(need) <= schema.MENU_MAX_SERVE_CHARS:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        rows.append((value, index, need))
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return tuple(need for _value, _index, need in rows[:schema.MENU_MAX_SERVES])
+
+
+def _serves_of(jobs):
+    """D2 (2026-11-09): the needs the kept acts of one object advertise, in the order they were met, deduplicated and
+    bounded to MENU_MAX_SERVES ids of at most MENU_MAX_SERVE_CHARS characters."""
+    found = []
+    for job in jobs:
+        for need in job.get("serves") or ():
+            if (isinstance(need, str) and 1 <= len(need) <= schema.MENU_MAX_SERVE_CHARS
+                    and need not in found and len(found) < schema.MENU_MAX_SERVES):
+                found.append(need)
+    return found
+
+
+def _need_rank(item, needs):
+    """D2 (2026-11-09): how urgently an object's needs rank: the index of its worst felt need in needs (0 is worst),
+    or len(needs) when it serves none of them. 0 for every object when nothing is felt."""
+    rank = len(needs)
+    for need in item.get("serves") or ():
+        try:
+            index = needs.index(need)
+        except ValueError:
+            continue
+        if index < rank:
+            rank = index
+    return rank
+
+
 def _room_key(item):
     if item.get("phone") is True:
         return "phone"
@@ -266,9 +311,13 @@ class MenuBuild(object):
     failed is set when reading the jobs raised; a failed build publishes nothing."""
 
     def __init__(self, jobs, runner, budget_ms=8.0, max_per_chunk=80, clock=time.perf_counter, spots=None,
-                 far=None, excluded_phone=None, on_near=None, reach=None, stages=None, excluded=None, heads=None):
+                 far=None, excluded_phone=None, on_near=None, reach=None, stages=None, excluded=None, heads=None,
+                 needs=None):
         self._jobs = iter(jobs)
         self._runner = runner
+        # D2 (2026-11-09): the needs she feels now, worst first (act_menu.felt_needs), so the object cap keeps what
+        # they require before the rest.
+        self._needs = tuple(needs or ())
         # 2.38.0 (W11 P3): asks a job's own reach; run for a far candidate whose outcome the cache gave, since reach is per object.
         self._reach = reach
         self.budget_ms = budget_ms
@@ -306,6 +355,11 @@ class MenuBuild(object):
         self.build_ms = 0.0
         self.done = False
         self.failed = False
+
+    def set_needs(self, needs):
+        """D2 (2026-11-09): the felt needs from the newest body row, worst first. Read again each tick while the build
+        runs, so a build that finishes later keeps what is urgent now (the helper does the same at each view)."""
+        self._needs = tuple(needs or ())
 
     def _outcome(self, job):
         """2.37.0 (W10 P2): whether the job's act is on the menu. A far candidate the cache holds is not tested again;
@@ -424,7 +478,13 @@ class MenuBuild(object):
                 "acts_cut": cut, "refusals": refusals}
             if excluded:
                 item["excluded"] = excluded
+            serves = _serves_of(self._acts.get(oid, []))
+            if serves:
+                item["serves"] = serves
             objects.append(item)
+        # D2 (2026-11-09): the object cap keeps what the felt needs require first; the nearest/menu order is kept
+        # within each rank (a stable sort), and what the cap still leaves out is counted in dropped.
+        objects.sort(key=lambda item: _need_rank(item, self._needs))
         kept = objects[:schema.MENU_MAX_OBJECTS]
         dropped_objects = objects[schema.MENU_MAX_OBJECTS:]
         rooms = []
@@ -475,6 +535,11 @@ class MenuBuild(object):
                    "text_key": job.get("text_key"), "variant": job.get("variant")}
             if relief:
                 row["relief"] = True
+            serves = [need for need in job.get("serves") or ()
+                      if isinstance(need, str) and 1 <= len(need) <= schema.MENU_MAX_SERVE_CHARS
+                      ][:schema.MENU_MAX_SERVES]
+            if serves:
+                row["serves"] = serves
             # 2.40.0 (W13 P1): a phone act that asks for a Sim is listed with needs_sim (absent on every other act).
             if job.get("needs_sim") is True:
                 row["needs_sim"] = True

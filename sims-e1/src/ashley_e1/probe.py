@@ -2048,7 +2048,8 @@ def _menu_offers(item, sim, context):
                                            pie_why or "pie_empty")
             jobs.extend(choices)
             continue
-        relief = e2_actuator.need_relief(affordance)
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
         why = None
         if not relief:
             why = e2_actuator.act_excluded(affordance, item.get("person") is True)
@@ -2079,6 +2080,7 @@ def _menu_offers(item, sim, context):
         }
         if relief:
             job["need_relief"] = True
+            job["serves"] = list(motives)
         jobs.append(job)
     return jobs
 
@@ -2105,7 +2107,8 @@ def _pie_jobs(item, pie, guid, sim, context, folded, excluded=None, pie_why=None
             affordance = choice.affordance
         except Exception:
             affordance = None
-        relief = e2_actuator.need_relief(affordance)
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
         why = None if relief else (e2_actuator.choice_excluded(choice) or pie_why)
         if key is None:
             act_menu.note_act_excluded(excluded, _choice_name(choice), "no_name")
@@ -2131,6 +2134,7 @@ def _pie_jobs(item, pie, guid, sim, context, folded, excluded=None, pie_why=None
         }
         if relief:
             job["need_relief"] = True
+            job["serves"] = list(motives)
         jobs.append(job)
     return jobs
 
@@ -2172,7 +2176,8 @@ def _menu_phone_offers(item, sim, context, excluded):
         if type(guid) is not int:
             act_menu.note_act_excluded(item["excluded"], name, "no_guid")
             continue
-        relief = e2_actuator.need_relief(affordance)
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
         why = None if relief else _phone_exclusion(affordance)
         if why is not None:
             act_menu.note_excluded(excluded, name, why)
@@ -2181,7 +2186,7 @@ def _menu_phone_offers(item, sim, context, excluded):
         if len(jobs) >= act_menu.PHONE_CANDIDATES and not relief:
             act_menu.note_act_excluded(item["excluded"], name, "cap")
             continue
-        jobs.append({
+        job = {
             "object_id": item["object_id"], "definition_id": None, "class": "phone",
             "distance_m": None, "same_room": None, "room": None, "phone": True, "on_lot": True,
             "guid64": str(guid), "name": name if type(name) is str else "",
@@ -2189,8 +2194,11 @@ def _menu_phone_offers(item, sim, context, excluded):
             "obj": sim, "affordance": affordance, "sim": sim, "context": context,
             # 2.40.0 (W13 P1): a phone act that opens a Sim picker is listed with needs_sim (she names the Sim).
             "needs_sim": True if e2_actuator.needs_sim(affordance) else None,
-            "need_relief": True if relief else None,
-        })
+        }
+        if relief:
+            job["need_relief"] = True
+            job["serves"] = list(motives)
+        jobs.append(job)
     return jobs
 
 
@@ -2209,7 +2217,7 @@ class _MenuJobs(object):
     D1 (2026-11-09): excluded (per object, the acts the probe left out) and heads (the objects that offer only such
     acts, so the menu still lists them)."""
 
-    def __init__(self, pairs, spots, excluded_phone, spot_stages=None, excluded=None, heads=None):
+    def __init__(self, pairs, spots, excluded_phone, spot_stages=None, excluded=None, heads=None, needs=None):
         self._jobs = _lazy_jobs(pairs)
         self.spots = spots
         # 2.37.0 (W10 P3): her phone's acts the guard left out, named as the build reads them.
@@ -2217,6 +2225,8 @@ class _MenuJobs(object):
         self.spot_stages = {} if spot_stages is None else spot_stages
         self.excluded = {} if excluded is None else excluded
         self.heads = {} if heads is None else heads
+        # D2 (2026-11-09): the needs her body feels now, worst first (act_menu.felt_needs).
+        self.needs = tuple(needs or ())
 
     def __iter__(self):
         return self
@@ -2339,7 +2349,8 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen, stages=None):
         if type(guid) is not int:
             act_menu.note_act_excluded(excluded, _affordance_name(affordance), "no_guid")
             continue
-        relief = e2_actuator.need_relief(affordance)
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
         why = None if relief else e2_actuator.act_excluded(affordance, False)
         if why is None and not relief and not e2_actuator.user_directed(affordance):
             why = "not_user_directed"
@@ -2351,7 +2362,7 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen, stages=None):
         if len(picked) >= act_menu.CANDIDATE_ACTS and not relief:
             act_menu.note_act_excluded(excluded, _affordance_name(affordance), "cap")
             continue
-        picked.append((affordance, guid))
+        picked.append((affordance, guid, motives))
     if not picked:
         return []
     count("go_here")
@@ -2366,11 +2377,16 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen, stages=None):
         item["excluded"] = excluded
     count("offers")
     distance = observers._distance(_planar(position), body_position)
-    return [{"object_id": str(spot_id), "definition_id": None, "class": "spot", "distance_m": distance,
-             "same_room": item["same_room"], "room": room, "level": level, "spot": kind,
-             "guid64": str(guid), "name": e2_actuator.GO_HERE_NAME, "text_key": None, "on_lot": True,
-             "obj": point, "affordance": affordance, "sim": sim, "context": spot_context}
-            for affordance, guid in picked]
+    jobs = []
+    for affordance, guid, motives in picked:
+        job = {"object_id": str(spot_id), "definition_id": None, "class": "spot", "distance_m": distance,
+               "same_room": item["same_room"], "room": room, "level": level, "spot": kind,
+               "guid64": str(guid), "name": e2_actuator.GO_HERE_NAME, "text_key": None, "on_lot": True,
+               "obj": point, "affordance": affordance, "sim": sim, "context": spot_context}
+        if motives:
+            job["serves"] = list(motives)
+        jobs.append(job)
+    return jobs
 
 
 def _menu_jobs(row):
@@ -2481,7 +2497,8 @@ def _menu_jobs(row):
             item["definition_id"] = None
         item["class"] = situation._name(type(item["obj"])) or ""
     return _MenuJobs(act_menu.iter_pick(phone + ordered, offers), spots, excluded_phone, spot_stages,
-                     excluded=excluded_objects, heads=object_heads), body_room
+                     excluded=excluded_objects, heads=object_heads,
+                     needs=act_menu.felt_needs(row.get("motives"))), body_room
 
 
 def _lazy_jobs(pairs):
@@ -2565,6 +2582,9 @@ def _menu_tick(row):
     elif _MENU is not None and moved and not _MENU_MOVE_RESTARTED:
         _menu_reset(keep_last=True)
         _MENU_MOVE_RESTARTED = True
+    # D2 (2026-11-09): a build spans ticks; its cap ranks by the needs she feels on the newest row.
+    if _MENU is not None:
+        _MENU.set_needs(act_menu.felt_needs(row.get("motives")))
     if _MENU_NEAR_REQUESTED or moved:
         _MENU_NEAR_REQUESTED = False
         _menu_near_now()
@@ -2608,7 +2628,7 @@ def _menu_tick(row):
             _MENU = act_menu.MenuBuild(jobs, _menu_test, spots=jobs.spots, excluded_phone=jobs.excluded_phone,
                                        budget_ms=act_menu.FIRST_BUDGET_MS if _MENU_FIRST else 8.0,
                                        far=_MENU_FAR, reach=_menu_reach, stages=jobs.spot_stages,
-                                       excluded=jobs.excluded, heads=jobs.heads,
+                                       excluded=jobs.excluded, heads=jobs.heads, needs=jobs.needs,
                                        on_near=lambda build, zone=zone: _menu_near_part(build, zone))
             _MENU_ZONE = zone
 
