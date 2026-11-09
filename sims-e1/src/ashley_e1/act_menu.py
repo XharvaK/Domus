@@ -217,6 +217,99 @@ def felt_needs(motives):
     return tuple(need for _value, _index, need in rows[:schema.MENU_MAX_SERVES])
 
 
+
+def _attr_name(value):
+    try:
+        name = value.__name__
+    except Exception:
+        return None
+    return name if isinstance(name, str) else None
+
+
+def _raw_states(obj):
+    try:
+        items = list(obj.state_component._states.items())
+    except Exception:
+        return {}
+    found = {}
+    for state, value in items[:32]:
+        key = _attr_name(state)
+        if key is not None:
+            found[key[:96]] = (_attr_name(value) or "")[:96] or None
+    return found
+
+
+# Freshness is always named by its last word. The rest match the portrait's notable tails, plus Burnt.
+_NOTABLE_STATE_TAILS = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed",
+                        "Flooded", "Smelly", "Burnt")
+_NEGATION_WORDS = ("Not", "No", "Non")
+
+
+def _is_notable(value):
+    if not isinstance(value, str):
+        return False
+    words = [word for word in value.replace(" ", "_").split("_") if word]
+    if not words or words[-1] not in _NOTABLE_STATE_TAILS:
+        return False
+    return not any(word in _NEGATION_WORDS for word in words)
+
+
+def _state_word(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    parts = [part for part in value.replace(" ", "_").split("_") if part]
+    if not parts:
+        return None
+    return parts[-1][:schema.MENU_MAX_STATE_CHARS]
+
+
+def _own_state_words(obj):
+    found = []
+    raw = _raw_states(obj)
+    fresh = _state_word(raw.get("Freshness"))
+    if fresh:
+        found.append(fresh)
+    for value in raw.values():
+        if _is_notable(value):
+            word = _state_word(value)
+            if word and word not in found:
+                found.append(word)
+    return found
+
+
+def state_words(obj):
+    """D5 (2026-11-09): freshness and notable condition words of this object and what it holds
+    (one level of contents), bounded to MENU_MAX_STATES."""
+    found = list(_own_state_words(obj))
+    try:
+        contents = list(obj.inventory_component)
+    except Exception:
+        contents = []
+    for item in contents:
+        for word in _own_state_words(item):
+            if word not in found:
+                found.append(word)
+            if len(found) >= schema.MENU_MAX_STATES:
+                return found[:schema.MENU_MAX_STATES]
+    return found[:schema.MENU_MAX_STATES]
+
+
+def _states_of(jobs):
+    """D5 (2026-11-09): the condition words of one object's kept jobs, from an explicit list or
+    from the game object, deduplicated and bounded."""
+    found = []
+    for job in jobs:
+        words = job.get("states")
+        if not words:
+            obj = job.get("obj")
+            words = state_words(obj) if obj is not None else ()
+        for word in words or ():
+            if (isinstance(word, str) and 1 <= len(word) <= schema.MENU_MAX_STATE_CHARS
+                    and word not in found and len(found) < schema.MENU_MAX_STATES):
+                found.append(word)
+    return found
+
+
 def _serves_of(jobs):
     """D2 (2026-11-09): the needs the kept acts of one object advertise, in the order they were met, deduplicated and
     bounded to MENU_MAX_SERVES ids of at most MENU_MAX_SERVE_CHARS characters."""
@@ -481,6 +574,9 @@ class MenuBuild(object):
             serves = _serves_of(self._acts.get(oid, []))
             if serves:
                 item["serves"] = serves
+            states = _states_of(self._acts.get(oid, []))
+            if states:
+                item["states"] = states
             objects.append(item)
         # D2 (2026-11-09): the object cap keeps what the felt needs require first; the nearest/menu order is kept
         # within each rank (a stable sort), and what the cap still leaves out is counted in dropped.

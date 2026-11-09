@@ -35,9 +35,9 @@ def test_a_bag_that_holds_a_spoiled_sandwich_names_spoiled_on_the_first_view():
 
 
 def test_burnt_and_fresh_are_named_from_the_freshness_value():
-    burnt = obj("12", 1.0, [("3", "food_Eat")], klass="object_food",
+    burnt = obj("12", 1.0, [("3", "food_Eat")], klass="object_food_burnt",
                 states=[{"state": "Freshness", "value": "Freshness_Burnt"}])
-    fresh = obj("13", 1.0, [("4", "food_Eat")], klass="object_food",
+    fresh = obj("13", 1.0, [("4", "food_Serve")], klass="object_food_fresh",
                 states=["Freshness_Fresh"])
     by_id = {entry["object_id"]: entry for entry in options(menu(burnt, fresh), room="1")}
     assert by_id["12"]["states"] == ["Burnt"]

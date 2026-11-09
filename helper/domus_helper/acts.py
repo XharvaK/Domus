@@ -852,6 +852,47 @@ def _need_rank(entry, needs):
     return rank
 
 
+
+def _state_word(piece):
+    """One condition word: the last token of a Freshness_Spoiled-style value, or the word itself."""
+    value = None
+    if isinstance(piece, str) and piece.strip():
+        value = piece.strip()
+    elif isinstance(piece, dict):
+        raw = piece.get("value")
+        if isinstance(raw, str) and raw.strip():
+            value = raw.strip()
+    if not value:
+        return None
+    if "_" in value:
+        parts = [part for part in value.replace(" ", "_").split("_") if part]
+        value = parts[-1] if parts else value
+    if not 1 <= len(value) <= 40:
+        return None
+    return value
+
+
+def _option_states(item, index):
+    """D5 (2026-11-09): condition words from the menu object itself first, else the things-list index."""
+    found = []
+    raw = item.get("states")
+    if isinstance(raw, list):
+        for piece in raw:
+            word = _state_word(piece)
+            if word and word not in found:
+                found.append(word)
+            if len(found) >= 4:
+                return found
+    if found:
+        return found
+    oid = str(item.get("object_id"))
+    if index and oid in index:
+        for word in list(index[oid])[:4]:
+            if isinstance(word, str) and word and word not in found:
+                found.append(word)
+    return found[:4]
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
             room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None, needs=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
@@ -955,9 +996,10 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
-            if states and not is_spot and str(item.get("object_id")) in states:
-                # W13 (D9.6): a thing that is broken or dirty says so, in the words of the things list (at most 4).
-                entry["states"] = list(states[str(item.get("object_id"))])[:4]
+            option_states = _option_states(item, None if is_spot else states)
+            if option_states:
+                # D5 (2026-11-09): the menu object's own freshness first; else the things-list index (W13 D9.6).
+                entry["states"] = option_states
             refused = _refusals(item, resolve, near)
             if refused:
                 entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)

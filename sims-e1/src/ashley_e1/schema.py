@@ -149,11 +149,14 @@ MENU_ACT_KEYS = ("guid64", "name", "text_key")
 # refusals (near objects only: at most 8 {text_key, reason_key} of the acts the game refused).
 # D1 (2026-11-09): an act that advertises a need carries relief; an object carries excluded (its left-out acts).
 # D2 (2026-11-09): an act (or its object) says which needs it relieves, by the portrait's need ids (serves).
+# D5 (2026-11-09): an object names freshness and notable condition words (states), including what it holds.
 MENU_ACT_OPTIONAL_KEYS = ("variant", "needs_sim", "relief", "serves")
 MENU_MAX_VARIANT = 999
-MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals", "excluded", "serves")
+MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals", "excluded", "serves", "states")
 MENU_MAX_SERVES = 8
 MENU_MAX_SERVE_CHARS = 32
+MENU_MAX_STATES = 4
+MENU_MAX_STATE_CHARS = 40
 MENU_MAX_REFUSALS = 8
 MENU_REFUSAL_KEYS = ("text_key", "reason_key")
 # 2.39.0 (W12 C8, C11): part 0's dropped {objects, rooms} and spot_stages counters.
@@ -994,6 +997,8 @@ def _validate_menu(payload):
             _menu_excluded(excluded)
         if item.get("serves") is not None:
             _menu_serves(item["serves"])
+        if item.get("states") is not None:
+            _menu_states(item["states"])
         _require(isinstance(acts, list) and len(acts) <= cap + sum(
             1 for act in acts if isinstance(act, dict) and act.get("relief") is True)
             and (acts or item.get("refusals") or excluded), "menu acts")
@@ -1027,6 +1032,14 @@ def _menu_excluded(excluded):
         _require(isinstance(item, dict) and set(item) == set(MENU_EXCLUDED_KEYS), "menu excluded shape")
         bounded_string(item["name"], 128, "menu excluded name", False)
         _require(item["why"] in MENU_ACT_EXCLUDED_WHY, "menu excluded why")
+
+
+def _menu_states(states):
+    """D5 (2026-11-09): freshness and notable condition words on a menu object (and what it holds): at most
+    MENU_MAX_STATES words of at most MENU_MAX_STATE_CHARS characters each."""
+    _require(type(states) is list and len(states) <= MENU_MAX_STATES, "menu states")
+    for word in states:
+        _require(isinstance(word, str) and 1 <= len(word) <= MENU_MAX_STATE_CHARS, "menu state")
 
 
 def _menu_serves(serves):
