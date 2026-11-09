@@ -757,6 +757,26 @@ def _excluded_entries(item):
     return entries
 
 
+def _wire_excluded(entries):
+    """Observation wire (Natalis): {text, reason} from the probe's {name, why} entries.
+
+    The probe and the helper's own bookkeeping keep {name, why}. Natalis parseObservation
+    accepts only {text, reason?, ref?} and rejects any other key with 400 for the whole view.
+    An empty name becomes "an act", the same words the left-out lines use.
+    """
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        why = entry.get("why") if isinstance(entry.get("why"), str) else ""
+        if not why:
+            continue
+        name = entry.get("name") if isinstance(entry.get("name"), str) else ""
+        text = name if name else AN_ACT
+        out.append({"text": text[:128], "reason": why[:64]})
+    return out
+
+
 def _excluded_lines(entries):
     """D1: "<act>: left out: <reason>" for each entry, in her words. A name that fails game_name, or a denied name,
     is "an act" (the same rule the phone's lines use)."""
@@ -1035,7 +1055,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if excluded_keys:
                 # D1 (2026-11-09): the wire keeps the probe's own entries and codes, so the view can count them
                 # ("3 acts hidden on t263: PIE_PICKER"); the plain lines are for the words she reads.
-                entry["excluded"] = excluded_keys
+                # B-1 (2026-11-09): remap {name, why} to Natalis's {text, reason} so the observation is accepted.
+                entry["excluded"] = _wire_excluded(excluded_keys)
             if item.get("phone") is True and phone_left_out:
                 # T2: her phone's own list is the one the probe writes; add only the helper's own folded lines.
                 helper_lines = _excluded_lines(helper_excluded)

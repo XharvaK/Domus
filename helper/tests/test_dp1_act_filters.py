@@ -53,7 +53,11 @@ def test_an_object_whose_every_act_was_left_out_is_listed_with_its_excluded_entr
     assert [entry["object_id"] for entry in result] == ["2", "3"]
     shown = result[0]
     assert shown["acts"] == []
-    assert shown["excluded"] == hidden["excluded"]
+    assert shown["excluded"] == [
+        {"text": "thing_Clean", "reason": "PIE_PICKER"},
+        {"text": "thing_Hide", "reason": "MENU_HIDDEN"},
+        {"text": "thing_Auto", "reason": "NOT_USER_DIRECTED"},
+    ]
     assert shown["left_out"] == [
         "thing Clean: left out: it opens a menu of choices, not an act",
         "thing Hide: left out: the game keeps it out of your menu",
@@ -69,7 +73,11 @@ def test_the_excluded_codes_are_sent_with_the_plain_words_of_each_reason():
         {"name": "thing_Cheat", "why": "DENY_NAME"},
     ])
     [entry] = options(menu(item), room="1")
-    assert entry["excluded"] == item["excluded"]
+    assert entry["excluded"] == [
+        {"text": "thing_Full", "reason": "CAP"},
+        {"text": "thing_Same", "reason": "FOLDED"},
+        {"text": "thing_Cheat", "reason": "DENY_NAME"},
+    ]
     assert entry["left_out"] == [
         "thing Full: left out: the menu is full",
         "thing Same: left out: the same words as another act here",
@@ -83,5 +91,5 @@ def test_an_act_with_the_same_words_twice_is_named_as_folded():
         act["text_key"] = "7001"
     [entry] = options(menu(item), resolve={"7001": "Read"}.get, room="1")
     assert [act["text"] for act in entry["acts"]] == ["Read"]
-    assert entry["excluded"] == [{"name": "thing_ReadAgain", "why": "FOLDED"}]
+    assert entry["excluded"] == [{"text": "thing_ReadAgain", "reason": "FOLDED"}]
     assert entry["left_out"] == ["thing Read Again: left out: the same words as another act here"]
