@@ -655,31 +655,52 @@ FOLD_TAIL = "; %d of them%s, the nearest is listed"
 
 
 def _fold(rows):
-    """2.38.0 (W11 H1): objects with the same shown name and the same act words are one entry. The first in the
-    given order (the nearest, the menu's order) keeps its acts and refs; its where says how many there are, and in
-    how many rooms when they span more than one. A spot, her phone and a person are never folded. rows are
-    (entry, where_named, room_id, is_spot, foldable); the folded rows are not in the result."""
-    first_of, counts, rooms_of = {}, {}, {}
+    """2.38.0 (W11 H1): objects with the same shown name and the same act words in the same room are one entry.
+    The first in the given order (the nearest, the menu's order) keeps its acts and refs; its where says how many
+    there are. D6 (2026-11-09): folding stays inside one room, so two rooms never become "N of them in N rooms".
+    A spot, her phone and a person are never folded. rows are (entry, where_named, room_id, is_spot, foldable)."""
+    first_of, counts = {}, {}
     kept = []
     for row in rows:
         entry, _name, room_id, _is_spot, foldable = row
         if not foldable:
             kept.append(row)
             continue
-        key = (entry["object"], tuple(act["text"] for act in entry["acts"]))
+        key = (entry["object"], tuple(act["text"] for act in entry["acts"]), room_id)
         if key not in first_of:
             first_of[key] = row
             kept.append(row)
-            counts[key], rooms_of[key] = 0, set()
+            counts[key] = 0
         counts[key] += 1
-        if room_id is not None:
-            rooms_of[key].add(room_id)
     for key, first in first_of.items():
         if counts[key] > 1:
-            rooms = len(rooms_of[key])
-            clause = " in %d rooms" % rooms if rooms > 1 else ""
-            first[0]["where"] = first[0]["where"] + FOLD_TAIL % (counts[key], clause)
+            first[0]["where"] = first[0]["where"] + FOLD_TAIL % (counts[key], "")
     return kept
+
+
+def assign_room_refs(rooms, book):
+    """D6 (2026-11-09): stable short ids r1, r2, ... for the given rooms. Unseen rooms are numbered in numeric
+    order (then lexical), and an id already in book is kept. book is mutated and returned."""
+    unseen, seen = [], set()
+    for room in rooms:
+        if room is None:
+            continue
+        key = str(room)
+        if key not in book and key not in seen:
+            unseen.append(key)
+            seen.add(key)
+    unseen.sort(key=lambda room: (0, int(room)) if room.isdigit() else (1, room))
+    used = set(book.values())
+    next_n = 1
+    for room in unseen:
+        while "r%d" % next_n in used:
+            next_n += 1
+        if next_n > 99_999_999:
+            break
+        book[room] = "r%d" % next_n
+        used.add(book[room])
+        next_n += 1
+    return book
 
 
 PHONE_LEFT_OUT_LINES = 12
@@ -894,7 +915,8 @@ def _option_states(item, index):
 
 
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
-            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None, needs=None):
+            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None, needs=None,
+            room_refs=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
     (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
     of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
@@ -909,6 +931,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
         return []
     refs = RefBook() if refs is None else refs
     needs = tuple(needs or ())
+    book = {} if room_refs is None else room_refs
+    assign_room_refs((item.get("room") for item in menu["objects"] if isinstance(item, dict)), book)
     result = []
     left_out = []
     phone_left_out = _phone_left_out(menu, resolve)
@@ -991,8 +1015,13 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             serves = _serves_of(item)
             if serves:
                 entry["serves"] = serves
+            short = book.get(str(item.get("room"))) if item.get("room") is not None else None
             if label:
                 entry["room"] = label[:64]
+            elif short:
+                entry["room"] = short
+            if short:
+                entry["room_id"] = short
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY

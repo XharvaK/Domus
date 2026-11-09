@@ -174,6 +174,7 @@ class Bridge:
         self._look_hold = None  # SEAM3-8: a look's view waiting for its near part: {at_ms, after (the row it followed)}
         self._near_rowid = None  # the row of the newest near part read (a look's view waits for one after it)
         self._refs = RefBook()  # N8 (F3): the refs of this helper session (reset at each attachment)
+        self._room_refs = {}  # D6 (2026-11-09): stable r1, r2, ... for rooms in this helper session
         self._menu_parts = MenuParts()  # N8 (F4): a menu arrives in parts; the whole one is the menu
         self._catalog = None
         # W13 (H): the lists as Natalis holds them (kind -> {digest, items}) and the households' first names, both kept in
@@ -371,7 +372,8 @@ class Bridge:
                              room_labels=self._room_labels(), cut=cut,
                              objects_limit=max(0, OPTIONS_OBJECTS_LIMIT - len(asked)),
                              states=self._index["states"],  # W13 (D9.6): what is broken or dirty, from the things list
-                             needs=felt_needs(row))  # D2 (2026-11-09): the felt needs, worst first, keep the cap
+                             needs=felt_needs(row),  # D2 (2026-11-09): the felt needs, worst first, keep the cap
+                             room_refs=self._room_refs)
         return asked + listed
 
     def _note_build_override(self, override, now):
@@ -587,6 +589,7 @@ class Bridge:
             return
         if self._refs_session is not None:
             self._refs = RefBook()
+            self._room_refs = {}
             self._refs_epoch += 1
         self._refs_session = session
 
