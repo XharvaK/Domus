@@ -11,6 +11,7 @@ from domus_helper.paths import Paths
 @pytest.fixture(autouse=True)
 def _fresh_pin(monkeypatch):
     monkeypatch.setattr(commands, "_PINNED_KEYS", {}, raising=False)
+    monkeypatch.setattr(commands, "_FAIL_CLOSED", {}, raising=False)
 
 
 def test_a_swapped_key_file_is_not_believed(tmp_path):
@@ -56,7 +57,11 @@ def test_a_key_swapped_between_sessions_is_refused_and_replaced(tmp_path, capsys
     second = commands.command_key(paths)
     assert second not in (EVIL, first)
     assert (paths.telemetry / "cmd" / "key").read_text(encoding="ascii") == second.hex()
-    assert "DOMUS_KEY_MISMATCH" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "DOMUS_KEY_MISMATCH" in err
+    assert "restart the game" in err.lower()
+    with pytest.raises(commands.CommandKeyFailClosed, match="restart the game"):
+        commands.publish("status", {}, "helper", paths=paths)
     commands._PINNED_KEYS.clear()
     assert commands.command_key(paths) == second  # the fingerprint now names the fresh key
 
