@@ -24,6 +24,12 @@ class EnvelopeInvalid(ValueError):
     pass
 
 
+class CommandKeyFailClosed(ValueError):
+    """AU NB-1: cmd/key was swapped between sessions and replaced; the running game may still hold the old key, so a
+    command signed under the fresh key would only be refused BAD_MAC. The game must be restarted first."""
+    pass
+
+
 @dataclass(frozen=True)
 class Reply:
     id: str
@@ -47,7 +53,11 @@ def envelope(command, args, issuer, ttl_ms=30_000):
 
 
 _PINNED_KEYS = {}
+_FAIL_CLOSED = {}
 KEY_FINGERPRINT_NAME = "cmd_key.sha256"
+_FAIL_CLOSED_MESSAGE = (
+    "DOMUS_KEY_FAIL_CLOSED (DOMUS_KEY_MISMATCH): cmd/key changed between sessions and was replaced; the running "
+    "game may still hold the old key. You must restart the game before commands can be issued.")
 
 
 def _fingerprint(key):
@@ -95,7 +105,9 @@ def command_key(paths):
     AU recheck NB-3: the helper keeps the SHA-256 of the key it made in its own data folder, outside cmd/. At the first
     read of each helper process, a cmd/key that does not match (swapped between sessions) is refused with the error
     code DOMUS_KEY_MISMATCH, replaced by a fresh key, and the fingerprint updated. With no fingerprint yet (a helper
-    from before this change), the key found is adopted and its fingerprint recorded."""
+    from before this change), the key found is adopted and its fingerprint recorded.
+    AU NB-1: the game may have started after the swap and pinned the swapped key for its whole session, so the helper
+    also enters a process-local fail-closed state: it refuses to issue commands until the game is restarted."""
     key_file = paths.telemetry / "cmd" / "key"
     pinned = _PINNED_KEYS.get(str(key_file))
     if pinned is not None:
@@ -108,8 +120,10 @@ def command_key(paths):
     except FileNotFoundError:
         recorded = None
     if not created and recorded is not None and recorded != _fingerprint(key):
+        _FAIL_CLOSED[str(key_file)] = True
         print("DOMUS_KEY_MISMATCH: cmd/key is not the key this helper made (changed between sessions); refusing it "
-              "and writing a fresh key", file=sys.stderr, flush=True)
+              "and writing a fresh key. You must restart the game before commands can be issued; the running game "
+              "may still hold the old key.", file=sys.stderr, flush=True)
         os.remove(key_file)
         if not _create_key(key_file):
             raise ValueError("cmd/key could not be replaced")
@@ -119,6 +133,17 @@ def command_key(paths):
         _write_fingerprint(fingerprint_file, key)
     _PINNED_KEYS[str(key_file)] = key
     return key
+
+
+def _is_fail_closed(paths):
+    return str(paths.telemetry / "cmd" / "key") in _FAIL_CLOSED
+
+
+def _refuse_when_fail_closed(paths):
+    """AU NB-1: after a between-sessions mismatch the running game may still hold the swapped key, so no command may
+    be signed and written under the fresh one. The game must be restarted first."""
+    if _is_fail_closed(paths):
+        raise CommandKeyFailClosed(_FAIL_CLOSED_MESSAGE)
 
 
 def signed(row, key):
@@ -136,8 +161,11 @@ def publish(command, args, issuer, *, paths=None):
 
 
 def _write(row, raw, paths):
+    _refuse_when_fail_closed(paths)
     paths.check_inbox()
-    row, raw = signed(row, command_key(paths))
+    key = command_key(paths)
+    _refuse_when_fail_closed(paths)  # command_key itself may have just entered fail-closed on a mismatch
+    row, raw = signed(row, key)
     # Do not bootstrap cmd directories: the probe/Owner owns their creation.
     temporary = paths.inbox / (row["id"] + ".json.tmp")
     destination = paths.inbox / (row["id"] + ".json")
@@ -190,7 +218,9 @@ def prune_done(paths, now_ms):
 
 def expire_pending(paths, now_ms=None):
     """R4/L4: cancel every command the probe has not taken yet, through cmdbox's own expiry path, so a probe that
-    reads the file later refuses it EXPIRED (an act is then refused to her as EXPIRED too). Returns the ids cancelled."""
+    reads the file later refuses it EXPIRED (an act is then refused to her as EXPIRED too). Returns the ids cancelled.
+    AU NB-1: while fail-closed this refuses: rewriting an inbox command would sign it under the fresh key."""
+    _refuse_when_fail_closed(paths)
     now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     cancelled = []
     for entry in sorted(paths.inbox.glob("*.json")):
@@ -212,6 +242,12 @@ def expire_pending(paths, now_ms=None):
                 key = command_key(paths)
             except (OSError, ValueError):
                 key = None
+            if _is_fail_closed(paths):
+                try:
+                    os.replace(claimed, entry)  # put the claimed command back before refusing
+                except OSError:
+                    pass
+                _refuse_when_fail_closed(paths)  # raises: the game must be restarted
             # Only a command we signed is re-signed: one another writer left is never laundered into a signed one.
             if key is None or not cmdbox.mac_ok(key, row):
                 row = None  # back untouched; the probe refuses it BAD_MAC
