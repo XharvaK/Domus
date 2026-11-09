@@ -105,6 +105,12 @@ E2_PAYLOAD_KEYS.update({
     "phone": ("kind", "from_sim_id", "notifies"),
 })
 E2_PAYLOAD_KEYS["act_event"] = E2_PAYLOAD_KEYS["act_event"] + ("result",)
+# D7 (2026-11-09): replaced (PUSHED: queued or running acts the push dropped; None when none, and on older rows).
+E2_PAYLOAD_KEYS["act_event"] = E2_PAYLOAD_KEYS["act_event"] + ("replaced",)
+ACT_MAX_REPLACED = 4
+ACT_REPLACED_NAME_CHARS = 128
+ACT_REPLACED_KEYS = ("name", "autonomous", "state")
+ACT_REPLACED_STATES = ("queued", "running")
 # 2.40.0 (W13 P2, home): the catalogue record (`catalog`), in parts. The things list is a `lists` record (kind things).
 EVENT_KINDS = EVENT_KINDS + ("catalog",)
 E2_EVENT_KINDS = E2_EVENT_KINDS + ("catalog",)
@@ -694,6 +700,8 @@ def _validate_e2(row):
         # 2.40.0 (W13 P1): result is optional; rows before schema 21 omit it.
         if "result" not in payload:
             payload["result"] = None
+        if "replaced" not in payload:
+            payload["replaced"] = None
     elif kind == "lists" and isinstance(payload, dict):
         # 2.40.0 (W13 R2, T1): total is optional; a list written before it omits it.
         if "total" not in payload:
@@ -787,6 +795,8 @@ def _validate_e2(row):
                 _require(isinstance(item, str), "act alias must be a string")
                 string_id(item, "act alias")
         _validate_result(payload["result"])
+        if payload.get("replaced") is not None:
+            _validate_replaced(payload["replaced"])
     elif kind == "act_menu":
         _validate_menu(payload)
     elif kind in ("discovery", "lists", "phone"):
@@ -833,6 +843,19 @@ PERSON_KEYS = frozenset(("sim_id", "first_name", "last_name", "labels", "tracks"
                          "waiting"))
 PLACE_KEYS = frozenset(("zone_id", "kind", "lot_name", "venue", "household_id"))
 EVENT_KEYS = frozenset(("situation_id", "name_key", "cost", "schedulable"))
+
+
+
+def _validate_replaced(replaced):
+    """D7 (2026-11-09): at most ACT_MAX_REPLACED acts a push dropped, each with its name, whether it was
+    the Sim's own, and whether it was queued or running."""
+    _require(type(replaced) is list and len(replaced) <= ACT_MAX_REPLACED, "act replaced")
+    for item in replaced:
+        _require(isinstance(item, dict) and set(item) == set(ACT_REPLACED_KEYS), "act replaced shape")
+        _require(isinstance(item["name"], str) and 1 <= len(item["name"]) <= ACT_REPLACED_NAME_CHARS,
+                 "act replaced name")
+        _require(type(item["autonomous"]) is bool, "act replaced autonomous")
+        _require(item["state"] in ACT_REPLACED_STATES, "act replaced state")
 
 
 def _validate_result(value):

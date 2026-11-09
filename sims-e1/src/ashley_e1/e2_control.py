@@ -620,6 +620,82 @@ def _tuning_name(affordance):
     return str(name)[:128]
 
 
+
+_IDLE_SOURCES = (
+    "InteractionSource.POSTURE_GRAPH",
+    "InteractionSource.BODY_CANCEL_AOP",
+    "InteractionSource.CARRY_CANCEL_AOP",
+)
+_IDLE_TUNINGS = ("sim-stand", "stand_Passive")
+
+
+def _source_of(entry):
+    try:
+        return str(entry.context.source)
+    except Exception:
+        return ""
+
+
+def _interaction_name(entry):
+    affordance = getattr(entry, "affordance", None)
+    name = _tuning_name(affordance) if affordance is not None else _tuning_name(entry)
+    if not name or name in ("SimpleNamespace", "str", "type"):
+        return None
+    return name[:schema.ACT_REPLACED_NAME_CHARS]
+
+
+def _is_idle(entry, name):
+    source = _source_of(entry)
+    if source in _IDLE_SOURCES or "POSTURE_GRAPH" in source:
+        return True
+    tail = name.split(".")[-1] if name else ""
+    return tail in _IDLE_TUNINGS or name in _IDLE_TUNINGS
+
+
+def _interaction_map(items):
+    found = {}
+    try:
+        if items is None:
+            return found
+        for index, entry in enumerate(items):
+            if index >= ALIAS_SCAN_LIMIT:
+                break
+            try:
+                if entry.id is not None:
+                    found.setdefault(str(entry.id), entry)
+            except Exception:
+                continue
+    except Exception:
+        return found
+    return found
+
+
+def _replaced_item(entry, state):
+    name = _interaction_name(entry)
+    if not name or _is_idle(entry, name):
+        return None
+    source = _source_of(entry)
+    autonomous = source == "InteractionSource.AUTONOMY" or source.endswith(".AUTONOMY")
+    return {"name": name, "autonomous": autonomous, "state": state}
+
+
+def _replaced_between(before_queued, before_running, after):
+    """D7 (2026-11-09): the queued or running acts present before a push and gone after it, idle left out."""
+    found = []
+    after_ids = after if isinstance(after, dict) else {}
+    for state, before in (("queued", before_queued), ("running", before_running)):
+        for key, entry in before.items():
+            if key in after_ids:
+                continue
+            item = _replaced_item(entry, state)
+            if item is None:
+                continue
+            found.append(item)
+            if len(found) >= schema.ACT_MAX_REPLACED:
+                return found
+    return found
+
+
 def _queued_interactions(sim):
     """2.28.0: her Sim's queued and running interactions by id, {id: interaction}: the two
     collections observers.poll_once reads. At most ALIAS_SCAN_LIMIT of each. Never raises."""
@@ -1328,6 +1404,8 @@ class E2Control:
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
             accepted = True
             queued_before = _queued_interactions(sim)
+            before_queued = _interaction_map(getattr(sim, "queue", None))
+            before_running = _interaction_map(getattr(sim, "si_state", None))
             self._push_mark({"act_id": act_id, "interaction_id": None, "tuning_name": tuning_name, "base": base})
             try:
                 if is_choice:
@@ -1344,10 +1422,12 @@ class E2Control:
             # 2.28.0 (live 2026-10-08: a picker's push returned 704 while her queue gained 703, and
             # 704 never appeared): whatever the push put in her queue or running list is this act too.
             born = {}
+            replaced = []
             if kind != "refused":
                 queued_after = _queued_interactions(sim)
                 born = dict((key, entry) for key, entry in queued_after.items()
                             if key not in queued_before)
+                replaced = _replaced_between(before_queued, before_running, queued_after)
             if interaction is None and not born:
                 code = "PUSH_REFUSED" if kind == "refused" else "PUSH_FAILED"
                 self._act_event(act_id, "REJECTED", code=code, tuning_name=tuning_name,
@@ -1365,7 +1445,8 @@ class E2Control:
                 born.pop(interaction_id, None)
             aliases = list(born)[:schema.ACT_MAX_ALIASES]
             self._act_event(act_id, "PUSHED", interaction_id=interaction_id,
-                            tuning_name=tuning_name, aliases=aliases or None, **base)
+                            tuning_name=tuning_name, aliases=aliases or None,
+                            replaced=replaced or None, **base)
             self._watch_act(act_id, base, interaction_id, tuning_name, interaction, born)
             self._say(connection, "ACT_PUSHED %s interaction %s" % (act_id, interaction_id))
             return True

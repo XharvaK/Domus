@@ -1303,6 +1303,21 @@ def stop_pending_acts(spool):
     return stopped
 
 
+def _replaced_of(raw):
+    """D7 (2026-11-09): the probe's list of acts a push dropped, or empty when the shape is wrong."""
+    if not isinstance(raw, list):
+        return []
+    found = []
+    for item in raw[:4]:
+        if not isinstance(item, dict):
+            continue
+        name, autonomous, state = item.get("name"), item.get("autonomous"), item.get("state")
+        if (isinstance(name, str) and 1 <= len(name) <= 128 and type(autonomous) is bool
+                and state in ("queued", "running")):
+            found.append({"name": name, "autonomous": autonomous, "state": state})
+    return found
+
+
 class ActCourier(object):
     """Carries her requested acts to the probe and the probe's record of them back.
 
@@ -1441,6 +1456,16 @@ class ActCourier(object):
         if type(e2.get("started")) is bool:
             # 2.24.0: did the game ever begin the pushed act.
             detail["started"] = e2["started"]
+        replaced = _replaced_of(e2.get("replaced"))
+        if replaced:
+            # D7 (2026-11-09): what this push dropped, forwarded for her receipt.
+            detail["replaced"] = replaced
+            while replaced and _detail_bytes(detail) > DETAIL_BYTES:
+                replaced = replaced[:-1]
+                if replaced:
+                    detail["replaced"] = replaced
+                else:
+                    detail.pop("replaced", None)
         window = _window_of(e2.get("detail"))
         if window is not None:
             detail["window"] = window  # W12: the question (dialog) the act is waiting on, when there is one
