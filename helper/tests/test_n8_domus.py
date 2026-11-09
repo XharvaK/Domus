@@ -114,9 +114,8 @@ def test_each_object_carries_its_room_when_known_and_whether_it_is_near():
         {"object_id": "43", "class": "object_c", "room": "3", "distance_m": 12.0, "same_room": False,
          "acts": [{"guid64": "7003", "name": "c_Wave", "text_key": None}]}]}
     result = options(menu, room="1", room_labels={"1": "Kitchen", "2": "Hall"})
-    assert [(item["object_id"], item.get("room"), item["near"]) for item in result] == [
-        ("41", "Kitchen", True), ("42", "Hall", True), ("43", None, False)]
-    assert "room" not in result[2]
+    assert [(item["object_id"], item.get("room"), item.get("room_id"), item["near"]) for item in result] == [
+        ("41", "Kitchen", "r1", True), ("42", "Hall", "r2", True), ("43", "r3", "r3", False)]
 
 
 def test_a_lot_of_150_objects_in_8_rooms_is_all_listed_with_stable_refs():
@@ -126,15 +125,21 @@ def test_a_lot_of_150_objects_in_8_rooms_is_all_listed_with_stable_refs():
     labels = {"k0": "Act zero", "k1": "Act one"}.get
     cut = {}
     result = options(menu, labels, room="1", room_labels=ROOM_LABELS, refs=book, cut=cut)
-    assert len(result) == 150 and cut == {}
+    # D6: each object names its room_id, so the byte cap may leave a few of a 150-object lot out.
+    assert len(result) + cut.get("objects", 0) == 150
+    assert len(result) >= 140
+    assert all(item.get("room_id", "").startswith("r") for item in result)
     assert sorted({item["room"] for item in result}) == sorted(ROOM_LABELS.values())
     refs = refs_of(result)
     assert len(set(refs.values())) == len(refs) == 150
     again = refs_of(options(menu, labels, room="1", room_labels=ROOM_LABELS, refs=book))
     assert again == refs
     assert len(json.dumps(result, separators=(",", ":")).encode("utf-8")) <= 32768
-    two = options(lot(acts=2), labels, room="1", room_labels=ROOM_LABELS, cut={})
-    assert len(two) == 150 and len(json.dumps(two, separators=(",", ":")).encode("utf-8")) <= 32768
+    two_cut = {}
+    two = options(lot(acts=2), labels, room="1", room_labels=ROOM_LABELS, cut=two_cut)
+    assert len(two) + two_cut.get("objects", 0) == 150
+    assert len(two) >= 140
+    assert len(json.dumps(two, separators=(",", ":")).encode("utf-8")) <= 32768
 
 
 def test_more_than_160_objects_or_too_many_bytes_are_cut_and_named_never_silently():

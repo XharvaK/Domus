@@ -637,7 +637,10 @@ def _source_of(entry):
 
 
 def _interaction_name(entry):
-    affordance = getattr(entry, "affordance", None)
+    try:
+        affordance = entry.affordance
+    except Exception:
+        affordance = None
     name = _tuning_name(affordance) if affordance is not None else _tuning_name(entry)
     if not name or name in ("SimpleNamespace", "str", "type"):
         return None
@@ -1404,8 +1407,14 @@ class E2Control:
             self._act_event(act_id, "ACCEPTED", tuning_name=tuning_name, owner=owner is True, **base)
             accepted = True
             queued_before = _queued_interactions(sim)
-            before_queued = _interaction_map(getattr(sim, "queue", None))
-            before_running = _interaction_map(getattr(sim, "si_state", None))
+            try:
+                before_queued = _interaction_map(sim.queue)
+            except Exception:
+                before_queued = {}
+            try:
+                before_running = _interaction_map(sim.si_state)
+            except Exception:
+                before_running = {}
             self._push_mark({"act_id": act_id, "interaction_id": None, "tuning_name": tuning_name, "base": base})
             try:
                 if is_choice:
