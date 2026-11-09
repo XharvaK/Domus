@@ -244,6 +244,11 @@ class Bridge:
         # Live 2026-10-26: at start the newest file can still be the previous game's (the running game has not written
         # its own yet). Its version says nothing about what is installed now, so it warns only while that file is fresh.
         newest_row = self.spool.latest_record(newest) if newest is not None else None
+        if isinstance(newest_row, dict):
+            # D-1: a new game session is the only evidence that clears the persisted key fail-closed marker.
+            commands.note_telemetry_session(newest_row.get("telemetry_session_id"),
+                                            wall_timestamp_ms=newest_row.get("wall_timestamp_ms"),
+                                            paths=self.paths)
         written = newest_row.get("wall_timestamp_ms") if isinstance(newest_row, dict) else None
         fresh = type(written) is int and now - written <= STALE_AFTER_MS
         if fresh and isinstance(probe, str) and probe != schema.PROBE_VERSION and probe != self._probe_warned:
@@ -504,6 +509,12 @@ class Bridge:
         kind = record.get("event_kind") if isinstance(record, dict) else None
         written = record.get("wall_timestamp_ms") if isinstance(record, dict) else None
         clock_ms = written if type(written) is int and 0 <= written <= wall_ms else wall_ms
+        if isinstance(record, dict):
+            session = record.get("telemetry_session_id")
+            if isinstance(session, str) and session:
+                # D-1: report each row's session, so the original helper clears fail-closed after a game restart.
+                self._guard(rowid, "session", wall_ms, lambda: commands.note_telemetry_session(
+                    session, wall_timestamp_ms=written, paths=self.paths))
         if kind == "act_menu" and isinstance(record.get("e2"), dict):
             self._guard(rowid, "menu", wall_ms, lambda: self._menu_row(rowid, record, clock_ms))
         elif kind == "presence_snapshot":

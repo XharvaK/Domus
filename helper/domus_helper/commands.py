@@ -10,8 +10,9 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from . import telemetry as telemetry_reader
 from .paths import Paths
-from .vendor import cmdbox
+from .vendor import cmdbox, schema
 
 
 class InboxNotAnswering(TimeoutError):
@@ -54,14 +55,144 @@ def envelope(command, args, issuer, ttl_ms=30_000):
 
 _PINNED_KEYS = {}
 _FAIL_CLOSED = {}
+_LATEST_SESSIONS = {}
 KEY_FINGERPRINT_NAME = "cmd_key.sha256"
+KEY_FAIL_CLOSED_NAME = "cmd_key.fail_closed"
+_MARKER_MAX_BYTES = 4096
 _FAIL_CLOSED_MESSAGE = (
     "DOMUS_KEY_FAIL_CLOSED (DOMUS_KEY_MISMATCH): cmd/key changed between sessions and was replaced; the running "
-    "game may still hold the old key. You must restart the game before commands can be issued.")
+    "game may still hold the old key. You must restart the game, then the helper, before commands can be issued.")
 
 
 def _fingerprint(key):
     return hashlib.sha256(key.hex().encode("ascii")).hexdigest()
+
+
+def _key_file(paths):
+    return str(paths.telemetry / "cmd" / "key")
+
+
+def _fail_closed_file(paths):
+    return paths.data_dir / KEY_FAIL_CLOSED_NAME
+
+
+def _session_id(value):
+    """A telemetry_session_id the committed schema would accept (vendor/schema.py validates it as a string id)."""
+    if not isinstance(value, str) or not value or len(value) > schema.MAX_ID_LENGTH:
+        return None
+    return value
+
+
+def _read_fail_closed(paths):
+    """D-1: the active fail-closed marker on disk. Disk is authoritative across helper processes; None means not
+    fail-closed (missing, unreadable, or not active)."""
+    path = _fail_closed_file(paths)
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if len(raw) > _MARKER_MAX_BYTES:
+        return None
+    try:
+        marker = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+    if not isinstance(marker, dict) or marker.get("active") is not True:
+        return None
+    return marker
+
+
+def _write_fail_closed(paths, session_id):
+    """D-1: record fail-closed beside the key fingerprint, fsynced before the key is replaced. The marker names the
+    telemetry session seen at the mismatch, when known, so only a different (new) game session can clear it."""
+    marker = {
+        "v": 1,
+        "active": True,
+        "telemetry_session_id": _session_id(session_id),
+        "wall_timestamp_ms": int(time.time() * 1000),
+    }
+    path = _fail_closed_file(paths)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(json.dumps(marker, ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    _FAIL_CLOSED[_key_file(paths)] = marker
+    return marker
+
+
+def _clear_fail_closed(paths):
+    try:
+        _fail_closed_file(paths).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False  # the marker is still on disk, so the state is still fail-closed
+    _FAIL_CLOSED.pop(_key_file(paths), None)
+    return True
+
+
+def _latest_telemetry_session(paths):
+    """D-1: the newest game session on the telemetry path the bridge already follows, or None. The probe writes
+    telemetry_session_id on each row (session_open and later); rows are schema-validated before their id is used."""
+    try:
+        session = telemetry_reader.latest_session(paths=paths)
+        for index, row in enumerate(telemetry_reader.file_rows(session)):
+            value = _session_id(row.get("telemetry_session_id"))
+            if value is not None:
+                return value
+            if index >= 20:
+                break
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return None
+    return None
+
+
+def _is_new_session(marker, session_id, wall_timestamp_ms=None):
+    """D-1: a session different from the one held at the mismatch is a new game. With no id held (no telemetry was
+    readable then), the marker's wall time is the fallback: a row written after it is from a newer session."""
+    recorded = _session_id(marker.get("telemetry_session_id"))
+    if recorded is not None:
+        return recorded != session_id
+    recorded_wall = marker.get("wall_timestamp_ms")
+    if type(recorded_wall) is not int:
+        return True
+    if type(wall_timestamp_ms) is not int:
+        return True
+    return wall_timestamp_ms > recorded_wall
+
+
+def note_telemetry_session(session_id, *, wall_timestamp_ms=None, paths=None):
+    """D-1: the bridge reports the telemetry_session_id of a row it just saw. If a fail-closed marker is active and
+    this is a session newer than the one recorded at the mismatch, the marker is cleared. Returns True when cleared.
+    While no new session is seen, the marker stays and commands keep refusing."""
+    paths = paths or Paths.from_env()
+    session_id = _session_id(session_id)
+    if session_id is None:
+        return False
+    _LATEST_SESSIONS[_key_file(paths)] = session_id
+    marker = _read_fail_closed(paths)
+    if marker is None:
+        _FAIL_CLOSED.pop(_key_file(paths), None)
+        return False
+    if not _is_new_session(marker, session_id, wall_timestamp_ms):
+        return False
+    return _clear_fail_closed(paths)
+
+
+def _clear_if_new_session(paths):
+    """D-1: before refusing (or reading the key), look for a newer session on the telemetry path the helper already
+    uses. This lets the original helper clear itself once the game restarts, without waiting for a bridge row hook."""
+    if _read_fail_closed(paths) is None:
+        _FAIL_CLOSED.pop(_key_file(paths), None)
+        return False
+    session_id = _latest_telemetry_session(paths) or _LATEST_SESSIONS.get(_key_file(paths))
+    if session_id is None:
+        return False
+    return note_telemetry_session(session_id, paths=paths)
 
 
 def _create_key(key_file):
@@ -107,8 +238,11 @@ def command_key(paths):
     code DOMUS_KEY_MISMATCH, replaced by a fresh key, and the fingerprint updated. With no fingerprint yet (a helper
     from before this change), the key found is adopted and its fingerprint recorded.
     AU NB-1: the game may have started after the swap and pinned the swapped key for its whole session, so the helper
-    also enters a process-local fail-closed state: it refuses to issue commands until the game is restarted."""
+    also enters a fail-closed state: it refuses to issue commands until the game is restarted.
+    D-1: the fail-closed state is written to paths.data_dir beside the fingerprint, so another helper process still
+    refuses; it is cleared only when telemetry shows a new game session (note_telemetry_session)."""
     key_file = paths.telemetry / "cmd" / "key"
+    _clear_if_new_session(paths)
     pinned = _PINNED_KEYS.get(str(key_file))
     if pinned is not None:
         return pinned
@@ -120,10 +254,11 @@ def command_key(paths):
     except FileNotFoundError:
         recorded = None
     if not created and recorded is not None and recorded != _fingerprint(key):
-        _FAIL_CLOSED[str(key_file)] = True
+        session_id = _latest_telemetry_session(paths) or _LATEST_SESSIONS.get(str(key_file))
+        _write_fail_closed(paths, session_id)
         print("DOMUS_KEY_MISMATCH: cmd/key is not the key this helper made (changed between sessions); refusing it "
-              "and writing a fresh key. You must restart the game before commands can be issued; the running game "
-              "may still hold the old key.", file=sys.stderr, flush=True)
+              "and writing a fresh key. You must restart the game, then the helper, before commands can be issued; "
+              "the running game may still hold the old key.", file=sys.stderr, flush=True)
         os.remove(key_file)
         if not _create_key(key_file):
             raise ValueError("cmd/key could not be replaced")
@@ -136,12 +271,20 @@ def command_key(paths):
 
 
 def _is_fail_closed(paths):
-    return str(paths.telemetry / "cmd" / "key") in _FAIL_CLOSED
+    """D-1: the on-disk marker is authoritative, so a restarted process still refuses; module memory is only a cache."""
+    marker = _read_fail_closed(paths)
+    if marker is None:
+        _FAIL_CLOSED.pop(_key_file(paths), None)
+        return False
+    _FAIL_CLOSED[_key_file(paths)] = marker
+    return True
 
 
 def _refuse_when_fail_closed(paths):
     """AU NB-1: after a between-sessions mismatch the running game may still hold the swapped key, so no command may
-    be signed and written under the fresh one. The game must be restarted first."""
+    be signed and written under the fresh one. The game must be restarted first. D-1: a telemetry session newer than
+    the one recorded in the marker is evidence of that restart and clears it."""
+    _clear_if_new_session(paths)
     if _is_fail_closed(paths):
         raise CommandKeyFailClosed(_FAIL_CLOSED_MESSAGE)
 
