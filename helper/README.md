@@ -8,7 +8,7 @@ From the Domus root, after Owner approval on the Windows PC:
 
 ```powershell
 py -3.13 -m venv helper/.venv
-helper/.venv/Scripts/python.exe -m pip install 'mcp==2.2.0' 'pytest==9.1.1'
+helper/.venv/Scripts/python.exe -m pip install 'mcp==2.3.0' 'pytest==9.2.0'
 $env:PYTHONPATH = 'helper'
 helper/.venv/Scripts/python.exe -m domus_helper.mcp_server
 ```
