@@ -126,8 +126,10 @@ def test_a_new_game_session_clears_the_marker_and_allows_publishing(paths):
         commands.publish("status", {}, "helper", paths=paths)
     assert marker.is_file()
 
-    # The game was restarted: its new telemetry session is the evidence that clears the marker, even in process A.
-    commands.note_telemetry_session("session-new", paths=paths)
+    # The game was restarted: its new telemetry session, with a row strictly newer than the marker, is the evidence
+    # that clears the marker, even in process A.
+    marker_wall = json.loads(marker.read_text(encoding="utf-8"))["wall_timestamp_ms"]
+    commands.note_telemetry_session("session-new", wall_timestamp_ms=marker_wall + 1, paths=paths)
     assert not marker.exists()
     commands.publish("status", {}, "helper", paths=paths)
     assert len(list(paths.inbox.glob("*.json"))) == 1
