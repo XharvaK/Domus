@@ -137,13 +137,20 @@ MENU_REFUSED_KEYS = ("name", "reason_key")
 MENU_MAX_EXCLUDED_PHONE = 64
 MENU_EXCLUDED_KEYS = ("name", "why")
 MENU_EXCLUDED_WHY = ("pie_picker", "deny_name", "travel", "not_user_directed", "hidden")
+# D1 (2026-11-09): every listed object carries the acts the probe left out, {name, why} with an upper-case code;
+# at most 16 per object (the first ones), so a part stays bounded. A folded or capped act is named there too.
+MENU_MAX_EXCLUDED_ACT = 16
+MENU_ACT_EXCLUDED_WHY = ("NOT_USER_DIRECTED", "PIE_PICKER", "POSTURE_SOURCE", "PHONE", "MENU_HIDDEN",
+                         "DENY_NAME", "TRAVEL", "SOCIAL", "PICKER", "FOLDED", "CAP", "NO_NAME", "NO_GUID",
+                         "PIE_EMPTY", "GAME_REFUSED")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 # 2.39.0 (W12 G1, C4, C10, C12): optional on older rows. An act's variant is a pie-menu choice's index (0..999);
 # an object's on_lot (bool or None), acts_cut (passing acts the per-object cap left out, after folding texts) and
 # refusals (near objects only: at most 8 {text_key, reason_key} of the acts the game refused).
-MENU_ACT_OPTIONAL_KEYS = ("variant", "needs_sim")
+# D1 (2026-11-09): an act that advertises a need carries relief; an object carries excluded (its left-out acts).
+MENU_ACT_OPTIONAL_KEYS = ("variant", "needs_sim", "relief")
 MENU_MAX_VARIANT = 999
-MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals")
+MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals", "excluded")
 MENU_MAX_REFUSALS = 8
 MENU_REFUSAL_KEYS = ("text_key", "reason_key")
 # 2.39.0 (W12 C8, C11): part 0's dropped {objects, rooms} and spot_stages counters.
@@ -979,7 +986,12 @@ def _validate_menu(payload):
         if item.get("acts_cut") is not None:
             _require(type(item["acts_cut"]) is int and item["acts_cut"] >= 0, "menu acts_cut")
         _menu_refusals(item.get("refusals"))
-        _require(isinstance(acts, list) and len(acts) <= cap and (acts or item.get("refusals")), "menu acts")
+        excluded = item.get("excluded")
+        if excluded is not None:
+            _menu_excluded(excluded)
+        _require(isinstance(acts, list) and len(acts) <= cap + sum(
+            1 for act in acts if isinstance(act, dict) and act.get("relief") is True)
+            and (acts or item.get("refusals") or excluded), "menu acts")
         for act in acts:
             _require(isinstance(act, dict) and set(act) - set(MENU_ACT_OPTIONAL_KEYS) == set(MENU_ACT_KEYS),
                      "menu act shape")
@@ -988,12 +1000,25 @@ def _validate_menu(payload):
             # 2.40.0 (W13 P1): a phone act that opens a Sim picker is listed with needs_sim (absent on every other act).
             if "needs_sim" in act:
                 _require(act["needs_sim"] is True, "menu needs_sim")
+            # D1 (2026-11-09): a need-relief act is marked so the cap can let it through.
+            if "relief" in act:
+                _require(act["relief"] is True, "menu relief")
             _require(isinstance(act["guid64"], str), "menu guid64")
             string_id(act["guid64"], "menu guid64")
             bounded_string(act["name"], 128, "menu act name", False)
             if act["text_key"] is not None:
                 _require(isinstance(act["text_key"], str), "menu text_key")
                 string_id(act["text_key"], "menu text_key")
+
+
+def _menu_excluded(excluded):
+    """D1 (2026-11-09): at most MENU_MAX_EXCLUDED_ACT acts of one listed object the probe left out, each with its
+    upper-case reason code."""
+    _require(type(excluded) is list and len(excluded) <= MENU_MAX_EXCLUDED_ACT, "menu excluded")
+    for item in excluded:
+        _require(isinstance(item, dict) and set(item) == set(MENU_EXCLUDED_KEYS), "menu excluded shape")
+        bounded_string(item["name"], 128, "menu excluded name", False)
+        _require(item["why"] in MENU_ACT_EXCLUDED_WHY, "menu excluded why")
 
 
 def _menu_dropped(dropped):

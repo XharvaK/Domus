@@ -143,11 +143,41 @@ class FarCache(object):
         self._entries = {}
 
 
-def note_excluded(kept, name, why):
-    """2.37.0 (W10 P3): one phone act the guard excluded before its test, named with why; at most
-    schema.MENU_MAX_EXCLUDED_PHONE, the first ones (a diagnostic, shown with the menu)."""
-    if len(kept) < schema.MENU_MAX_EXCLUDED_PHONE:
+# 2.37.0 (W10 P3): the guard's own reason names, as the menu's upper-case codes (D1: every listed object carries
+# the acts it left out). The phone's old list keeps its lower-case codes; the per-object list speaks these.
+WHY_CODES = {
+    "pie_picker": "PIE_PICKER",
+    "deny_name": "DENY_NAME",
+    "travel": "TRAVEL",
+    "not_user_directed": "NOT_USER_DIRECTED",
+    "hidden": "MENU_HIDDEN",
+    "picker": "PICKER",
+    "social": "SOCIAL",
+    "no_guid": "NO_GUID",
+    "no_name": "NO_NAME",
+    "pie_empty": "PIE_EMPTY",
+    "folded": "FOLDED",
+    "cap": "CAP",
+}
+
+
+def why_code(reason):
+    """D1 (2026-11-09): a filter's reason as the menu's upper-case code; None stays None."""
+    if reason is None:
+        return None
+    return WHY_CODES.get(reason, str(reason).upper())
+
+
+def note_excluded(kept, name, why, cap=None):
+    """2.37.0 (W10 P3): one act the guard excluded before its test, named with why; at most cap entries, the first
+    ones (a diagnostic, shown with the menu). D1: cap lets each listed object keep its own bounded list."""
+    if len(kept) < (schema.MENU_MAX_EXCLUDED_PHONE if cap is None else cap):
         kept.append({"name": (name or "")[:128], "why": why})
+
+
+def note_act_excluded(kept, name, why):
+    """D1 (2026-11-09): one act of a listed object that was left out, with its upper-case code."""
+    note_excluded(kept, name, why_code(why), schema.MENU_MAX_EXCLUDED_ACT)
 
 
 def ordered(objects):
@@ -222,10 +252,12 @@ def pick(items, offers):
 def _shape_of(item):
     """What the menu shows of one object, for the same-menu check (distances are not compared here)."""
     refusals = item.get("refusals")
+    excluded = item.get("excluded")
     return (item["object_id"], item.get("room"), item.get("reach"),
             tuple((act["guid64"], act.get("variant")) for act in item["acts"]),
             item.get("on_lot"), item.get("acts_cut"),
-            None if refusals is None else tuple((r.get("text_key"), r.get("reason_key")) for r in refusals))
+            None if refusals is None else tuple((r.get("text_key"), r.get("reason_key")) for r in refusals),
+            None if excluded is None else tuple((e.get("name"), e.get("why")) for e in excluded))
 
 
 class MenuBuild(object):
@@ -234,7 +266,7 @@ class MenuBuild(object):
     failed is set when reading the jobs raised; a failed build publishes nothing."""
 
     def __init__(self, jobs, runner, budget_ms=8.0, max_per_chunk=80, clock=time.perf_counter, spots=None,
-                 far=None, excluded_phone=None, on_near=None, reach=None, stages=None):
+                 far=None, excluded_phone=None, on_near=None, reach=None, stages=None, excluded=None, heads=None):
         self._jobs = iter(jobs)
         self._runner = runner
         # 2.38.0 (W11 P3): asks a job's own reach; run for a far candidate whose outcome the cache gave, since reach is per object.
@@ -249,6 +281,10 @@ class MenuBuild(object):
         self._heads = {}
         self._acts = {}
         self._refusals = {}
+        # D1 (2026-11-09): per object, the acts the menu left out before the game's test {object_id: [{name, why}]},
+        # and the objects that offer nothing but left-out acts (their first fields, so they are still listed).
+        self._excluded = {} if excluded is None else excluded
+        self._object_heads = {} if heads is None else heads
         # 2.39.0 (W12 G1): the choices of pie-menu acts this build kept: (object id, guid64, variant) -> the key the
         # push matches the choice by. Published with the menu, so an act names a choice the menu showed.
         self.variants = {}
@@ -351,24 +387,33 @@ class MenuBuild(object):
         are folded before the per-object cap, and the passing acts the cap leaves out are counted (acts_cut).
         part 0 of 1: parts() cuts it into rows."""
         objects = []
-        for oid in self._order:
-            head = self._heads[oid]
+        order = list(self._order)
+        for oid in self._excluded:
+            if oid not in self._heads:
+                order.append(oid)
+        for oid in order:
+            head = self._heads.get(oid) or self._object_heads.get(oid)
+            if head is None:
+                continue
             view = dict(head)
             if refresh is not None:
                 view.update(refresh(head) or {})
             near_now = is_near(view)
             if near and not near_now:
                 continue
-            acts, cut = self._act_rows(oid, view)
+            acts, cut, dropped = self._act_rows(oid, view)
+            excluded = list(self._excluded.get(oid) or []) + dropped
+            if len(excluded) > schema.MENU_MAX_EXCLUDED_ACT:
+                excluded = excluded[:schema.MENU_MAX_EXCLUDED_ACT]
             refusals = None
             # Her phone's refusals are already named in refused_phone (2.35.0), so the phone carries none here.
             if near_now and head.get("phone") is not True:
                 refusals = [{"text_key": job.get("text_key"), "reason_key": job.get("reason_key")}
-                            for job in self._refusals[oid]]
-            if not acts and not refusals:
+                            for job in self._refusals.get(oid, [])]
+            if not acts and not refusals and not excluded:
                 continue
             on_lot = view.get("on_lot")
-            objects.append({
+            item = {
                 "object_id": oid, "definition_id": head.get("definition_id"),
                 "class": (head.get("class") or "")[:96], "distance_m": view.get("distance_m"),
                 "same_room": view.get("same_room"), "room": _room_text(view.get("room")),
@@ -376,7 +421,10 @@ class MenuBuild(object):
                 "phone": True if head.get("phone") is True else None,
                 "spot": head.get("spot"), "level": head.get("level"), "acts": acts,
                 "on_lot": on_lot if on_lot in (True, False) else None,
-                "acts_cut": cut, "refusals": refusals})
+                "acts_cut": cut, "refusals": refusals}
+            if excluded:
+                item["excluded"] = excluded
+            objects.append(item)
         kept = objects[:schema.MENU_MAX_OBJECTS]
         dropped_objects = objects[schema.MENU_MAX_OBJECTS:]
         rooms = []
@@ -403,26 +451,35 @@ class MenuBuild(object):
 
     def _act_rows(self, oid, view):
         """2.39.0 (W12 C12): the acts of one object: texts folded (the first of each text kept), at most the
-        per-object cap, and the passing acts past the cap counted. A pie choice carries its variant."""
+        per-object cap, and the passing acts past the cap counted. A pie choice carries its variant.
+        D1 (2026-11-09): an act that advertises a need is never cut by the probe; the acts the cap or a fold leaves
+        out are named in the object's excluded list with CAP or FOLDED."""
         cap = schema.MENU_MAX_PHONE_ACTS if view.get("phone") is True else schema.MENU_MAX_ACTS
         seen = set()
         acts = []
         cut = 0
-        for job in self._acts[oid]:
+        dropped = []
+        for job in self._acts.get(oid, []):
             key = fold_key(job)
+            relief = job.get("need_relief") is True
             if key in seen:
+                note_excluded(dropped, job.get("name"), "FOLDED", schema.MENU_MAX_EXCLUDED_ACT)
                 continue
             seen.add(key)
-            if len(acts) >= cap:
+            if len(acts) >= cap and not relief:
                 cut += 1
+                note_excluded(dropped, job.get("name"), "CAP", schema.MENU_MAX_EXCLUDED_ACT)
                 continue
             # The variant is always written (None for an act that is not a pie choice), so a part's size is what it is.
-            acts.append({"guid64": job["guid64"], "name": (job.get("name") or "")[:128],
-                         "text_key": job.get("text_key"), "variant": job.get("variant")})
+            row = {"guid64": job["guid64"], "name": (job.get("name") or "")[:128],
+                   "text_key": job.get("text_key"), "variant": job.get("variant")}
+            if relief:
+                row["relief"] = True
             # 2.40.0 (W13 P1): a phone act that asks for a Sim is listed with needs_sim (absent on every other act).
             if job.get("needs_sim") is True:
-                acts[-1]["needs_sim"] = True
-        return acts, cut
+                row["needs_sim"] = True
+            acts.append(row)
+        return acts, cut, dropped
 
 
 def _room_text(room):

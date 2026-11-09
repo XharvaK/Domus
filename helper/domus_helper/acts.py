@@ -180,9 +180,46 @@ class RefBook(object):
                 self._next[prefix] = number + 1
         return "%s%d" % (prefix, number)
 
+    def ref_widths(self, keys, prefix="a"):
+        """D1 (2026-11-09): the length each ref would have, in order, without allocating one. The view's byte budget
+        is measured before refs are given, and a ref still costs its bytes in the printed view."""
+        with self._lock:
+            numbers = dict(self._numbers)
+            following = self._next.get(prefix, 1)
+            widths = []
+            for key in keys:
+                number = numbers.get((prefix, key))
+                if number is None:
+                    number = following
+                    numbers[(prefix, key)] = number
+                    following += 1
+                widths.append(len("%s%d" % (prefix, number)))
+            return widths
+
 
 def _bytes(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _budget_objects(result, refs):
+    """D1: the entries as they would be printed, with each ref's exact width but no ref allocated: a cut object must
+    not take a number, and the printed ref still has to fit the byte budget."""
+    keys = [act.get("_ref_key") for row in result for act in row[0]["acts"] if act.get("_ref_key") is not None]
+    widths = refs.ref_widths(keys)
+    index = 0
+    entries = []
+    for row in result:
+        entry = row[0]
+        acts = []
+        for act in entry["acts"]:
+            shown = dict((key, value) for key, value in act.items() if key != "_ref_key")
+            if act.get("_ref_key") is not None:
+                width = widths[index]
+                index += 1
+                shown["ref"] = "a" + "0" * max(width - 1, 1)
+            acts.append(shown)
+        entries.append(dict(entry, acts=acts))
+    return entries
 
 
 def _ascii_bytes(value):
@@ -653,7 +690,63 @@ LEFT_OUT_REASONS = {
     "not_user_directed": "only the game starts it, not you",
     "hidden": "the game keeps it out of your menu",
 }
+# D1 (2026-11-09): the upper-case codes a listed object's own excluded list carries, in her words. The phone's old
+# list keeps LEFT_OUT_REASONS; a code with no words here is shown as itself (never dropped).
+ACT_LEFT_OUT_REASONS = {
+    "PIE_PICKER": LEFT_OUT_REASONS["pie_picker"],
+    "DENY_NAME": LEFT_OUT_REASONS["deny_name"],
+    "TRAVEL": LEFT_OUT_REASONS["travel"],
+    "NOT_USER_DIRECTED": LEFT_OUT_REASONS["not_user_directed"],
+    "MENU_HIDDEN": LEFT_OUT_REASONS["hidden"],
+    "SOCIAL": "it is a social act, not an action on this thing",
+    "PICKER": "it opens a picker, not an act",
+    "FOLDED": "the same words as another act here",
+    "CAP": "the menu is full",
+    "NO_NAME": "the game gives it no name",
+    "NO_GUID": "the game gives it no id",
+    "PIE_EMPTY": "it has no choices now",
+    "GAME_REFUSED": "the game refused it",
+    "PHONE": "it is one of your phone's acts",
+    "POSTURE_SOURCE": "it only changes how you stand or sit",
+}
+EXCLUDED_SHOWN = 16
 AN_ACT = "an act"
+
+
+def _excluded_entries(item):
+    """D1: one listed object's left-out acts, as the probe named them: at most EXCLUDED_SHOWN {name, why} entries."""
+    raw = item.get("excluded") if isinstance(item, dict) else None
+    if not isinstance(raw, list):
+        return []
+    entries = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") if isinstance(entry.get("name"), str) else ""
+        why = entry.get("why") if isinstance(entry.get("why"), str) else ""
+        if not why:
+            continue
+        entries.append({"name": name[:128], "why": why[:64]})
+        if len(entries) >= EXCLUDED_SHOWN:
+            break
+    return entries
+
+
+def _excluded_lines(entries):
+    """D1: "<act>: left out: <reason>" for each entry, in her words. A name that fails game_name, or a denied name,
+    is "an act" (the same rule the phone's lines use)."""
+    lines = []
+    for entry in entries:
+        code = entry["why"]
+        why = LEFT_OUT_REASONS.get(code) or LEFT_OUT_REASONS.get(code.lower()) or \
+            ACT_LEFT_OUT_REASONS.get(code) or code
+        name = entry["name"]
+        if code.lower() == "deny_name" or game_name(name) is None:
+            act = AN_ACT
+        else:
+            act = humanize(name)[:64] or AN_ACT
+        lines.append(_phone_line(act, "left out", why))
+    return lines
 
 
 def _phone_act(item, words, code):
@@ -745,6 +838,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             where = "with you"  # 2.29.0: your phone is on you, so no distance and no room.
         acts = []
         texts = set()
+        helper_excluded = []
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
@@ -757,7 +851,11 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
                     text = humanize(act.get("name"))
                     unmapped = True
             if text in texts:
-                continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
+                # N8 (F4): the same words twice on one object is one act (all the lights, once). D1: the second is
+                # named as folded, so it does not disappear from the view without a word.
+                helper_excluded.append({"name": act.get("name") if isinstance(act.get("name"), str) else "",
+                                        "why": "FOLDED"})
+                continue
             texts.add(text)
             guid = str(act["guid64"])
             if type(act.get("variant")) is int and not isinstance(act.get("variant"), bool):
@@ -768,7 +866,9 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
                 ref_key = ("spot", str(item.get("room")), item.get("level"), item.get("spot"))
             else:
                 ref_key = ("act", str(item.get("object_id")), guid)
-            listed = {"ref": refs.ref(ref_key), "guid64": guid, "text": text}
+            # D1 (2026-11-09): a ref is given only to an act that is printed. It is kept here and given after the
+            # object budget and the fold have decided what she sees (a cut object must not consume a number).
+            listed = {"guid64": guid, "text": text, "_ref_key": ref_key}
             if unmapped:
                 listed["unmapped"] = True
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
@@ -776,7 +876,17 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if act.get("needs_sim") is True:
                 listed["needs_sim"] = True  # W13 (D4.1): a phone act that opens a Sim picker; game_act names the Sim
             acts.append(listed)
-        if acts:
+        probe_excluded = _excluded_entries(item)
+        if helper_excluded:
+            merged = list(probe_excluded)
+            for entry in helper_excluded:
+                if entry not in merged:
+                    merged.append(entry)
+            excluded_keys = merged[:EXCLUDED_SHOWN]
+        else:
+            excluded_keys = probe_excluded
+        excluded_lines = _excluded_lines(excluded_keys)
+        if acts or excluded_keys:
             label = _room_label(item, room_labels)
             name = _spot_name(item, label) if is_spot else _object_name(item, resolve, catalog, people)
             near = _near(item, room)
@@ -793,15 +903,27 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             refused = _refusals(item, resolve, near)
             if refused:
                 entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)
+            if excluded_keys:
+                # D1 (2026-11-09): the wire keeps the probe's own entries and codes, so the view can count them
+                # ("3 acts hidden on t263: PIE_PICKER"); the plain lines are for the words she reads.
+                entry["excluded"] = excluded_keys
             if item.get("phone") is True and phone_left_out:
-                entry["left_out"] = list(phone_left_out)  # T2: her phone's acts left out of the menu, and why
+                # T2: her phone's own list is the one the probe writes; add only the helper's own folded lines.
+                helper_lines = _excluded_lines(helper_excluded)
+                left_out_lines = list(phone_left_out) + [line for line in helper_lines
+                                                         if line not in phone_left_out]
+            else:
+                left_out_lines = excluded_lines
+            if left_out_lines:
+                entry["left_out"] = left_out_lines
             if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
                 entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
             where_named = label[:64] if label else (str(item["room"])[:64] if item.get("room") is not None else None)
             room_id = None if item.get("room") is None else str(item["room"])
             # 2.38.0 (W11 H1): a thing is folded with its identical kin; a spot, her phone and a person are not.
-            foldable = not is_spot and item.get("phone") is not True and item.get("class") != "sim"
+            # D1: an object with no printed act is not folded into one that has acts.
+            foldable = bool(acts) and not is_spot and item.get("phone") is not True and item.get("class") != "sim"
             result.append((entry, where_named, room_id, is_spot, foldable))
     # Near first; then the rooms in the menu's order, and a spot before the objects of its own room, so a cut takes
     # a spot only once its room's objects are gone (2.35.0, D3). Within a room the menu's order is kept.
@@ -811,7 +933,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     result.sort(key=lambda row: (row[0]["near"] is not True, heads[row[2]], not row[3]))
     # 2.38.0 (W11 H1): folded before the budget, so the budget counts what she is shown, not the same thing many times.
     result = _fold(result)
-    while result and (len(result) > objects_limit or _bytes([row[0] for row in result]) > limit):
+    while result and (len(result) > objects_limit or _bytes(_budget_objects(result, refs)) > limit):
         left_out.append(result.pop()[1])
     # W12 (C8): what the probe's own object cap left out joins the cut, named by room (labels when known).
     dropped = menu.get("dropped") if isinstance(menu.get("dropped"), dict) else {}
@@ -821,6 +943,12 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     if cut is not None and (left_out or dropped_objects):
         cut["objects"] = len(left_out) + dropped_objects
         cut["rooms"] = sorted({name for name in left_out + dropped_rooms if name})[:16]
+    # D1 (2026-11-09): refs go only to the acts actually printed, in the order she sees them, so the numbering has
+    # no gap when an object is cut or folded away.
+    for row in result:
+        for act in row[0]["acts"]:
+            ref_key = act.pop("_ref_key", None)
+            act["ref"] = refs.ref(ref_key)
     return [row[0] for row in result]
 
 

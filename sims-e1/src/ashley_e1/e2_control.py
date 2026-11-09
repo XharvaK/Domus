@@ -1216,13 +1216,18 @@ class E2Control:
             person = obj.is_sim is True and obj is not sim
         except Exception:
             person = False
-        if own_phone:
-            excluded = e2_actuator.phone_act_excluded(affordance)
-        else:
-            excluded = e2_actuator.act_excluded(affordance, person)
+        # D1 (2026-11-09): an act that advertises a need is never filtered by the probe; only the game's own test
+        # (below) may refuse it. That includes an autonomous or hidden toilet act, and a social that relieves social.
+        relief = e2_actuator.need_relief(affordance)
+        excluded = None
+        if not relief:
+            if own_phone:
+                excluded = e2_actuator.phone_act_excluded(affordance)
+            else:
+                excluded = e2_actuator.act_excluded(affordance, person)
         if excluded is not None:
             return ("EXCLUDED", excluded), None
-        if not e2_actuator.user_directed(affordance):
+        if not relief and not e2_actuator.user_directed(affordance):
             return ("NOT_USER_DIRECTED", None), None
         # 2.40.0 (W13 P1): a Sim picker takes the Sim she named (its picked_item_ids and included_override); the Sim is
         # named only to a picker. The picker is tested and pushed with her choice.
@@ -1267,7 +1272,13 @@ class E2Control:
         choice = None if key is None else e2_actuator.variant_choice(pie, obj, context, key)
         if choice is None:
             return ("VARIANT_GONE", None), None
-        excluded = e2_actuator.choice_excluded(choice)
+        # D1 (2026-11-09): a choice that advertises a need is never filtered by the probe; only the game's test decides.
+        try:
+            choice_affordance = choice.affordance
+        except Exception:
+            choice_affordance = None
+        excluded = None if e2_actuator.need_relief(choice_affordance) \
+            else e2_actuator.choice_excluded(choice)
         if excluded is not None:
             return ("EXCLUDED", excluded), None
         ok, reason, reason_key = e2_actuator.choice_test(choice, context)
