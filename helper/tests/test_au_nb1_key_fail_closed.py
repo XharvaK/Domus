@@ -1,10 +1,13 @@
 """AU NB-1: a cmd/key swapped between sessions while a live probe may already have pinned it must leave the helper
-fail-closed: it refuses the swapped key, replaces it for the next game start, and issues no commands until a restart."""
+fail-closed: it refuses the swapped key, replaces it for the next game start, and issues no commands until a restart.
+D-1: the fail-closed state is kept on disk, so a restarted helper still refuses; only a new telemetry session clears it."""
 import hashlib
+import json
 import os
 
 import pytest
 
+from conftest import opened, session_file
 from domus_helper import commands
 
 
@@ -15,6 +18,7 @@ EVIL = bytes([7]) * 32
 def _fresh_process(monkeypatch):
     monkeypatch.setattr(commands, "_PINNED_KEYS", {}, raising=False)
     monkeypatch.setattr(commands, "_FAIL_CLOSED", {}, raising=False)
+    monkeypatch.setattr(commands, "_LATEST_SESSIONS", {}, raising=False)
 
 
 def _fingerprint(key):
@@ -82,3 +86,66 @@ def test_first_create_and_unchanged_key_still_issue(paths, capsys):
     commands.publish("status", {}, "helper", paths=paths)
     assert "DOMUS_KEY_MISMATCH" not in capsys.readouterr().err
     assert len(list(paths.inbox.glob("*.json"))) == 2
+
+
+def test_a_new_helper_process_still_refuses_from_the_marker_on_disk(paths, capsys):
+    """D-1: a helper restart must not forget the mismatch just because its module dicts are empty."""
+    commands.command_key(paths)
+    _swap_between_sessions(paths)
+    with pytest.raises(commands.CommandKeyFailClosed, match="restart the game"):
+        commands.publish("status", {}, "helper", paths=paths)
+
+    marker = paths.data_dir / commands.KEY_FAIL_CLOSED_NAME
+    assert marker.is_file()
+    stored = json.loads(marker.read_text(encoding="utf-8"))
+    assert stored["active"] is True
+    assert type(stored["wall_timestamp_ms"]) is int
+
+    # A brand new helper process: no pinned key and no fail-closed flag in memory.
+    commands._PINNED_KEYS.clear()
+    commands._FAIL_CLOSED.clear()
+    with pytest.raises(commands.CommandKeyFailClosed, match="restart the game"):
+        commands.publish("status", {}, "helper", paths=paths)
+    assert not list(paths.inbox.glob("*.json"))
+
+
+def test_a_new_game_session_clears_the_marker_and_allows_publishing(paths):
+    """D-1: only a telemetry session different from the one held at the mismatch clears the disk marker."""
+    commands.command_key(paths)
+    commands.note_telemetry_session("session-old", paths=paths)
+    _swap_between_sessions(paths)
+    with pytest.raises(commands.CommandKeyFailClosed, match="restart the game"):
+        commands.publish("status", {}, "helper", paths=paths)
+
+    marker = paths.data_dir / commands.KEY_FAIL_CLOSED_NAME
+    assert json.loads(marker.read_text(encoding="utf-8"))["telemetry_session_id"] == "session-old"
+
+    # The same game session is still running: it must keep refusing, from the original process's own memory too.
+    commands.note_telemetry_session("session-old", paths=paths)
+    with pytest.raises(commands.CommandKeyFailClosed, match="restart the game"):
+        commands.publish("status", {}, "helper", paths=paths)
+    assert marker.is_file()
+
+    # The game was restarted: its new telemetry session is the evidence that clears the marker, even in process A.
+    commands.note_telemetry_session("session-new", paths=paths)
+    assert not marker.exists()
+    commands.publish("status", {}, "helper", paths=paths)
+    assert len(list(paths.inbox.glob("*.json"))) == 1
+
+
+def test_a_new_session_on_the_telemetry_path_clears_the_marker_without_a_hook(paths):
+    """D-1: the helper already follows the telemetry path, so its newest session id is readable at refusal time too."""
+    commands.command_key(paths)
+    commands.note_telemetry_session("session-old", paths=paths)
+    _swap_between_sessions(paths)
+    with pytest.raises(commands.CommandKeyFailClosed, match="restart the game"):
+        commands.publish("status", {}, "helper", paths=paths)
+
+    row = opened()
+    row["telemetry_session_id"] = "session-new"
+    row["wall_timestamp_ms"] = 10 ** 15
+    session_file(paths, [row])
+
+    commands.publish("status", {}, "helper", paths=paths)
+    assert not (paths.data_dir / commands.KEY_FAIL_CLOSED_NAME).exists()
+    assert len(list(paths.inbox.glob("*.json"))) == 1
