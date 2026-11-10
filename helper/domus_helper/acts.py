@@ -13,6 +13,10 @@ from .transport import SyncRefused
 # N8 (F4): the options of one view: at most 160 objects and 32,768 bytes (contract.py takes the same).
 OPTIONS_LIMIT = 32768
 OPTIONS_OBJECTS_LIMIT = 160
+# D2 (2026-11-09): an option object says which needs its acts relieve (serves), by the portrait's need ids: at most
+# this many ids of at most this many characters (the same bound the probe's schema checks).
+SERVES_MAX = 8
+SERVE_MAX_CHARS = 32
 # N8 (F4): an object within this many metres of her is near, as one in her room is.
 NEAR_M = 4.0
 # Mint expires an act its helper never picked up after 90 s; a written act the probe never
@@ -180,9 +184,46 @@ class RefBook(object):
                 self._next[prefix] = number + 1
         return "%s%d" % (prefix, number)
 
+    def ref_widths(self, keys, prefix="a"):
+        """D1 (2026-11-09): the length each ref would have, in order, without allocating one. The view's byte budget
+        is measured before refs are given, and a ref still costs its bytes in the printed view."""
+        with self._lock:
+            numbers = dict(self._numbers)
+            following = self._next.get(prefix, 1)
+            widths = []
+            for key in keys:
+                number = numbers.get((prefix, key))
+                if number is None:
+                    number = following
+                    numbers[(prefix, key)] = number
+                    following += 1
+                widths.append(len("%s%d" % (prefix, number)))
+            return widths
+
 
 def _bytes(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _budget_objects(result, refs):
+    """D1: the entries as they would be printed, with each ref's exact width but no ref allocated: a cut object must
+    not take a number, and the printed ref still has to fit the byte budget."""
+    keys = [act.get("_ref_key") for row in result for act in row[0]["acts"] if act.get("_ref_key") is not None]
+    widths = refs.ref_widths(keys)
+    index = 0
+    entries = []
+    for row in result:
+        entry = row[0]
+        acts = []
+        for act in entry["acts"]:
+            shown = dict((key, value) for key, value in act.items() if key != "_ref_key")
+            if act.get("_ref_key") is not None:
+                width = widths[index]
+                index += 1
+                shown["ref"] = "a" + "0" * max(width - 1, 1)
+            acts.append(shown)
+        entries.append(dict(entry, acts=acts))
+    return entries
 
 
 def _ascii_bytes(value):
@@ -614,31 +655,52 @@ FOLD_TAIL = "; %d of them%s, the nearest is listed"
 
 
 def _fold(rows):
-    """2.38.0 (W11 H1): objects with the same shown name and the same act words are one entry. The first in the
-    given order (the nearest, the menu's order) keeps its acts and refs; its where says how many there are, and in
-    how many rooms when they span more than one. A spot, her phone and a person are never folded. rows are
-    (entry, where_named, room_id, is_spot, foldable); the folded rows are not in the result."""
-    first_of, counts, rooms_of = {}, {}, {}
+    """2.38.0 (W11 H1): objects with the same shown name and the same act words in the same room are one entry.
+    The first in the given order (the nearest, the menu's order) keeps its acts and refs; its where says how many
+    there are. D6 (2026-11-09): folding stays inside one room, so two rooms never become "N of them in N rooms".
+    A spot, her phone and a person are never folded. rows are (entry, where_named, room_id, is_spot, foldable)."""
+    first_of, counts = {}, {}
     kept = []
     for row in rows:
         entry, _name, room_id, _is_spot, foldable = row
         if not foldable:
             kept.append(row)
             continue
-        key = (entry["object"], tuple(act["text"] for act in entry["acts"]))
+        key = (entry["object"], tuple(act["text"] for act in entry["acts"]), room_id)
         if key not in first_of:
             first_of[key] = row
             kept.append(row)
-            counts[key], rooms_of[key] = 0, set()
+            counts[key] = 0
         counts[key] += 1
-        if room_id is not None:
-            rooms_of[key].add(room_id)
     for key, first in first_of.items():
         if counts[key] > 1:
-            rooms = len(rooms_of[key])
-            clause = " in %d rooms" % rooms if rooms > 1 else ""
-            first[0]["where"] = first[0]["where"] + FOLD_TAIL % (counts[key], clause)
+            first[0]["where"] = first[0]["where"] + FOLD_TAIL % (counts[key], "")
     return kept
+
+
+def assign_room_refs(rooms, book):
+    """D6 (2026-11-09): stable short ids r1, r2, ... for the given rooms. Unseen rooms are numbered in numeric
+    order (then lexical), and an id already in book is kept. book is mutated and returned."""
+    unseen, seen = [], set()
+    for room in rooms:
+        if room is None:
+            continue
+        key = str(room)
+        if key not in book and key not in seen:
+            unseen.append(key)
+            seen.add(key)
+    unseen.sort(key=lambda room: (0, int(room)) if room.isdigit() else (1, room))
+    used = set(book.values())
+    next_n = 1
+    for room in unseen:
+        while "r%d" % next_n in used:
+            next_n += 1
+        if next_n > 99_999_999:
+            break
+        book[room] = "r%d" % next_n
+        used.add(book[room])
+        next_n += 1
+    return book
 
 
 PHONE_LEFT_OUT_LINES = 12
@@ -653,7 +715,83 @@ LEFT_OUT_REASONS = {
     "not_user_directed": "only the game starts it, not you",
     "hidden": "the game keeps it out of your menu",
 }
+# D1 (2026-11-09): the upper-case codes a listed object's own excluded list carries, in her words. The phone's old
+# list keeps LEFT_OUT_REASONS; a code with no words here is shown as itself (never dropped).
+ACT_LEFT_OUT_REASONS = {
+    "PIE_PICKER": LEFT_OUT_REASONS["pie_picker"],
+    "DENY_NAME": LEFT_OUT_REASONS["deny_name"],
+    "TRAVEL": LEFT_OUT_REASONS["travel"],
+    "NOT_USER_DIRECTED": LEFT_OUT_REASONS["not_user_directed"],
+    "MENU_HIDDEN": LEFT_OUT_REASONS["hidden"],
+    "SOCIAL": "it is a social act, not an action on this thing",
+    "PICKER": "it opens a picker, not an act",
+    "FOLDED": "the same words as another act here",
+    "CAP": "the menu is full",
+    "NO_NAME": "the game gives it no name",
+    "NO_GUID": "the game gives it no id",
+    "PIE_EMPTY": "it has no choices now",
+    "GAME_REFUSED": "the game refused it",
+    "PHONE": "it is one of your phone's acts",
+    "POSTURE_SOURCE": "it only changes how you stand or sit",
+}
+EXCLUDED_SHOWN = 16
 AN_ACT = "an act"
+
+
+def _excluded_entries(item):
+    """D1: one listed object's left-out acts, as the probe named them: at most EXCLUDED_SHOWN {name, why} entries."""
+    raw = item.get("excluded") if isinstance(item, dict) else None
+    if not isinstance(raw, list):
+        return []
+    entries = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") if isinstance(entry.get("name"), str) else ""
+        why = entry.get("why") if isinstance(entry.get("why"), str) else ""
+        if not why:
+            continue
+        entries.append({"name": name[:128], "why": why[:64]})
+        if len(entries) >= EXCLUDED_SHOWN:
+            break
+    return entries
+
+
+def _wire_excluded(entries):
+    """Observation wire (Natalis): {text, reason} from the probe's {name, why} entries.
+
+    The probe and the helper's own bookkeeping keep {name, why}. Natalis parseObservation
+    accepts only {text, reason?, ref?} and rejects any other key with 400 for the whole view.
+    An empty name becomes "an act", the same words the left-out lines use.
+    """
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        why = entry.get("why") if isinstance(entry.get("why"), str) else ""
+        if not why:
+            continue
+        name = entry.get("name") if isinstance(entry.get("name"), str) else ""
+        text = name if name else AN_ACT
+        out.append({"text": text[:128], "reason": why[:64]})
+    return out
+
+
+def _excluded_lines(entries):
+    """D1: "<act>: left out: <reason>" for each entry, in her words. A name that fails game_name, or a denied name,
+    is "an act" (the same rule the phone's lines use)."""
+    lines = []
+    for entry in entries:
+        code = entry["why"]
+        why = LEFT_OUT_REASONS.get(code) or LEFT_OUT_REASONS.get(code.lower()) or \
+            ACT_LEFT_OUT_REASONS.get(code) or code
+        name = entry["name"]
+        if code.lower() == "deny_name" or game_name(name) is None:
+            act = AN_ACT
+        else:
+            act = humanize(name)[:64] or AN_ACT
+        lines.append(_phone_line(act, "left out", why))
+    return lines
 
 
 def _phone_act(item, words, code):
@@ -707,19 +845,114 @@ def _phone_left_out(menu, resolve):
     return lines
 
 
+def felt_needs(row):
+    """D2 (2026-11-09): the needs her body feels now, worst first: her motive rows with a numeric value, ordered by
+    value (the lowest first) and then by the row's own order, keyed as the portrait's needs are. At most SERVES_MAX."""
+    rows = []
+    for index, item in enumerate((row if isinstance(row, dict) else {}).get("motives") or ()):
+        if not isinstance(item, dict):
+            continue
+        need = item.get("id")
+        value = item.get("value")
+        if not isinstance(need, str) or not 1 <= len(need) <= SERVE_MAX_CHARS:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        rows.append((value, index, need))
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return tuple(need for _value, _index, need in rows[:SERVES_MAX])
+
+
+def _serves_of(item):
+    """D2 (2026-11-09): the needs one option object's acts advertise, from the probe's per-act and per-object serves:
+    deduplicated, at most SERVES_MAX ids of at most SERVE_MAX_CHARS characters, in the order they were met."""
+    found = []
+    groups = [act.get("serves") for act in item.get("acts") or [] if isinstance(act, dict)]
+    groups.append(item.get("serves"))
+    for group in groups:
+        if not isinstance(group, (list, tuple)):
+            continue
+        for need in group:
+            if (isinstance(need, str) and 1 <= len(need) <= SERVE_MAX_CHARS
+                    and need not in found and len(found) < SERVES_MAX):
+                found.append(need)
+    return found
+
+
+def _need_rank(entry, needs):
+    """D2 (2026-11-09): the index of the entry's worst felt need in needs (0 is worst), or len(needs) when it serves
+    none. 0 for every entry when nothing is felt."""
+    rank = len(needs)
+    for need in entry.get("serves") or ():
+        try:
+            index = needs.index(need)
+        except ValueError:
+            continue
+        if index < rank:
+            rank = index
+    return rank
+
+
+
+def _state_word(piece):
+    """One condition word: the last token of a Freshness_Spoiled-style value, or the word itself."""
+    value = None
+    if isinstance(piece, str) and piece.strip():
+        value = piece.strip()
+    elif isinstance(piece, dict):
+        raw = piece.get("value")
+        if isinstance(raw, str) and raw.strip():
+            value = raw.strip()
+    if not value:
+        return None
+    if "_" in value:
+        parts = [part for part in value.replace(" ", "_").split("_") if part]
+        value = parts[-1] if parts else value
+    if not 1 <= len(value) <= 40:
+        return None
+    return value
+
+
+def _option_states(item, index):
+    """D5 (2026-11-09): condition words from the menu object itself first, else the things-list index."""
+    found = []
+    raw = item.get("states")
+    if isinstance(raw, list):
+        for piece in raw:
+            word = _state_word(piece)
+            if word and word not in found:
+                found.append(word)
+            if len(found) >= 4:
+                return found
+    if found:
+        return found
+    oid = str(item.get("object_id"))
+    if index and oid in index:
+        for word in list(index[oid])[:4]:
+            if isinstance(word, str) and word and word not in found:
+                found.append(word)
+    return found[:4]
+
+
 def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, refs=None, withheld=(), room=None,
-            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None):
+            room_labels=None, cut=None, objects_limit=OPTIONS_OBJECTS_LIMIT, heard=None, states=None, needs=None,
+            room_refs=None):
     """The observation's options: near objects first (her room, or within NEAR_M), each act with a short ref
     (a1, a2, ...), its guid64 and its text. N8 (F3): a ref is stable for one act on one object for the life
     of the helper session (refs is a RefBook). N8 (F4): identical act texts on one object are listed once;
-    each object names its room (room_labels gives the label, when known) and whether it is near. Farthest
-    objects are left out until it fits the byte budget and the object limit; cut (a dict, filled in) names
-    how many were left out and in which rooms. W2h: an act whose interaction the notebook has seen end on a
+    each object names its room (room_labels gives the label, when known) and whether it is near. D2 (2026-11-09):
+    an object whose acts relieve a need says so (serves, the portrait's ids), and needs (felt needs, worst first)
+    keeps such objects ahead of the rest, so the cut takes them last. Farthest objects are left out until it fits
+    the byte budget and the object limit; cut (a dict, filled in) names how many were left out and in which rooms.
+    W2h: an act whose interaction the notebook has seen end on a
     screen only the User's hands can use stays listed, marked with what it opens. HE12: room is the room she
     is in now (the zone's), and the menu's own room comes with the menu."""
     if not isinstance(menu, dict) or not isinstance(menu.get("objects"), list):
         return []
     refs = RefBook() if refs is None else refs
+    needs = tuple(needs or ())
+    book = {} if room_refs is None else room_refs
+    assign_room_refs((item.get("room") for item in menu["objects"] if isinstance(item, dict)), book)
     result = []
     left_out = []
     phone_left_out = _phone_left_out(menu, resolve)
@@ -745,6 +978,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             where = "with you"  # 2.29.0: your phone is on you, so no distance and no room.
         acts = []
         texts = set()
+        helper_excluded = []
         for act in item["acts"]:
             if not isinstance(act, dict) or not act.get("guid64"):
                 continue
@@ -757,7 +991,11 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
                     text = humanize(act.get("name"))
                     unmapped = True
             if text in texts:
-                continue  # N8 (F4): the same words twice on one object is one act (all the lights, once)
+                # N8 (F4): the same words twice on one object is one act (all the lights, once). D1: the second is
+                # named as folded, so it does not disappear from the view without a word.
+                helper_excluded.append({"name": act.get("name") if isinstance(act.get("name"), str) else "",
+                                        "why": "FOLDED"})
+                continue
             texts.add(text)
             guid = str(act["guid64"])
             if type(act.get("variant")) is int and not isinstance(act.get("variant"), bool):
@@ -768,7 +1006,9 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
                 ref_key = ("spot", str(item.get("room")), item.get("level"), item.get("spot"))
             else:
                 ref_key = ("act", str(item.get("object_id")), guid)
-            listed = {"ref": refs.ref(ref_key), "guid64": guid, "text": text}
+            # D1 (2026-11-09): a ref is given only to an act that is printed. It is kept here and given after the
+            # object budget and the fold have decided what she sees (a cut object must not consume a number).
+            listed = {"guid64": guid, "text": text, "_ref_key": ref_key}
             if unmapped:
                 listed["unmapped"] = True
             if act.get("name") in withheld or act.get("name") in WITHHELD_SEED:
@@ -776,42 +1016,76 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if act.get("needs_sim") is True:
                 listed["needs_sim"] = True  # W13 (D4.1): a phone act that opens a Sim picker; game_act names the Sim
             acts.append(listed)
-        if acts:
+        probe_excluded = _excluded_entries(item)
+        if helper_excluded:
+            merged = list(probe_excluded)
+            for entry in helper_excluded:
+                if entry not in merged:
+                    merged.append(entry)
+            excluded_keys = merged[:EXCLUDED_SHOWN]
+        else:
+            excluded_keys = probe_excluded
+        excluded_lines = _excluded_lines(excluded_keys)
+        if acts or excluded_keys:
             label = _room_label(item, room_labels)
             name = _spot_name(item, label) if is_spot else _object_name(item, resolve, catalog, people)
             near = _near(item, room)
             entry = {"object": name, "object_id": str(item.get("object_id")), "where": where, "acts": acts,
                      "near": near}
+            serves = _serves_of(item)
+            if serves:
+                entry["serves"] = serves
+            short = book.get(str(item.get("room"))) if item.get("room") is not None else None
             if label:
                 entry["room"] = label[:64]
+            elif short:
+                entry["room"] = short
+            if short:
+                entry["room_id"] = short
             if item.get("reach") is False:
                 # 2.25.0: the game's own connectivity check sees no way from her to it now.
                 entry["noWay"] = NO_WAY
-            if states and not is_spot and str(item.get("object_id")) in states:
-                # W13 (D9.6): a thing that is broken or dirty says so, in the words of the things list (at most 4).
-                entry["states"] = list(states[str(item.get("object_id"))])[:4]
+            option_states = _option_states(item, None if is_spot else states)
+            if option_states:
+                # D5 (2026-11-09): the menu object's own freshness first; else the things-list index (W13 D9.6).
+                entry["states"] = option_states
             refused = _refusals(item, resolve, near)
             if refused:
                 entry["refused"] = refused  # W12 (C4): why the game refused her acts here (near objects only)
+            if excluded_keys:
+                # D1 (2026-11-09): the wire keeps the probe's own entries and codes, so the view can count them
+                # ("3 acts hidden on t263: PIE_PICKER"); the plain lines are for the words she reads.
+                # B-1 (2026-11-09): remap {name, why} to Natalis's {text, reason} so the observation is accepted.
+                entry["excluded"] = _wire_excluded(excluded_keys)
             if item.get("phone") is True and phone_left_out:
-                entry["left_out"] = list(phone_left_out)  # T2: her phone's acts left out of the menu, and why
+                # T2: her phone's own list is the one the probe writes; add only the helper's own folded lines.
+                helper_lines = _excluded_lines(helper_excluded)
+                left_out_lines = list(phone_left_out) + [line for line in helper_lines
+                                                         if line not in phone_left_out]
+            else:
+                left_out_lines = excluded_lines
+            if left_out_lines:
+                entry["left_out"] = left_out_lines
             if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
                 entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
             where_named = label[:64] if label else (str(item["room"])[:64] if item.get("room") is not None else None)
             room_id = None if item.get("room") is None else str(item["room"])
             # 2.38.0 (W11 H1): a thing is folded with its identical kin; a spot, her phone and a person are not.
-            foldable = not is_spot and item.get("phone") is not True and item.get("class") != "sim"
+            # D1: an object with no printed act is not folded into one that has acts.
+            foldable = bool(acts) and not is_spot and item.get("phone") is not True and item.get("class") != "sim"
             result.append((entry, where_named, room_id, is_spot, foldable))
-    # Near first; then the rooms in the menu's order, and a spot before the objects of its own room, so a cut takes
-    # a spot only once its room's objects are gone (2.35.0, D3). Within a room the menu's order is kept.
+    # D2 (2026-11-09): what the felt needs require first (the worst need's objects, then the next), so a cut takes
+    # them last. Then near first; then the rooms in the menu's order, and a spot before the objects of its own room,
+    # so a cut takes a spot only once its room's objects are gone (2.35.0, D3). Within a rank the menu's order is kept.
     heads = {}
     for index, row in enumerate(result):
         heads.setdefault(row[2], index)
-    result.sort(key=lambda row: (row[0]["near"] is not True, heads[row[2]], not row[3]))
+    result.sort(key=lambda row: (_need_rank(row[0], needs), row[0]["near"] is not True,
+                                 heads[row[2]], not row[3]))
     # 2.38.0 (W11 H1): folded before the budget, so the budget counts what she is shown, not the same thing many times.
     result = _fold(result)
-    while result and (len(result) > objects_limit or _bytes([row[0] for row in result]) > limit):
+    while result and (len(result) > objects_limit or _bytes(_budget_objects(result, refs)) > limit):
         left_out.append(result.pop()[1])
     # W12 (C8): what the probe's own object cap left out joins the cut, named by room (labels when known).
     dropped = menu.get("dropped") if isinstance(menu.get("dropped"), dict) else {}
@@ -821,6 +1095,12 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
     if cut is not None and (left_out or dropped_objects):
         cut["objects"] = len(left_out) + dropped_objects
         cut["rooms"] = sorted({name for name in left_out + dropped_rooms if name})[:16]
+    # D1 (2026-11-09): refs go only to the acts actually printed, in the order she sees them, so the numbering has
+    # no gap when an object is cut or folded away.
+    for row in result:
+        for act in row[0]["acts"]:
+            ref_key = act.pop("_ref_key", None)
+            act["ref"] = refs.ref(ref_key)
     return [row[0] for row in result]
 
 
@@ -1044,6 +1324,21 @@ def stop_pending_acts(spool):
     return stopped
 
 
+def _replaced_of(raw):
+    """D7 (2026-11-09): the probe's list of acts a push dropped, or empty when the shape is wrong."""
+    if not isinstance(raw, list):
+        return []
+    found = []
+    for item in raw[:4]:
+        if not isinstance(item, dict):
+            continue
+        name, autonomous, state = item.get("name"), item.get("autonomous"), item.get("state")
+        if (isinstance(name, str) and 1 <= len(name) <= 128 and type(autonomous) is bool
+                and state in ("queued", "running")):
+            found.append({"name": name, "autonomous": autonomous, "state": state})
+    return found
+
+
 class ActCourier(object):
     """Carries her requested acts to the probe and the probe's record of them back.
 
@@ -1182,6 +1477,16 @@ class ActCourier(object):
         if type(e2.get("started")) is bool:
             # 2.24.0: did the game ever begin the pushed act.
             detail["started"] = e2["started"]
+        replaced = _replaced_of(e2.get("replaced"))
+        if replaced:
+            # D7 (2026-11-09): what this push dropped, forwarded for her receipt.
+            detail["replaced"] = replaced
+            while replaced and _detail_bytes(detail) > DETAIL_BYTES:
+                replaced = replaced[:-1]
+                if replaced:
+                    detail["replaced"] = replaced
+                else:
+                    detail.pop("replaced", None)
         window = _window_of(e2.get("detail"))
         if window is not None:
             detail["window"] = window  # W12: the question (dialog) the act is waiting on, when there is one

@@ -886,9 +886,12 @@ def _lot_affordances(obj, context):
         extra = []
     for affordance in extra:
         guid = tuned._class_plain(affordance, "guid64")
-        if type(guid) is int and guid not in seen:
+        if type(guid) is int:
+            if guid in seen:
+                continue
             seen.add(guid)
-            listed.append(affordance)
+        # D1: an affordance with no int guid is still the game's offer; _menu_offers names it NO_GUID.
+        listed.append(affordance)
     return listed
 
 
@@ -2019,39 +2022,66 @@ def _menu_hidden(affordance):
 def _menu_offers(item, sim, context):
     """The candidate acts of one object: user-directed offers the trial guard does not exclude and the game does not
     mark as a cheat, at most CANDIDATE_ACTS distinct texts. 2.39.0 (W12 C12): a text repeated is folded before the cap.
-    2.39.0 (W12 G1): a pie-menu act is not an act itself; each of its choices is one act, with its variant."""
+    2.39.0 (W12 G1): a pie-menu act is not an act itself; each of its choices is one act, with its variant.
+    D1 (2026-11-09): every act left out is named in item["excluded"] with its upper-case reason; an act that
+    advertises a need is never filtered (only the game's own test may refuse it)."""
     obj = item["obj"]
     jobs = []
     folded = set()
+    excluded = []
+    item["excluded"] = excluded
     for affordance in _lot_affordances(obj, context):
-        if len(folded) >= act_menu.CANDIDATE_ACTS:
-            break
         guid = tuned._class_plain(affordance, "guid64")
         if type(guid) is not int:
+            act_menu.note_act_excluded(excluded, _affordance_name(affordance), "no_guid")
             continue
         if e2_actuator.is_pie(affordance):
-            if e2_actuator.user_directed(affordance) and not _menu_hidden(affordance):
-                jobs.extend(_pie_jobs(item, affordance, guid, sim, context, folded))
+            pie_why = None
+            if not e2_actuator.user_directed(affordance):
+                pie_why = "not_user_directed"
+            elif _menu_hidden(affordance):
+                pie_why = "hidden"
+            before = len(excluded)
+            choices = _pie_jobs(item, affordance, guid, sim, context, folded, excluded, pie_why)
+            if not choices and len(excluded) == before:
+                act_menu.note_act_excluded(excluded, _affordance_name(affordance),
+                                           pie_why or "pie_empty")
+            jobs.extend(choices)
             continue
-        if (e2_actuator.act_excluded(affordance, item.get("person") is True) is not None
-                or not e2_actuator.user_directed(affordance)):
-            continue
-        if _menu_hidden(affordance):
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
+        why = None
+        if not relief:
+            why = e2_actuator.act_excluded(affordance, item.get("person") is True)
+            if why is None and not e2_actuator.user_directed(affordance):
+                why = "not_user_directed"
+            if why is None and _menu_hidden(affordance):
+                why = "hidden"
+        if why is not None:
+            act_menu.note_act_excluded(excluded, _affordance_name(affordance), why)
             continue
         text_key = observers._string_key(tuned._class_plain(affordance, "display_name"))
         name = _affordance_name(affordance)
         fold = act_menu.fold_key({"text_key": text_key, "name": name, "guid64": str(guid)})
-        if fold in folded:
+        if fold in folded and not relief:
+            act_menu.note_act_excluded(excluded, name, "folded")
+            continue
+        if len(folded) >= act_menu.CANDIDATE_ACTS and not relief:
+            act_menu.note_act_excluded(excluded, name, "cap")
             continue
         folded.add(fold)
-        jobs.append({
+        job = {
             "object_id": item["object_id"], "definition_id": item["definition_id"], "class": item["class"],
             "distance_m": item["distance_m"], "same_room": item["same_room"], "room": item.get("room"),
             "on_lot": item.get("on_lot"),
             "person": item.get("person") is True,  # 2.37.0 (W10 P2): a Sim is never a far candidate (the cache)
             "guid64": str(guid), "name": name, "text_key": text_key,
             "obj": obj, "affordance": affordance, "sim": sim, "context": context,
-        })
+        }
+        if relief:
+            job["need_relief"] = True
+            job["serves"] = list(motives)
+        jobs.append(job)
     return jobs
 
 
@@ -2063,30 +2093,49 @@ def _choice_name(choice):
         return ""
 
 
-def _pie_jobs(item, pie, guid, sim, context, folded):
+def _pie_jobs(item, pie, guid, sim, context, folded, excluded=None, pie_why=None):
     """2.39.0 (W12 G1): one job per choice of a pie-menu act: the choice's own name and text, its variant (its place in
     the game's list), and the choice itself, which is tested and later run as its own pair. A choice with no name key,
-    a choice the guard excludes, and a text already folded are left out."""
+    a choice the guard excludes, and a text already folded are left out.
+    D1 (2026-11-09): each left-out choice is named in excluded with its reason; a choice that advertises a need is
+    never filtered. pie_why is the pie's own reason (a hidden or autonomous pie), used for choices that have none."""
     obj = item["obj"]
     jobs = []
     for index, choice in enumerate(e2_actuator.pie_choices(pie, obj, context)):
-        if len(folded) >= act_menu.CANDIDATE_ACTS:
-            break
         text_key, key = e2_actuator.choice_names(choice, context)
+        try:
+            affordance = choice.affordance
+        except Exception:
+            affordance = None
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
+        why = None if relief else (e2_actuator.choice_excluded(choice) or pie_why)
         if key is None:
+            act_menu.note_act_excluded(excluded, _choice_name(choice), "no_name")
+            continue
+        if why is not None:
+            act_menu.note_act_excluded(excluded, _choice_name(choice), why)
             continue
         fold = act_menu.fold_key({"text_key": text_key, "name": key})
-        if fold in folded or e2_actuator.choice_excluded(choice) is not None:
+        if fold in folded and not relief:
+            act_menu.note_act_excluded(excluded, _choice_name(choice), "folded")
+            continue
+        if len(folded) >= act_menu.CANDIDATE_ACTS and not relief:
+            act_menu.note_act_excluded(excluded, _choice_name(choice), "cap")
             continue
         folded.add(fold)
-        jobs.append({
+        job = {
             "object_id": item["object_id"], "definition_id": item["definition_id"], "class": item["class"],
             "distance_m": item["distance_m"], "same_room": item["same_room"], "room": item.get("room"),
             "on_lot": item.get("on_lot"), "person": False,
             "guid64": str(guid), "name": _choice_name(choice),
             "text_key": text_key, "variant": index, "variant_key": key,
             "choice": choice, "obj": obj, "affordance": choice, "sim": sim, "context": context,
-        })
+        }
+        if relief:
+            job["need_relief"] = True
+            job["serves"] = list(motives)
+        jobs.append(job)
     return jobs
 
 
@@ -2116,20 +2165,28 @@ def _menu_phone_offers(item, sim, context, excluded):
     not exclude (as her own acts, so never a social), the game does not mark as a cheat, debug or
     automation, and that do not take her off the lot. Each is tested like any other candidate;
     the target of each is her own Sim. 2.37.0 (P3): up to act_menu.PHONE_CANDIDATES, and each act left
-    out before the test is named in excluded (act_menu.note_excluded)."""
+    out before the test is named in excluded (act_menu.note_excluded).
+    D1 (2026-11-09): the phone is a listed object too, so item["excluded"] carries the same acts with upper-case
+    codes; an act that advertises a need is never filtered."""
     jobs = []
+    item["excluded"] = []
     for affordance in e2_actuator.phone_affordances(sim):
-        if len(jobs) >= act_menu.PHONE_CANDIDATES:
-            break
         guid = tuned._class_plain(affordance, "guid64")
-        if type(guid) is not int:
-            continue
-        why = _phone_exclusion(affordance)
-        if why is not None:
-            act_menu.note_excluded(excluded, _affordance_name(affordance), why)
-            continue
         name = _affordance_name(affordance)
-        jobs.append({
+        if type(guid) is not int:
+            act_menu.note_act_excluded(item["excluded"], name, "no_guid")
+            continue
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
+        why = None if relief else _phone_exclusion(affordance)
+        if why is not None:
+            act_menu.note_excluded(excluded, name, why)
+            act_menu.note_act_excluded(item["excluded"], name, why)
+            continue
+        if len(jobs) >= act_menu.PHONE_CANDIDATES and not relief:
+            act_menu.note_act_excluded(item["excluded"], name, "cap")
+            continue
+        job = {
             "object_id": item["object_id"], "definition_id": None, "class": "phone",
             "distance_m": None, "same_room": None, "room": None, "phone": True, "on_lot": True,
             "guid64": str(guid), "name": name if type(name) is str else "",
@@ -2137,7 +2194,11 @@ def _menu_phone_offers(item, sim, context, excluded):
             "obj": sim, "affordance": affordance, "sim": sim, "context": context,
             # 2.40.0 (W13 P1): a phone act that opens a Sim picker is listed with needs_sim (she names the Sim).
             "needs_sim": True if e2_actuator.needs_sim(affordance) else None,
-        })
+        }
+        if relief:
+            job["need_relief"] = True
+            job["serves"] = list(motives)
+        jobs.append(job)
     return jobs
 
 
@@ -2152,14 +2213,20 @@ def _on_lot(obj):
 class _MenuJobs(object):
     """2.35.0 (D3): the jobs of one menu build, read lazily as _lazy_jobs reads them, with the spots the build has
     found so far (the build's table; it is published when the build finishes). 2.39.0 (W12 C11): and the spot stage
-    counters, which the build writes into its part 0."""
+    counters, which the build writes into its part 0.
+    D1 (2026-11-09): excluded (per object, the acts the probe left out) and heads (the objects that offer only such
+    acts, so the menu still lists them)."""
 
-    def __init__(self, pairs, spots, excluded_phone, spot_stages=None):
+    def __init__(self, pairs, spots, excluded_phone, spot_stages=None, excluded=None, heads=None, needs=None):
         self._jobs = _lazy_jobs(pairs)
         self.spots = spots
         # 2.37.0 (W10 P3): her phone's acts the guard left out, named as the build reads them.
         self.excluded_phone = excluded_phone
         self.spot_stages = {} if spot_stages is None else spot_stages
+        self.excluded = {} if excluded is None else excluded
+        self.heads = {} if heads is None else heads
+        # D2 (2026-11-09): the needs her body feels now, worst first (act_menu.felt_needs).
+        self.needs = tuple(needs or ())
 
     def __iter__(self):
         return self
@@ -2276,16 +2343,26 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen, stages=None):
         return []
     count("target")
     picked = []
+    excluded = []
     for affordance in e2_actuator.go_here_offered(terrain, spot_context):
-        if len(picked) >= act_menu.CANDIDATE_ACTS:
-            break
         guid = tuned._class_plain(affordance, "guid64")
         if type(guid) is not int:
+            act_menu.note_act_excluded(excluded, _affordance_name(affordance), "no_guid")
             continue
-        if (e2_actuator.act_excluded(affordance, False) is not None
-                or not e2_actuator.user_directed(affordance) or _menu_hidden(affordance)):
+        motives = e2_actuator.relief_motives(affordance)
+        relief = bool(motives)
+        why = None if relief else e2_actuator.act_excluded(affordance, False)
+        if why is None and not relief and not e2_actuator.user_directed(affordance):
+            why = "not_user_directed"
+        if why is None and not relief and _menu_hidden(affordance):
+            why = "hidden"
+        if why is not None:
+            act_menu.note_act_excluded(excluded, _affordance_name(affordance), why)
             continue
-        picked.append((affordance, guid))
+        if len(picked) >= act_menu.CANDIDATE_ACTS and not relief:
+            act_menu.note_act_excluded(excluded, _affordance_name(affordance), "cap")
+            continue
+        picked.append((affordance, guid, motives))
     if not picked:
         return []
     count("go_here")
@@ -2294,13 +2371,22 @@ def _spot_offers(item, sim, body_position, terrain, spots, seen, stages=None):
         return []
     seen.add(key)
     spots[str(spot_id)] = spot
+    # D1: the acts this listed spot left out are named on it, under the spot id the menu shows.
+    item["object_id"] = str(spot_id)
+    if excluded:
+        item["excluded"] = excluded
     count("offers")
     distance = observers._distance(_planar(position), body_position)
-    return [{"object_id": str(spot_id), "definition_id": None, "class": "spot", "distance_m": distance,
-             "same_room": item["same_room"], "room": room, "level": level, "spot": kind,
-             "guid64": str(guid), "name": e2_actuator.GO_HERE_NAME, "text_key": None, "on_lot": True,
-             "obj": point, "affordance": affordance, "sim": sim, "context": spot_context}
-            for affordance, guid in picked]
+    jobs = []
+    for affordance, guid, motives in picked:
+        job = {"object_id": str(spot_id), "definition_id": None, "class": "spot", "distance_m": distance,
+               "same_room": item["same_room"], "room": room, "level": level, "spot": kind,
+               "guid64": str(guid), "name": e2_actuator.GO_HERE_NAME, "text_key": None, "on_lot": True,
+               "obj": point, "affordance": affordance, "sim": sim, "context": spot_context}
+        if motives:
+            job["serves"] = list(motives)
+        jobs.append(job)
+    return jobs
 
 
 def _menu_jobs(row):
@@ -2352,6 +2438,8 @@ def _menu_jobs(row):
     # 2.35.0 (D3): the spots of her lot (one per room and level, and the front door), searched when the build asks.
     spots, seen = {}, set()
     excluded_phone = []  # 2.37.0 (W10 P3): her phone's acts left out before the test, named
+    # D1 (2026-11-09): each listed object's left-out acts, and the fields of an object that offers only those.
+    excluded_objects, object_heads = {}, {}
     terrain = e2_actuator.terrain_object()
     anchors = _spot_anchors(items, body_room) + _front_door_anchors(body_position, body_room)
     # 2.39.0 (W12 C11): how far the spots got, counted as the build reads them (part 0 carries them).
@@ -2363,7 +2451,8 @@ def _menu_jobs(row):
     phone = []
     if sim_id is not None and sim_id not in e2_control.EXCLUDED_OBJECT_IDS:
         phone.append({"object_id": sim_id, "obj": sim, "phone": True, "person": False,
-                      "same_room": None, "on_lot": None, "distance_m": None, "room": None})
+                      "same_room": None, "on_lot": None, "distance_m": None, "room": None,
+                      "definition_id": None, "class": "phone", "spot": None, "level": None})
 
     def item_offers(item):
         if item.get("phone") is True:
@@ -2382,6 +2471,10 @@ def _menu_jobs(row):
         # R3 (PROBE3-11): each act carries its item's level, so a near part can read whether it is on another level.
         for job in acts:
             job["floor"], job["other_level"] = item.get("floor"), item.get("other_level") is True
+        if item.get("excluded"):
+            oid = str(item.get("object_id"))
+            excluded_objects[oid] = list(item["excluded"])[:schema.MENU_MAX_EXCLUDED_ACT]
+            object_heads[oid] = item
         return acts
 
     # R3 (PROBE3-11): the level of each item, and whether it is on another level than her body (never near her).
@@ -2403,7 +2496,9 @@ def _menu_jobs(row):
         except Exception:
             item["definition_id"] = None
         item["class"] = situation._name(type(item["obj"])) or ""
-    return _MenuJobs(act_menu.iter_pick(phone + ordered, offers), spots, excluded_phone, spot_stages), body_room
+    return _MenuJobs(act_menu.iter_pick(phone + ordered, offers), spots, excluded_phone, spot_stages,
+                     excluded=excluded_objects, heads=object_heads,
+                     needs=act_menu.felt_needs(row.get("motives"))), body_room
 
 
 def _lazy_jobs(pairs):
@@ -2487,6 +2582,9 @@ def _menu_tick(row):
     elif _MENU is not None and moved and not _MENU_MOVE_RESTARTED:
         _menu_reset(keep_last=True)
         _MENU_MOVE_RESTARTED = True
+    # D2 (2026-11-09): a build spans ticks; its cap ranks by the needs she feels on the newest row.
+    if _MENU is not None:
+        _MENU.set_needs(act_menu.felt_needs(row.get("motives")))
     if _MENU_NEAR_REQUESTED or moved:
         _MENU_NEAR_REQUESTED = False
         _menu_near_now()
@@ -2530,6 +2628,7 @@ def _menu_tick(row):
             _MENU = act_menu.MenuBuild(jobs, _menu_test, spots=jobs.spots, excluded_phone=jobs.excluded_phone,
                                        budget_ms=act_menu.FIRST_BUDGET_MS if _MENU_FIRST else 8.0,
                                        far=_MENU_FAR, reach=_menu_reach, stages=jobs.spot_stages,
+                                       excluded=jobs.excluded, heads=jobs.heads, needs=jobs.needs,
                                        on_near=lambda build, zone=zone: _menu_near_part(build, zone))
             _MENU_ZONE = zone
 

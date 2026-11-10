@@ -2376,7 +2376,7 @@ def _object_states(obj):
 
 # 2.32.0 (HE7): the game's state values worth a line in her portrait (the last word of the value's name), and the
 # words that negate them ("FireState_..._Not_Burning" is not burning). The helper's scene.NOTABLE, read the same way.
-NOTABLE_STATE_WORDS = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed", "Flooded", "Smelly")
+NOTABLE_STATE_WORDS = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed", "Flooded", "Smelly", "Burnt")
 NEGATION_WORDS = ("Not", "No", "Non")
 
 

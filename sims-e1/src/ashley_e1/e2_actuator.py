@@ -380,6 +380,146 @@ def user_directed(affordance):
     return value is True
 
 
+# D1 (Domus perception 1): an act that advertises one of her needs is never filtered by the probe; only the game's
+# own test may refuse it. The needs are the motives the probe already reads by name, with the game's own commodity
+# ids (observers.MOTIVE_GUIDS). A fixture may advertise one directly (`advertised_motives`), or through the game's
+# `_static_commodities`/`_autonomy_ads` tuning fields the atlas already dumps. A food route is hunger relief.
+NEED_MOTIVES = ("bladder", "hunger", "hygiene", "energy", "fun", "social")
+
+
+def _advertised_motives_of(affordance):
+    """Read: a fixture's declared needs, or None. Never raises."""
+    try:
+        return affordance.advertised_motives
+    except Exception:
+        return None
+
+
+def _static_commodities_of(affordance):
+    """Read: an affordance's static commodities, or None. Never raises."""
+    try:
+        return affordance._static_commodities
+    except Exception:
+        return None
+
+
+def _autonomy_ads_of(affordance):
+    """Read: an affordance's autonomy ads, or None. Never raises."""
+    try:
+        return affordance._autonomy_ads
+    except Exception:
+        return None
+
+
+def _static_commodity_of(entry):
+    """Read: the commodity an entry wraps, or the entry itself. Never raises."""
+    try:
+        return entry.static_commodity
+    except Exception:
+        return entry
+
+
+def _stat_type_of(ad_list):
+    """Read: an autonomy ad's statistic, or None. Never raises."""
+    try:
+        return ad_list._stat_type
+    except Exception:
+        return None
+
+
+def _op_list_of(ad_list):
+    """Read: an autonomy ad's operations, or None. Never raises."""
+    try:
+        return ad_list._op_list
+    except Exception:
+        return None
+
+
+def _amount_of(op):
+    """Read: an operation's amount, or None. Never raises."""
+    try:
+        return op._amount
+    except Exception:
+        return None
+
+
+def _advertise_of(op):
+    """Read: an operation's advertise flag, or None. Never raises."""
+    try:
+        return op._advertise
+    except Exception:
+        return None
+
+
+def _motive_of(value):
+    """Read: a commodity or statistic row's motive id, or None."""
+    if type(value) is int and not isinstance(value, bool):
+        return observers.MOTIVE_GUIDS.get(value)
+    if type(value) is str:
+        return value if value in NEED_MOTIVES else None
+    try:
+        guid = value.guid64
+    except Exception:
+        return None
+    if type(guid) is int and not isinstance(guid, bool):
+        return observers.MOTIVE_GUIDS.get(guid)
+    return None
+
+
+def relief_motives(affordance):
+    """Read: the needs this affordance advertises it relieves, in NEED_MOTIVES order (empty when unread).
+
+    D1: the probe reads the advertisement, never a name guess: `advertised_motives` (fixtures), the static
+    commodities or the autonomy ads (the game's own tuning), and a food route (hunger). A negative ad is not a
+    relief. Never raises."""
+    if affordance is None:
+        return ()
+    found = set()
+    explicit = _advertised_motives_of(affordance)
+    if isinstance(explicit, (list, tuple, set, frozenset)):
+        for item in explicit:
+            if type(item) is str and item in NEED_MOTIVES:
+                found.add(item)
+    commodities = _static_commodities_of(affordance)
+    if isinstance(commodities, (list, tuple, set, frozenset)):
+        for entry in commodities:
+            if type(entry) is str:
+                motive = _motive_of(entry)
+            else:
+                motive = _motive_of(_static_commodity_of(entry))
+            if motive is not None:
+                found.add(motive)
+    ads = _autonomy_ads_of(affordance)
+    if isinstance(ads, dict):
+        for ad_list in ads.values():
+            motive = _motive_of(_stat_type_of(ad_list))
+            if motive is None:
+                continue
+            try:
+                ops = list(_op_list_of(ad_list) or ())
+            except TypeError:
+                ops = []
+            if not ops:
+                found.add(motive)
+                continue
+            for op in ops:
+                amount = _amount_of(op)
+                advertised = _advertise_of(op)
+                if amount is None:
+                    if advertised is not False:
+                        found.add(motive)
+                elif type(amount) in (int, float) and not isinstance(amount, bool) and amount > 0:
+                    found.add(motive)
+    if food_route(affordance) is not None:
+        found.add("hunger")
+    return tuple(motive for motive in NEED_MOTIVES if motive in found)
+
+
+def need_relief(affordance):
+    """Read: whether this affordance advertises relief of one of her needs (D1)."""
+    return bool(relief_motives(affordance))
+
+
 def push_sit(sim, obj, affordance, context):
     """Act: push exactly one admitted sit. Returns (interaction_or_None, detail)."""
     interaction, detail, _kind = push_affordance(sim, obj, affordance, context)

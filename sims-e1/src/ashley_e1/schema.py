@@ -105,6 +105,12 @@ E2_PAYLOAD_KEYS.update({
     "phone": ("kind", "from_sim_id", "notifies"),
 })
 E2_PAYLOAD_KEYS["act_event"] = E2_PAYLOAD_KEYS["act_event"] + ("result",)
+# D7 (2026-11-09): replaced (PUSHED: queued or running acts the push dropped; None when none, and on older rows).
+E2_PAYLOAD_KEYS["act_event"] = E2_PAYLOAD_KEYS["act_event"] + ("replaced",)
+ACT_MAX_REPLACED = 4
+ACT_REPLACED_NAME_CHARS = 128
+ACT_REPLACED_KEYS = ("name", "autonomous", "state")
+ACT_REPLACED_STATES = ("queued", "running")
 # 2.40.0 (W13 P2, home): the catalogue record (`catalog`), in parts. The things list is a `lists` record (kind things).
 EVENT_KINDS = EVENT_KINDS + ("catalog",)
 E2_EVENT_KINDS = E2_EVENT_KINDS + ("catalog",)
@@ -137,13 +143,26 @@ MENU_REFUSED_KEYS = ("name", "reason_key")
 MENU_MAX_EXCLUDED_PHONE = 64
 MENU_EXCLUDED_KEYS = ("name", "why")
 MENU_EXCLUDED_WHY = ("pie_picker", "deny_name", "travel", "not_user_directed", "hidden")
+# D1 (2026-11-09): every listed object carries the acts the probe left out, {name, why} with an upper-case code;
+# at most 16 per object (the first ones), so a part stays bounded. A folded or capped act is named there too.
+MENU_MAX_EXCLUDED_ACT = 16
+MENU_ACT_EXCLUDED_WHY = ("NOT_USER_DIRECTED", "PIE_PICKER", "POSTURE_SOURCE", "PHONE", "MENU_HIDDEN",
+                         "DENY_NAME", "TRAVEL", "SOCIAL", "PICKER", "FOLDED", "CAP", "NO_NAME", "NO_GUID",
+                         "PIE_EMPTY", "GAME_REFUSED")
 MENU_ACT_KEYS = ("guid64", "name", "text_key")
 # 2.39.0 (W12 G1, C4, C10, C12): optional on older rows. An act's variant is a pie-menu choice's index (0..999);
 # an object's on_lot (bool or None), acts_cut (passing acts the per-object cap left out, after folding texts) and
 # refusals (near objects only: at most 8 {text_key, reason_key} of the acts the game refused).
-MENU_ACT_OPTIONAL_KEYS = ("variant", "needs_sim")
+# D1 (2026-11-09): an act that advertises a need carries relief; an object carries excluded (its left-out acts).
+# D2 (2026-11-09): an act (or its object) says which needs it relieves, by the portrait's need ids (serves).
+# D5 (2026-11-09): an object names freshness and notable condition words (states), including what it holds.
+MENU_ACT_OPTIONAL_KEYS = ("variant", "needs_sim", "relief", "serves")
 MENU_MAX_VARIANT = 999
-MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals")
+MENU_OBJECT_OPTIONAL_KEYS = ("on_lot", "acts_cut", "refusals", "excluded", "serves", "states")
+MENU_MAX_SERVES = 8
+MENU_MAX_SERVE_CHARS = 32
+MENU_MAX_STATES = 4
+MENU_MAX_STATE_CHARS = 40
 MENU_MAX_REFUSALS = 8
 MENU_REFUSAL_KEYS = ("text_key", "reason_key")
 # 2.39.0 (W12 C8, C11): part 0's dropped {objects, rooms} and spot_stages counters.
@@ -681,6 +700,8 @@ def _validate_e2(row):
         # 2.40.0 (W13 P1): result is optional; rows before schema 21 omit it.
         if "result" not in payload:
             payload["result"] = None
+        if "replaced" not in payload:
+            payload["replaced"] = None
     elif kind == "lists" and isinstance(payload, dict):
         # 2.40.0 (W13 R2, T1): total is optional; a list written before it omits it.
         if "total" not in payload:
@@ -774,6 +795,8 @@ def _validate_e2(row):
                 _require(isinstance(item, str), "act alias must be a string")
                 string_id(item, "act alias")
         _validate_result(payload["result"])
+        if payload.get("replaced") is not None:
+            _validate_replaced(payload["replaced"])
     elif kind == "act_menu":
         _validate_menu(payload)
     elif kind in ("discovery", "lists", "phone"):
@@ -820,6 +843,19 @@ PERSON_KEYS = frozenset(("sim_id", "first_name", "last_name", "labels", "tracks"
                          "waiting"))
 PLACE_KEYS = frozenset(("zone_id", "kind", "lot_name", "venue", "household_id"))
 EVENT_KEYS = frozenset(("situation_id", "name_key", "cost", "schedulable"))
+
+
+
+def _validate_replaced(replaced):
+    """D7 (2026-11-09): at most ACT_MAX_REPLACED acts a push dropped, each with its name, whether it was
+    the Sim's own, and whether it was queued or running."""
+    _require(type(replaced) is list and len(replaced) <= ACT_MAX_REPLACED, "act replaced")
+    for item in replaced:
+        _require(isinstance(item, dict) and set(item) == set(ACT_REPLACED_KEYS), "act replaced shape")
+        _require(isinstance(item["name"], str) and 1 <= len(item["name"]) <= ACT_REPLACED_NAME_CHARS,
+                 "act replaced name")
+        _require(type(item["autonomous"]) is bool, "act replaced autonomous")
+        _require(item["state"] in ACT_REPLACED_STATES, "act replaced state")
 
 
 def _validate_result(value):
@@ -979,7 +1015,16 @@ def _validate_menu(payload):
         if item.get("acts_cut") is not None:
             _require(type(item["acts_cut"]) is int and item["acts_cut"] >= 0, "menu acts_cut")
         _menu_refusals(item.get("refusals"))
-        _require(isinstance(acts, list) and len(acts) <= cap and (acts or item.get("refusals")), "menu acts")
+        excluded = item.get("excluded")
+        if excluded is not None:
+            _menu_excluded(excluded)
+        if item.get("serves") is not None:
+            _menu_serves(item["serves"])
+        if item.get("states") is not None:
+            _menu_states(item["states"])
+        _require(isinstance(acts, list) and len(acts) <= cap + sum(
+            1 for act in acts if isinstance(act, dict) and act.get("relief") is True)
+            and (acts or item.get("refusals") or excluded), "menu acts")
         for act in acts:
             _require(isinstance(act, dict) and set(act) - set(MENU_ACT_OPTIONAL_KEYS) == set(MENU_ACT_KEYS),
                      "menu act shape")
@@ -988,12 +1033,44 @@ def _validate_menu(payload):
             # 2.40.0 (W13 P1): a phone act that opens a Sim picker is listed with needs_sim (absent on every other act).
             if "needs_sim" in act:
                 _require(act["needs_sim"] is True, "menu needs_sim")
+            # D1 (2026-11-09): a need-relief act is marked so the cap can let it through.
+            if "relief" in act:
+                _require(act["relief"] is True, "menu relief")
+            # D2 (2026-11-09): the needs this act advertises it relieves.
+            if "serves" in act:
+                _menu_serves(act["serves"])
             _require(isinstance(act["guid64"], str), "menu guid64")
             string_id(act["guid64"], "menu guid64")
             bounded_string(act["name"], 128, "menu act name", False)
             if act["text_key"] is not None:
                 _require(isinstance(act["text_key"], str), "menu text_key")
                 string_id(act["text_key"], "menu text_key")
+
+
+def _menu_excluded(excluded):
+    """D1 (2026-11-09): at most MENU_MAX_EXCLUDED_ACT acts of one listed object the probe left out, each with its
+    upper-case reason code."""
+    _require(type(excluded) is list and len(excluded) <= MENU_MAX_EXCLUDED_ACT, "menu excluded")
+    for item in excluded:
+        _require(isinstance(item, dict) and set(item) == set(MENU_EXCLUDED_KEYS), "menu excluded shape")
+        bounded_string(item["name"], 128, "menu excluded name", False)
+        _require(item["why"] in MENU_ACT_EXCLUDED_WHY, "menu excluded why")
+
+
+def _menu_states(states):
+    """D5 (2026-11-09): freshness and notable condition words on a menu object (and what it holds): at most
+    MENU_MAX_STATES words of at most MENU_MAX_STATE_CHARS characters each."""
+    _require(type(states) is list and len(states) <= MENU_MAX_STATES, "menu states")
+    for word in states:
+        _require(isinstance(word, str) and 1 <= len(word) <= MENU_MAX_STATE_CHARS, "menu state")
+
+
+def _menu_serves(serves):
+    """D2 (2026-11-09): the needs an act (or an object's acts) relieves, as the portrait's need ids: at most
+    MENU_MAX_SERVES ids of at most MENU_MAX_SERVE_CHARS characters each."""
+    _require(type(serves) is list and len(serves) <= MENU_MAX_SERVES, "menu serves")
+    for need in serves:
+        _require(isinstance(need, str) and 1 <= len(need) <= MENU_MAX_SERVE_CHARS, "menu serves need")
 
 
 def _menu_dropped(dropped):

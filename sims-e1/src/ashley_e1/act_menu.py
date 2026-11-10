@@ -143,11 +143,41 @@ class FarCache(object):
         self._entries = {}
 
 
-def note_excluded(kept, name, why):
-    """2.37.0 (W10 P3): one phone act the guard excluded before its test, named with why; at most
-    schema.MENU_MAX_EXCLUDED_PHONE, the first ones (a diagnostic, shown with the menu)."""
-    if len(kept) < schema.MENU_MAX_EXCLUDED_PHONE:
+# 2.37.0 (W10 P3): the guard's own reason names, as the menu's upper-case codes (D1: every listed object carries
+# the acts it left out). The phone's old list keeps its lower-case codes; the per-object list speaks these.
+WHY_CODES = {
+    "pie_picker": "PIE_PICKER",
+    "deny_name": "DENY_NAME",
+    "travel": "TRAVEL",
+    "not_user_directed": "NOT_USER_DIRECTED",
+    "hidden": "MENU_HIDDEN",
+    "picker": "PICKER",
+    "social": "SOCIAL",
+    "no_guid": "NO_GUID",
+    "no_name": "NO_NAME",
+    "pie_empty": "PIE_EMPTY",
+    "folded": "FOLDED",
+    "cap": "CAP",
+}
+
+
+def why_code(reason):
+    """D1 (2026-11-09): a filter's reason as the menu's upper-case code; None stays None."""
+    if reason is None:
+        return None
+    return WHY_CODES.get(reason, str(reason).upper())
+
+
+def note_excluded(kept, name, why, cap=None):
+    """2.37.0 (W10 P3): one act the guard excluded before its test, named with why; at most cap entries, the first
+    ones (a diagnostic, shown with the menu). D1: cap lets each listed object keep its own bounded list."""
+    if len(kept) < (schema.MENU_MAX_EXCLUDED_PHONE if cap is None else cap):
         kept.append({"name": (name or "")[:128], "why": why})
+
+
+def note_act_excluded(kept, name, why):
+    """D1 (2026-11-09): one act of a listed object that was left out, with its upper-case code."""
+    note_excluded(kept, name, why_code(why), schema.MENU_MAX_EXCLUDED_ACT)
 
 
 def ordered(objects):
@@ -166,6 +196,144 @@ def ordered(objects):
     kept = [item for item in objects
             if item.get("distance_m") is not None or item.get("same_room") is True or item.get("on_lot") is True]
     return sorted(kept, key=order)
+
+
+def felt_needs(motives):
+    """D2 (2026-11-09): the needs she feels now, worst first: her motive rows with a numeric value, ordered by value
+    (the lowest first) and then by the row's own order, as the portrait's need ids name them. At most MENU_MAX_SERVES.
+    Unread values are skipped: a need the body does not report is not a need the cap can rank."""
+    rows = []
+    for index, item in enumerate(motives if isinstance(motives, (list, tuple)) else ()):
+        if not isinstance(item, dict):
+            continue
+        need = item.get("id")
+        value = item.get("value")
+        if not isinstance(need, str) or not 1 <= len(need) <= schema.MENU_MAX_SERVE_CHARS:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        rows.append((value, index, need))
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return tuple(need for _value, _index, need in rows[:schema.MENU_MAX_SERVES])
+
+
+
+def _attr_name(value):
+    try:
+        name = value.__name__
+    except Exception:
+        return None
+    return name if isinstance(name, str) else None
+
+
+def _raw_states(obj):
+    try:
+        items = list(obj.state_component._states.items())
+    except Exception:
+        return {}
+    found = {}
+    for state, value in items[:32]:
+        key = _attr_name(state)
+        if key is not None:
+            found[key[:96]] = (_attr_name(value) or "")[:96] or None
+    return found
+
+
+# Freshness is always named by its last word. The rest match the portrait's notable tails, plus Burnt.
+_NOTABLE_STATE_TAILS = ("Spoiled", "Stale", "Dirty", "Broken", "Burning", "Fire", "Unflushed",
+                        "Flooded", "Smelly", "Burnt")
+_NEGATION_WORDS = ("Not", "No", "Non")
+
+
+def _is_notable(value):
+    if not isinstance(value, str):
+        return False
+    words = [word for word in value.replace(" ", "_").split("_") if word]
+    if not words or words[-1] not in _NOTABLE_STATE_TAILS:
+        return False
+    return not any(word in _NEGATION_WORDS for word in words)
+
+
+def _state_word(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    parts = [part for part in value.replace(" ", "_").split("_") if part]
+    if not parts:
+        return None
+    return parts[-1][:schema.MENU_MAX_STATE_CHARS]
+
+
+def _own_state_words(obj):
+    found = []
+    raw = _raw_states(obj)
+    fresh = _state_word(raw.get("Freshness"))
+    if fresh:
+        found.append(fresh)
+    for value in raw.values():
+        if _is_notable(value):
+            word = _state_word(value)
+            if word and word not in found:
+                found.append(word)
+    return found
+
+
+def state_words(obj):
+    """D5 (2026-11-09): freshness and notable condition words of this object and what it holds
+    (one level of contents), bounded to MENU_MAX_STATES."""
+    found = list(_own_state_words(obj))
+    try:
+        contents = list(obj.inventory_component)
+    except Exception:
+        contents = []
+    for item in contents:
+        for word in _own_state_words(item):
+            if word not in found:
+                found.append(word)
+            if len(found) >= schema.MENU_MAX_STATES:
+                return found[:schema.MENU_MAX_STATES]
+    return found[:schema.MENU_MAX_STATES]
+
+
+def _states_of(jobs):
+    """D5 (2026-11-09): the condition words of one object's kept jobs, from an explicit list or
+    from the game object, deduplicated and bounded."""
+    found = []
+    for job in jobs:
+        words = job.get("states")
+        if not words:
+            obj = job.get("obj")
+            words = state_words(obj) if obj is not None else ()
+        for word in words or ():
+            if (isinstance(word, str) and 1 <= len(word) <= schema.MENU_MAX_STATE_CHARS
+                    and word not in found and len(found) < schema.MENU_MAX_STATES):
+                found.append(word)
+    return found
+
+
+def _serves_of(jobs):
+    """D2 (2026-11-09): the needs the kept acts of one object advertise, in the order they were met, deduplicated and
+    bounded to MENU_MAX_SERVES ids of at most MENU_MAX_SERVE_CHARS characters."""
+    found = []
+    for job in jobs:
+        for need in job.get("serves") or ():
+            if (isinstance(need, str) and 1 <= len(need) <= schema.MENU_MAX_SERVE_CHARS
+                    and need not in found and len(found) < schema.MENU_MAX_SERVES):
+                found.append(need)
+    return found
+
+
+def _need_rank(item, needs):
+    """D2 (2026-11-09): how urgently an object's needs rank: the index of its worst felt need in needs (0 is worst),
+    or len(needs) when it serves none of them. 0 for every object when nothing is felt."""
+    rank = len(needs)
+    for need in item.get("serves") or ():
+        try:
+            index = needs.index(need)
+        except ValueError:
+            continue
+        if index < rank:
+            rank = index
+    return rank
 
 
 def _room_key(item):
@@ -222,10 +390,12 @@ def pick(items, offers):
 def _shape_of(item):
     """What the menu shows of one object, for the same-menu check (distances are not compared here)."""
     refusals = item.get("refusals")
+    excluded = item.get("excluded")
     return (item["object_id"], item.get("room"), item.get("reach"),
             tuple((act["guid64"], act.get("variant")) for act in item["acts"]),
             item.get("on_lot"), item.get("acts_cut"),
-            None if refusals is None else tuple((r.get("text_key"), r.get("reason_key")) for r in refusals))
+            None if refusals is None else tuple((r.get("text_key"), r.get("reason_key")) for r in refusals),
+            None if excluded is None else tuple((e.get("name"), e.get("why")) for e in excluded))
 
 
 class MenuBuild(object):
@@ -234,9 +404,13 @@ class MenuBuild(object):
     failed is set when reading the jobs raised; a failed build publishes nothing."""
 
     def __init__(self, jobs, runner, budget_ms=8.0, max_per_chunk=80, clock=time.perf_counter, spots=None,
-                 far=None, excluded_phone=None, on_near=None, reach=None, stages=None):
+                 far=None, excluded_phone=None, on_near=None, reach=None, stages=None, excluded=None, heads=None,
+                 needs=None):
         self._jobs = iter(jobs)
         self._runner = runner
+        # D2 (2026-11-09): the needs she feels now, worst first (act_menu.felt_needs), so the object cap keeps what
+        # they require before the rest.
+        self._needs = tuple(needs or ())
         # 2.38.0 (W11 P3): asks a job's own reach; run for a far candidate whose outcome the cache gave, since reach is per object.
         self._reach = reach
         self.budget_ms = budget_ms
@@ -249,6 +423,10 @@ class MenuBuild(object):
         self._heads = {}
         self._acts = {}
         self._refusals = {}
+        # D1 (2026-11-09): per object, the acts the menu left out before the game's test {object_id: [{name, why}]},
+        # and the objects that offer nothing but left-out acts (their first fields, so they are still listed).
+        self._excluded = {} if excluded is None else excluded
+        self._object_heads = {} if heads is None else heads
         # 2.39.0 (W12 G1): the choices of pie-menu acts this build kept: (object id, guid64, variant) -> the key the
         # push matches the choice by. Published with the menu, so an act names a choice the menu showed.
         self.variants = {}
@@ -270,6 +448,11 @@ class MenuBuild(object):
         self.build_ms = 0.0
         self.done = False
         self.failed = False
+
+    def set_needs(self, needs):
+        """D2 (2026-11-09): the felt needs from the newest body row, worst first. Read again each tick while the build
+        runs, so a build that finishes later keeps what is urgent now (the helper does the same at each view)."""
+        self._needs = tuple(needs or ())
 
     def _outcome(self, job):
         """2.37.0 (W10 P2): whether the job's act is on the menu. A far candidate the cache holds is not tested again;
@@ -351,24 +534,33 @@ class MenuBuild(object):
         are folded before the per-object cap, and the passing acts the cap leaves out are counted (acts_cut).
         part 0 of 1: parts() cuts it into rows."""
         objects = []
-        for oid in self._order:
-            head = self._heads[oid]
+        order = list(self._order)
+        for oid in self._excluded:
+            if oid not in self._heads:
+                order.append(oid)
+        for oid in order:
+            head = self._heads.get(oid) or self._object_heads.get(oid)
+            if head is None:
+                continue
             view = dict(head)
             if refresh is not None:
                 view.update(refresh(head) or {})
             near_now = is_near(view)
             if near and not near_now:
                 continue
-            acts, cut = self._act_rows(oid, view)
+            acts, cut, dropped = self._act_rows(oid, view)
+            excluded = list(self._excluded.get(oid) or []) + dropped
+            if len(excluded) > schema.MENU_MAX_EXCLUDED_ACT:
+                excluded = excluded[:schema.MENU_MAX_EXCLUDED_ACT]
             refusals = None
             # Her phone's refusals are already named in refused_phone (2.35.0), so the phone carries none here.
             if near_now and head.get("phone") is not True:
                 refusals = [{"text_key": job.get("text_key"), "reason_key": job.get("reason_key")}
-                            for job in self._refusals[oid]]
-            if not acts and not refusals:
+                            for job in self._refusals.get(oid, [])]
+            if not acts and not refusals and not excluded:
                 continue
             on_lot = view.get("on_lot")
-            objects.append({
+            item = {
                 "object_id": oid, "definition_id": head.get("definition_id"),
                 "class": (head.get("class") or "")[:96], "distance_m": view.get("distance_m"),
                 "same_room": view.get("same_room"), "room": _room_text(view.get("room")),
@@ -376,7 +568,19 @@ class MenuBuild(object):
                 "phone": True if head.get("phone") is True else None,
                 "spot": head.get("spot"), "level": head.get("level"), "acts": acts,
                 "on_lot": on_lot if on_lot in (True, False) else None,
-                "acts_cut": cut, "refusals": refusals})
+                "acts_cut": cut, "refusals": refusals}
+            if excluded:
+                item["excluded"] = excluded
+            serves = _serves_of(self._acts.get(oid, []))
+            if serves:
+                item["serves"] = serves
+            states = _states_of(self._acts.get(oid, []))
+            if states:
+                item["states"] = states
+            objects.append(item)
+        # D2 (2026-11-09): the object cap keeps what the felt needs require first; the nearest/menu order is kept
+        # within each rank (a stable sort), and what the cap still leaves out is counted in dropped.
+        objects.sort(key=lambda item: _need_rank(item, self._needs))
         kept = objects[:schema.MENU_MAX_OBJECTS]
         dropped_objects = objects[schema.MENU_MAX_OBJECTS:]
         rooms = []
@@ -403,26 +607,40 @@ class MenuBuild(object):
 
     def _act_rows(self, oid, view):
         """2.39.0 (W12 C12): the acts of one object: texts folded (the first of each text kept), at most the
-        per-object cap, and the passing acts past the cap counted. A pie choice carries its variant."""
+        per-object cap, and the passing acts past the cap counted. A pie choice carries its variant.
+        D1 (2026-11-09): an act that advertises a need is never cut by the probe; the acts the cap or a fold leaves
+        out are named in the object's excluded list with CAP or FOLDED."""
         cap = schema.MENU_MAX_PHONE_ACTS if view.get("phone") is True else schema.MENU_MAX_ACTS
         seen = set()
         acts = []
         cut = 0
-        for job in self._acts[oid]:
+        dropped = []
+        for job in self._acts.get(oid, []):
             key = fold_key(job)
+            relief = job.get("need_relief") is True
             if key in seen:
+                note_excluded(dropped, job.get("name"), "FOLDED", schema.MENU_MAX_EXCLUDED_ACT)
                 continue
             seen.add(key)
-            if len(acts) >= cap:
+            if len(acts) >= cap and not relief:
                 cut += 1
+                note_excluded(dropped, job.get("name"), "CAP", schema.MENU_MAX_EXCLUDED_ACT)
                 continue
             # The variant is always written (None for an act that is not a pie choice), so a part's size is what it is.
-            acts.append({"guid64": job["guid64"], "name": (job.get("name") or "")[:128],
-                         "text_key": job.get("text_key"), "variant": job.get("variant")})
+            row = {"guid64": job["guid64"], "name": (job.get("name") or "")[:128],
+                   "text_key": job.get("text_key"), "variant": job.get("variant")}
+            if relief:
+                row["relief"] = True
+            serves = [need for need in job.get("serves") or ()
+                      if isinstance(need, str) and 1 <= len(need) <= schema.MENU_MAX_SERVE_CHARS
+                      ][:schema.MENU_MAX_SERVES]
+            if serves:
+                row["serves"] = serves
             # 2.40.0 (W13 P1): a phone act that asks for a Sim is listed with needs_sim (absent on every other act).
             if job.get("needs_sim") is True:
-                acts[-1]["needs_sim"] = True
-        return acts, cut
+                row["needs_sim"] = True
+            acts.append(row)
+        return acts, cut, dropped
 
 
 def _room_text(room):

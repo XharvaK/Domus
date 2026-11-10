@@ -34,15 +34,17 @@ def size(value):
 
 def test_identical_objects_are_one_entry_that_counts_them_and_their_rooms_and_names_the_nearest():
     result = acts.options(menu(*seats(60)), room=ROOM, room_labels={"1": "Kitchen", "2": "Hall", "3": "Den"})
-    assert len(result) == 1
+    # D6 (2026-11-09): folding stays inside one room, so sixty seats in three rooms are three entries.
+    assert len(result) == 3
+    assert [entry["object_id"] for entry in result] == ["9000", "9001", "9002"]
     entry = result[0]
-    assert entry["object_id"] == "9000"  # the first in the menu's order, the nearest
     assert entry["object"] == "pool seat"
-    assert entry["where"].endswith("; 60 of them in 3 rooms, the nearest is listed")
+    assert entry["where"].endswith("; 20 of them, the nearest is listed")
     assert entry["where"].startswith("here, 1.0 m")
+    assert "of them in" not in entry["where"]
     assert [(act["guid64"], act["text"]) for act in entry["acts"]] == [("8100", "seat Sit")]
     assert entry["acts"][0]["ref"] == "a1"
-    assert set(entry) <= {"object", "object_id", "where", "acts", "near", "room"}
+    assert set(entry) <= {"object", "object_id", "where", "acts", "near", "room", "room_id"}
 
 
 def test_identical_objects_in_one_room_say_how_many_without_a_room_count():
@@ -58,7 +60,7 @@ def test_folding_happens_before_the_budget_so_the_objects_behind_identical_ones_
              for n in range(20)]
     result = acts.options(menu(*(seats(150) + lamps)), room=ROOM, cut=cut, objects_limit=40)
     assert cut == {}
-    assert len(result) == 21
+    assert len(result) == 23
     assert [entry["object_id"] for entry in result if entry["object"].startswith("lamp")] == \
         [str(9200 + n) for n in range(20)]
 
@@ -90,13 +92,13 @@ def test_a_spot_a_phone_and_a_person_are_never_folded():
 
 def test_a_folded_entry_adds_no_key_the_contract_or_natalis_does_not_read():
     result = acts.options(menu(*seats(3)), room=ROOM, cut={})
-    assert set(result[0]) <= {"object", "object_id", "where", "acts", "near", "room"}
+    assert set(result[0]) <= {"object", "object_id", "where", "acts", "near", "room", "room_id"}
     assert "many" not in result[0] and "rooms" not in result[0]
 
 
 def test_a_folded_entry_is_smaller_than_its_members_and_fits_the_contract_bytes():
     result = acts.options(menu(*seats(160)), room=ROOM, cut={})
-    assert len(result) == 1
+    assert len(result) == 3
     assert size(result) < 1024
 
 
