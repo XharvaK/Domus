@@ -757,6 +757,16 @@ def _excluded_entries(item):
     return entries
 
 
+def _utf16_cut(text, limit):
+    """At most `limit` UTF-16 code units (what Natalis measures), never splitting a character."""
+    units = 0
+    for i, ch in enumerate(text):
+        units += 2 if ord(ch) > 0xFFFF else 1
+        if units > limit:
+            return text[:i]
+    return text
+
+
 def _wire_excluded(entries):
     """Observation wire (Natalis): {text, reason} from the probe's {name, why} entries.
 
@@ -773,7 +783,7 @@ def _wire_excluded(entries):
             continue
         name = entry.get("name") if isinstance(entry.get("name"), str) else ""
         text = name if name else AN_ACT
-        out.append({"text": text[:128], "reason": why[:64]})
+        out.append({"text": _utf16_cut(text, 128), "reason": _utf16_cut(why, 64)})
     return out
 
 
