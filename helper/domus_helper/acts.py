@@ -605,7 +605,7 @@ def _refusals(item, resolve, near):
             continue
         act = _text(resolve, refusal.get("text_key")) or humanize("act")
         reason = _sentence(resolve, refusal.get("reason_key")) or "no reason given"
-        found.append(("%s: refused: %s" % (act, reason))[:240])
+        found.append(_utf16_cut("%s: refused: %s" % (act, reason), 240))
         if len(found) >= REFUSALS_SHOWN:
             break
     return found
@@ -758,11 +758,16 @@ def _excluded_entries(item):
     return entries
 
 
+def _utf16_len(text):
+    """The length Natalis measures: UTF-16 code units (2 for a code point above 0xFFFF, else 1)."""
+    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in text)
+
+
 def _utf16_cut(text, limit):
     """At most `limit` UTF-16 code units (what Natalis measures), never splitting a character."""
     units = 0
     for i, ch in enumerate(text):
-        units += 2 if ord(ch) > 0xFFFF else 1
+        units += _utf16_len(ch)
         if units > limit:
             return text[:i]
     return text
@@ -815,10 +820,14 @@ def _phone_act(item, words, code):
 
 
 def _phone_line(act, verb, reason):
-    """One left-out or refused line: the act is cut first, and the reason is kept whole."""
+    """One left-out or refused line: the act is cut first, and the reason is kept whole when the line allows it."""
     tail = ": %s: %s" % (verb, reason)
-    room = max(PHONE_LEFT_OUT_CHARS - len(tail), 0)
-    return (act[:room].rstrip() or AN_ACT) + tail
+    room = max(PHONE_LEFT_OUT_CHARS - _utf16_len(tail), 0)
+    shown = _utf16_cut(act, room).rstrip()
+    if not shown:
+        shown = AN_ACT
+        tail = _utf16_cut(tail, max(PHONE_LEFT_OUT_CHARS - _utf16_len(AN_ACT), 0))
+    return shown + tail
 
 
 def _phone_left_out(menu, resolve):
@@ -850,7 +859,7 @@ def _phone_left_out(menu, resolve):
     lines = [line for _kind, _reason, line in entries[:keep]]
     for reason in reasons:
         count = sum(1 for kind, why, _line in tail if kind == "left" and why == reason)
-        lines.append("%d more acts: left out: %s" % (count, reason))
+        lines.append(_utf16_cut("%d more acts: left out: %s" % (count, reason), PHONE_LEFT_OUT_CHARS))
     if refused:
         lines.append("and %d more" % refused)
     return lines
@@ -875,7 +884,7 @@ def _cap_left_out(lines):
     for reason in reasons:
         count = sum(1 for line in tail if ": left out: " in line
                     and line.split(": left out: ", 1)[1] == reason)
-        capped.append("%d more acts: left out: %s" % (count, reason))
+        capped.append(_utf16_cut("%d more acts: left out: %s" % (count, reason), PHONE_LEFT_OUT_CHARS))
     if unmarked:
         capped.append("and %d more" % unmarked)
     return capped
@@ -909,7 +918,7 @@ def _serves_of(item):
         if not isinstance(group, (list, tuple)):
             continue
         for need in group:
-            if (isinstance(need, str) and 1 <= len(need) <= SERVE_MAX_CHARS
+            if (isinstance(need, str) and 1 <= _utf16_len(need) <= SERVE_MAX_CHARS
                     and need not in found and len(found) < SERVES_MAX):
                 found.append(need)
     return found
@@ -944,7 +953,7 @@ def _state_word(piece):
     if "_" in value:
         parts = [part for part in value.replace(" ", "_").split("_") if part]
         value = parts[-1] if parts else value
-    if not 1 <= len(value) <= 40:
+    if not 1 <= _utf16_len(value) <= 40:
         return None
     return value
 
@@ -1073,7 +1082,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
                 entry["serves"] = serves
             short = book.get(str(item.get("room"))) if item.get("room") is not None else None
             if label:
-                entry["room"] = label[:64]
+                entry["room"] = _utf16_cut(label, 64)
             elif short:
                 entry["room"] = short
             if short:
@@ -1106,7 +1115,8 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
                 entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
             # A room with no label is named by its id in a cut, so a cut is never silent about where it was.
-            where_named = label[:64] if label else (str(item["room"])[:64] if item.get("room") is not None else None)
+            where_named = _utf16_cut(label, 64) if label else (
+                _utf16_cut(str(item["room"]), 64) if item.get("room") is not None else None)
             room_id = None if item.get("room") is None else str(item["room"])
             # 2.38.0 (W11 H1): a thing is folded with its identical kin; a spot, her phone and a person are not.
             # D1: an object with no printed act is not folded into one that has acts.
@@ -1146,7 +1156,7 @@ def _probe_room_name(value, room_labels):
     if str(value) == OUTSIDE_ROOM:
         return OUTSIDE_NAME
     label = (room_labels or {}).get(str(value))
-    return (label if isinstance(label, str) and label else "room %s" % str(value))[:64]
+    return _utf16_cut(label if isinstance(label, str) and label else "room %s" % str(value), 64)
 
 
 def _version(probe):
