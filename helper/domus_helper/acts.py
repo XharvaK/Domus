@@ -736,6 +736,7 @@ ACT_LEFT_OUT_REASONS = {
     "POSTURE_SOURCE": "it only changes how you stand or sit",
 }
 EXCLUDED_SHOWN = 16
+EXCLUDED_WIRE_MAX = 32
 AN_ACT = "an act"
 
 
@@ -790,6 +791,8 @@ def _wire_excluded(entries):
         name = entry.get("name") if isinstance(entry.get("name"), str) else ""
         text = name if name else AN_ACT
         out.append({"text": _utf16_cut(text, 128), "reason": _utf16_cut(why, 64)})
+        if len(out) >= EXCLUDED_WIRE_MAX:
+            break
     return out
 
 
@@ -868,7 +871,8 @@ def _phone_left_out(menu, resolve):
 def _cap_left_out(lines):
     """NB-1: Natalis accepts at most LEFT_OUT_MAX left-out lines on one object. Past it, keep the first lines and
     name each cut reason once ("<N> more acts: left out: <reason>"); cut lines without that mark become one last
-    "and <N> more" line."""
+    "and <N> more" line. NB-R1: when even no kept lines would leave more than LEFT_OUT_MAX reasons, the first
+    LEFT_OUT_MAX - 1 reasons are named and every other cut act folds into the one last line."""
     if len(lines) <= LEFT_OUT_MAX:
         return lines
     keep = LEFT_OUT_MAX
@@ -880,12 +884,18 @@ def _cap_left_out(lines):
         if keep + len(reasons) + (1 if unmarked else 0) <= LEFT_OUT_MAX or keep == 0:
             break
         keep -= 1
+    fold = keep == 0 and len(reasons) + (1 if unmarked else 0) > LEFT_OUT_MAX
+    named = reasons[:LEFT_OUT_MAX - 1] if fold else reasons
     capped = list(lines[:keep])
-    for reason in reasons:
+    counted = 0
+    for reason in named:
         count = sum(1 for line in tail if ": left out: " in line
                     and line.split(": left out: ", 1)[1] == reason)
+        counted += count
         capped.append(_utf16_cut("%d more acts: left out: %s" % (count, reason), PHONE_LEFT_OUT_CHARS))
-    if unmarked:
+    if fold:
+        capped.append("and %d more" % (len(tail) - counted))
+    elif unmarked:
         capped.append("and %d more" % unmarked)
     return capped
 

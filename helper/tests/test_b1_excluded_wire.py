@@ -35,6 +35,13 @@ def test_helper_excluded_matches_the_shared_wire_fixture():
     assert shown["excluded"] == expected
 
 
+def test_excluded_wire_stops_at_32_entries():
+    entries = [{"name": "act%d" % i, "why": "CAP"} for i in range(40)]
+    shown = _wire_excluded(entries)
+    assert len(shown) == 32
+    assert shown == [{"text": "act%d" % i, "reason": "CAP"} for i in range(32)]
+
+
 def test_excluded_text_and_reason_fit_natalis_utf16_caps():
     shown = _wire_excluded([{"name": "\U0001F600" * 81, "why": "\U0001F600" * 33}])
     assert len(shown) == 1
