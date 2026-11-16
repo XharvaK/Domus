@@ -736,6 +736,7 @@ ACT_LEFT_OUT_REASONS = {
     "POSTURE_SOURCE": "it only changes how you stand or sit",
 }
 EXCLUDED_SHOWN = 16
+EXCLUDED_WIRE_MAX = 32
 AN_ACT = "an act"
 
 
@@ -790,6 +791,8 @@ def _wire_excluded(entries):
         name = entry.get("name") if isinstance(entry.get("name"), str) else ""
         text = name if name else AN_ACT
         out.append({"text": _utf16_cut(text, 128), "reason": _utf16_cut(why, 64)})
+        if len(out) >= EXCLUDED_WIRE_MAX:
+            break
     return out
 
 
