@@ -192,6 +192,39 @@ def test_the_privacy_list_holds_lines_and_labels(tmp_path):
         spool.close()
 
 
+def test_the_privacy_list_holds_nfd_and_zero_width_spellings(tmp_path):
+    # NB-4: an NFC term matches NFD text, and format characters inside a name do not hide it.
+    path = tmp_path / overlay.PRIVACY_FILE
+    path.write_text("Café\nAlice\n", encoding="utf-8")
+    privacy = overlay.PrivacyList(path)
+    assert privacy.held("we met at Cafe\u0301 Rouge") is True
+    assert privacy.held("Alic\u200be said hi") is True
+    assert privacy.held("Al\u00adice") is True
+    assert privacy.held("Alicia") is False
+
+
+def test_a_learned_save_name_holds_zero_width_spellings(tmp_path):
+    # NB-4: a name learned as "Alice Smith" holds the same name with a zero-width space in it.
+    spool, view = made(tmp_path)
+    try:
+        view.on_row(_named_row({"name": "Alice Smith"}, her="Ada"), NOW)
+        assert view._save_names.held("Alic\u200be came by") is True
+    finally:
+        spool.close()
+
+
+def test_a_zero_width_privacy_line_is_not_said_in_the_game(tmp_path):
+    # NB-4: a held line never reaches the bridge to be said in the game.
+    spool, view = made(tmp_path)
+    try:
+        (tmp_path / overlay.PRIVACY_FILE).write_text("Alice\n", encoding="utf-8")
+        view.poll(Feed([{"inputs": "chosen", "pass": "p1", "line": "Alic\u200be said hi",
+                         "at_ms": NOW - 1_000}]), "h1", NOW)
+        assert view.take_thoughts() == []
+    finally:
+        spool.close()
+
+
 def test_the_now_list_names_running_acts_in_the_games_words(tmp_path):
     # HE1: the newest menu's text key names the act; the tuning name is humanized only as a fallback.
     spool, view = made(tmp_path)
