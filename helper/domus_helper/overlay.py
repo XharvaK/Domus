@@ -21,6 +21,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -72,6 +73,12 @@ _MECHANICAL = (re.compile(r"<[@#][!&]?\d+>"), re.compile(r"(^|[^\w])@[A-Za-z0-9_
 _LIMIT = 64
 
 
+def _privacy_form(text):
+    """NFC text with format characters (zero-width spaces, soft hyphens) removed, for privacy matching."""
+    return "".join(ch for ch in unicodedata.normalize("NFC", text)
+                   if unicodedata.category(ch) != "Cf")
+
+
 class PrivacyList:
     """The User's own list of names and places that never appear, reread when the file changes."""
 
@@ -100,13 +107,14 @@ class PrivacyList:
         for line in self._path.read_text(encoding="utf-8").splitlines():
             term = line.strip()
             if len(term) >= 2 and not term.startswith("#"):
-                terms.append(re.compile(r"(?<!\w)%s(?!\w)" % re.escape(term), re.I))
+                terms.append(re.compile(r"(?<!\w)%s(?!\w)" % re.escape(_privacy_form(term)), re.I))
         self._terms = terms
 
     def held(self, text):
         if not isinstance(text, str):
             return False
         self._load()
+        text = _privacy_form(text)
         return any(pattern.search(text) for pattern in _MECHANICAL + tuple(self._terms))
 
 
@@ -168,7 +176,7 @@ class SaveNames:
         self._compile()
 
     def _compile(self):
-        self._terms = [re.compile(r"(?<!\w)%s(?!\w)" % re.escape(name), re.I)
+        self._terms = [re.compile(r"(?<!\w)%s(?!\w)" % re.escape(_privacy_form(name)), re.I)
                        for name in self._names]
 
     def learn(self, row, now_ms):
@@ -198,6 +206,7 @@ class SaveNames:
     def held(self, text):
         if not isinstance(text, str):
             return False
+        text = _privacy_form(text)
         return any(pattern.search(text) for pattern in self._terms)
 
     @property
