@@ -705,6 +705,7 @@ def assign_room_refs(rooms, book):
 
 PHONE_LEFT_OUT_LINES = 12
 PHONE_LEFT_OUT_CHARS = 160
+LEFT_OUT_MAX = 12
 # W14 (D7): the plain-words reason of each code the probe gives a left-out phone act (its excluded_phone "why"). A code
 # with no words here is shown as the code itself. R3-H (CONTRA3-2, CONTRA3-3): "travel" is any part that can take her off
 # the lot, not every phone act, so the words say "can"; the debug words cover cheat, debug and test acts only.
@@ -853,6 +854,31 @@ def _phone_left_out(menu, resolve):
     if refused:
         lines.append("and %d more" % refused)
     return lines
+
+
+def _cap_left_out(lines):
+    """NB-1: Natalis accepts at most LEFT_OUT_MAX left-out lines on one object. Past it, keep the first lines and
+    name each cut reason once ("<N> more acts: left out: <reason>"); cut lines without that mark become one last
+    "and <N> more" line."""
+    if len(lines) <= LEFT_OUT_MAX:
+        return lines
+    keep = LEFT_OUT_MAX
+    while True:
+        tail = lines[keep:]
+        reasons = list(dict.fromkeys(line.split(": left out: ", 1)[1] for line in tail
+                                     if ": left out: " in line))
+        unmarked = sum(1 for line in tail if ": left out: " not in line)
+        if keep + len(reasons) + (1 if unmarked else 0) <= LEFT_OUT_MAX or keep == 0:
+            break
+        keep -= 1
+    capped = list(lines[:keep])
+    for reason in reasons:
+        count = sum(1 for line in tail if ": left out: " in line
+                    and line.split(": left out: ", 1)[1] == reason)
+        capped.append("%d more acts: left out: %s" % (count, reason))
+    if unmarked:
+        capped.append("and %d more" % unmarked)
+    return capped
 
 
 def felt_needs(row):
@@ -1075,6 +1101,7 @@ def options(menu, resolve=None, catalog=None, limit=OPTIONS_LIMIT, people=None, 
             else:
                 left_out_lines = excluded_lines
             if left_out_lines:
+                left_out_lines = _cap_left_out(left_out_lines)
                 entry["left_out"] = left_out_lines
             if type(item.get("acts_cut")) is int and item["acts_cut"] > 0:
                 entry["acts_cut"] = item["acts_cut"]  # W12 (C12): passing acts not listed, after folding by words
